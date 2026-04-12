@@ -19,6 +19,7 @@ import {
   MissionTemplate,
 } from '../types/mission';
 import { useAuth } from './AuthContext';
+import { useAircraft } from './AircraftContext';
 
 // Context Type Definition
 interface MissionContextType {
@@ -70,6 +71,24 @@ interface MissionContextType {
   validateMission: (mission: Partial<MissionRecord>) => MissionValidationError[];
   validateMissionReadiness: (id: string, targetStatus: MissionStatus) => MissionValidationError[];
 
+  // Aircraft Integration Functions
+  validateAircraftAvailability: (aircraftId: string, startDate: string, endDate?: string) => {
+    available: boolean;
+    conflicts: string[];
+    recommendations: string[];
+  };
+  getCompatibleConfigurations: (aircraftId: string) => Array<{
+    configuration: any;
+    kit: any;
+    compatibilityScore: number;
+  }>;
+  calculateMissionCost: (missionData: Partial<MissionRecord>) => {
+    aircraftCost: number;
+    equipmentCost: number;
+    totalCost: number;
+    breakdown: Record<string, number>;
+  };
+
   // Template Management
   createTemplate: (template: Omit<MissionTemplate, 'id' | 'createdAt' | 'updatedAt' | 'createdBy'>) => Promise<string>;
   updateTemplate: (id: string, updates: Partial<Omit<MissionTemplate, 'id' | 'createdAt' | 'createdBy'>>) => Promise<void>;
@@ -119,6 +138,9 @@ const defaultContext: MissionContextType = {
   getMissionStatusHistory: () => [],
   validateMission: () => [],
   validateMissionReadiness: () => [],
+  validateAircraftAvailability: () => ({ available: false, conflicts: [], recommendations: [] }),
+  getCompatibleConfigurations: () => [],
+  calculateMissionCost: () => ({ aircraftCost: 0, equipmentCost: 0, totalCost: 0, breakdown: {} }),
   createTemplate: async () => '',
   updateTemplate: async () => {},
   deleteTemplate: async () => {},
@@ -199,7 +221,15 @@ const getValidActionsForRole = (userRole: string): string[] => {
 };
 
 // Validation Functions
-const validateMissionData = (mission: Partial<MissionRecord>): MissionValidationError[] => {
+const validateMissionData = (
+  mission: Partial<MissionRecord>,
+  aircraftContext?: {
+    getAircraftById: (id: string) => any;
+    getEquipmentKitById: (id: string) => any;
+    getConfigurationById: (id: string) => any;
+    validateConfiguration: (aircraftId: string, kitId: string) => boolean;
+  }
+): MissionValidationError[] => {
   const errors: MissionValidationError[] = [];
 
   if (!mission.missionName?.trim()) {
@@ -236,6 +266,7 @@ const validateMissionData = (mission: Partial<MissionRecord>): MissionValidation
     });
   }
 
+  // Enhanced aircraft validation with Aircraft Context integration
   if (!mission.aircraftConfiguration?.aircraftId) {
     errors.push({
       field: 'aircraftConfiguration.aircraftId',
@@ -243,6 +274,24 @@ const validateMissionData = (mission: Partial<MissionRecord>): MissionValidation
       severity: 'error',
       code: 'REQUIRED_FIELD'
     });
+  } else if (aircraftContext) {
+    // Validate aircraft exists and is available
+    const aircraft = aircraftContext.getAircraftById(mission.aircraftConfiguration.aircraftId);
+    if (!aircraft) {
+      errors.push({
+        field: 'aircraftConfiguration.aircraftId',
+        message: 'Selected aircraft does not exist',
+        severity: 'error',
+        code: 'INVALID_AIRCRAFT'
+      });
+    } else if (aircraft.status !== 'operational') {
+      errors.push({
+        field: 'aircraftConfiguration.aircraftId',
+        message: `Aircraft is not operational (current status: ${aircraft.status})`,
+        severity: 'error',
+        code: 'AIRCRAFT_UNAVAILABLE'
+      });
+    }
   }
 
   if (!mission.aircraftConfiguration?.configurationId) {
@@ -252,6 +301,49 @@ const validateMissionData = (mission: Partial<MissionRecord>): MissionValidation
       severity: 'error',
       code: 'REQUIRED_FIELD'
     });
+  } else if (aircraftContext && mission.aircraftConfiguration?.aircraftId) {
+    // Validate configuration exists and is compatible
+    const configuration = aircraftContext.getConfigurationById(mission.aircraftConfiguration.configurationId);
+    if (!configuration) {
+      errors.push({
+        field: 'aircraftConfiguration.configurationId',
+        message: 'Selected configuration does not exist',
+        severity: 'error',
+        code: 'INVALID_CONFIGURATION'
+      });
+    } else {
+      // Check if configuration matches aircraft and equipment kit compatibility
+      const aircraft = aircraftContext.getAircraftById(mission.aircraftConfiguration.aircraftId);
+      const kit = aircraftContext.getEquipmentKitById(configuration.kitId);
+
+      if (configuration.aircraftId !== mission.aircraftConfiguration.aircraftId) {
+        errors.push({
+          field: 'aircraftConfiguration.configurationId',
+          message: 'Configuration does not match selected aircraft',
+          severity: 'error',
+          code: 'CONFIGURATION_MISMATCH'
+        });
+      }
+
+      if (kit && kit.operationalData.status !== 'available') {
+        errors.push({
+          field: 'aircraftConfiguration.configurationId',
+          message: `Equipment kit is not available (current status: ${kit.operationalData.status})`,
+          severity: 'error',
+          code: 'KIT_UNAVAILABLE'
+        });
+      }
+
+      // Validate aircraft-kit compatibility
+      if (aircraft && kit && !aircraftContext.validateConfiguration(aircraft.id, kit.id)) {
+        errors.push({
+          field: 'aircraftConfiguration.configurationId',
+          message: 'Selected aircraft and equipment kit are not compatible',
+          severity: 'error',
+          code: 'INCOMPATIBLE_CONFIGURATION'
+        });
+      }
+    }
   }
 
   return errors;
@@ -260,7 +352,13 @@ const validateMissionData = (mission: Partial<MissionRecord>): MissionValidation
 const validateStatusTransitionRules = (
   fromStatus: MissionStatus,
   toStatus: MissionStatus,
-  mission: MissionRecord
+  mission: MissionRecord,
+  aircraftContext?: {
+    getAircraftById: (id: string) => any;
+    getEquipmentKitById: (id: string) => any;
+    getConfigurationById: (id: string) => any;
+    validateConfiguration: (aircraftId: string, kitId: string) => boolean;
+  }
 ): MissionValidationError[] => {
   const errors: MissionValidationError[] = [];
   const validTransitions = STATUS_TRANSITIONS[fromStatus] || [];
@@ -296,6 +394,7 @@ const validateStatusTransitionRules = (
         });
       }
 
+      // Enhanced aircraft configuration validation using Aircraft Context
       if (!mission.aircraftConfiguration.aircraftId || !mission.aircraftConfiguration.configurationId) {
         errors.push({
           field: 'aircraftConfiguration',
@@ -303,6 +402,104 @@ const validateStatusTransitionRules = (
           severity: 'error',
           code: 'INCOMPLETE_CONFIGURATION'
         });
+      } else if (aircraftContext) {
+        // Validate aircraft availability and operational status
+        const aircraft = aircraftContext.getAircraftById(mission.aircraftConfiguration.aircraftId);
+        const configuration = aircraftContext.getConfigurationById(mission.aircraftConfiguration.configurationId);
+
+        if (!aircraft) {
+          errors.push({
+            field: 'aircraftConfiguration.aircraftId',
+            message: 'Selected aircraft does not exist',
+            severity: 'error',
+            code: 'INVALID_AIRCRAFT'
+          });
+        } else {
+          // Check aircraft operational status
+          if (aircraft.status !== 'operational') {
+            errors.push({
+              field: 'aircraftConfiguration.aircraftId',
+              message: `Aircraft must be operational for mission approval (current status: ${aircraft.status})`,
+              severity: 'error',
+              code: 'AIRCRAFT_NOT_OPERATIONAL'
+            });
+          }
+
+          // Check maintenance currency
+          const now = new Date();
+          const nextInspection = new Date(aircraft.maintenanceDates.nextInspectionDue);
+          const nextMajorService = new Date(aircraft.maintenanceDates.nextMajorServiceDue);
+          const missionDate = new Date(mission.scheduledDate);
+
+          if (missionDate >= nextInspection) {
+            errors.push({
+              field: 'aircraftConfiguration.aircraftId',
+              message: 'Aircraft inspection is due before mission date',
+              severity: 'error',
+              code: 'INSPECTION_DUE'
+            });
+          }
+
+          if (missionDate >= nextMajorService) {
+            errors.push({
+              field: 'aircraftConfiguration.aircraftId',
+              message: 'Aircraft major service is due before mission date',
+              severity: 'error',
+              code: 'MAJOR_SERVICE_DUE'
+            });
+          }
+
+          // Check insurance validity
+          const insuranceExpiry = new Date(aircraft.insurance.expiryDate);
+          if (missionDate >= insuranceExpiry) {
+            errors.push({
+              field: 'aircraftConfiguration.aircraftId',
+              message: 'Aircraft insurance expires before mission date',
+              severity: 'error',
+              code: 'INSURANCE_EXPIRED'
+            });
+          }
+        }
+
+        if (!configuration) {
+          errors.push({
+            field: 'aircraftConfiguration.configurationId',
+            message: 'Selected configuration does not exist',
+            severity: 'error',
+            code: 'INVALID_CONFIGURATION'
+          });
+        } else {
+          // Validate configuration safety (weight and balance within limits)
+          if (!configuration.weightAndBalance.withinLimits) {
+            errors.push({
+              field: 'aircraftConfiguration.configurationId',
+              message: 'Aircraft-kit configuration weight and balance is not within safe limits',
+              severity: 'error',
+              code: 'CONFIGURATION_UNSAFE'
+            });
+          }
+
+          // Validate equipment kit availability
+          const kit = aircraftContext.getEquipmentKitById(configuration.kitId);
+          if (kit && kit.operationalData.status !== 'available') {
+            errors.push({
+              field: 'aircraftConfiguration.configurationId',
+              message: `Equipment kit is not available (status: ${kit.operationalData.status})`,
+              severity: 'error',
+              code: 'KIT_UNAVAILABLE'
+            });
+          }
+
+          // Check compatibility one more time
+          if (aircraft && kit && !aircraftContext.validateConfiguration(aircraft.id, kit.id)) {
+            errors.push({
+              field: 'aircraftConfiguration',
+              message: 'Aircraft and equipment kit configuration is not valid',
+              severity: 'error',
+              code: 'INVALID_AIRCRAFT_KIT_COMBINATION'
+            });
+          }
+        }
       }
 
       if (!mission.complianceChecks.casaNotification) {
@@ -398,6 +595,14 @@ export function MissionProvider({ children }: { children: React.ReactNode }) {
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   const { user } = useAuth();
+  const {
+    getAircraftById,
+    getEquipmentKitById,
+    getConfigurationById,
+    validateConfiguration,
+    getAvailableAircraft,
+    getAircraftConfigurations
+  } = useAircraft();
 
   // Enhanced error handling
   const safeOperation = useCallback(<T,>(operation: () => T, errorMessage: string): T | null => {
@@ -498,7 +703,12 @@ export function MissionProvider({ children }: { children: React.ReactNode }) {
 
     return safeOperation(() => {
       // Validate mission data
-      const validationErrors = validateMissionData(missionData);
+      const validationErrors = validateMissionData(missionData, {
+        getAircraftById,
+        getEquipmentKitById,
+        getConfigurationById,
+        validateConfiguration
+      });
       const criticalErrors = validationErrors.filter(error => error.severity === 'error');
 
       if (criticalErrors.length > 0) {
@@ -634,8 +844,13 @@ export function MissionProvider({ children }: { children: React.ReactNode }) {
     toStatus: MissionStatus,
     mission: MissionRecord
   ): MissionValidationError[] => {
-    return validateStatusTransitionRules(fromStatus, toStatus, mission);
-  }, []);
+    return validateStatusTransitionRules(fromStatus, toStatus, mission, {
+      getAircraftById,
+      getEquipmentKitById,
+      getConfigurationById,
+      validateConfiguration
+    });
+  }, [getAircraftById, getEquipmentKitById, getConfigurationById, validateConfiguration]);
 
   const transitionMissionStatus = useCallback(async (id: string, toStatus: MissionStatus, comments?: string) => {
     if (!user) {
@@ -648,7 +863,12 @@ export function MissionProvider({ children }: { children: React.ReactNode }) {
         throw new Error(`Mission with ID ${id} not found`);
       }
 
-      const validationErrors = validateStatusTransitionRules(mission.status, toStatus, mission);
+      const validationErrors = validateStatusTransitionRules(mission.status, toStatus, mission, {
+        getAircraftById,
+        getEquipmentKitById,
+        getConfigurationById,
+        validateConfiguration
+      });
       const criticalErrors = validationErrors.filter(error => error.severity === 'error');
 
       if (criticalErrors.length > 0) {
@@ -1116,8 +1336,8 @@ export function MissionProvider({ children }: { children: React.ReactNode }) {
             bValue = b.financialEstimate.totalEstimatedCost;
             break;
           default:
-            aValue = a[criteria.sortBy as keyof MissionRecord];
-            bValue = b[criteria.sortBy as keyof MissionRecord];
+            aValue = criteria.sortBy ? a[criteria.sortBy as keyof MissionRecord] : '';
+            bValue = criteria.sortBy ? b[criteria.sortBy as keyof MissionRecord] : '';
         }
 
         if (criteria.sortOrder === 'desc') {
@@ -1265,8 +1485,13 @@ export function MissionProvider({ children }: { children: React.ReactNode }) {
 
   // Validation Functions
   const validateMission = useCallback((mission: Partial<MissionRecord>): MissionValidationError[] => {
-    return validateMissionData(mission);
-  }, []);
+    return validateMissionData(mission, {
+      getAircraftById,
+      getEquipmentKitById,
+      getConfigurationById,
+      validateConfiguration
+    });
+  }, [getAircraftById, getEquipmentKitById, getConfigurationById, validateConfiguration]);
 
   const validateMissionReadiness = useCallback((id: string, targetStatus: MissionStatus): MissionValidationError[] => {
     const mission = missions.find(m => m.id === id);
@@ -1274,8 +1499,178 @@ export function MissionProvider({ children }: { children: React.ReactNode }) {
       return [{ field: 'mission', message: 'Mission not found', severity: 'error', code: 'NOT_FOUND' }];
     }
 
-    return validateStatusTransitionRules(mission.status, targetStatus, mission);
-  }, [missions]);
+    return validateStatusTransitionRules(mission.status, targetStatus, mission, {
+      getAircraftById,
+      getEquipmentKitById,
+      getConfigurationById,
+      validateConfiguration
+    });
+  }, [missions, getAircraftById, getEquipmentKitById, getConfigurationById, validateConfiguration]);
+
+  // Aircraft Integration Helper Functions
+  const validateAircraftAvailability = useCallback((aircraftId: string, startDate: string, endDate?: string): {
+    available: boolean;
+    conflicts: string[];
+    recommendations: string[];
+  } => {
+    const aircraft = getAircraftById(aircraftId);
+    const conflicts: string[] = [];
+    const recommendations: string[] = [];
+
+    if (!aircraft) {
+      conflicts.push('Aircraft not found');
+      return { available: false, conflicts, recommendations };
+    }
+
+    // Check operational status
+    if (aircraft.status !== 'operational') {
+      conflicts.push(`Aircraft is not operational (status: ${aircraft.status})`);
+    }
+
+    // Check maintenance schedule
+    const missionStart = new Date(startDate);
+    const nextInspection = new Date(aircraft.maintenanceDates.nextInspectionDue);
+    const nextMajorService = new Date(aircraft.maintenanceDates.nextMajorServiceDue);
+
+    if (missionStart >= nextInspection) {
+      conflicts.push('Inspection due before mission date');
+      recommendations.push('Schedule inspection or select another aircraft');
+    }
+
+    if (missionStart >= nextMajorService) {
+      conflicts.push('Major service due before mission date');
+      recommendations.push('Schedule major service or select another aircraft');
+    }
+
+    // Check insurance validity
+    const insuranceExpiry = new Date(aircraft.insurance.expiryDate);
+    if (missionStart >= insuranceExpiry) {
+      conflicts.push('Insurance expires before mission date');
+      recommendations.push('Renew insurance or select another aircraft');
+    }
+
+    // Check for conflicting missions
+    const missionEnd = endDate ? new Date(endDate) : new Date(missionStart.getTime() + 24 * 60 * 60 * 1000); // Default to 24h if no end date
+    const conflictingMissions = missions.filter(mission => {
+      if (mission.aircraftConfiguration.aircraftId !== aircraftId) return false;
+      if (['Cancelled', 'Completed', 'Locked'].includes(mission.status)) return false;
+
+      const missionDate = new Date(mission.scheduledDate);
+      return missionDate >= missionStart && missionDate <= missionEnd;
+    });
+
+    if (conflictingMissions.length > 0) {
+      conflicts.push(`${conflictingMissions.length} conflicting mission(s) scheduled`);
+      recommendations.push('Reschedule mission or use different aircraft');
+    }
+
+    return {
+      available: conflicts.length === 0,
+      conflicts,
+      recommendations
+    };
+  }, [getAircraftById, missions]);
+
+  const getCompatibleConfigurations = useCallback((aircraftId: string): Array<{
+    configuration: any;
+    kit: any;
+    compatibilityScore: number;
+  }> => {
+    const aircraft = getAircraftById(aircraftId);
+    if (!aircraft) return [];
+
+    const configurations = getAircraftConfigurations(aircraftId);
+
+    return configurations
+      .map(config => {
+        const kit = getEquipmentKitById(config.kitId);
+        let compatibilityScore = 0;
+
+        // Base compatibility
+        if (kit && validateConfiguration(aircraftId, kit.id)) {
+          compatibilityScore += 50;
+        }
+
+        // Equipment availability
+        if (kit?.operationalData.status === 'available') {
+          compatibilityScore += 20;
+        }
+
+        // Configuration validity (weight and balance within limits)
+        if (config.weightAndBalance.withinLimits) {
+          compatibilityScore += 20;
+        }
+
+        // Recent usage (prefer frequently used configs)
+        const recentUsage = missions.filter(m =>
+          m.aircraftConfiguration.configurationId === config.id &&
+          m.status === 'Completed'
+        ).length;
+        compatibilityScore += Math.min(recentUsage * 2, 10);
+
+        return {
+          configuration: config,
+          kit,
+          compatibilityScore
+        };
+      })
+      .filter(item => item.compatibilityScore > 0)
+      .sort((a, b) => b.compatibilityScore - a.compatibilityScore);
+  }, [getAircraftById, getAircraftConfigurations, getEquipmentKitById, validateConfiguration, missions]);
+
+  const calculateMissionCost = useCallback((missionData: Partial<MissionRecord>): {
+    aircraftCost: number;
+    equipmentCost: number;
+    totalCost: number;
+    breakdown: Record<string, number>;
+  } => {
+    const breakdown: Record<string, number> = {};
+    let aircraftCost = 0;
+    let equipmentCost = 0;
+
+    if (missionData.aircraftConfiguration?.aircraftId && missionData.aircraftConfiguration?.configurationId) {
+      const configuration = getConfigurationById(missionData.aircraftConfiguration.configurationId);
+
+      if (configuration) {
+        // Aircraft base cost
+        aircraftCost = configuration.pricingModel.baseRate || 0;
+        breakdown['Aircraft Base Rate'] = aircraftCost;
+
+        // Equipment cost
+        const kit = getEquipmentKitById(configuration.kitId);
+        if (kit) {
+          equipmentCost = kit.financialData.maintenanceCostPerHour || 0;
+          breakdown['Equipment Maintenance Rate'] = equipmentCost;
+        }
+
+        // Area-based pricing adjustments (using performance data if available)
+        const totalArea = missionData.boundaryFiles?.[0]?.analysis?.geometry?.totalArea;
+        if (totalArea && configuration.performance.sprayRate?.hectaresPerHour) {
+          const hoursRequired = totalArea / configuration.performance.sprayRate.hectaresPerHour;
+          const areaCost = hoursRequired * aircraftCost;
+          breakdown['Area Coverage Time'] = areaCost;
+          aircraftCost += areaCost;
+        }
+
+        // Additional fees
+        if (configuration.pricingModel.additionalFees) {
+          let additionalCost = 0;
+          configuration.pricingModel.additionalFees.forEach(fee => {
+            additionalCost += fee.amount;
+            breakdown[fee.description] = fee.amount;
+          });
+          equipmentCost += additionalCost;
+        }
+      }
+    }
+
+    return {
+      aircraftCost,
+      equipmentCost,
+      totalCost: aircraftCost + equipmentCost,
+      breakdown
+    };
+  }, [getConfigurationById, getEquipmentKitById]);
 
   // Template Management
   const createTemplate = useCallback(async (templateData: Omit<MissionTemplate, 'id' | 'createdAt' | 'updatedAt' | 'createdBy'>): Promise<string> => {
@@ -1507,6 +1902,9 @@ export function MissionProvider({ children }: { children: React.ReactNode }) {
     getMissionStatusHistory,
     validateMission,
     validateMissionReadiness,
+    validateAircraftAvailability,
+    getCompatibleConfigurations,
+    calculateMissionCost,
     createTemplate,
     updateTemplate,
     deleteTemplate,
@@ -1550,6 +1948,9 @@ export function MissionProvider({ children }: { children: React.ReactNode }) {
     getMissionStatusHistory,
     validateMission,
     validateMissionReadiness,
+    validateAircraftAvailability,
+    getCompatibleConfigurations,
+    calculateMissionCost,
     createTemplate,
     updateTemplate,
     deleteTemplate,
