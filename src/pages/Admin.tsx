@@ -24,6 +24,10 @@ import {
   getAllClientsUnscoped,
   getJobs,
 } from '../services/fieldManagementStore';
+import AdminSourceManager from '../components/AdminSourceManager';
+import AdminSourceExtraction from '../components/AdminSourceExtraction';
+import AdminChemicalIntake from '../components/AdminChemicalIntake';
+import AdminDocumentSourcing from '../components/AdminDocumentSourcing';
 
 export default function Admin() {
   const { user } = useAuth();
@@ -181,6 +185,26 @@ export default function Admin() {
           </Typography>
         </Box>
       )}
+
+      {/* Source Manager */}
+      <Box sx={{ mt: 6 }} className="ftf-animate-in-delay-1">
+        <AdminSourceManager />
+      </Box>
+
+      {/* Source Extraction */}
+      <Box sx={{ mt: 6 }} className="ftf-animate-in-delay-1">
+        <AdminSourceExtraction />
+      </Box>
+
+      {/* Chemical Intake */}
+      <Box sx={{ mt: 6 }} className="ftf-animate-in-delay-1">
+        <AdminChemicalIntake />
+      </Box>
+
+      {/* Document Sourcing */}
+      <Box sx={{ mt: 6 }} className="ftf-animate-in-delay-1">
+        <AdminDocumentSourcing />
+      </Box>
     </Box>
   );
 }

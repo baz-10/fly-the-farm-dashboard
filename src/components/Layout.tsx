@@ -32,6 +32,9 @@ import LogoutIcon from '@mui/icons-material/Logout';
 import AccountCircleIcon from '@mui/icons-material/AccountCircle';
 import FlightTakeoffIcon from '@mui/icons-material/FlightTakeoff';
 import AdminPanelSettingsIcon from '@mui/icons-material/AdminPanelSettings';
+import SmartToyIcon from '@mui/icons-material/SmartToy';
+import GavelIcon from '@mui/icons-material/Gavel';
+import BadgeIcon from '@mui/icons-material/Badge';
 import { useAuth } from '../contexts/AuthContext';
 import { Chip } from '@mui/material';
 
@@ -69,6 +72,8 @@ export default function Layout() {
     { label: 'Jobs', path: '/jobs', icon: <AssignmentIcon />, roles: ['admin', 'contractor', 'client'] },
     { label: 'Quotes', path: '/quotes', icon: <ReceiptLongIcon />, roles: ['admin', 'contractor'] },
     { label: 'Financials', path: '/financials', icon: <AccountBalanceIcon />, roles: ['admin', 'contractor'] },
+    { label: 'Ask FTF', path: '/ask-ftf', icon: <SmartToyIcon />, roles: ['admin', 'contractor'] },
+    { label: 'Compliance', path: '/compliance', icon: <GavelIcon />, roles: ['admin', 'contractor'] },
     { label: 'Admin', path: '/admin', icon: <AdminPanelSettingsIcon />, roles: ['admin'] },
   ].filter((item) => !user?.role || item.roles.includes(user.role));
 
@@ -189,6 +194,16 @@ export default function Layout() {
                     }}
                   />
                 </Box>
+                <Divider />
+                <MenuItem
+                  onClick={() => {
+                    navigate('/license-settings');
+                    setAnchorEl(null);
+                  }}
+                  sx={{ gap: 1.5, py: 1.5 }}
+                >
+                  <BadgeIcon sx={{ fontSize: 18 }} /> License Settings
+                </MenuItem>
                 <Divider />
                 <MenuItem
                   onClick={handleLogout}

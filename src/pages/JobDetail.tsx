@@ -46,6 +46,7 @@ import DownloadIcon from '@mui/icons-material/Download';
 import LocalShippingIcon from '@mui/icons-material/LocalShipping';
 import ReceiptLongIcon from '@mui/icons-material/ReceiptLong';
 import AccountBalanceIcon from '@mui/icons-material/AccountBalance';
+import GavelIcon from '@mui/icons-material/Gavel';
 import {
   getJobById,
   getFieldById,
@@ -57,8 +58,13 @@ import {
   updateOutcome,
 } from '../services/fieldManagementStore';
 import { getActualByJobId } from '../services/financialsStore';
+import { getReportsForJob, AskFtfReportRecord } from '../services/askFtfReportStore';
 import { JobOutcome, EfficacyRating, PhotoRef } from '../types/fieldManagement';
 import PhotoUpload from '../components/PhotoUpload';
+import { generateClientReportPdf } from '../utils/clientReportPdf';
+import AssessmentIcon from '@mui/icons-material/Assessment';
+import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
+import ExpandLessIcon from '@mui/icons-material/ExpandLess';
 
 const efficacyLabels: Record<number, string> = {
   1: 'No effect',
@@ -82,6 +88,12 @@ export default function JobDetail() {
 
   const existingActual = getActualByJobId(jobId || '');
   const [outcome, setOutcome] = useState(() => getOutcomeByJob(jobId || ''));
+  const [ftfReports] = useState<AskFtfReportRecord[]>(() => getReportsForJob(jobId || ''));
+  const [expandedReportId, setExpandedReportId] = useState<string | null>(null);
+  const [complianceRecords] = useState(() => {
+    const allRecords = JSON.parse(localStorage.getItem('compliance-records') || '[]');
+    return allRecords.filter((record: any) => record.jobId === jobId);
+  });
   const [outcomeDialogOpen, setOutcomeDialogOpen] = useState(false);
   const [outcomeForm, setOutcomeForm] = useState({
     followUpDate: '',
@@ -534,6 +546,367 @@ export default function JobDetail() {
                   Download
                 </Button>
               </Box>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Fly The Farm Reports */}
+        {ftfReports.length > 0 && (
+          <Card elevation={0} sx={{
+            border: `1.5px solid ${alpha('#1565c0', 0.15)}`,
+            borderRadius: '16px',
+          }}>
+            <CardContent sx={{ p: 3 }}>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
+                <AssessmentIcon sx={{ color: '#1565c0', fontSize: 20 }} />
+                <Typography variant="subtitle1" fontWeight={700} color="primary.dark">
+                  Fly The Farm Reports ({ftfReports.length})
+                </Typography>
+              </Box>
+
+              <Stack spacing={1.5}>
+                {ftfReports.map((report) => {
+                  const isExpanded = expandedReportId === report.id;
+                  return (
+                    <Box key={report.id} sx={{
+                      borderRadius: '12px',
+                      border: `1px solid ${alpha('#1565c0', 0.1)}`,
+                      overflow: 'hidden',
+                    }}>
+                      <Box
+                        sx={{
+                          p: 2,
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          cursor: 'pointer',
+                          bgcolor: isExpanded ? alpha('#1565c0', 0.04) : 'transparent',
+                          '&:hover': { bgcolor: alpha('#1565c0', 0.04) },
+                        }}
+                        onClick={() => setExpandedReportId(isExpanded ? null : report.id)}
+                      >
+                        <Box>
+                          <Typography variant="body2" fontWeight={700}>
+                            {report.product}
+                          </Typography>
+                          <Typography variant="caption" color="text.secondary">
+                            {new Date(report.createdAt).toLocaleDateString('en-AU', {
+                              day: 'numeric', month: 'short', year: 'numeric',
+                              hour: '2-digit', minute: '2-digit',
+                            })}
+                            {' \u2022 '}Aircraft: {report.aircraft}
+                            {' \u2022 '}Target: {report.target}
+                          </Typography>
+                        </Box>
+                        <Box sx={{ display: 'flex', gap: 0.5 }}>
+                          <IconButton
+                            size="small"
+                            onClick={async (e) => {
+                              e.stopPropagation();
+                              const input = {
+                                question: report.question,
+                                chemical: report.context.chemical,
+                                aircraft: report.aircraft,
+                                target: report.target,
+                                state: report.context.state,
+                                terrain: report.context.terrain,
+                                boundaries: report.context.boundaries,
+                              };
+                              await generateClientReportPdf(report.clientReport, input, report.operatorBriefing);
+                            }}
+                            title="Export PDF"
+                          >
+                            <DownloadIcon fontSize="small" />
+                          </IconButton>
+                          <IconButton size="small">
+                            {isExpanded ? <ExpandLessIcon fontSize="small" /> : <ExpandMoreIcon fontSize="small" />}
+                          </IconButton>
+                        </Box>
+                      </Box>
+
+                      {isExpanded && (
+                        <Box sx={{
+                          px: 2, pb: 2,
+                          borderTop: `1px solid ${alpha('#1565c0', 0.08)}`,
+                        }}>
+                          {/* Primary View: Operator Briefing */}
+                          {report.operatorBriefing && (
+                            <Box sx={{ mt: 1.5 }}>
+                              {/* Mission Status */}
+                              <Box sx={{ mb: 2 }}>
+                                <Chip
+                                  label={`MISSION STATUS: ${report.operatorBriefing.missionStatus.status}`}
+                                  sx={{
+                                    fontWeight: 800,
+                                    fontSize: '0.75rem',
+                                    bgcolor:
+                                      report.operatorBriefing.missionStatus.status === 'GO' ? alpha('#4caf50', 0.15) :
+                                      report.operatorBriefing.missionStatus.status === 'CONDITIONAL' ? alpha('#ff9800', 0.15) :
+                                      alpha('#f44336', 0.15),
+                                    color:
+                                      report.operatorBriefing.missionStatus.status === 'GO' ? '#2e7d32' :
+                                      report.operatorBriefing.missionStatus.status === 'CONDITIONAL' ? '#e65100' :
+                                      '#c62828',
+                                  }}
+                                />
+                              </Box>
+
+                              {/* Critical Blockers */}
+                              {report.operatorBriefing.criticalBlockers.length > 0 && (
+                                <Box sx={{ mt: 1.5 }}>
+                                  <Typography variant="body2" fontWeight={700} sx={{ color: '#d32f2f', mb: 0.5 }}>
+                                    🚫 Critical Blockers
+                                  </Typography>
+                                  {report.operatorBriefing.criticalBlockers.map((item, i) => (
+                                    <Box key={i} sx={{ mb: 1.5, pl: 2, borderLeft: '3px solid #d32f2f', bgcolor: alpha('#d32f2f', 0.05), p: 1, borderRadius: 1 }}>
+                                      <Typography variant="body2" fontWeight={600} sx={{ color: '#d32f2f', mb: 0.5 }}>
+                                        {item.title}
+                                      </Typography>
+                                      <Typography variant="caption" sx={{ display: 'block', mb: 0.5, color: '#d32f2f' }}>
+                                        {item.why}
+                                      </Typography>
+                                      {item.actionToResolve && (
+                                        <Typography variant="caption" sx={{ color: 'text.secondary', fontStyle: 'italic' }}>
+                                          Action: {item.actionToResolve}
+                                        </Typography>
+                                      )}
+                                    </Box>
+                                  ))}
+                                </Box>
+                              )}
+
+                              {/* Key Cautions */}
+                              {report.operatorBriefing.keyCautions.length > 0 && (
+                                <Box sx={{ mt: 1.5 }}>
+                                  <Typography variant="body2" fontWeight={700} sx={{ color: '#f57c00', mb: 0.5 }}>
+                                    ⚠️ Key Cautions
+                                  </Typography>
+                                  {report.operatorBriefing.keyCautions.map((item, i) => (
+                                    <Box key={i} sx={{ mb: 1.5, pl: 2, borderLeft: '3px solid #f57c00', bgcolor: alpha('#f57c00', 0.05), p: 1, borderRadius: 1 }}>
+                                      <Typography variant="body2" fontWeight={600} sx={{ color: '#f57c00', mb: 0.5 }}>
+                                        {item.title}
+                                      </Typography>
+                                      <Typography variant="caption" sx={{ display: 'block', mb: 0.5, color: '#f57c00' }}>
+                                        {item.why}
+                                      </Typography>
+                                      {item.actionToResolve && (
+                                        <Typography variant="caption" sx={{ color: 'text.secondary', fontStyle: 'italic' }}>
+                                          Action: {item.actionToResolve}
+                                        </Typography>
+                                      )}
+                                    </Box>
+                                  ))}
+                                </Box>
+                              )}
+
+                              {/* Legal / Compliance Actions Required */}
+                              {report.operatorBriefing.legalComplianceActions.length > 0 && (
+                                <Box sx={{ mt: 1.5 }}>
+                                  <Typography variant="body2" fontWeight={700} sx={{ color: '#1976d2', mb: 0.5 }}>
+                                    📋 Legal / Compliance Actions Required
+                                  </Typography>
+                                  <ul style={{ margin: '4px 0', paddingLeft: 20 }}>
+                                    {report.operatorBriefing.legalComplianceActions.map((item, i) => (
+                                      <li key={i}>
+                                        <Typography variant="body2" sx={{ lineHeight: 1.6, color: '#1976d2' }}>{item}</Typography>
+                                      </li>
+                                    ))}
+                                  </ul>
+                                </Box>
+                              )}
+
+                              {/* Priority Operational Constraints */}
+                              {report.operatorBriefing.priorityConstraints.length > 0 && (
+                                <Box sx={{ mt: 1.5 }}>
+                                  <Typography variant="body2" fontWeight={700} sx={{ color: '#388e3c', mb: 0.5 }}>
+                                    🎯 Priority Operational Constraints
+                                  </Typography>
+                                  <ul style={{ margin: '4px 0', paddingLeft: 20 }}>
+                                    {report.operatorBriefing.priorityConstraints.map((item, i) => (
+                                      <li key={i}>
+                                        <Typography variant="body2" sx={{ lineHeight: 1.6, color: '#388e3c' }}>{item}</Typography>
+                                      </li>
+                                    ))}
+                                  </ul>
+                                </Box>
+                              )}
+
+                              {/* Product Clean Name (if available) */}
+                              {report.operatorBriefing.cleanProductName && report.operatorBriefing.cleanProductName !== report.product && (
+                                <Box sx={{ mt: 1.5 }}>
+                                  <Typography variant="body2" fontWeight={600} sx={{ color: 'text.secondary', mb: 0.5 }}>
+                                    📦 Clean Product Name
+                                  </Typography>
+                                  <Typography variant="body2" sx={{ lineHeight: 1.6, fontWeight: 600 }}>
+                                    {report.operatorBriefing.cleanProductName}
+                                  </Typography>
+                                </Box>
+                              )}
+
+                              {/* Separator between operator briefing and legacy sections */}
+                              <Divider sx={{ my: 2, opacity: 0.5 }} />
+                            </Box>
+                          )}
+
+                          {/* Legacy Client Report Sections (secondary) */}
+                          <Typography variant="caption" color="text.disabled" sx={{ display: 'block', mb: 1, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                            Legacy Report Details
+                          </Typography>
+
+                          {report.clientReport.finalRecommendation.length > 0 && (
+                            <Box sx={{ mt: 1.5 }}>
+                              <Typography variant="body2" fontWeight={700} sx={{ color: '#1565c0', mb: 0.5, opacity: 0.8 }}>
+                                Final Recommendation
+                              </Typography>
+                              <ul style={{ margin: '4px 0', paddingLeft: 20, opacity: 0.8 }}>
+                                {report.clientReport.finalRecommendation.map((item, i) => (
+                                  <li key={i}>
+                                    <Typography variant="body2" sx={{ lineHeight: 1.6 }}>{item}</Typography>
+                                  </li>
+                                ))}
+                              </ul>
+                            </Box>
+                          )}
+
+                          {report.clientReport.complianceNotes.length > 0 && (
+                            <Box sx={{ mt: 1.5 }}>
+                              <Typography variant="body2" fontWeight={700} sx={{ color: '#e65100', mb: 0.5, opacity: 0.8 }}>
+                                Compliance Notes
+                              </Typography>
+                              <ul style={{ margin: '4px 0', paddingLeft: 20, opacity: 0.8 }}>
+                                {report.clientReport.complianceNotes.map((item, i) => (
+                                  <li key={i}>
+                                    <Typography variant="body2" sx={{ lineHeight: 1.6 }}>{item}</Typography>
+                                  </li>
+                                ))}
+                              </ul>
+                            </Box>
+                          )}
+
+                          {report.clientReport.applicationSettings.length > 0 && (
+                            <Box sx={{ mt: 1.5 }}>
+                              <Typography variant="body2" fontWeight={700} sx={{ color: '#2e7d32', mb: 0.5, opacity: 0.8 }}>
+                                Application Settings
+                              </Typography>
+                              <ul style={{ margin: '4px 0', paddingLeft: 20, opacity: 0.8 }}>
+                                {report.clientReport.applicationSettings.map((item, i) => (
+                                  <li key={i}>
+                                    <Typography variant="body2" sx={{ lineHeight: 1.6 }}>{item}</Typography>
+                                  </li>
+                                ))}
+                              </ul>
+                            </Box>
+                          )}
+
+                          {/* Show fallback message if no operator briefing available */}
+                          {!report.operatorBriefing && (
+                            <Box sx={{ mt: 1.5 }}>
+                              <Alert severity="info" sx={{ fontSize: '0.75rem' }}>
+                                This report was generated before Operator Briefing feature. Only legacy client report data is available.
+                              </Alert>
+                            </Box>
+                          )}
+                        </Box>
+                      )}
+                    </Box>
+                  );
+                })}
+              </Stack>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Compliance Records */}
+        {complianceRecords.length > 0 && (
+          <Card elevation={0} sx={{
+            border: `1.5px solid ${alpha('#7b1fa2', 0.15)}`,
+            borderRadius: '16px',
+          }}>
+            <CardContent sx={{ p: 3 }}>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
+                <GavelIcon sx={{ color: '#7b1fa2', fontSize: 20 }} />
+                <Typography variant="subtitle1" fontWeight={700} color="primary.dark">
+                  Compliance Records ({complianceRecords.length})
+                </Typography>
+              </Box>
+
+              <Stack spacing={1.5}>
+                {complianceRecords.map((record: any) => (
+                  <Box key={record.id} sx={{
+                    borderRadius: '12px',
+                    border: `1px solid ${alpha('#7b1fa2', 0.1)}`,
+                    overflow: 'hidden',
+                    bgcolor: record.isLocked ? alpha('#4caf50', 0.05) : 'transparent',
+                  }}>
+                    <Box sx={{ p: 2 }}>
+                      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 1 }}>
+                        <Typography variant="body2" fontWeight={700}>
+                          {record.state} Chemical Compliance
+                        </Typography>
+                        <Box sx={{ display: 'flex', gap: 1 }}>
+                          {record.isLocked && (
+                            <Chip
+                              label="SIGNED OFF"
+                              size="small"
+                              sx={{
+                                bgcolor: alpha('#4caf50', 0.15),
+                                color: '#2e7d32',
+                                fontWeight: 700,
+                                fontSize: '0.65rem',
+                              }}
+                            />
+                          )}
+                          <Chip
+                            label={record.isLocked ? "LOCKED" : "DRAFT"}
+                            size="small"
+                            sx={{
+                              bgcolor: record.isLocked ? alpha('#ff9800', 0.15) : alpha('#2196f3', 0.15),
+                              color: record.isLocked ? '#e65100' : '#1565c0',
+                              fontWeight: 700,
+                              fontSize: '0.65rem',
+                            }}
+                          />
+                        </Box>
+                      </Box>
+
+                      <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>
+                        Created: {new Date(record.createdAt).toLocaleDateString('en-AU', {
+                          day: 'numeric', month: 'short', year: 'numeric',
+                          hour: '2-digit', minute: '2-digit',
+                        })}
+                        {record.signedOff && (
+                          <span> • Signed by: {record.signedOff.signedBy} on {new Date(record.signedOff.signedAt).toLocaleDateString('en-AU')}</span>
+                        )}
+                      </Typography>
+
+                      <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
+                        <Typography variant="caption">
+                          Product: <strong>{record.apvmaCompliance.productName || 'Not specified'}</strong>
+                        </Typography>
+                        <Typography variant="caption">
+                          APVMA: <strong>{record.apvmaCompliance.apvmaNumber || 'Not specified'}</strong>
+                        </Typography>
+                        <Typography variant="caption">
+                          Area: <strong>{record.apvmaCompliance.areaHectares || 0} ha</strong>
+                        </Typography>
+                      </Box>
+
+                      {!record.isLocked && (
+                        <Box sx={{ mt: 1 }}>
+                          <Button
+                            size="small"
+                            variant="outlined"
+                            onClick={() => window.open(`/compliance/chemical?record=${record.id}`, '_blank')}
+                            sx={{ fontSize: '0.7rem' }}
+                          >
+                            Edit Record
+                          </Button>
+                        </Box>
+                      )}
+                    </Box>
+                  </Box>
+                ))}
+              </Stack>
             </CardContent>
           </Card>
         )}

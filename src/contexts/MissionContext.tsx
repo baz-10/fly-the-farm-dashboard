@@ -20,40 +20,52 @@ import {
 } from '../types/mission';
 import { useAuth } from './AuthContext';
 import { useAircraft } from './AircraftContext';
+import MissionErrorBoundary from '../components/MissionErrorBoundary';
 
-// Context Type Definition
-interface MissionContextType {
-  // State
+// Enhanced mission record with version tracking for optimistic locking
+interface MissionWithVersion extends MissionRecord {
+  version: number;
+}
+
+// Split Context Types for Better Performance
+interface MissionDataContextType {
   missions: MissionRecord[];
   missionTemplates: MissionTemplate[];
   isLoading: boolean;
   error: string | null;
   statistics: MissionStatistics | null;
+}
 
-  // Mission CRUD Operations
+interface MissionOperationsContextType {
   createMission: (mission: Omit<MissionRecord, 'id' | 'createdAt' | 'updatedAt' | 'createdBy' | 'lastModifiedBy' | 'auditTrail' | 'approvals'>) => Promise<string>;
-  updateMission: (id: string, updates: Partial<Omit<MissionRecord, 'id' | 'createdAt' | 'createdBy' | 'auditTrail'>>) => Promise<void>;
+  updateMission: (id: string, updates: Partial<Omit<MissionRecord, 'id' | 'createdAt' | 'createdBy' | 'auditTrail'>>, expectedVersion?: number) => Promise<void>;
   deleteMission: (id: string) => Promise<void>;
   getMissionById: (id: string) => MissionRecord | undefined;
 
-  // Status Workflow Management
+}
+
+interface MissionWorkflowContextType {
   transitionMissionStatus: (id: string, toStatus: MissionStatus, comments?: string) => Promise<void>;
   validateStatusTransition: (fromStatus: MissionStatus, toStatus: MissionStatus, mission: MissionRecord) => MissionValidationError[];
   getValidNextStatuses: (currentStatus: MissionStatus) => MissionStatus[];
+}
 
-  // Approval Management
+interface MissionApprovalContextType {
   approveMission: (id: string, approvalType: 'planning' | 'flying' | 'completion' | 'final', digitalSignature: string, comments?: string) => Promise<void>;
   rejectMission: (id: string, approvalType: 'planning' | 'flying' | 'completion' | 'final', reason: string) => Promise<void>;
   checkApprovalRequirements: (mission: MissionRecord, approvalType: 'planning' | 'flying' | 'completion' | 'final') => MissionValidationError[];
 
-  // Component Management
+}
+
+interface MissionComponentsContextType {
   updateJSARecord: (missionId: string, jsa: JSARecord) => Promise<void>;
   addBoundaryFile: (missionId: string, boundaryFile: BoundaryFile) => Promise<void>;
   removeBoundaryFile: (missionId: string, boundaryFileId: string) => Promise<void>;
   updateFlightPlan: (missionId: string, flightPlan: FlightPlan) => Promise<void>;
   updateFlightExecution: (missionId: string, flightExecution: FlightExecution) => Promise<void>;
+}
 
-  // Search and Filtering
+interface MissionSearchContextType {
   searchMissions: (criteria: MissionSearchCriteria) => MissionRecord[];
   getMissionsByStatus: (status: MissionStatus) => MissionRecord[];
   getMissionsByType: (type: MissionType) => MissionRecord[];
@@ -62,16 +74,20 @@ interface MissionContextType {
   getUpcomingMissions: (days?: number) => MissionRecord[];
   getOverdueMissions: () => MissionRecord[];
 
-  // Statistics and Analytics
+}
+
+interface MissionAnalyticsContextType {
   calculateStatistics: () => MissionStatistics;
   getMissionsForUser: (userId: string) => MissionRecord[];
   getMissionStatusHistory: (id: string) => MissionAuditEntry[];
+}
 
-  // Validation Functions
+interface MissionValidationContextType {
   validateMission: (mission: Partial<MissionRecord>) => MissionValidationError[];
   validateMissionReadiness: (id: string, targetStatus: MissionStatus) => MissionValidationError[];
+}
 
-  // Aircraft Integration Functions
+interface MissionAircraftContextType {
   validateAircraftAvailability: (aircraftId: string, startDate: string, endDate?: string) => {
     available: boolean;
     conflicts: string[];
@@ -88,21 +104,38 @@ interface MissionContextType {
     totalCost: number;
     breakdown: Record<string, number>;
   };
+}
 
-  // Template Management
+interface MissionTemplateContextType {
   createTemplate: (template: Omit<MissionTemplate, 'id' | 'createdAt' | 'updatedAt' | 'createdBy'>) => Promise<string>;
   updateTemplate: (id: string, updates: Partial<Omit<MissionTemplate, 'id' | 'createdAt' | 'createdBy'>>) => Promise<void>;
   deleteTemplate: (id: string) => Promise<void>;
   getTemplateById: (id: string) => MissionTemplate | undefined;
   createMissionFromTemplate: (templateId: string, overrides: Partial<MissionRecord>) => Promise<string>;
+}
 
-  // Data Management
+interface MissionDataManagementContextType {
   loadData: () => Promise<void>;
   saveData: () => Promise<void>;
   clearData: () => Promise<void>;
   exportMissionData: (missionIds?: string[]) => string;
   importMissionData: (data: string) => Promise<void>;
+  getMissionVersion: (id: string) => number; // For optimistic locking
 }
+
+// Consolidated Context Type for Backwards Compatibility
+interface MissionContextType extends
+  MissionDataContextType,
+  MissionOperationsContextType,
+  MissionWorkflowContextType,
+  MissionApprovalContextType,
+  MissionComponentsContextType,
+  MissionSearchContextType,
+  MissionAnalyticsContextType,
+  MissionValidationContextType,
+  MissionAircraftContextType,
+  MissionTemplateContextType,
+  MissionDataManagementContextType {}
 
 // Default Context Value
 const defaultContext: MissionContextType = {
@@ -151,6 +184,7 @@ const defaultContext: MissionContextType = {
   clearData: async () => {},
   exportMissionData: () => '',
   importMissionData: async () => {},
+  getMissionVersion: () => 1,
 };
 
 // Create Context
@@ -171,19 +205,39 @@ const generateMissionNumber = (): string => {
   return `MSN-${year}-${timestamp}`;
 };
 
-// Debounce utility
+// Enhanced Debounce utility with cleanup support
+interface DebouncedFunction<T extends (...args: any[]) => any> {
+  (...args: Parameters<T>): void;
+  cancel: () => void;
+}
+
 const debounce = <T extends (...args: any[]) => any>(
   func: T,
   delay: number
-): ((...args: Parameters<T>) => void) => {
-  let timeoutId: NodeJS.Timeout;
-  return (...args: Parameters<T>) => {
-    clearTimeout(timeoutId);
-    timeoutId = setTimeout(() => func(...args), delay);
+): DebouncedFunction<T> => {
+  let timeoutId: NodeJS.Timeout | null = null;
+
+  const debouncedFn = ((...args: Parameters<T>) => {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
+    timeoutId = setTimeout(() => {
+      func(...args);
+      timeoutId = null;
+    }, delay);
+  }) as DebouncedFunction<T>;
+
+  debouncedFn.cancel = () => {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+      timeoutId = null;
+    }
   };
+
+  return debouncedFn;
 };
 
-// Safe localStorage operations
+// Safe localStorage operations with async support for large datasets
 const safeLocalStorageOperation = <T extends unknown>(
   operation: () => T,
   fallback: T,
@@ -195,6 +249,43 @@ const safeLocalStorageOperation = <T extends unknown>(
     console.error(errorMessage, error);
     return fallback;
   }
+};
+
+// Async localStorage operations for large datasets
+const safeAsyncLocalStorageOperation = <T extends unknown>(
+  operation: () => T,
+  fallback: T,
+  errorMessage: string
+): Promise<T> => {
+  return new Promise((resolve) => {
+    // Use setTimeout to make localStorage operations non-blocking
+    setTimeout(() => {
+      try {
+        const result = operation();
+        resolve(result);
+      } catch (error) {
+        console.error(errorMessage, error);
+        resolve(fallback);
+      }
+    }, 0);
+  });
+};
+
+// Data validation for loaded mission data
+const validateMissionRecord = (data: any): data is MissionRecord => {
+  return (
+    typeof data === 'object' &&
+    data !== null &&
+    typeof data.id === 'string' &&
+    typeof data.missionName === 'string' &&
+    typeof data.status === 'string' &&
+    typeof data.createdAt === 'string' &&
+    typeof data.updatedAt === 'string'
+  );
+};
+
+const validateMissionArray = (data: any): data is MissionRecord[] => {
+  return Array.isArray(data) && data.every(validateMissionRecord);
 };
 
 // Status Transition Validation Rules
@@ -592,7 +683,12 @@ export function MissionProvider({ children }: { children: React.ReactNode }) {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [statistics, setStatistics] = useState<MissionStatistics | null>(null);
+
+  // Refs for cleanup and concurrency control
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const debouncedSaveRef = useRef<DebouncedFunction<() => Promise<void>> | null>(null);
+  const saveInProgressRef = useRef<boolean>(false);
+  const versionMapRef = useRef<Map<string, number>>(new Map());
 
   const { user } = useAuth();
   const {
@@ -637,48 +733,101 @@ export function MissionProvider({ children }: { children: React.ReactNode }) {
     };
   }, [user?.id]);
 
-  // Load data from localStorage
+  // Enhanced async data loading with validation
   const loadData = useCallback(async () => {
     setIsLoading(true);
     setError(null);
 
-    const missionsData = safeOperation(() => {
-      const stored = localStorage.getItem(STORAGE_KEY);
-      return stored ? JSON.parse(stored) : [];
-    }, 'Failed to load mission data from localStorage');
+    try {
+      // Load mission data asynchronously
+      const missionsData = await safeAsyncLocalStorageOperation(() => {
+        const stored = localStorage.getItem(STORAGE_KEY);
+        if (!stored) return [];
 
-    const templatesData = safeOperation(() => {
-      const stored = localStorage.getItem(TEMPLATES_STORAGE_KEY);
-      return stored ? JSON.parse(stored) : [];
-    }, 'Failed to load template data from localStorage');
+        const parsed = JSON.parse(stored);
+        if (!validateMissionArray(parsed)) {
+          console.warn('Invalid mission data detected, using empty array');
+          return [];
+        }
 
-    if (missionsData) {
+        return parsed;
+      }, [], 'Failed to load mission data from localStorage');
+
+      // Load templates data asynchronously
+      const templatesData = await safeAsyncLocalStorageOperation(() => {
+        const stored = localStorage.getItem(TEMPLATES_STORAGE_KEY);
+        return stored ? JSON.parse(stored) : [];
+      }, [], 'Failed to load template data from localStorage');
+
+      // Initialize version map for optimistic locking
+      const versionMap = new Map<string, number>();
+      missionsData.forEach((mission: MissionRecord) => {
+        versionMap.set(mission.id, 1); // Start with version 1 for existing missions
+      });
+      versionMapRef.current = versionMap;
+
       setMissions(missionsData);
-    }
-
-    if (templatesData) {
       setMissionTemplates(templatesData);
+    } catch (error) {
+      const message = `Failed to load data: ${error instanceof Error ? error.message : String(error)}`;
+      setError(message);
+      console.error(message, error);
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  // Enhanced async save with concurrency protection
+  const saveData = useCallback(async () => {
+    // Prevent concurrent save operations
+    if (saveInProgressRef.current) {
+      console.log('Save operation already in progress, skipping...');
+      return;
     }
 
-    setIsLoading(false);
-  }, [safeOperation]);
+    saveInProgressRef.current = true;
 
-  // Save data to localStorage
-  const saveData = useCallback(async () => {
-    safeOperation(() => {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(missions));
-      localStorage.setItem(TEMPLATES_STORAGE_KEY, JSON.stringify(missionTemplates));
-      return true;
-    }, 'Failed to save mission data to localStorage');
-  }, [missions, missionTemplates, safeOperation]);
+    try {
+      await safeAsyncLocalStorageOperation(() => {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(missions));
+        localStorage.setItem(TEMPLATES_STORAGE_KEY, JSON.stringify(missionTemplates));
+        return true;
+      }, false, 'Failed to save mission data to localStorage');
+    } catch (error) {
+      console.error('Save operation failed:', error);
+      throw error;
+    } finally {
+      saveInProgressRef.current = false;
+    }
+  }, [missions, missionTemplates]);
 
-  // Debounced save function
-  const debouncedSave = useCallback(
-    debounce(() => {
-      saveData();
-    }, 1000),
-    [saveData]
-  );
+  // Enhanced debounced save with proper cleanup
+  const createDebouncedSave = useCallback(() => {
+    // Cancel previous debounced function if it exists
+    if (debouncedSaveRef.current) {
+      debouncedSaveRef.current.cancel();
+    }
+
+    // Create new debounced function
+    debouncedSaveRef.current = debounce(async () => {
+      try {
+        await saveData();
+      } catch (error) {
+        console.error('Auto-save failed:', error);
+        setError('Auto-save failed. Your changes may not be saved.');
+      }
+    }, 1000);
+
+    return debouncedSaveRef.current;
+  }, [saveData]);
+
+  // Get or create debounced save function
+  const getDebouncedSave = useCallback(() => {
+    if (!debouncedSaveRef.current) {
+      return createDebouncedSave();
+    }
+    return debouncedSaveRef.current;
+  }, [createDebouncedSave]);
 
   // Clear all data
   const clearData = useCallback(async () => {
@@ -749,11 +898,19 @@ export function MissionProvider({ children }: { children: React.ReactNode }) {
       };
 
       setMissions(prev => [...prev, newMission]);
+
+      // Initialize version tracking for new mission
+      versionMapRef.current.set(id, 1);
+
       return id;
     }, 'Failed to create mission') || '';
   }, [safeOperation, user, createAuditEntry]);
 
-  const updateMission = useCallback(async (id: string, updates: Partial<Omit<MissionRecord, 'id' | 'createdAt' | 'createdBy' | 'auditTrail'>>) => {
+  const updateMission = useCallback(async (
+    id: string,
+    updates: Partial<Omit<MissionRecord, 'id' | 'createdAt' | 'createdBy' | 'auditTrail'>>,
+    expectedVersion?: number
+  ): Promise<void> => {
     if (!user) {
       throw new Error('User must be authenticated to update missions');
     }
@@ -763,42 +920,52 @@ export function MissionProvider({ children }: { children: React.ReactNode }) {
         throw new Error('Mission ID is required');
       }
 
-      setMissions(prev => {
-        const missionIndex = prev.findIndex(mission => mission.id === id);
-        if (missionIndex === -1) {
-          throw new Error(`Mission with ID ${id} not found`);
-        }
+      const missionIndex = missions.findIndex(mission => mission.id === id);
+      if (missionIndex === -1) {
+        throw new Error(`Mission with ID ${id} not found`);
+      }
 
-        const currentMission = prev[missionIndex];
+      const currentMission = missions[missionIndex];
 
-        // Check if mission is locked
-        if (currentMission.status === 'Locked') {
-          throw new Error('Cannot modify locked missions');
-        }
+      // Check if mission is locked
+      if (currentMission.status === 'Locked') {
+        throw new Error('Cannot modify locked missions');
+      }
 
-        // Create audit entries for changes
-        const changes = Object.entries(updates).map(([field, newValue]) => ({
-          field,
-          oldValue: (currentMission as any)[field],
-          newValue,
-        }));
+      // Optimistic locking check
+      const currentVersion = versionMapRef.current.get(id) || 1;
+      if (expectedVersion !== undefined && currentVersion !== expectedVersion) {
+        throw new Error(`Mission has been modified by another user. Expected version ${expectedVersion}, current version ${currentVersion}`);
+      }
 
-        const auditEntry = createAuditEntry(id, 'updated', changes);
+      // Create audit entries for changes
+      const changes = Object.entries(updates).map(([field, newValue]) => ({
+        field,
+        oldValue: (currentMission as any)[field],
+        newValue,
+      }));
 
-        const updatedMission = {
-          ...currentMission,
-          ...updates,
-          updatedAt: new Date().toISOString(),
-          lastModifiedBy: user.id,
-          auditTrail: [...currentMission.auditTrail, auditEntry],
-        };
+      const auditEntry = createAuditEntry(id, 'updated', changes);
 
-        const newMissions = [...prev];
-        newMissions[missionIndex] = updatedMission;
-        return newMissions;
-      });
+      const updatedMission = {
+        ...currentMission,
+        ...updates,
+        updatedAt: new Date().toISOString(),
+        lastModifiedBy: user.id,
+        auditTrail: [...currentMission.auditTrail, auditEntry],
+      };
+
+      // Increment version for optimistic locking
+      const newVersion = currentVersion + 1;
+      versionMapRef.current.set(id, newVersion);
+
+      const newMissions = [...missions];
+      newMissions[missionIndex] = updatedMission;
+      setMissions(newMissions);
+
+      return true; // Return success indicator
     }, 'Failed to update mission');
-  }, [safeOperation, user, createAuditEntry]);
+  }, [safeOperation, user, createAuditEntry, missions]);
 
   const deleteMission = useCallback(async (id: string) => {
     if (!user) {
@@ -1839,15 +2006,18 @@ export function MissionProvider({ children }: { children: React.ReactNode }) {
     }, 'Failed to import mission data');
   }, [user, safeOperation]);
 
-  // Auto-save when data changes
+  // Get mission version for optimistic locking
+  const getMissionVersion = useCallback((id: string): number => {
+    return versionMapRef.current.get(id) || 1;
+  }, []);
+
+  // Auto-save when data changes with proper cleanup
   useEffect(() => {
     if (missions.length > 0 || missionTemplates.length > 0) {
-      if (saveTimeoutRef.current) {
-        clearTimeout(saveTimeoutRef.current);
-      }
+      const debouncedSave = getDebouncedSave();
       debouncedSave();
     }
-  }, [missions, missionTemplates, debouncedSave]);
+  }, [missions, missionTemplates, getDebouncedSave]);
 
   // Load data on mount
   useEffect(() => {
@@ -1856,117 +2026,200 @@ export function MissionProvider({ children }: { children: React.ReactNode }) {
 
   // Calculate statistics when missions change
   useEffect(() => {
-    calculateStatistics();
+    const calculateStats = async () => {
+      try {
+        const stats = calculateStatistics();
+        setStatistics(stats);
+      } catch (error) {
+        console.error('Failed to calculate statistics:', error);
+      }
+    };
+
+    calculateStats();
   }, [missions, calculateStatistics]);
 
-  // Cleanup timeout on unmount
+  // Cleanup resources on unmount
   useEffect(() => {
     return () => {
+      // Cancel any pending debounced saves
+      if (debouncedSaveRef.current) {
+        debouncedSaveRef.current.cancel();
+      }
+
+      // Clear timeout refs
       if (saveTimeoutRef.current) {
         clearTimeout(saveTimeoutRef.current);
       }
     };
   }, []);
 
-  // Memoized context value
+  // Memoized function groups for performance optimization
+  const missionOperations = useMemo(() => ({
+    createMission,
+    updateMission,
+    deleteMission,
+    getMissionById,
+  }), [createMission, updateMission, deleteMission, getMissionById]);
+
+  const workflowOperations = useMemo(() => ({
+    transitionMissionStatus,
+    validateStatusTransition,
+    getValidNextStatuses,
+  }), [transitionMissionStatus, validateStatusTransition, getValidNextStatuses]);
+
+  const approvalOperations = useMemo(() => ({
+    approveMission,
+    rejectMission,
+    checkApprovalRequirements,
+  }), [approveMission, rejectMission, checkApprovalRequirements]);
+
+  const componentOperations = useMemo(() => ({
+    updateJSARecord,
+    addBoundaryFile,
+    removeBoundaryFile,
+    updateFlightPlan,
+    updateFlightExecution,
+  }), [updateJSARecord, addBoundaryFile, removeBoundaryFile, updateFlightPlan, updateFlightExecution]);
+
+  const searchOperations = useMemo(() => ({
+    searchMissions,
+    getMissionsByStatus,
+    getMissionsByType,
+    getMissionsByPriority,
+    getMissionsByDateRange,
+    getUpcomingMissions,
+    getOverdueMissions,
+  }), [searchMissions, getMissionsByStatus, getMissionsByType, getMissionsByPriority, getMissionsByDateRange, getUpcomingMissions, getOverdueMissions]);
+
+  const analyticsOperations = useMemo(() => ({
+    calculateStatistics,
+    getMissionsForUser,
+    getMissionStatusHistory,
+  }), [calculateStatistics, getMissionsForUser, getMissionStatusHistory]);
+
+  const validationOperations = useMemo(() => ({
+    validateMission,
+    validateMissionReadiness,
+  }), [validateMission, validateMissionReadiness]);
+
+  const aircraftOperations = useMemo(() => ({
+    validateAircraftAvailability,
+    getCompatibleConfigurations,
+    calculateMissionCost,
+  }), [validateAircraftAvailability, getCompatibleConfigurations, calculateMissionCost]);
+
+  const templateOperations = useMemo(() => ({
+    createTemplate,
+    updateTemplate,
+    deleteTemplate,
+    getTemplateById,
+    createMissionFromTemplate,
+  }), [createTemplate, updateTemplate, deleteTemplate, getTemplateById, createMissionFromTemplate]);
+
+  const dataOperations = useMemo(() => ({
+    loadData,
+    saveData,
+    clearData,
+    exportMissionData,
+    importMissionData,
+    getMissionVersion,
+  }), [loadData, saveData, clearData, exportMissionData, importMissionData, getMissionVersion]);
+
+  // Core data state (most frequently accessed)
+  const coreState = useMemo(() => ({
+    missions,
+    missionTemplates,
+    isLoading,
+    error,
+    statistics,
+  }), [missions, missionTemplates, isLoading, error, statistics]);
+
+  // Optimized context value with grouped dependencies
   const contextValue: MissionContextType = useMemo(() => ({
-    missions,
-    missionTemplates,
-    isLoading,
-    error,
-    statistics,
-    createMission,
-    updateMission,
-    deleteMission,
-    getMissionById,
-    transitionMissionStatus,
-    validateStatusTransition,
-    getValidNextStatuses,
-    approveMission,
-    rejectMission,
-    checkApprovalRequirements,
-    updateJSARecord,
-    addBoundaryFile,
-    removeBoundaryFile,
-    updateFlightPlan,
-    updateFlightExecution,
-    searchMissions,
-    getMissionsByStatus,
-    getMissionsByType,
-    getMissionsByPriority,
-    getMissionsByDateRange,
-    getUpcomingMissions,
-    getOverdueMissions,
-    calculateStatistics,
-    getMissionsForUser,
-    getMissionStatusHistory,
-    validateMission,
-    validateMissionReadiness,
-    validateAircraftAvailability,
-    getCompatibleConfigurations,
-    calculateMissionCost,
-    createTemplate,
-    updateTemplate,
-    deleteTemplate,
-    getTemplateById,
-    createMissionFromTemplate,
-    loadData,
-    saveData,
-    clearData,
-    exportMissionData,
-    importMissionData,
+    // Spread core state
+    ...coreState,
+
+    // Spread operation groups
+    ...missionOperations,
+    ...workflowOperations,
+    ...approvalOperations,
+    ...componentOperations,
+    ...searchOperations,
+    ...analyticsOperations,
+    ...validationOperations,
+    ...aircraftOperations,
+    ...templateOperations,
+    ...dataOperations,
   }), [
-    missions,
-    missionTemplates,
-    isLoading,
-    error,
-    statistics,
-    createMission,
-    updateMission,
-    deleteMission,
-    getMissionById,
-    transitionMissionStatus,
-    validateStatusTransition,
-    getValidNextStatuses,
-    approveMission,
-    rejectMission,
-    checkApprovalRequirements,
-    updateJSARecord,
-    addBoundaryFile,
-    removeBoundaryFile,
-    updateFlightPlan,
-    updateFlightExecution,
-    searchMissions,
-    getMissionsByStatus,
-    getMissionsByType,
-    getMissionsByPriority,
-    getMissionsByDateRange,
-    getUpcomingMissions,
-    getOverdueMissions,
-    calculateStatistics,
-    getMissionsForUser,
-    getMissionStatusHistory,
-    validateMission,
-    validateMissionReadiness,
-    validateAircraftAvailability,
-    getCompatibleConfigurations,
-    calculateMissionCost,
-    createTemplate,
-    updateTemplate,
-    deleteTemplate,
-    getTemplateById,
-    createMissionFromTemplate,
-    loadData,
-    saveData,
-    clearData,
-    exportMissionData,
-    importMissionData,
+    // Grouped dependencies - dramatically reduced from 38+ to 11
+    coreState,
+    missionOperations,
+    workflowOperations,
+    approvalOperations,
+    componentOperations,
+    searchOperations,
+    analyticsOperations,
+    validationOperations,
+    aircraftOperations,
+    templateOperations,
+    dataOperations,
   ]);
 
   return (
-    <MissionContext.Provider value={contextValue}>
-      {children}
-    </MissionContext.Provider>
+    <MissionErrorBoundary
+      onError={(error, errorId) => {
+        console.error('Mission system error:', { errorId, error });
+        // Could integrate with external error reporting service here
+      }}
+      fallback={(error, retry) => (
+        <div style={{
+          padding: '20px',
+          border: '1px solid #ff6b6b',
+          borderRadius: '8px',
+          backgroundColor: '#fff5f5',
+          margin: '20px 0'
+        }}>
+          <h3 style={{ color: '#d63031', marginBottom: '12px' }}>
+            Mission System Error
+          </h3>
+          <p style={{ marginBottom: '16px' }}>
+            The mission management system encountered an error. Please try refreshing or contact support if the issue persists.
+          </p>
+          <div style={{ display: 'flex', gap: '12px' }}>
+            <button
+              onClick={retry}
+              style={{
+                padding: '8px 16px',
+                backgroundColor: '#00b894',
+                color: 'white',
+                border: 'none',
+                borderRadius: '4px',
+                cursor: 'pointer'
+              }}
+            >
+              Retry
+            </button>
+            <button
+              onClick={() => window.location.reload()}
+              style={{
+                padding: '8px 16px',
+                backgroundColor: '#636e72',
+                color: 'white',
+                border: 'none',
+                borderRadius: '4px',
+                cursor: 'pointer'
+              }}
+            >
+              Refresh Page
+            </button>
+          </div>
+        </div>
+      )}
+    >
+      <MissionContext.Provider value={contextValue}>
+        {children}
+      </MissionContext.Provider>
+    </MissionErrorBoundary>
   );
 }
 
