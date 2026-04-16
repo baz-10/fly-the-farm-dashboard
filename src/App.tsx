@@ -35,6 +35,7 @@ import ComplianceLicensing from './pages/ComplianceLicensing';
 import ComplianceEnvironmental from './pages/ComplianceEnvironmental';
 import ComplianceSafety from './pages/ComplianceSafety';
 import ComplianceDocumentation from './pages/ComplianceDocumentation';
+import MissionPlanning from './pages/MissionPlanning';
 
 function App() {
   return (
@@ -71,6 +72,7 @@ function App() {
           <Route path="/financials/:actualId" element={<ActualDetail />} />
           <Route path="/aircraft" element={<AircraftManagement />} />
           <Route path="/jsa" element={<JSAManagement />} />
+          <Route path="/mission-planning" element={<MissionPlanning />} />
           <Route path="/compliance" element={<ComplianceMenu />} />
           <Route path="/compliance/flight" element={<ComplianceFlight />} />
           <Route path="/compliance/chemical" element={<ComplianceChemical />} />

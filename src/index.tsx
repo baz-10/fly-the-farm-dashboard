@@ -6,6 +6,7 @@ import theme from './theme/theme';
 import { AuthProvider } from './contexts/AuthContext';
 import { UserLicenseProvider } from './contexts/UserLicenseContext';
 import { AircraftProvider } from './contexts/AircraftContext';
+import { MissionProvider } from './contexts/MissionContext';
 import App from './App';
 
 const root = ReactDOM.createRoot(
@@ -19,7 +20,9 @@ root.render(
       <AuthProvider>
         <UserLicenseProvider>
           <AircraftProvider>
-            <App />
+            <MissionProvider>
+              <App />
+            </MissionProvider>
           </AircraftProvider>
         </UserLicenseProvider>
       </AuthProvider>
