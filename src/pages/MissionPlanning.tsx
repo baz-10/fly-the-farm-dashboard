@@ -30,7 +30,7 @@ import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import FieldBoundaryEditor from '../components/FieldBoundaryEditor';
 import JSASystem from '../components/JSASystem';
 import { LatLng, BoundaryFileRef } from '../types/fieldManagement';
-import { MissionRecord, MissionStatus } from '../types/mission';
+import { MissionRecord, MissionStatus, MissionType, MissionAuditEntry, JSARecord, BoundaryFile, FlightPlan } from '../types/mission';
 import { useMission } from '../contexts/MissionContext';
 import { useAircraft } from '../contexts/AircraftContext';
 import { IndustryType } from '../types/jsa';
@@ -42,21 +42,21 @@ const MISSION_STEPS = [
   { label: 'Flight Authorization', description: 'Final checks and approval' },
 ];
 
-const MISSION_TYPES: { value: string; label: string; description: string; industry: IndustryType }[] = [
+const MISSION_TYPES: { value: MissionType; label: string; description: string; industry: IndustryType }[] = [
   {
-    value: 'crop_spraying',
+    value: 'spray',
     label: 'Crop Spraying',
     description: 'Chemical application for pest and weed control',
     industry: 'crop-spraying'
   },
   {
-    value: 'crop_survey',
+    value: 'survey',
     label: 'Crop Survey',
     description: 'Monitoring and assessment of crop health',
     industry: 'surveying'
   },
   {
-    value: 'infrastructure_inspection',
+    value: 'inspection',
     label: 'Infrastructure Inspection',
     description: 'Asset monitoring and damage assessment',
     industry: 'inspections'
@@ -70,7 +70,7 @@ export default function MissionPlanning() {
 
   // Mission Planning State
   const [activeStep, setActiveStep] = useState(0);
-  const [missionType, setMissionType] = useState('');
+  const [missionType, setMissionType] = useState<MissionType | ''>('');
   const [selectedAircraft, setSelectedAircraft] = useState('');
   const [selectedKit, setSelectedKit] = useState('');
   const [missionName, setMissionName] = useState('');
@@ -95,56 +95,89 @@ export default function MissionPlanning() {
   useEffect(() => {
     if (!localMission) {
       const missionId = `mission_${Date.now()}`;
+      const emptyJSA: JSARecord = {
+        id: `jsa_${Date.now()}`,
+        missionId: missionId,
+        jsaType: 'custom',
+        status: 'pending',
+        jsaNumber: '',
+        completedBy: '',
+        hazardAnalysis: [],
+        mitigationMeasures: [],
+        approvalRequired: false,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+
       setLocalMission({
         id: missionId,
-        status: 'planning' as MissionStatus,
         missionNumber: `M-${new Date().getFullYear()}-${String(Date.now()).slice(-6)}`,
-        title: '',
-        description: '',
-        missionType: '',
+        status: 'Planning' as MissionStatus,
+        missionName: '',
+        missionType: 'spray' as MissionType,
         priority: 'medium',
+        description: '',
+        clientId: '',
+        location: {
+          name: '',
+          address: '',
+          coordinates: {
+            latitude: -27.5,
+            longitude: 133.0,
+          },
+          elevation: 0,
+        },
         scheduledDate: new Date().toISOString(),
         estimatedDuration: 60,
-        aircraftId: '',
-        equipmentKitId: '',
-        clientInfo: {
-          name: '',
-          contact: '',
-          propertyAddress: '',
-        },
-        boundaryData: {
-          coordinates: [],
-          areaHa: 0,
-          boundaryFile: null,
-        },
-        flightPlan: {
-          plannedFlightLines: null,
-          estimatedFlightTime: 0,
-          maxAltitude: 120,
-          waypoints: [],
-        },
-        jsaRecord: null,
-        riskAssessment: {
-          overallRiskLevel: 'low',
-          identifiedHazards: [],
-          mitigationMeasures: [],
-          approvalRequired: false,
-        },
         weatherRequirements: {
           maxWindSpeed: 15,
           minVisibility: 5000,
-          noRain: true,
+          maxPrecipitationChance: 20,
+          allowedCloudCover: 80,
+        },
+        aircraftConfiguration: {
+          aircraftId: '',
+          configurationId: '',
+          estimatedFlightTime: 0,
+          maxPayloadWeight: 0,
+        },
+        jsaRecord: emptyJSA,
+        boundaryFiles: [],
+        approvals: {
+          crpApproval: {
+            status: 'pending',
+            approvedBy: '',
+            approvedAt: '',
+            digitalSignature: '',
+            comments: '',
+          },
+          operationalApproval: {
+            status: 'pending',
+            approvedBy: '',
+            approvedAt: '',
+            digitalSignature: '',
+            comments: '',
+          },
+        },
+        financialEstimate: {
+          aircraftCost: 0,
+          equipmentCost: 0,
+          personnelCost: 0,
+          travelCost: 0,
+          totalEstimatedCost: 0,
         },
         complianceChecks: {
+          casaNotification: false,
           airspaceApproval: false,
-          notamIssued: false,
-          insuranceValid: false,
-          licenseValid: false,
+          localPermits: false,
+          environmentalClearance: false,
+          insuranceCoverage: false,
         },
-        createdBy: 'current_user', // Would come from auth context
-        assignedPilot: '',
+        auditTrail: [],
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
+        createdBy: 'current_user', // Would come from auth context
+        lastModifiedBy: 'current_user',
       });
     }
   }, [localMission]);
@@ -176,24 +209,19 @@ export default function MissionPlanning() {
       setActiveStep((prev) => prev + 1);
 
       // Update mission data
-      if (localMission) {
+      if (localMission && missionType) {
         const updatedMission = {
           ...localMission,
-          title: missionName,
-          missionType,
-          aircraftId: selectedAircraft,
-          equipmentKitId: selectedKit,
-          clientInfo: {
-            ...localMission.clientInfo,
-            name: clientName,
+          missionName: missionName,
+          missionType: missionType as MissionType,
+          aircraftConfiguration: {
+            ...localMission.aircraftConfiguration,
+            aircraftId: selectedAircraft,
+            configurationId: selectedKit,
           },
-          boundaryData: {
-            coordinates: boundaryCoords,
-            areaHa: missionArea,
-            boundaryFile,
-          },
-          jsaRecord: jsaId,
+          clientId: clientName,
           updatedAt: new Date().toISOString(),
+          lastModifiedBy: 'current_user',
         };
         setLocalMission(updatedMission);
       }
@@ -212,27 +240,39 @@ export default function MissionPlanning() {
     setBoundaryFile(file);
   }, []);
 
-  const handleJSAComplete = useCallback((jsaRecordId: string) => {
+  const handleJSAComplete = useCallback((jsa: any) => {
     setJSACompleted(true);
-    setJSAId(jsaRecordId);
-  }, []);
+    setJSAId(jsa.id);
+
+    // Update local mission with JSA data
+    if (localMission) {
+      setLocalMission({
+        ...localMission,
+        jsaRecord: {
+          ...localMission.jsaRecord,
+          id: jsa.id,
+          status: 'completed',
+          completedDate: new Date().toISOString(),
+        },
+        updatedAt: new Date().toISOString(),
+      });
+    }
+  }, [localMission]);
 
   const handleStartMission = async () => {
-    if (localMission && validateStep(2)) {
+    if (localMission && validateStep(2) && missionType) {
       const finalMission = {
         ...localMission,
-        status: 'approved' as MissionStatus,
-        title: missionName,
-        missionType,
-        aircraftId: selectedAircraft,
-        equipmentKitId: selectedKit,
-        boundaryData: {
-          coordinates: boundaryCoords,
-          areaHa: missionArea,
-          boundaryFile,
+        status: 'Approved' as MissionStatus,
+        missionName: missionName,
+        missionType: missionType as MissionType,
+        aircraftConfiguration: {
+          ...localMission.aircraftConfiguration,
+          aircraftId: selectedAircraft,
+          configurationId: selectedKit,
         },
-        jsaRecord: jsaId,
         updatedAt: new Date().toISOString(),
+        lastModifiedBy: 'current_user',
       };
 
       try {
@@ -407,7 +447,7 @@ export default function MissionPlanning() {
                                 {ac.registration} - {ac.model}
                               </Typography>
                               <Typography variant="caption" color="text.secondary">
-                                {ac.type} • Max Load: {ac.specifications.maxPayloadKg}kg
+                                {ac.model} • Max Load: {ac.operationalLimits.maxPayloadWeight}kg
                               </Typography>
                             </Box>
                           </MenuItem>
