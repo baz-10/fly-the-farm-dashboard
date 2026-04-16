@@ -4,6 +4,7 @@ import { ThemeProvider } from '@mui/material/styles';
 import CssBaseline from '@mui/material/CssBaseline';
 import theme from './theme/theme';
 import { AuthProvider } from './contexts/AuthContext';
+import { UserLicenseProvider } from './contexts/UserLicenseContext';
 import { AircraftProvider } from './contexts/AircraftContext';
 import App from './App';
 
@@ -16,9 +17,11 @@ root.render(
     <ThemeProvider theme={theme}>
       <CssBaseline />
       <AuthProvider>
-        <AircraftProvider>
-          <App />
-        </AircraftProvider>
+        <UserLicenseProvider>
+          <AircraftProvider>
+            <App />
+          </AircraftProvider>
+        </UserLicenseProvider>
       </AuthProvider>
     </ThemeProvider>
   </React.StrictMode>

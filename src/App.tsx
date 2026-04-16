@@ -27,6 +27,14 @@ import ActualCreate from './pages/ActualCreate';
 import ActualDetail from './pages/ActualDetail';
 import AircraftManagement from './pages/AircraftManagement';
 import JSAManagement from './pages/JSAManagement';
+import ComplianceMenu from './pages/ComplianceMenu';
+import ComplianceFlight from './pages/ComplianceFlight';
+import ComplianceChemical from './pages/ComplianceChemical';
+import ComplianceTransport from './pages/ComplianceTransport';
+import ComplianceLicensing from './pages/ComplianceLicensing';
+import ComplianceEnvironmental from './pages/ComplianceEnvironmental';
+import ComplianceSafety from './pages/ComplianceSafety';
+import ComplianceDocumentation from './pages/ComplianceDocumentation';
 
 function App() {
   return (
@@ -63,6 +71,14 @@ function App() {
           <Route path="/financials/:actualId" element={<ActualDetail />} />
           <Route path="/aircraft" element={<AircraftManagement />} />
           <Route path="/jsa" element={<JSAManagement />} />
+          <Route path="/compliance" element={<ComplianceMenu />} />
+          <Route path="/compliance/flight" element={<ComplianceFlight />} />
+          <Route path="/compliance/chemical" element={<ComplianceChemical />} />
+          <Route path="/compliance/transport" element={<ComplianceTransport />} />
+          <Route path="/compliance/licensing" element={<ComplianceLicensing />} />
+          <Route path="/compliance/environmental" element={<ComplianceEnvironmental />} />
+          <Route path="/compliance/safety" element={<ComplianceSafety />} />
+          <Route path="/compliance/documentation" element={<ComplianceDocumentation />} />
           <Route path="/admin" element={<Admin />} />
         </Route>
       </Routes>
