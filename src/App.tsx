@@ -25,6 +25,8 @@ import QuoteSettings from './pages/QuoteSettings';
 import FinancialsList from './pages/FinancialsList';
 import ActualCreate from './pages/ActualCreate';
 import ActualDetail from './pages/ActualDetail';
+import AircraftManagement from './pages/AircraftManagement';
+import JSAManagement from './pages/JSAManagement';
 
 function App() {
   return (
@@ -59,6 +61,8 @@ function App() {
           <Route path="/financials" element={<FinancialsList />} />
           <Route path="/financials/new" element={<ActualCreate />} />
           <Route path="/financials/:actualId" element={<ActualDetail />} />
+          <Route path="/aircraft" element={<AircraftManagement />} />
+          <Route path="/jsa" element={<JSAManagement />} />
           <Route path="/admin" element={<Admin />} />
         </Route>
       </Routes>

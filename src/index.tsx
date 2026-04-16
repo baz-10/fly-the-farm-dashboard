@@ -4,6 +4,7 @@ import { ThemeProvider } from '@mui/material/styles';
 import CssBaseline from '@mui/material/CssBaseline';
 import theme from './theme/theme';
 import { AuthProvider } from './contexts/AuthContext';
+import { AircraftProvider } from './contexts/AircraftContext';
 import App from './App';
 
 const root = ReactDOM.createRoot(
@@ -15,7 +16,9 @@ root.render(
     <ThemeProvider theme={theme}>
       <CssBaseline />
       <AuthProvider>
-        <App />
+        <AircraftProvider>
+          <App />
+        </AircraftProvider>
       </AuthProvider>
     </ThemeProvider>
   </React.StrictMode>

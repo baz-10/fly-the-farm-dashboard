@@ -42,6 +42,9 @@ interface AircraftContextType {
   loadData: () => Promise<void>;
   saveData: () => Promise<void>;
   clearData: () => Promise<void>;
+
+  // Error management
+  clearError: () => void;
 }
 
 // Default context value
@@ -74,6 +77,7 @@ const defaultContext: AircraftContextType = {
   loadData: async () => {},
   saveData: async () => {},
   clearData: async () => {},
+  clearError: () => {},
 };
 
 // Create context
@@ -301,6 +305,11 @@ export function AircraftProvider({ children }: { children: React.ReactNode }) {
       'Failed to clear aircraft data from localStorage'
     );
   }, [safeOperation]);
+
+  // Clear error state
+  const clearError = useCallback(() => {
+    setError(null);
+  }, []);
 
   // Aircraft CRUD operations with validation
   const createAircraft = useCallback(async (aircraftData: Omit<Aircraft, 'id' | 'createdAt' | 'updatedAt'>): Promise<string> => {
@@ -632,6 +641,7 @@ export function AircraftProvider({ children }: { children: React.ReactNode }) {
     loadData,
     saveData,
     clearData,
+    clearError,
   }), [
     aircraft,
     equipmentKits,
@@ -661,6 +671,7 @@ export function AircraftProvider({ children }: { children: React.ReactNode }) {
     loadData,
     saveData,
     clearData,
+    clearError,
   ]);
 
   return (

@@ -31,10 +31,12 @@ import AccountBalanceIcon from '@mui/icons-material/AccountBalance';
 import LogoutIcon from '@mui/icons-material/Logout';
 import AccountCircleIcon from '@mui/icons-material/AccountCircle';
 import FlightTakeoffIcon from '@mui/icons-material/FlightTakeoff';
+import AirplanemodeActiveIcon from '@mui/icons-material/AirplanemodeActive';
 import AdminPanelSettingsIcon from '@mui/icons-material/AdminPanelSettings';
 import SmartToyIcon from '@mui/icons-material/SmartToy';
 import GavelIcon from '@mui/icons-material/Gavel';
 import BadgeIcon from '@mui/icons-material/Badge';
+import SecurityIcon from '@mui/icons-material/Security';
 import { useAuth } from '../contexts/AuthContext';
 import { Chip } from '@mui/material';
 
@@ -70,6 +72,8 @@ export default function Layout() {
     { label: 'Database', path: '/database', icon: <GrassIcon />, roles: ['admin', 'contractor', 'client'] },
     { label: 'Calculator', path: '/calculator', icon: <CalculateIcon />, roles: ['admin', 'contractor'] },
     { label: 'Jobs', path: '/jobs', icon: <AssignmentIcon />, roles: ['admin', 'contractor', 'client'] },
+    { label: 'Aircraft', path: '/aircraft', icon: <AirplanemodeActiveIcon />, roles: ['admin', 'contractor'] },
+    { label: 'JSA System', path: '/jsa', icon: <SecurityIcon />, roles: ['admin', 'contractor'] },
     { label: 'Quotes', path: '/quotes', icon: <ReceiptLongIcon />, roles: ['admin', 'contractor'] },
     { label: 'Financials', path: '/financials', icon: <AccountBalanceIcon />, roles: ['admin', 'contractor'] },
     { label: 'Ask FTF', path: '/ask-ftf', icon: <SmartToyIcon />, roles: ['admin', 'contractor'] },
