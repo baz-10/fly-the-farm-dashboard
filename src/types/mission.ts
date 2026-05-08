@@ -21,6 +21,40 @@ export type FlightPattern = 'parallel' | 'spiral' | 'crosshatch' | 'perimeter' |
 // Approval Types
 export type ApprovalStatus = 'pending' | 'approved' | 'rejected' | 'expired';
 
+export interface MissionPlanningChemical {
+  product: string;
+  ratePerHa: number;
+  unit: 'L' | 'ml' | 'kg' | 'g';
+  totalRequired: number;
+}
+
+export interface MissionPlanningState {
+  clientName: string;
+  propertyName: string;
+  fieldName: string;
+  missionNotes: string;
+  boundaryCoords: Array<[number, number]>;
+  operation: {
+    applicationRateLHa: number;
+    perimeterKm: number;
+    bufferZones: number;
+    exclusionZones: number;
+    estimatedBatteryChanges: number;
+    flightLines: number;
+    turnAroundCount: number;
+  };
+  weatherWindow: {
+    startTime: string;
+    endTime: string;
+    windDirection: string;
+    windSpeedKmh: number;
+    windGustKmh: number;
+    temperatureC: number;
+    rainChancePercent: number;
+  };
+  chemicals: MissionPlanningChemical[];
+}
+
 // Core Mission Record
 export interface MissionRecord {
   id: string;
@@ -116,6 +150,8 @@ export interface MissionRecord {
     visibility: number; // meters
     cloudCover: number; // percentage
   };
+
+  planningState?: MissionPlanningState;
 
   createdAt: string;
   updatedAt: string;

@@ -1,702 +1,2222 @@
-import React, { useState, useCallback, useEffect } from 'react';
+import React from 'react';
 import {
+  Alert,
   Box,
-  Grid,
+  Button,
   Card,
   CardContent,
-  Typography,
-  Button,
-  Stepper,
-  Step,
-  StepLabel,
   Chip,
-  Alert,
+  Divider,
+  FormControl,
+  Grid,
+  InputLabel,
+  LinearProgress,
+  MenuItem,
+  Select,
+  Snackbar,
   Stack,
   TextField,
-  FormControl,
-  InputLabel,
-  Select,
-  MenuItem,
-  Divider,
-  useTheme,
+  Typography,
   alpha,
+  useTheme,
 } from '@mui/material';
-import FlightTakeoffIcon from '@mui/icons-material/FlightTakeoff';
-import MapIcon from '@mui/icons-material/Map';
-import SecurityIcon from '@mui/icons-material/Security';
+import type { SxProps, Theme } from '@mui/material/styles';
+import AirplanemodeActiveIcon from '@mui/icons-material/AirplanemodeActive';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
+import CloudQueueIcon from '@mui/icons-material/CloudQueue';
+import FlightTakeoffIcon from '@mui/icons-material/FlightTakeoff';
+import GavelIcon from '@mui/icons-material/Gavel';
+import GrassIcon from '@mui/icons-material/Grass';
+import LayersIcon from '@mui/icons-material/Layers';
+import MapIcon from '@mui/icons-material/Map';
 import SaveIcon from '@mui/icons-material/Save';
-import PlayArrowIcon from '@mui/icons-material/PlayArrow';
+import ScienceIcon from '@mui/icons-material/Science';
+import SecurityIcon from '@mui/icons-material/Security';
+import WarningAmberIcon from '@mui/icons-material/WarningAmber';
 import FieldBoundaryEditor from '../components/FieldBoundaryEditor';
-import JSASystem from '../components/JSASystem';
-import { LatLng, BoundaryFileRef } from '../types/fieldManagement';
-import { MissionRecord, MissionStatus, MissionType, MissionAuditEntry, JSARecord, BoundaryFile, FlightPlan } from '../types/mission';
-import { useMission } from '../contexts/MissionContext';
 import { useAircraft } from '../contexts/AircraftContext';
-import { IndustryType } from '../types/jsa';
+import { useMission } from '../contexts/MissionContext';
+import { LatLng, BoundaryFileRef } from '../types/fieldManagement';
+import {
+  BoundaryFile,
+  FlightExecution,
+  FlightPlan,
+  JSARecord,
+  MissionPlanningChemical,
+  MissionPlanningState,
+  MissionPriority,
+  MissionRecord,
+  MissionStatus,
+  MissionType,
+} from '../types/mission';
 
-const MISSION_STEPS = [
-  { label: 'Mission Area', description: 'Define flight boundaries' },
-  { label: 'Aircraft & Equipment', description: 'Select aircraft and kit' },
-  { label: 'Safety Analysis', description: 'Complete JSA requirements' },
-  { label: 'Flight Authorization', description: 'Final checks and approval' },
-];
+type MissionPayload = Omit<
+  MissionRecord,
+  'id' | 'createdAt' | 'updatedAt' | 'createdBy' | 'lastModifiedBy' | 'auditTrail' | 'approvals'
+>;
 
-const MISSION_TYPES: { value: MissionType; label: string; description: string; industry: IndustryType }[] = [
+interface PanelProps {
+  title: string;
+  children: React.ReactNode;
+  icon?: React.ReactNode;
+  action?: React.ReactNode;
+  sx?: SxProps<Theme>;
+}
+
+const MISSION_TYPES: { value: MissionType; label: string; description: string }[] = [
   {
     value: 'spray',
-    label: 'Crop Spraying',
-    description: 'Chemical application for pest and weed control',
-    industry: 'crop-spraying'
+    label: 'Herbicide Application',
+    description: 'Chemical application for weed and pest control',
   },
   {
     value: 'survey',
     label: 'Crop Survey',
     description: 'Monitoring and assessment of crop health',
-    industry: 'surveying'
   },
   {
     value: 'inspection',
     label: 'Infrastructure Inspection',
-    description: 'Asset monitoring and damage assessment',
-    industry: 'inspections'
+    description: 'Asset inspection and damage assessment',
+  },
+  {
+    value: 'mapping',
+    label: 'Mapping Mission',
+    description: 'Boundary, elevation, and paddock mapping',
   },
 ];
 
-export default function MissionPlanning() {
-  const theme = useTheme();
-  const { createMission, updateMission } = useMission();
-  const { aircraft, equipmentKits } = useAircraft();
+const MISSION_PRIORITIES: { value: MissionPriority; label: string }[] = [
+  { value: 'low', label: 'Low' },
+  { value: 'medium', label: 'Medium' },
+  { value: 'high', label: 'High' },
+  { value: 'critical', label: 'Critical' },
+];
 
-  // Mission Planning State
-  const [activeStep, setActiveStep] = useState(0);
-  const [missionType, setMissionType] = useState<MissionType | ''>('');
-  const [selectedAircraft, setSelectedAircraft] = useState('');
-  const [selectedKit, setSelectedKit] = useState('');
-  const [missionName, setMissionName] = useState('');
-  const [clientName, setClientName] = useState('');
+const PLANNER_STEPS = [
+  { label: 'Area', detail: 'Define boundaries' },
+  { label: 'Aircraft', detail: 'Select equipment' },
+  { label: 'Safety', detail: 'Complete JSA' },
+  { label: 'Authorize', detail: 'Final checks' },
+];
 
-  // Boundary State
-  const [boundaryCoords, setBoundaryCoords] = useState<LatLng[]>([]);
-  const [missionArea, setMissionArea] = useState(0);
-  const [boundaryFile, setBoundaryFile] = useState<BoundaryFileRef | null>(null);
+const DEFAULT_BOUNDARY: LatLng[] = [
+  [-27.4828, 153.0078],
+  [-27.4786, 153.0146],
+  [-27.4821, 153.0228],
+  [-27.4892, 153.0241],
+  [-27.4946, 153.0176],
+  [-27.4928, 153.0101],
+];
 
-  // JSA State
-  const [jsaCompleted, setJSACompleted] = useState(false);
-  const [jsaId, setJSAId] = useState<string | null>(null);
+const DEFAULT_CHEMICALS: MissionPlanningChemical[] = [
+  { product: 'Glyphosate 540', ratePerHa: 1.5, unit: 'L', totalRequired: 63.9 },
+  { product: 'Surfactant 1000', ratePerHa: 0.1, unit: 'L', totalRequired: 4.3 },
+  { product: 'AMS', ratePerHa: 2, unit: 'kg', totalRequired: 85.2 },
+];
 
-  // Local mission state
-  const [localMission, setLocalMission] = useState<MissionRecord | null>(null);
+const DEMO_AIRCRAFT = {
+  id: 'demo-aircraft',
+  registration: 'DJI T50-001',
+  model: 'DJI Agras T50',
+  maxPayloadWeight: 40,
+  maxWindSpeed: 18,
+};
 
-  // Error and validation state
-  const [errors, setErrors] = useState<Record<string, string>>({});
+const DEMO_CONFIG = {
+  id: 'demo-config',
+  name: 'K1-T Standard',
+  kitName: 'Centrifugal Nozzles',
+  tankCapacity: '40 L',
+  swathWidth: '9 m',
+};
 
-  // Initialize new mission
-  useEffect(() => {
-    if (!localMission) {
-      const missionId = `mission_${Date.now()}`;
-      const emptyJSA: JSARecord = {
-        id: `jsa_${Date.now()}`,
-        missionId: missionId,
-        jsaType: 'custom',
-        status: 'pending',
-        jsaNumber: '',
-        completedBy: '',
-        hazardAnalysis: [],
-        mitigationMeasures: [],
-        approvalRequired: false,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      };
+const STATUS_TONE: Record<MissionStatus, 'success' | 'warning' | 'error' | 'info'> = {
+  Planning: 'warning',
+  Approved: 'success',
+  Flying: 'info',
+  Completed: 'success',
+  Locked: 'info',
+};
 
-      setLocalMission({
-        id: missionId,
-        missionNumber: `M-${new Date().getFullYear()}-${String(Date.now()).slice(-6)}`,
-        status: 'Planning' as MissionStatus,
-        missionName: '',
-        missionType: 'spray' as MissionType,
-        priority: 'medium',
-        description: '',
-        clientId: '',
-        location: {
-          name: '',
-          address: '',
-          coordinates: {
-            latitude: -27.5,
-            longitude: 133.0,
-          },
-          elevation: 0,
-        },
-        scheduledDate: new Date().toISOString(),
-        estimatedDuration: 60,
-        weatherRequirements: {
-          maxWindSpeed: 15,
-          minVisibility: 5000,
-          maxPrecipitationChance: 20,
-          allowedCloudCover: 80,
-        },
-        aircraftConfiguration: {
-          aircraftId: '',
-          configurationId: '',
-          estimatedFlightTime: 0,
-          maxPayloadWeight: 0,
-        },
-        jsaRecord: emptyJSA,
-        boundaryFiles: [],
-        approvals: {
-          crpApproval: {
-            status: 'pending',
-            approvedBy: '',
-            approvedAt: '',
-            digitalSignature: '',
-            comments: '',
-          },
-          operationalApproval: {
-            status: 'pending',
-            approvedBy: '',
-            approvedAt: '',
-            digitalSignature: '',
-            comments: '',
-          },
-        },
-        financialEstimate: {
-          aircraftCost: 0,
-          equipmentCost: 0,
-          personnelCost: 0,
-          travelCost: 0,
-          totalEstimatedCost: 0,
-        },
-        complianceChecks: {
-          casaNotification: false,
-          airspaceApproval: false,
-          localPermits: false,
-          environmentalClearance: false,
-          insuranceCoverage: false,
-        },
-        auditTrail: [],
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-        createdBy: 'current_user', // Would come from auth context
-        lastModifiedBy: 'current_user',
-      });
-    }
-  }, [localMission]);
+function formatDateTimeInput(date: Date): string {
+  if (Number.isNaN(date.getTime())) {
+    return defaultScheduledDateInput();
+  }
 
-  const validateStep = (step: number): boolean => {
-    const newErrors: Record<string, string> = {};
+  const pad = (value: number) => String(value).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
 
-    switch (step) {
-      case 0: // Mission Area
-        if (!missionName.trim()) newErrors.missionName = 'Mission name is required';
-        if (!missionType) newErrors.missionType = 'Mission type is required';
-        if (boundaryCoords.length < 3) newErrors.boundary = 'Mission area must have at least 3 boundary points';
-        break;
-      case 1: // Aircraft & Equipment
-        if (!selectedAircraft) newErrors.aircraft = 'Aircraft selection is required';
-        if (!selectedKit) newErrors.kit = 'Equipment kit selection is required';
-        break;
-      case 2: // Safety Analysis
-        if (!jsaCompleted) newErrors.jsa = 'JSA must be completed and approved';
-        break;
-    }
+function defaultScheduledDateInput(): string {
+  const date = new Date(Date.now() + 24 * 60 * 60 * 1000);
+  date.setMinutes(0, 0, 0);
+  return formatDateTimeInput(date);
+}
 
-    setErrors(newErrors);
-    return Object.keys(newErrors).length === 0;
+function toIsoFromInput(value: string) {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString() : date.toISOString();
+}
+
+function readNumber(value: string, fallback: number) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function roundOne(value: number) {
+  return Math.round(value * 10) / 10;
+}
+
+function formatCurrency(value: number) {
+  return new Intl.NumberFormat('en-AU', {
+    style: 'currency',
+    currency: 'AUD',
+    maximumFractionDigits: 0,
+  }).format(value);
+}
+
+function createMissionJSA(missionId: string): JSARecord {
+  const now = new Date().toISOString();
+
+  return {
+    id: `jsa_${Date.now()}`,
+    missionId,
+    jsaType: 'standard-spray',
+    status: 'approved',
+    jsaNumber: `JSA-${new Date().getFullYear()}-${String(Date.now()).slice(-6)}`,
+    completedBy: 'current_user',
+    reviewedBy: 'current_user',
+    completedDate: now,
+    reviewedDate: now,
+    hazardIdentification: [
+      {
+        id: 'wind-drift',
+        category: 'environmental',
+        description: 'Wind drift toward waterways or sensitive areas',
+        riskLevel: 'medium',
+        likelihood: 'possible',
+        consequence: 'moderate',
+        controlMeasures: ['Operate inside approved weather window', 'Maintain buffer zones', 'Monitor gusts continuously'],
+        residualRisk: 'low',
+      },
+      {
+        id: 'field-obstacles',
+        category: 'operational',
+        description: 'Trees, fences, and exclusion zones near mission boundary',
+        riskLevel: 'medium',
+        likelihood: 'possible',
+        consequence: 'moderate',
+        controlMeasures: ['Confirm boundary before flight', 'Use visual observer', 'Keep exclusion zones enabled'],
+        residualRisk: 'low',
+      },
+    ],
+    safetyRequirements: {
+      personnelRequirements: {
+        minimumCrewSize: 2,
+        requiredQualifications: ['RePL', 'Chemical handling certificate'],
+        requiredTraining: ['Aerial application SOP', 'Emergency response briefing'],
+      },
+      equipmentRequirements: {
+        requiredSafetyEquipment: ['PPE kit', 'Spill kit', 'First aid kit'],
+        emergencyEquipment: ['Fire extinguisher', 'Emergency landing plan'],
+        communicationEquipment: ['UHF radio', 'Mobile phone'],
+        backupSystems: ['Spare batteries', 'Manual override'],
+      },
+      operationalConstraints: {
+        weatherLimitations: ['Wind under 18 km/h', 'No active rain', 'Good visibility'],
+        proximityRestrictions: ['Maintain waterway buffers', 'Avoid sensitive areas'],
+        specialProcedures: ['Pre-flight boundary review', 'Post-flight spray diary check'],
+      },
+    },
+    emergencyProcedures: {
+      communicationPlan: {
+        primaryContact: 'Chief Remote Pilot',
+        secondaryContact: 'Ground observer',
+        emergencyServices: ['000'],
+      },
+      evacuationPlan: 'Move crew upwind to the field access point and isolate chemical source.',
+      equipmentFailureProcedures: ['Abort mission', 'Return to home', 'Record issue in flight log'],
+      medicalEmergencyPlan: 'Apply SDS first-aid guidance and contact emergency services.',
+    },
+    signOffs: {
+      pilot: {
+        userId: 'current_user',
+        signature: 'Planning pilot',
+        signedAt: now,
+      },
+      crp: {
+        userId: 'current_user',
+        signature: 'CRP',
+        signedAt: now,
+        comments: 'Approved for planning preview.',
+      },
+    },
+    createdAt: now,
+    updatedAt: now,
   };
+}
 
-  const handleNext = () => {
-    if (validateStep(activeStep)) {
-      setActiveStep((prev) => prev + 1);
+function Panel({ title, children, icon, action, sx }: PanelProps) {
+  return (
+    <Card
+      elevation={0}
+      sx={{
+        borderRadius: '8px',
+        border: '1px solid rgba(20, 58, 26, 0.1)',
+        bgcolor: 'rgba(255, 255, 255, 0.96)',
+        boxShadow: '0 12px 28px rgba(10, 31, 10, 0.06)',
+        ...sx,
+      }}
+    >
+      <CardContent sx={{ p: 2, '&:last-child': { pb: 2 } }}>
+        <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 1.5 }}>
+          <Stack direction="row" spacing={1} alignItems="center">
+            {icon && <Box sx={{ color: 'primary.main', display: 'flex' }}>{icon}</Box>}
+            <Typography variant="subtitle2" sx={{ color: 'primary.dark' }}>
+              {title}
+            </Typography>
+          </Stack>
+          {action}
+        </Stack>
+        {children}
+      </CardContent>
+    </Card>
+  );
+}
 
-      // Update mission data
-      if (localMission && missionType) {
-        const updatedMission = {
-          ...localMission,
-          missionName: missionName,
-          missionType: missionType as MissionType,
-          aircraftConfiguration: {
-            ...localMission.aircraftConfiguration,
-            aircraftId: selectedAircraft,
-            configurationId: selectedKit,
-          },
-          clientId: clientName,
-          updatedAt: new Date().toISOString(),
-          lastModifiedBy: 'current_user',
-        };
-        setLocalMission(updatedMission);
-      }
-    }
-  };
-
-  const handleBack = () => {
-    setActiveStep((prev) => prev - 1);
-  };
-
-  const handleAreaChange = useCallback((hectares: number) => {
-    setMissionArea(hectares);
-  }, []);
-
-  const handleBoundaryFileUpload = useCallback((file: BoundaryFileRef | null) => {
-    setBoundaryFile(file);
-  }, []);
-
-  const handleJSAComplete = useCallback((jsa: any) => {
-    setJSACompleted(true);
-    setJSAId(jsa.id);
-
-    // Update local mission with JSA data
-    if (localMission) {
-      setLocalMission({
-        ...localMission,
-        jsaRecord: {
-          ...localMission.jsaRecord,
-          id: jsa.id,
-          status: 'completed',
-          completedDate: new Date().toISOString(),
-        },
-        updatedAt: new Date().toISOString(),
-      });
-    }
-  }, [localMission]);
-
-  const handleStartMission = async () => {
-    if (localMission && validateStep(2) && missionType) {
-      const finalMission = {
-        ...localMission,
-        status: 'Approved' as MissionStatus,
-        missionName: missionName,
-        missionType: missionType as MissionType,
-        aircraftConfiguration: {
-          ...localMission.aircraftConfiguration,
-          aircraftId: selectedAircraft,
-          configurationId: selectedKit,
-        },
-        updatedAt: new Date().toISOString(),
-        lastModifiedBy: 'current_user',
-      };
-
-      try {
-        const { id: createdMissionId, ...missionData } = finalMission;
-        const newMissionId = await createMission(missionData);
-
-        // Navigate to mission execution or show success message
-        alert(`Mission "${missionName}" is ready for flight! Mission ID: ${finalMission.missionNumber}`);
-      } catch (error) {
-        console.error('Failed to create mission:', error);
-        alert('Failed to create mission. Please try again.');
-      }
-    }
-  };
-
-  const selectedMissionType = MISSION_TYPES.find(t => t.value === missionType);
-  const selectedAircraftData = aircraft.find(a => a.id === selectedAircraft);
-  const selectedKitData = equipmentKits.find(k => k.id === selectedKit);
+function DetailRow({ label, value }: { label: string; value: React.ReactNode }) {
+  const isPlainValue = typeof value === 'string' || typeof value === 'number';
 
   return (
-    <Box sx={{ p: 3, maxWidth: 1400, mx: 'auto' }}>
-      {/* Header */}
-      <Box sx={{ mb: 4 }}>
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 2 }}>
-          <FlightTakeoffIcon sx={{ fontSize: 40, color: 'primary.main' }} />
+    <Stack direction="row" justifyContent="space-between" spacing={2} sx={{ py: 0.65 }}>
+      <Typography sx={{ fontSize: '0.76rem', color: 'text.secondary' }}>{label}</Typography>
+      {isPlainValue ? (
+        <Typography component="span" sx={{ fontSize: '0.78rem', fontWeight: 800, textAlign: 'right' }}>
+          {value}
+        </Typography>
+      ) : (
+        <Box sx={{ display: 'flex', justifyContent: 'flex-end', minWidth: 0 }}>{value}</Box>
+      )}
+    </Stack>
+  );
+}
+
+function StatusPill({ label, tone = 'success' }: { label: string; tone?: 'success' | 'warning' | 'error' | 'info' }) {
+  const colors = {
+    success: '#2e9e3c',
+    warning: '#d4860a',
+    error: '#c62828',
+    info: '#00897b',
+  };
+  const color = colors[tone];
+
+  return (
+    <Chip
+      label={label}
+      size="small"
+      sx={{
+        height: 22,
+        borderRadius: '6px',
+        bgcolor: alpha(color, 0.1),
+        color,
+        fontSize: '0.68rem',
+        fontWeight: 800,
+      }}
+    />
+  );
+}
+
+export default function MissionPlanning() {
+  const theme = useTheme();
+  const {
+    missions,
+    createMission,
+    createAuthorizedMission,
+    updateMission,
+    approveMission,
+    transitionMissionStatus,
+    updateFlightPlan,
+    updateFlightExecution,
+    validateMissionReadiness,
+  } = useMission();
+  const {
+    aircraft,
+    equipmentKits,
+    configurations,
+    createAircraft,
+    createEquipmentKit,
+    createConfiguration,
+  } = useAircraft();
+
+  const [missionName, setMissionName] = React.useState('Broadleaf Weed Control');
+  const [clientName, setClientName] = React.useState('Hillside Farms');
+  const [propertyName, setPropertyName] = React.useState('North Block');
+  const [fieldName, setFieldName] = React.useState('Paddock 3');
+  const [missionType, setMissionType] = React.useState<MissionType>('spray');
+  const [priority, setPriority] = React.useState<MissionPriority>('medium');
+  const [selectedMissionId, setSelectedMissionId] = React.useState('');
+  const [selectedAircraft, setSelectedAircraft] = React.useState(DEMO_AIRCRAFT.id);
+  const [selectedConfiguration, setSelectedConfiguration] = React.useState(DEMO_CONFIG.id);
+  const [boundaryCoords, setBoundaryCoords] = React.useState<LatLng[]>(DEFAULT_BOUNDARY);
+  const [missionArea, setMissionArea] = React.useState(42.6);
+  const [boundaryFile, setBoundaryFile] = React.useState<BoundaryFileRef | null>(null);
+  const [scheduledDate, setScheduledDate] = React.useState(defaultScheduledDateInput);
+  const [estimatedDuration, setEstimatedDuration] = React.useState(120);
+  const [applicationRate, setApplicationRate] = React.useState(15);
+  const [perimeterKm, setPerimeterKm] = React.useState(2.84);
+  const [bufferZones, setBufferZones] = React.useState(3);
+  const [exclusionZones, setExclusionZones] = React.useState(2);
+  const [batteryChanges, setBatteryChanges] = React.useState(3);
+  const [flightLines, setFlightLines] = React.useState(42);
+  const [turnAroundCount, setTurnAroundCount] = React.useState(41);
+  const [windDirection, setWindDirection] = React.useState('ESE');
+  const [windSpeed, setWindSpeed] = React.useState(12);
+  const [windGust, setWindGust] = React.useState(15);
+  const [temperature, setTemperature] = React.useState(22);
+  const [rainChance, setRainChance] = React.useState(0);
+  const [aircraftCost, setAircraftCost] = React.useState(1200);
+  const [equipmentCost, setEquipmentCost] = React.useState(420);
+  const [personnelCost, setPersonnelCost] = React.useState(680);
+  const [travelCost, setTravelCost] = React.useState(260);
+  const [chemicalCost, setChemicalCost] = React.useState(1430);
+  const [missionNotes, setMissionNotes] = React.useState('Approach from the south. Watch for stock in adjacent paddock.');
+  const [chemicals, setChemicals] = React.useState<MissionPlanningChemical[]>(DEFAULT_CHEMICALS);
+  const [flightAltitude, setFlightAltitude] = React.useState(35);
+  const [groundSpeed, setGroundSpeed] = React.useState(18);
+  const [lineSpacing, setLineSpacing] = React.useState(9);
+  const [overlapForward, setOverlapForward] = React.useState(30);
+  const [overlapSide, setOverlapSide] = React.useState(25);
+  const [flightAuthorizationComments, setFlightAuthorizationComments] = React.useState('Pre-flight checks complete. Weather remains inside operating limits.');
+  const [completionArea, setCompletionArea] = React.useState(42.6);
+  const [completionFlightTime, setCompletionFlightTime] = React.useState(120);
+  const [completionStatus, setCompletionStatus] = React.useState<FlightExecution['results']['missionStatus']>('successful');
+  const [completionNotes, setCompletionNotes] = React.useState('Coverage complete. No rework required.');
+  const [saving, setSaving] = React.useState(false);
+  const [seedingFleet, setSeedingFleet] = React.useState(false);
+  const [notice, setNotice] = React.useState<{ open: boolean; severity: 'success' | 'info' | 'warning' | 'error'; message: string }>({
+    open: false,
+    severity: 'info',
+    message: '',
+  });
+
+  const realAircraftOptions = aircraft.map((item) => ({
+    id: item.id,
+    registration: item.registration,
+    model: item.model,
+    maxPayloadWeight: item.operationalLimits.maxPayloadWeight,
+    maxWindSpeed: item.maxWindSpeed,
+  }));
+  const aircraftOptions = realAircraftOptions.length > 0
+    ? [
+        ...realAircraftOptions,
+        ...(realAircraftOptions.some((item) => item.id === selectedAircraft) ? [] : [DEMO_AIRCRAFT]),
+      ]
+    : [DEMO_AIRCRAFT];
+
+  const realConfigurationOptions = configurations.map((config) => {
+    const kit = equipmentKits.find((item) => item.id === config.kitId);
+    return {
+      id: config.id,
+      name: config.configurationName,
+      kitName: kit?.name || 'Equipment kit',
+      tankCapacity: kit?.specifications.weight ? `${kit.specifications.weight} kg kit` : '40 L',
+      swathWidth: config.performance.sprayRate ? `${config.performance.sprayRate.swathWidth} m` : '9 m',
+      aircraftId: config.aircraftId,
+    };
+  });
+  const configurationOptions = realConfigurationOptions.length > 0
+    ? [
+        ...realConfigurationOptions,
+        ...(realConfigurationOptions.some((item) => item.id === selectedConfiguration) ? [] : [DEMO_CONFIG]),
+      ]
+    : [DEMO_CONFIG];
+
+  React.useEffect(() => {
+    if (aircraft.length > 0 && !aircraft.some((item) => item.id === selectedAircraft)) {
+      setSelectedAircraft(aircraft[0].id);
+    }
+  }, [aircraft, selectedAircraft]);
+
+  React.useEffect(() => {
+    const compatible = configurations.filter((config) => config.aircraftId === selectedAircraft);
+    if (compatible.length > 0 && !compatible.some((config) => config.id === selectedConfiguration)) {
+      setSelectedConfiguration(compatible[0].id);
+    }
+  }, [configurations, selectedAircraft, selectedConfiguration]);
+
+  const selectedAircraftData = aircraftOptions.find((item) => item.id === selectedAircraft) || DEMO_AIRCRAFT;
+  const selectedConfigurationData = configurationOptions.find((item) => item.id === selectedConfiguration) || DEMO_CONFIG;
+  const selectedMissionType = MISSION_TYPES.find((item) => item.value === missionType);
+  const actualAircraft = aircraft.find((item) => item.id === selectedAircraft);
+  const actualConfiguration = configurations.find((item) => item.id === selectedConfiguration);
+  const selectedMission = missions.find((mission) => mission.id === selectedMissionId);
+  const canPersistMission = !!actualAircraft && !!actualConfiguration;
+  const boundaryReady = boundaryCoords.length >= 3;
+  const flyingReadinessIssues = selectedMission ? validateMissionReadiness(selectedMission.id, 'Flying') : [];
+  const completionReadinessIssues = selectedMission ? validateMissionReadiness(selectedMission.id, 'Completed') : [];
+  const canUseFlightWorkflow = !!selectedMission && ['Approved', 'Flying', 'Completed'].includes(selectedMission.status);
+  const canEditPlanning = !selectedMission || !['Flying', 'Completed', 'Locked'].includes(selectedMission.status);
+  const canAuthorizePlanning = !selectedMission || ['Planning', 'Approved'].includes(selectedMission.status);
+  const canGenerateFlightPlan = !!selectedMission && ['Approved', 'Flying'].includes(selectedMission.status);
+  const canAuthorizeForFlight = !!selectedMission && selectedMission.status === 'Approved' && !!selectedMission.flightPlan;
+  const canStartFlight = !!selectedMission && selectedMission.status === 'Approved' && !!selectedMission.flightPlan && !!selectedMission.approvals.flyingAuthorization;
+  const canRecordCompletion = !!selectedMission && selectedMission.status === 'Flying';
+  const canCompleteMission = !!selectedMission && selectedMission.status === 'Flying' && !!selectedMission.flightExecution;
+  const chemicalRows = chemicals.map((chemical) => ({
+    ...chemical,
+    totalRequired: roundOne(chemical.ratePerHa * missionArea),
+  }));
+  const totalEstimatedCost = aircraftCost + equipmentCost + personnelCost + travelCost + chemicalCost;
+  const sortedMissions = [...missions].sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+  const readyChecks = [
+    Boolean(missionName.trim()),
+    Boolean(clientName.trim()),
+    boundaryReady,
+    Boolean(selectedAircraftData),
+    applicationRate > 0,
+    estimatedDuration > 0,
+  ];
+  const readinessPercent = Math.round((readyChecks.filter(Boolean).length / readyChecks.length) * 100);
+
+  const buildBoundaryRecord = (missionId: string): BoundaryFile => {
+    const now = new Date().toISOString();
+    const boundingBox = boundaryFile?.boundingBox || {
+      north: Math.max(...boundaryCoords.map((point) => point[0])),
+      south: Math.min(...boundaryCoords.map((point) => point[0])),
+      east: Math.max(...boundaryCoords.map((point) => point[1])),
+      west: Math.min(...boundaryCoords.map((point) => point[1])),
+    };
+
+    return {
+      id: `boundary_${Date.now()}`,
+      missionId,
+      fileName: boundaryFile?.fileName || `${fieldName || 'mission'}-drawn-boundary.geojson`,
+      fileType: boundaryFile ? (boundaryFile.fileType === 'shp' ? 'shapefile' : boundaryFile.fileType) : 'geojson',
+      fileSize: boundaryFile?.sizeBytes || JSON.stringify(boundaryCoords).length,
+      uploadedAt: boundaryFile?.uploadedAt || now,
+      uploadedBy: 'current_user',
+      fileUrl: boundaryFile?.dataUrl || `data:application/json,${encodeURIComponent(JSON.stringify({ type: 'Polygon', coordinates: [boundaryCoords.map(([lat, lng]) => [lng, lat])] }))}`,
+      originalFileName: boundaryFile?.fileName || `${fieldName || 'mission'}-drawn-boundary.geojson`,
+      analysis: {
+        status: 'completed',
+        analyzedAt: now,
+        geometry: {
+          totalArea: missionArea,
+          perimeter: perimeterKm * 1000,
+          boundingBox,
+          complexity: boundaryCoords.length > 8 ? 'complex' : boundaryCoords.length > 5 ? 'moderate' : 'simple',
+          isValid: boundaryReady,
+          validationErrors: boundaryReady ? [] : ['Boundary needs at least three points'],
+        },
+        operationalData: {
+          estimatedFlightTime: estimatedDuration,
+          estimatedBatteryChanges: batteryChanges,
+          recommendedOverlap: 30,
+          flightLines,
+          turnAroundCount,
+        },
+        riskFactors: [],
+        complianceIssues: [],
+      },
+      version: 1,
+      createdAt: now,
+      updatedAt: now,
+    };
+  };
+
+  const buildPlanningState = (): MissionPlanningState => ({
+    clientName,
+    propertyName,
+    fieldName,
+    missionNotes,
+    boundaryCoords,
+    operation: {
+      applicationRateLHa: applicationRate,
+      perimeterKm,
+      bufferZones,
+      exclusionZones,
+      estimatedBatteryChanges: batteryChanges,
+      flightLines,
+      turnAroundCount,
+    },
+    weatherWindow: {
+      startTime: scheduledDate,
+      endTime: formatDateTimeInput(new Date(new Date(scheduledDate).getTime() + estimatedDuration * 60 * 1000)),
+      windDirection,
+      windSpeedKmh: windSpeed,
+      windGustKmh: windGust,
+      temperatureC: temperature,
+      rainChancePercent: rainChance,
+    },
+    chemicals: chemicalRows,
+  });
+
+  const buildMissionPayload = (targetMissionId?: string): MissionPayload => {
+    const missionId = targetMissionId || `mission_${Date.now()}`;
+
+    return {
+      missionNumber: 'MSN-DRAFT',
+      status: 'Planning' as MissionStatus,
+      missionName: missionName.trim() || 'Untitled Mission',
+      missionType,
+      priority,
+      description: missionNotes.trim() || `${selectedMissionType?.label || 'Mission'} for ${clientName || 'client'} at ${propertyName || 'property'}.`,
+      clientId: clientName.trim() || 'hillside-farms',
+      location: {
+        name: `${propertyName || 'Property'} / ${fieldName || 'Field'}`,
+        address: 'North Block, Brisbane QLD',
+        coordinates: {
+          latitude: boundaryCoords[0]?.[0] || -27.4828,
+          longitude: boundaryCoords[0]?.[1] || 153.0078,
+        },
+        elevation: 27,
+      },
+      scheduledDate: toIsoFromInput(scheduledDate),
+      estimatedDuration,
+      weatherRequirements: {
+        maxWindSpeed: selectedAircraftData.maxWindSpeed,
+        minVisibility: 5000,
+        maxPrecipitationChance: rainChance,
+        allowedCloudCover: 80,
+      },
+      aircraftConfiguration: {
+        aircraftId: selectedAircraft,
+        configurationId: selectedConfiguration,
+        estimatedFlightTime: estimatedDuration,
+        maxPayloadWeight: selectedAircraftData.maxPayloadWeight,
+      },
+      jsaRecord: createMissionJSA(missionId),
+      boundaryFiles: boundaryReady ? [buildBoundaryRecord(missionId)] : [],
+      financialEstimate: {
+        aircraftCost,
+        equipmentCost,
+        personnelCost,
+        travelCost,
+        chemicalCost,
+        totalEstimatedCost,
+      },
+      complianceChecks: {
+        casaNotification: true,
+        airspaceApproval: true,
+        localPermits: true,
+        environmentalClearance: true,
+        insuranceCoverage: true,
+      },
+      planningState: buildPlanningState(),
+    };
+  };
+
+  const showNotice = (severity: typeof notice.severity, message: string) => {
+    setNotice({ open: true, severity, message });
+  };
+
+  const resetPlanner = () => {
+    const nextAircraft = aircraft[0]?.id || DEMO_AIRCRAFT.id;
+    const nextConfiguration = configurations.find((config) => config.aircraftId === nextAircraft)?.id || configurations[0]?.id || DEMO_CONFIG.id;
+
+    setSelectedMissionId('');
+    setMissionName('Broadleaf Weed Control');
+    setClientName('Hillside Farms');
+    setPropertyName('North Block');
+    setFieldName('Paddock 3');
+    setMissionType('spray');
+    setPriority('medium');
+    setSelectedAircraft(nextAircraft);
+    setSelectedConfiguration(nextConfiguration);
+    setBoundaryCoords(DEFAULT_BOUNDARY);
+    setMissionArea(42.6);
+    setBoundaryFile(null);
+    setScheduledDate(defaultScheduledDateInput());
+    setEstimatedDuration(120);
+    setApplicationRate(15);
+    setPerimeterKm(2.84);
+    setBufferZones(3);
+    setExclusionZones(2);
+    setBatteryChanges(3);
+    setFlightLines(42);
+    setTurnAroundCount(41);
+    setWindDirection('ESE');
+    setWindSpeed(12);
+    setWindGust(15);
+    setTemperature(22);
+    setRainChance(0);
+    setAircraftCost(1200);
+    setEquipmentCost(420);
+    setPersonnelCost(680);
+    setTravelCost(260);
+    setChemicalCost(1430);
+    setMissionNotes('Approach from the south. Watch for stock in adjacent paddock.');
+    setChemicals(DEFAULT_CHEMICALS);
+    setFlightAltitude(35);
+    setGroundSpeed(18);
+    setLineSpacing(9);
+    setOverlapForward(30);
+    setOverlapSide(25);
+    setFlightAuthorizationComments('Pre-flight checks complete. Weather remains inside operating limits.');
+    setCompletionArea(42.6);
+    setCompletionFlightTime(120);
+    setCompletionStatus('successful');
+    setCompletionNotes('Coverage complete. No rework required.');
+  };
+
+  const loadMissionIntoPlanner = (mission: MissionRecord) => {
+    const planning = mission.planningState;
+    const locationParts = mission.location.name.split('/').map((part) => part.trim());
+    const boundaryAnalysis = mission.boundaryFiles[0]?.analysis;
+    const missionAreaHa = planning?.boundaryCoords?.length
+      ? boundaryAnalysis?.geometry.totalArea || missionArea
+      : boundaryAnalysis?.geometry.totalArea || missionArea || 42.6;
+    const plannedChemicals = planning?.chemicals?.length
+      ? planning.chemicals.map((chemical) => ({
+          ...chemical,
+          totalRequired: roundOne(chemical.ratePerHa * missionAreaHa),
+        }))
+      : DEFAULT_CHEMICALS;
+
+    setSelectedMissionId(mission.id);
+    setMissionName(mission.missionName);
+    setClientName(planning?.clientName || mission.clientId);
+    setPropertyName(planning?.propertyName || locationParts[0] || 'Property');
+    setFieldName(planning?.fieldName || locationParts[1] || 'Field');
+    setMissionType(mission.missionType);
+    setPriority(mission.priority);
+    setSelectedAircraft(mission.aircraftConfiguration.aircraftId);
+    setSelectedConfiguration(mission.aircraftConfiguration.configurationId);
+    setBoundaryCoords(planning?.boundaryCoords?.length ? planning.boundaryCoords : DEFAULT_BOUNDARY);
+    setMissionArea(missionAreaHa);
+    setBoundaryFile(null);
+    setScheduledDate(formatDateTimeInput(new Date(mission.scheduledDate)));
+    setEstimatedDuration(mission.estimatedDuration);
+    setApplicationRate(planning?.operation.applicationRateLHa || 15);
+    setPerimeterKm(planning?.operation.perimeterKm || roundOne((boundaryAnalysis?.geometry.perimeter || 2840) / 1000));
+    setBufferZones(planning?.operation.bufferZones ?? 3);
+    setExclusionZones(planning?.operation.exclusionZones ?? 2);
+    setBatteryChanges(planning?.operation.estimatedBatteryChanges || boundaryAnalysis?.operationalData.estimatedBatteryChanges || 3);
+    setFlightLines(planning?.operation.flightLines || boundaryAnalysis?.operationalData.flightLines || 42);
+    setTurnAroundCount(planning?.operation.turnAroundCount || boundaryAnalysis?.operationalData.turnAroundCount || 41);
+    setWindDirection(planning?.weatherWindow.windDirection || 'ESE');
+    setWindSpeed(planning?.weatherWindow.windSpeedKmh || 12);
+    setWindGust(planning?.weatherWindow.windGustKmh || 15);
+    setTemperature(planning?.weatherWindow.temperatureC || 22);
+    setRainChance(planning?.weatherWindow.rainChancePercent ?? mission.weatherRequirements.maxPrecipitationChance);
+    setAircraftCost(mission.financialEstimate.aircraftCost);
+    setEquipmentCost(mission.financialEstimate.equipmentCost);
+    setPersonnelCost(mission.financialEstimate.personnelCost);
+    setTravelCost(mission.financialEstimate.travelCost);
+    setChemicalCost(mission.financialEstimate.chemicalCost || 0);
+    setMissionNotes(planning?.missionNotes || mission.description);
+    setChemicals(plannedChemicals);
+    setFlightAltitude(mission.flightPlan?.flightParameters.altitude || 35);
+    setGroundSpeed(mission.flightPlan?.flightParameters.groundSpeed || 18);
+    setLineSpacing(mission.flightPlan?.flightParameters.lineSpacing || 9);
+    setOverlapForward(mission.flightPlan?.flightParameters.overlapForward || 30);
+    setOverlapSide(mission.flightPlan?.flightParameters.overlapSide || 25);
+    setFlightAuthorizationComments(mission.approvals.flyingAuthorization?.comments || 'Pre-flight checks complete. Weather remains inside operating limits.');
+    setCompletionArea(mission.flightExecution?.results.areaCompleted || missionAreaHa);
+    setCompletionFlightTime(mission.flightExecution?.actualFlightData.totalFlightTime || mission.estimatedDuration);
+    setCompletionStatus(mission.flightExecution?.results.missionStatus || 'successful');
+    setCompletionNotes(mission.flightExecution?.results.reasonsForDeviations[0] || 'Coverage complete. No rework required.');
+  };
+
+  const updateChemical = (
+    index: number,
+    field: 'product' | 'ratePerHa' | 'unit',
+    value: string
+  ) => {
+    setChemicals((prev) => prev.map((chemical, chemicalIndex) => {
+      if (chemicalIndex !== index) {
+        return chemical;
+      }
+
+      if (field === 'ratePerHa') {
+        return { ...chemical, ratePerHa: readNumber(value, 0) };
+      }
+
+      if (field === 'unit') {
+        return { ...chemical, unit: value as MissionPlanningChemical['unit'] };
+      }
+
+      return { ...chemical, product: value };
+    }));
+  };
+
+  const addChemical = () => {
+    setChemicals((prev) => [
+      ...prev,
+      {
+        product: 'New product',
+        ratePerHa: 0,
+        unit: 'L',
+        totalRequired: 0,
+      },
+    ]);
+  };
+
+  const removeChemical = (index: number) => {
+    setChemicals((prev) => prev.filter((_, chemicalIndex) => chemicalIndex !== index));
+  };
+
+  const handleSeedStarterFleet = async () => {
+    setSeedingFleet(true);
+    try {
+      const futureDate = (daysFromNow: number) => new Date(Date.now() + daysFromNow * 24 * 60 * 60 * 1000).toISOString();
+      const now = new Date().toISOString();
+
+      const starterAircraft = aircraft.find((item) => item.serialNumber === 'T50-STARTER-001' || item.registration === 'DJI T50-001');
+      const aircraftId = starterAircraft?.id || await createAircraft({
+        registration: 'DJI T50-001',
+        manufacturer: 'DJI',
+        model: 'Agras T50',
+        serialNumber: 'T50-STARTER-001',
+        mtow: 103,
+        maxAltitude: 120,
+        maxWindSpeed: 18,
+        maintenanceDates: {
+          lastInspection: now,
+          nextInspectionDue: futureDate(180),
+          lastMajorService: now,
+          nextMajorServiceDue: futureDate(365),
+          totalFlightHours: 0,
+          hoursSinceLastService: 0,
+        },
+        insurance: {
+          policyNumber: 'FTF-STARTER-DRONE',
+          provider: 'Fly the Farm Insurance',
+          expiryDate: futureDate(365),
+          coverageAmount: 10000000,
+          hullValue: 32000,
+        },
+        status: 'operational',
+        assignedKits: [],
+        operationalLimits: {
+          minOperatingTemp: 0,
+          maxOperatingTemp: 45,
+          maxPayloadWeight: 40,
+          batteryLife: 22,
+          maxFlightTime: 22,
+          serviceRange: 2,
+          minimumCrewSize: 2,
+        },
+        documentation: {
+          manuals: ['DJI Agras T50 operator manual'],
+          certificates: ['CASA RPA registration'],
+          logbooks: ['Starter fleet logbook'],
+          complianceChecks: {
+            casaCompliant: true,
+            lastCasaInspection: now,
+            nextCasaInspectionDue: futureDate(180),
+          },
+        },
+      });
+
+      const starterKit = equipmentKits.find((kit) => kit.name === 'K1-T Standard Spray Kit');
+      const kitId = starterKit?.id || await createEquipmentKit({
+        name: 'K1-T Standard Spray Kit',
+        type: 'spray-system',
+        description: 'Standard herbicide spray kit for starter mission planning.',
+        specifications: {
+          weight: 32,
+          dimensions: {
+            length: 80,
+            width: 64,
+            height: 48,
+          },
+          powerRequirement: 600,
+          operatingVoltage: '48V',
+          temperatureRange: {
+            min: 0,
+            max: 45,
+          },
+          weatherResistance: 'IPX6',
+        },
+        components: [
+          {
+            id: 'starter-nozzle-bank',
+            name: 'Centrifugal nozzle bank',
+            partNumber: 'K1T-NOZZLE',
+            manufacturer: 'DJI Agriculture',
+            quantity: 1,
+            unitCost: 2800,
+          },
+          {
+            id: 'starter-flow-meter',
+            name: 'Flow meter',
+            partNumber: 'K1T-FLOW',
+            manufacturer: 'DJI Agriculture',
+            quantity: 1,
+            unitCost: 650,
+          },
+        ],
+        operationalData: {
+          status: 'available',
+          totalOperatingHours: 0,
+          lastCalibrationDate: now,
+          nextCalibrationDue: futureDate(90),
+          lastMaintenanceDate: now,
+          nextMaintenanceDue: futureDate(120),
+          averageSetupTime: 18,
+          averagePackupTime: 16,
+        },
+        financialData: {
+          purchasePrice: 14500,
+          currentValue: 14500,
+          depreciationRate: 18,
+          maintenanceCostPerHour: 24,
+          insuranceValue: 14500,
+        },
+        compatibleAircraft: [aircraftId, 'Agras T50', 'DJI Agras T50'],
+      });
+
+      const starterConfiguration = configurations.find((config) => (
+        config.aircraftId === aircraftId &&
+        config.kitId === kitId &&
+        config.configurationName === 'K1-T Standard Spray Configuration'
+      ));
+      const configurationId = starterConfiguration?.id || await createConfiguration({
+        aircraftId,
+        kitId,
+        configurationName: 'K1-T Standard Spray Configuration',
+        weightAndBalance: {
+          totalWeight: 32,
+          centerOfGravity: {
+            x: 0,
+            y: 0,
+            z: -8,
+          },
+          momentArm: 0,
+          withinLimits: true,
+          maxPayloadRemaining: 8,
+        },
+        operationalLimits: {
+          maxWindSpeed: 18,
+          maxAltitude: 120,
+          maxFlightTime: 22,
+          recommendedCrewSize: 2,
+          specialRequirements: ['Chemical handling certificate', 'Visual observer'],
+        },
+        pricingModel: {
+          type: 'per-hectare',
+          baseRate: 28,
+          setupFee: 260,
+          minimumCharge: 900,
+          additionalFees: [],
+        },
+        performance: {
+          sprayRate: {
+            hectaresPerHour: 32,
+            litresPerMinute: 8,
+            swathWidth: 9,
+          },
+          enduranceModifier: 0.85,
+        },
+      });
+
+      setSelectedAircraft(aircraftId);
+      setSelectedConfiguration(configurationId);
+      showNotice('success', 'Starter aircraft, spray kit, and configuration are ready for mission authorization.');
+    } catch (error) {
+      showNotice('error', error instanceof Error ? error.message : 'Failed to create starter fleet data.');
+    } finally {
+      setSeedingFleet(false);
+    }
+  };
+
+  const handleSaveDraft = async () => {
+    if (!canPersistMission) {
+      showNotice('warning', 'Planning preview saved visually. Add a real aircraft configuration before persisting a mission record.');
+      return;
+    }
+
+    setSaving(true);
+    try {
+      const payload = buildMissionPayload(selectedMission?.id);
+
+      if (selectedMission) {
+        if (['Flying', 'Completed', 'Locked'].includes(selectedMission.status)) {
+          showNotice('error', `Cannot update a mission in ${selectedMission.status} status from the planner.`);
+          return;
+        }
+
+        const updates = { ...payload } as Partial<MissionRecord>;
+        delete updates.missionNumber;
+        delete updates.status;
+        await updateMission(selectedMission.id, updates);
+        showNotice('success', 'Mission plan updated.');
+        return;
+      }
+
+      const missionId = await createMission(payload);
+      if (missionId) {
+        setSelectedMissionId(missionId);
+        showNotice('success', 'Mission draft saved.');
+      } else {
+        showNotice('error', 'Mission draft could not be saved.');
+      }
+    } catch (error) {
+      showNotice('error', error instanceof Error ? error.message : 'Failed to save mission draft.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleAuthorizeMission = async () => {
+    if (!boundaryReady) {
+      showNotice('error', 'Draw or upload a valid mission boundary before authorization.');
+      return;
+    }
+
+    if (!canPersistMission) {
+      showNotice('info', 'Mission is ready as a planning preview. Add real aircraft/configuration data to authorize and persist it.');
+      return;
+    }
+
+    setSaving(true);
+    try {
+      if (selectedMission && ['Flying', 'Completed', 'Locked'].includes(selectedMission.status)) {
+        showNotice('error', `Cannot re-authorize a mission in ${selectedMission.status} status.`);
+        return;
+      }
+
+      const missionId = await createAuthorizedMission(
+        buildMissionPayload(selectedMission?.id),
+        'Mission Planner Authorization',
+        'Authorized from the mission planning dashboard.',
+        selectedMission?.id
+      );
+
+      if (missionId) {
+        setSelectedMissionId(missionId);
+        showNotice('success', 'Mission authorized and moved to Approved.');
+      } else {
+        showNotice('error', 'Mission authorization could not be completed.');
+      }
+    } catch (error) {
+      showNotice('error', error instanceof Error ? error.message : 'Failed to authorize mission.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const buildFlightPlan = (mission: MissionRecord): FlightPlan => {
+    const now = new Date().toISOString();
+    const home = boundaryCoords[0] || [mission.location.coordinates.latitude, mission.location.coordinates.longitude];
+    const waypoints = [
+      {
+        id: 'wp_home',
+        latitude: home[0],
+        longitude: home[1],
+        altitude: 0,
+        action: 'fly-to' as const,
+      },
+      ...boundaryCoords.map(([latitude, longitude], index) => ({
+        id: `wp_${index + 1}`,
+        latitude,
+        longitude,
+        altitude: flightAltitude,
+        action: index === 0 ? 'start-spray' as const : index === boundaryCoords.length - 1 ? 'stop-spray' as const : 'fly-to' as const,
+      })),
+      {
+        id: 'wp_rtl',
+        latitude: home[0],
+        longitude: home[1],
+        altitude: flightAltitude,
+        action: 'rtl' as const,
+      },
+    ];
+
+    return {
+      id: mission.flightPlan?.id || `flightplan_${Date.now()}`,
+      missionId: mission.id,
+      planName: `${mission.missionName} operational flight plan`,
+      planType: 'automated',
+      flightParameters: {
+        altitude: flightAltitude,
+        groundSpeed,
+        flightPattern: 'parallel',
+        overlapForward,
+        overlapSide,
+        lineSpacing,
+      },
+      route: {
+        waypoints,
+        homePosition: {
+          latitude: home[0],
+          longitude: home[1],
+          altitude: 0,
+        },
+        alternateHomeSites: [
+          {
+            name: 'Field access point',
+            latitude: home[0] + 0.001,
+            longitude: home[1] + 0.001,
+            altitude: 0,
+          },
+        ],
+      },
+      timing: {
+        estimatedTotalTime: estimatedDuration + 30 + batteryChanges * 6,
+        estimatedFlightTime: estimatedDuration,
+        estimatedSetupTime: 18,
+        estimatedPackupTime: 12,
+        batteryChangeTime: 6,
+        requiredBatteryChanges: batteryChanges,
+      },
+      safetyPlanning: {
+        emergencyLandingSites: [
+          {
+            id: 'els_primary',
+            name: 'Primary field edge',
+            latitude: home[0],
+            longitude: home[1],
+            suitabilityRating: 'good',
+            notes: 'Clear approach from field access track.',
+          },
+          {
+            id: 'els_secondary',
+            name: 'Secondary access point',
+            latitude: home[0] + 0.001,
+            longitude: home[1] + 0.001,
+            suitabilityRating: 'adequate',
+            notes: 'Use if primary edge is obstructed.',
+          },
+        ],
+        noFlyZones: exclusionZones > 0
+          ? [
+              {
+                id: 'nfz_boundary_buffer',
+                name: 'Mapped exclusion buffer',
+                coordinates: boundaryCoords.slice(0, Math.min(boundaryCoords.length, 4)).map(([latitude, longitude]) => ({
+                  latitude,
+                  longitude,
+                })),
+                reason: `${exclusionZones} exclusion zone${exclusionZones === 1 ? '' : 's'} set during planning`,
+              },
+            ]
+          : [],
+        contingencyProcedures: [
+          'Abort and return to home if gusts exceed aircraft limit.',
+          'Pause application before any manual avoidance manoeuvre.',
+          'Record deviations and chemical usage after landing.',
+        ],
+      },
+      createdBy: 'current_user',
+      approvedBy: mission.approvals.flyingAuthorization?.authorizedBy,
+      approvedAt: mission.approvals.flyingAuthorization?.authorizedAt,
+      createdAt: mission.flightPlan?.createdAt || now,
+      updatedAt: now,
+    };
+  };
+
+  const buildFlightExecution = (mission: MissionRecord): FlightExecution => {
+    const now = new Date();
+    const start = new Date(now.getTime() - completionFlightTime * 60 * 1000);
+    const areaMissed = Math.max(0, roundOne(missionArea - completionArea));
+
+    return {
+      id: mission.flightExecution?.id || `execution_${Date.now()}`,
+      missionId: mission.id,
+      flightPlanId: mission.flightPlan?.id || `flightplan_${mission.id}`,
+      executionDate: now.toISOString(),
+      crew: {
+        pilot: {
+          userId: 'current_user',
+          licenseNumber: 'RePL-FTF-001',
+          qualifications: ['RePL', 'Chemical handling certificate'],
+        },
+        visualObserver: {
+          userId: 'visual_observer',
+          qualifications: ['Visual observer briefing'],
+        },
+        crp: {
+          userId: 'current_user',
+          licenseNumber: 'CRP-FTF-001',
+          present: true,
+        },
+      },
+      actualFlightData: {
+        startTime: start.toISOString(),
+        endTime: now.toISOString(),
+        totalFlightTime: completionFlightTime,
+        actualAltitudes: {
+          minimum: Math.max(0, flightAltitude - 3),
+          maximum: flightAltitude + 3,
+          average: flightAltitude,
+        },
+        actualGroundSpeed: {
+          minimum: Math.max(0, groundSpeed - 3),
+          maximum: groundSpeed + 3,
+          average: groundSpeed,
+        },
+        batteryChanges,
+        distanceTraveled: roundOne(perimeterKm + flightLines * lineSpacing / 1000),
+      },
+      deviations: {
+        timeDeviation: completionFlightTime - estimatedDuration,
+        routeDeviations: [],
+        altitudeDeviations: [],
+      },
+      results: {
+        missionStatus: completionStatus,
+        areaCompleted: completionArea,
+        areaMissed,
+        reasonsForDeviations: completionNotes.trim() ? [completionNotes.trim()] : [],
+        qualityAssessment: {
+          coverageQuality: completionStatus === 'successful' ? 'good' : completionStatus === 'partially-successful' ? 'adequate' : 'poor',
+          overlapAchieved: overlapSide,
+          gapsIdentified: areaMissed > 0,
+          reworkRequired: completionStatus !== 'successful' || areaMissed > 0,
+        },
+      },
+      issues: [],
+      postFlightChecks: {
+        aircraftInspection: {
+          completed: true,
+          completedBy: 'current_user',
+          completedAt: now.toISOString(),
+          issues: [],
+        },
+        equipmentInspection: {
+          completed: true,
+          completedBy: 'current_user',
+          completedAt: now.toISOString(),
+          issues: [],
+          cleaningRequired: true,
+          calibrationRequired: false,
+        },
+        dataBackup: {
+          completed: true,
+          location: 'Mission local archive',
+          verifiedIntegrity: true,
+        },
+      },
+      createdAt: mission.flightExecution?.createdAt || now.toISOString(),
+      updatedAt: now.toISOString(),
+    };
+  };
+
+  const handleGenerateFlightPlan = async () => {
+    if (!selectedMission) {
+      showNotice('info', 'Save or authorize a mission before generating a flight plan.');
+      return;
+    }
+
+    setSaving(true);
+    try {
+      await updateFlightPlan(selectedMission.id, buildFlightPlan(selectedMission));
+      showNotice('success', 'Flight plan generated from the current mission area and operating settings.');
+    } catch (error) {
+      showNotice('error', error instanceof Error ? error.message : 'Failed to generate flight plan.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleAuthorizeForFlight = async () => {
+    if (!selectedMission?.flightPlan) {
+      showNotice('warning', 'Generate a flight plan before authorizing flight.');
+      return;
+    }
+
+    setSaving(true);
+    try {
+      await approveMission(
+        selectedMission.id,
+        'flying',
+        'Flight Authorization',
+        flightAuthorizationComments.trim() || 'Authorized for flight from mission planner.'
+      );
+      showNotice('success', 'Flight authorization recorded. The mission can now be started.');
+    } catch (error) {
+      showNotice('error', error instanceof Error ? error.message : 'Failed to authorize flight.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleStartFlying = async () => {
+    if (!selectedMission) {
+      showNotice('info', 'Select an approved mission before starting flight.');
+      return;
+    }
+
+    if (!canStartFlight) {
+      showNotice('warning', 'Generate a flight plan and record flight authorization before starting.');
+      return;
+    }
+
+    setSaving(true);
+    try {
+      await transitionMissionStatus(selectedMission.id, 'Flying', 'Started from mission planning screen.');
+      showNotice('success', 'Mission moved to Flying.');
+    } catch (error) {
+      showNotice('error', error instanceof Error ? error.message : 'Failed to start mission.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleRecordCompletion = async () => {
+    if (!selectedMission?.flightPlan) {
+      showNotice('warning', 'A flight plan is required before recording completion.');
+      return;
+    }
+
+    setSaving(true);
+    try {
+      await updateFlightExecution(selectedMission.id, buildFlightExecution(selectedMission));
+      showNotice('success', 'Flight execution captured. You can now mark the mission completed.');
+    } catch (error) {
+      showNotice('error', error instanceof Error ? error.message : 'Failed to record flight execution.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleCompleteMission = async () => {
+    if (!selectedMission?.flightExecution) {
+      showNotice('warning', 'Record flight execution before marking the mission completed.');
+      return;
+    }
+
+    setSaving(true);
+    try {
+      await approveMission(
+        selectedMission.id,
+        'completion',
+        'Mission Completion',
+        completionNotes.trim() || 'Mission completed from mission planner.'
+      );
+      await transitionMissionStatus(selectedMission.id, 'Completed', 'Completion captured from mission planning screen.');
+      showNotice('success', 'Mission marked Completed.');
+    } catch (error) {
+      showNotice('error', error instanceof Error ? error.message : 'Failed to complete mission.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Box sx={{ maxWidth: 1500, mx: 'auto' }}>
+      <Stack
+        direction={{ xs: 'column', md: 'row' }}
+        justifyContent="space-between"
+        alignItems={{ xs: 'flex-start', md: 'flex-end' }}
+        spacing={2}
+        sx={{ mb: 3 }}
+      >
+        <Stack direction="row" spacing={2} alignItems="center">
+          <Box
+            sx={{
+              width: 54,
+              height: 54,
+              borderRadius: '8px',
+              bgcolor: alpha(theme.palette.primary.main, 0.08),
+              color: 'primary.main',
+              display: 'grid',
+              placeItems: 'center',
+            }}
+          >
+            <FlightTakeoffIcon sx={{ fontSize: 32 }} />
+          </Box>
           <Box>
-            <Typography variant="h3" sx={{ fontWeight: 800, color: 'primary.dark' }}>
-              Mission Planning
+            <Typography variant="h3" sx={{ fontWeight: 800, color: 'primary.dark', fontSize: { xs: '2rem', md: '2.6rem' } }}>
+              Mission Planner
             </Typography>
-            <Typography variant="h6" color="text.secondary" sx={{ fontWeight: 400 }}>
-              Plan and authorize drone missions with complete compliance
+            <Typography color="text.secondary" sx={{ fontSize: '1rem' }}>
+              Plan and authorize drone missions with complete compliance.
             </Typography>
           </Box>
-        </Box>
-      </Box>
+        </Stack>
 
-      <Grid container spacing={3}>
-        {/* Progress Stepper */}
-        <Grid size={{ xs: 12 }}>
-          <Card sx={{ mb: 3 }}>
-            <CardContent sx={{ p: 3 }}>
-              <Stepper activeStep={activeStep} alternativeLabel>
-                {MISSION_STEPS.map((step, index) => (
-                  <Step key={step.label}>
-                    <StepLabel
-                      StepIconProps={{
-                        sx: {
-                          '&.Mui-completed': { color: 'success.main' },
-                          '&.Mui-active': { color: 'primary.main' },
-                        },
+        <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+          <StatusPill label={`${readinessPercent}% Ready`} tone={readinessPercent === 100 ? 'success' : 'warning'} />
+          {selectedMission && (
+            <StatusPill label={`${selectedMission.missionNumber} ${selectedMission.status}`} tone={STATUS_TONE[selectedMission.status]} />
+          )}
+          <StatusPill label="APVMA Compliant" tone="success" />
+          <StatusPill label={`Wind ${windDirection} ${windSpeed}-${windGust} km/h`} tone="info" />
+        </Stack>
+      </Stack>
+
+      <Card
+        elevation={0}
+        sx={{
+          mb: 2,
+          borderRadius: '8px',
+          border: '1px solid rgba(20, 58, 26, 0.1)',
+          bgcolor: 'rgba(255,255,255,0.96)',
+        }}
+      >
+        <CardContent sx={{ py: 2, '&:last-child': { pb: 2 } }}>
+          <Grid container spacing={1.5}>
+            {PLANNER_STEPS.map((step, index) => {
+              const complete = index < 3 || readinessPercent === 100;
+              return (
+                <Grid key={step.label} size={{ xs: 6, md: 3 }}>
+                  <Stack direction="row" alignItems="center" spacing={1.25}>
+                    <Box
+                      sx={{
+                        width: 28,
+                        height: 28,
+                        borderRadius: '50%',
+                        display: 'grid',
+                        placeItems: 'center',
+                        bgcolor: complete ? 'primary.main' : alpha(theme.palette.primary.main, 0.16),
+                        color: complete ? 'white' : 'primary.dark',
+                        fontSize: '0.78rem',
+                        fontWeight: 900,
                       }}
                     >
-                      <Typography variant="subtitle2" fontWeight={600}>
-                        {step.label}
-                      </Typography>
-                      <Typography variant="caption" color="text.secondary">
-                        {step.description}
-                      </Typography>
-                    </StepLabel>
-                  </Step>
-                ))}
-              </Stepper>
-            </CardContent>
-          </Card>
+                      {index + 1}
+                    </Box>
+                    <Box sx={{ minWidth: 0 }}>
+                      <Typography sx={{ fontSize: '0.82rem', fontWeight: 900 }}>{step.label}</Typography>
+                      <Typography sx={{ fontSize: '0.72rem', color: 'text.secondary' }}>{step.detail}</Typography>
+                    </Box>
+                  </Stack>
+                </Grid>
+              );
+            })}
+          </Grid>
+        </CardContent>
+      </Card>
+
+      {!canPersistMission && (
+        <Alert
+          severity="info"
+          sx={{ mb: 2, borderRadius: '8px' }}
+          action={
+            <Button color="inherit" size="small" onClick={handleSeedStarterFleet} disabled={seedingFleet}>
+              {seedingFleet ? 'Adding...' : 'Add starter fleet'}
+            </Button>
+          }
+        >
+          This planner is using demo aircraft/equipment values because no compatible aircraft configuration is saved yet. The UI is usable for planning, but mission persistence needs real fleet data.
+        </Alert>
+      )}
+
+      <Grid container spacing={2}>
+        <Grid size={{ xs: 12, lg: 8 }}>
+          <Panel
+            title="Mission Boundary"
+            icon={<MapIcon />}
+            action={<StatusPill label={`${missionArea.toFixed(1)} ha`} tone="info" />}
+            sx={{ overflow: 'hidden' }}
+          >
+            <Box
+              sx={{
+                position: 'relative',
+                '& .leaflet-control-layers': { borderRadius: '8px', border: '1px solid rgba(20, 58, 26, 0.15)' },
+              }}
+            >
+              <FieldBoundaryEditor
+                coords={boundaryCoords}
+                onCoordsChange={setBoundaryCoords}
+                onAreaChange={setMissionArea}
+                onBoundaryFile={setBoundaryFile}
+                mapHeight={580}
+              />
+              <Box
+                sx={{
+                  position: 'absolute',
+                  left: 16,
+                  top: 66,
+                  zIndex: 500,
+                  borderRadius: '8px',
+                  bgcolor: 'rgba(6, 36, 7, 0.88)',
+                  color: 'white',
+                  px: 1.5,
+                  py: 1,
+                  boxShadow: '0 10px 24px rgba(0,0,0,0.22)',
+                }}
+              >
+                <Stack direction="row" spacing={1} alignItems="center">
+                  <CloudQueueIcon sx={{ fontSize: 18, color: '#a8e2af' }} />
+                  <Box>
+                    <Typography sx={{ fontSize: '0.78rem', fontWeight: 900 }}>
+                      {windDirection} {windSpeed}-{windGust} km/h
+                    </Typography>
+                    <Typography sx={{ fontSize: '0.64rem', color: alpha(theme.palette.common.white, 0.72) }}>Wind direction</Typography>
+                  </Box>
+                </Stack>
+              </Box>
+            </Box>
+
+            <Grid container spacing={1.25} sx={{ mt: 1.5 }}>
+              {[
+                ['Total Area', `${missionArea.toFixed(1)} ha`, <MapIcon />],
+                ['Perimeter', `${perimeterKm.toFixed(2)} km`, <LayersIcon />],
+                ['Buffer Zones', `${bufferZones} active`, <WarningAmberIcon />],
+                ['Exclusion Zones', `${exclusionZones} active`, <GavelIcon />],
+              ].map(([label, value, icon]) => (
+                <Grid key={String(label)} size={{ xs: 6, md: 3 }}>
+                  <Box sx={{ p: 1.25, borderRadius: '8px', bgcolor: alpha(theme.palette.primary.main, 0.04) }}>
+                    <Stack direction="row" spacing={0.75} alignItems="center" sx={{ color: 'primary.main', mb: 0.5 }}>
+                      {icon}
+                      <Typography sx={{ fontSize: '0.7rem', fontWeight: 800, color: 'text.secondary' }}>{label}</Typography>
+                    </Stack>
+                    <Typography sx={{ fontSize: '1.1rem', fontWeight: 900 }}>{value}</Typography>
+                  </Box>
+                </Grid>
+              ))}
+            </Grid>
+
+            <Grid container spacing={1.25} sx={{ mt: 1.5 }}>
+              <Grid size={{ xs: 6, md: 2 }}>
+                <TextField
+                  label="Perimeter km"
+                  type="number"
+                  value={perimeterKm}
+                  onChange={(event) => setPerimeterKm(readNumber(event.target.value, 0))}
+                  fullWidth
+                  size="small"
+                />
+              </Grid>
+              <Grid size={{ xs: 6, md: 2 }}>
+                <TextField
+                  label="Buffers"
+                  type="number"
+                  value={bufferZones}
+                  onChange={(event) => setBufferZones(readNumber(event.target.value, 0))}
+                  fullWidth
+                  size="small"
+                />
+              </Grid>
+              <Grid size={{ xs: 6, md: 2 }}>
+                <TextField
+                  label="Exclusions"
+                  type="number"
+                  value={exclusionZones}
+                  onChange={(event) => setExclusionZones(readNumber(event.target.value, 0))}
+                  fullWidth
+                  size="small"
+                />
+              </Grid>
+              <Grid size={{ xs: 6, md: 2 }}>
+                <TextField
+                  label="Batteries"
+                  type="number"
+                  value={batteryChanges}
+                  onChange={(event) => setBatteryChanges(readNumber(event.target.value, 0))}
+                  fullWidth
+                  size="small"
+                />
+              </Grid>
+              <Grid size={{ xs: 6, md: 2 }}>
+                <TextField
+                  label="Flight lines"
+                  type="number"
+                  value={flightLines}
+                  onChange={(event) => setFlightLines(readNumber(event.target.value, 0))}
+                  fullWidth
+                  size="small"
+                />
+              </Grid>
+              <Grid size={{ xs: 6, md: 2 }}>
+                <TextField
+                  label="Turns"
+                  type="number"
+                  value={turnAroundCount}
+                  onChange={(event) => setTurnAroundCount(readNumber(event.target.value, 0))}
+                  fullWidth
+                  size="small"
+                />
+              </Grid>
+            </Grid>
+
+            <Box sx={{ mt: 1.5 }}>
+              <Typography variant="subtitle2" sx={{ mb: 1 }}>
+                Mission Notes
+              </Typography>
+              <TextField
+                fullWidth
+                multiline
+                minRows={2}
+                value={missionNotes}
+                onChange={(event) => setMissionNotes(event.target.value)}
+                InputProps={{ sx: { fontSize: '0.86rem' } }}
+              />
+            </Box>
+          </Panel>
         </Grid>
 
-        {/* Step Content */}
-        <Grid size={{ xs: 12, lg: 8 }}>
-          {/* Step 0: Mission Area */}
-          {activeStep === 0 && (
-            <Card>
-              <CardContent sx={{ p: 3 }}>
-                <Typography variant="h5" gutterBottom sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                  <MapIcon /> Define Mission Area
-                </Typography>
+        <Grid size={{ xs: 12, lg: 4 }}>
+          <Stack spacing={2}>
+            <Panel
+              title="Mission State"
+              icon={<FlightTakeoffIcon />}
+              action={
+                <Button size="small" variant="text" onClick={resetPlanner}>
+                  New
+                </Button>
+              }
+            >
+              <Stack spacing={1}>
+                {selectedMission ? (
+                  <Box sx={{ p: 1.25, borderRadius: '8px', bgcolor: alpha(theme.palette.primary.main, 0.05) }}>
+                    <Stack direction="row" alignItems="center" justifyContent="space-between" spacing={1}>
+                      <Box sx={{ minWidth: 0 }}>
+                        <Typography sx={{ fontSize: '0.82rem', fontWeight: 900 }} noWrap>
+                          {selectedMission.missionNumber}
+                        </Typography>
+                        <Typography sx={{ fontSize: '0.72rem', color: 'text.secondary' }} noWrap>
+                          {selectedMission.missionName}
+                        </Typography>
+                      </Box>
+                      <StatusPill label={selectedMission.status} tone={STATUS_TONE[selectedMission.status]} />
+                    </Stack>
+                  </Box>
+                ) : (
+                  <Typography sx={{ fontSize: '0.78rem', color: 'text.secondary' }}>
+                    Build a new mission plan, or load a saved mission below.
+                  </Typography>
+                )}
 
-                <Grid container spacing={3} sx={{ mb: 3 }}>
-                  <Grid size={{ xs: 12, md: 6 }}>
-                    <TextField
-                      label="Mission Name"
-                      value={missionName}
-                      onChange={(e) => setMissionName(e.target.value)}
-                      error={!!errors.missionName}
-                      helperText={errors.missionName}
-                      fullWidth
-                      required
-                    />
+                <Divider />
+
+                {sortedMissions.length === 0 ? (
+                  <Typography sx={{ fontSize: '0.76rem', color: 'text.secondary' }}>
+                    No missions saved yet.
+                  </Typography>
+                ) : (
+                  sortedMissions.slice(0, 5).map((mission) => (
+                    <Button
+                      key={mission.id}
+                      onClick={() => loadMissionIntoPlanner(mission)}
+                      variant={mission.id === selectedMissionId ? 'contained' : 'outlined'}
+                      color={mission.id === selectedMissionId ? 'primary' : 'inherit'}
+                      sx={{
+                        justifyContent: 'space-between',
+                        textTransform: 'none',
+                        borderRadius: '8px',
+                        px: 1.25,
+                        py: 1,
+                        minHeight: 54,
+                      }}
+                    >
+                      <Box sx={{ textAlign: 'left', minWidth: 0, pr: 1 }}>
+                        <Typography sx={{ fontSize: '0.76rem', fontWeight: 900 }} noWrap>
+                          {mission.missionName}
+                        </Typography>
+                        <Typography sx={{ fontSize: '0.66rem', opacity: 0.72 }} noWrap>
+                          {mission.missionNumber} - {new Date(mission.updatedAt).toLocaleDateString('en-AU')}
+                        </Typography>
+                      </Box>
+                      <StatusPill label={mission.status} tone={STATUS_TONE[mission.status]} />
+                    </Button>
+                  ))
+                )}
+              </Stack>
+            </Panel>
+
+            <Panel title="Mission Details" icon={<GrassIcon />}>
+              <Stack spacing={1.5}>
+                <Grid container spacing={1.25}>
+                  <Grid size={{ xs: 12, sm: 6 }}>
+                    <TextField label="Client" value={clientName} onChange={(event) => setClientName(event.target.value)} fullWidth size="small" />
                   </Grid>
-                  <Grid size={{ xs: 12, md: 6 }}>
-                    <TextField
-                      label="Client Name"
-                      value={clientName}
-                      onChange={(e) => setClientName(e.target.value)}
-                      fullWidth
-                    />
+                  <Grid size={{ xs: 12, sm: 6 }}>
+                    <TextField label="Property" value={propertyName} onChange={(event) => setPropertyName(event.target.value)} fullWidth size="small" />
+                  </Grid>
+                  <Grid size={{ xs: 12, sm: 6 }}>
+                    <TextField label="Field / Paddock" value={fieldName} onChange={(event) => setFieldName(event.target.value)} fullWidth size="small" />
+                  </Grid>
+                  <Grid size={{ xs: 12, sm: 6 }}>
+                    <TextField label="Mission Name" value={missionName} onChange={(event) => setMissionName(event.target.value)} fullWidth size="small" />
                   </Grid>
                   <Grid size={{ xs: 12 }}>
-                    <FormControl fullWidth error={!!errors.missionType} required>
+                    <FormControl fullWidth size="small">
                       <InputLabel>Mission Type</InputLabel>
-                      <Select
-                        value={missionType}
-                        onChange={(e) => setMissionType(e.target.value)}
-                        label="Mission Type"
-                      >
+                      <Select value={missionType} label="Mission Type" onChange={(event) => setMissionType(event.target.value as MissionType)}>
                         {MISSION_TYPES.map((type) => (
                           <MenuItem key={type.value} value={type.value}>
                             <Box>
-                              <Typography variant="body1">{type.label}</Typography>
-                              <Typography variant="caption" color="text.secondary">
-                                {type.description}
-                              </Typography>
+                              <Typography sx={{ fontSize: '0.86rem', fontWeight: 700 }}>{type.label}</Typography>
+                              <Typography sx={{ fontSize: '0.72rem', color: 'text.secondary' }}>{type.description}</Typography>
                             </Box>
                           </MenuItem>
                         ))}
                       </Select>
-                      {errors.missionType && (
-                        <Typography variant="caption" color="error" sx={{ mt: 0.5 }}>
-                          {errors.missionType}
-                        </Typography>
-                      )}
                     </FormControl>
+                  </Grid>
+                  <Grid size={{ xs: 12, sm: 6 }}>
+                    <FormControl fullWidth size="small">
+                      <InputLabel>Priority</InputLabel>
+                      <Select value={priority} label="Priority" onChange={(event) => setPriority(event.target.value as MissionPriority)}>
+                        {MISSION_PRIORITIES.map((item) => (
+                          <MenuItem key={item.value} value={item.value}>
+                            {item.label}
+                          </MenuItem>
+                        ))}
+                      </Select>
+                    </FormControl>
+                  </Grid>
+                  <Grid size={{ xs: 12, sm: 6 }}>
+                    <TextField
+                      label="Duration min"
+                      type="number"
+                      value={estimatedDuration}
+                      onChange={(event) => setEstimatedDuration(readNumber(event.target.value, 0))}
+                      fullWidth
+                      size="small"
+                    />
+                  </Grid>
+                  <Grid size={{ xs: 12 }}>
+                    <TextField
+                      label="Scheduled"
+                      type="datetime-local"
+                      value={scheduledDate}
+                      onChange={(event) => setScheduledDate(event.target.value)}
+                      fullWidth
+                      size="small"
+                      InputLabelProps={{ shrink: true }}
+                    />
+                  </Grid>
+                </Grid>
+              </Stack>
+            </Panel>
+
+            <Panel title="Aircraft & Equipment" icon={<AirplanemodeActiveIcon />}>
+              <Stack spacing={1.5}>
+                <FormControl fullWidth size="small">
+                  <InputLabel>Aircraft</InputLabel>
+                  <Select value={selectedAircraft} label="Aircraft" onChange={(event) => setSelectedAircraft(event.target.value)}>
+                    {aircraftOptions.map((item) => (
+                      <MenuItem key={item.id} value={item.id}>
+                        {item.registration} - {item.model}
+                      </MenuItem>
+                    ))}
+                  </Select>
+                </FormControl>
+                <FormControl fullWidth size="small">
+                  <InputLabel>Equipment Kit</InputLabel>
+                  <Select value={selectedConfiguration} label="Equipment Kit" onChange={(event) => setSelectedConfiguration(event.target.value)}>
+                    {configurationOptions
+                      .filter((item) => !('aircraftId' in item) || item.aircraftId === selectedAircraft)
+                      .map((item) => (
+                        <MenuItem key={item.id} value={item.id}>
+                          {item.name}
+                        </MenuItem>
+                      ))}
+                  </Select>
+                </FormControl>
+                <Divider />
+                <DetailRow label="Spray System" value={selectedConfigurationData.kitName} />
+                <DetailRow label="Tank Capacity" value={selectedConfigurationData.tankCapacity} />
+                <DetailRow label="Swath Width" value={selectedConfigurationData.swathWidth} />
+                <DetailRow label="Payload Limit" value={`${selectedAircraftData.maxPayloadWeight} kg`} />
+              </Stack>
+            </Panel>
+
+            <Panel title="Chemical Mix Summary" icon={<ScienceIcon />}>
+              <Stack spacing={1.25}>
+                <Grid container spacing={1.25}>
+                  <Grid size={{ xs: 6 }}>
+                    <TextField
+                      label="Water L/ha"
+                      type="number"
+                      value={applicationRate}
+                      onChange={(event) => setApplicationRate(readNumber(event.target.value, 0))}
+                      fullWidth
+                      size="small"
+                    />
+                  </Grid>
+                  <Grid size={{ xs: 6 }}>
+                    <TextField
+                      label="Chemical cost"
+                      type="number"
+                      value={chemicalCost}
+                      onChange={(event) => setChemicalCost(readNumber(event.target.value, 0))}
+                      fullWidth
+                      size="small"
+                    />
                   </Grid>
                 </Grid>
 
-                <Divider sx={{ my: 3 }} />
-
-                <Typography variant="h6" gutterBottom>
-                  Mission Boundary
-                </Typography>
-                <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                  Upload KML/KMZ/SHP files or draw the mission area directly on the map
-                </Typography>
-
-                {errors.boundary && (
-                  <Alert severity="error" sx={{ mb: 2 }}>
-                    {errors.boundary}
-                  </Alert>
-                )}
-
-                <FieldBoundaryEditor
-                  coords={boundaryCoords}
-                  onCoordsChange={setBoundaryCoords}
-                  onAreaChange={handleAreaChange}
-                  onBoundaryFile={handleBoundaryFileUpload}
-                  mapHeight={400}
-                />
-              </CardContent>
-            </Card>
-          )}
-
-          {/* Step 1: Aircraft & Equipment */}
-          {activeStep === 1 && (
-            <Card>
-              <CardContent sx={{ p: 3 }}>
-                <Typography variant="h5" gutterBottom sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                  <FlightTakeoffIcon /> Aircraft & Equipment
-                </Typography>
-
-                <Grid container spacing={3}>
-                  <Grid size={{ xs: 12, md: 6 }}>
-                    <FormControl fullWidth error={!!errors.aircraft} required>
-                      <InputLabel>Select Aircraft</InputLabel>
-                      <Select
-                        value={selectedAircraft}
-                        onChange={(e) => setSelectedAircraft(e.target.value)}
-                        label="Select Aircraft"
-                      >
-                        {aircraft.map((ac) => (
-                          <MenuItem key={ac.id} value={ac.id}>
-                            <Box>
-                              <Typography variant="body1">
-                                {ac.registration} - {ac.model}
-                              </Typography>
-                              <Typography variant="caption" color="text.secondary">
-                                {ac.model} • Max Load: {ac.operationalLimits.maxPayloadWeight}kg
-                              </Typography>
-                            </Box>
-                          </MenuItem>
-                        ))}
-                      </Select>
-                      {errors.aircraft && (
-                        <Typography variant="caption" color="error" sx={{ mt: 0.5 }}>
-                          {errors.aircraft}
-                        </Typography>
-                      )}
-                    </FormControl>
-                  </Grid>
-
-                  <Grid size={{ xs: 12, md: 6 }}>
-                    <FormControl fullWidth error={!!errors.kit} required>
-                      <InputLabel>Equipment Kit</InputLabel>
-                      <Select
-                        value={selectedKit}
-                        onChange={(e) => setSelectedKit(e.target.value)}
-                        label="Equipment Kit"
-                      >
-                        {equipmentKits.map((kit) => (
-                          <MenuItem key={kit.id} value={kit.id}>
-                            <Box>
-                              <Typography variant="body1">{kit.name}</Typography>
-                              <Typography variant="caption" color="text.secondary">
-                                {kit.type} • {kit.description}
-                              </Typography>
-                            </Box>
-                          </MenuItem>
-                        ))}
-                      </Select>
-                      {errors.kit && (
-                        <Typography variant="caption" color="error" sx={{ mt: 0.5 }}>
-                          {errors.kit}
-                        </Typography>
-                      )}
-                    </FormControl>
-                  </Grid>
-                </Grid>
-
-                {selectedAircraftData && selectedKitData && (
-                  <Box sx={{ mt: 3, p: 2, bgcolor: alpha(theme.palette.primary.main, 0.05), borderRadius: 2 }}>
-                    <Typography variant="h6" gutterBottom>Mission Configuration Summary</Typography>
-                    <Stack direction="row" spacing={2} flexWrap="wrap">
-                      <Chip
-                        label={`Aircraft: ${selectedAircraftData.registration}`}
-                        color="primary"
-                        variant="outlined"
-                      />
-                      <Chip
-                        label={`Kit: ${selectedKitData.name}`}
-                        color="primary"
-                        variant="outlined"
-                      />
-                      <Chip
-                        label={`Area: ${missionArea.toFixed(1)} ha`}
-                        color="secondary"
-                        variant="outlined"
-                      />
-                      {selectedMissionType && (
-                        <Chip
-                          label={`Type: ${selectedMissionType.label}`}
-                          color="info"
-                          variant="outlined"
+                {chemicalRows.map((chemical, index) => (
+                  <Box key={`${chemical.product}-${index}`} sx={{ p: 1, borderRadius: '8px', bgcolor: alpha(theme.palette.primary.main, 0.04) }}>
+                    <Grid container spacing={1} alignItems="center">
+                      <Grid size={{ xs: 12, sm: 5 }}>
+                        <TextField
+                          label="Product"
+                          value={chemical.product}
+                          onChange={(event) => updateChemical(index, 'product', event.target.value)}
+                          fullWidth
+                          size="small"
                         />
-                      )}
-                    </Stack>
+                      </Grid>
+                      <Grid size={{ xs: 5, sm: 3 }}>
+                        <TextField
+                          label="Rate / ha"
+                          type="number"
+                          value={chemical.ratePerHa}
+                          onChange={(event) => updateChemical(index, 'ratePerHa', event.target.value)}
+                          fullWidth
+                          size="small"
+                        />
+                      </Grid>
+                      <Grid size={{ xs: 4, sm: 2 }}>
+                        <FormControl fullWidth size="small">
+                          <InputLabel>Unit</InputLabel>
+                          <Select value={chemical.unit} label="Unit" onChange={(event) => updateChemical(index, 'unit', event.target.value)}>
+                            {['L', 'ml', 'kg', 'g'].map((unit) => (
+                              <MenuItem key={unit} value={unit}>
+                                {unit}
+                              </MenuItem>
+                            ))}
+                          </Select>
+                        </FormControl>
+                      </Grid>
+                      <Grid size={{ xs: 3, sm: 2 }}>
+                        <Typography sx={{ fontSize: '0.78rem', fontWeight: 900, textAlign: 'right' }}>
+                          {chemical.totalRequired} {chemical.unit}
+                        </Typography>
+                        {chemicals.length > 1 && (
+                          <Button
+                            size="small"
+                            color="error"
+                            onClick={() => removeChemical(index)}
+                            sx={{ minWidth: 0, px: 0.5, fontSize: '0.64rem' }}
+                          >
+                            Remove
+                          </Button>
+                        )}
+                      </Grid>
+                    </Grid>
                   </Box>
-                )}
-              </CardContent>
-            </Card>
-          )}
+                ))}
+                <Divider />
+                <DetailRow label="Water Volume" value={`${(missionArea * applicationRate).toFixed(0)} L`} />
+                <DetailRow label="Chemical Total" value={formatCurrency(chemicalCost)} />
+                <Button variant="outlined" size="small" onClick={addChemical} sx={{ borderRadius: '8px' }}>
+                  Add product
+                </Button>
+              </Stack>
+            </Panel>
 
-          {/* Step 2: Safety Analysis */}
-          {activeStep === 2 && (
-            <Card>
-              <CardContent sx={{ p: 3 }}>
-                <Typography variant="h5" gutterBottom sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                  <SecurityIcon /> Safety Analysis & JSA
-                </Typography>
+            <Panel title="Weather Window" icon={<CloudQueueIcon />}>
+              <Grid container spacing={1.25}>
+                <Grid size={{ xs: 12 }}>
+                  <DetailRow
+                    label="Window"
+                    value={`${formatDateTimeInput(new Date(scheduledDate))} - ${formatDateTimeInput(new Date(new Date(scheduledDate).getTime() + estimatedDuration * 60 * 1000)).slice(11)}`}
+                  />
+                </Grid>
+                <Grid size={{ xs: 6 }}>
+                  <TextField
+                    label="Wind direction"
+                    value={windDirection}
+                    onChange={(event) => setWindDirection(event.target.value.toUpperCase())}
+                    fullWidth
+                    size="small"
+                  />
+                </Grid>
+                <Grid size={{ xs: 6 }}>
+                  <TextField
+                    label="Wind km/h"
+                    type="number"
+                    value={windSpeed}
+                    onChange={(event) => setWindSpeed(readNumber(event.target.value, 0))}
+                    fullWidth
+                    size="small"
+                  />
+                </Grid>
+                <Grid size={{ xs: 6 }}>
+                  <TextField
+                    label="Gust km/h"
+                    type="number"
+                    value={windGust}
+                    onChange={(event) => setWindGust(readNumber(event.target.value, 0))}
+                    fullWidth
+                    size="small"
+                  />
+                </Grid>
+                <Grid size={{ xs: 6 }}>
+                  <TextField
+                    label="Temp C"
+                    type="number"
+                    value={temperature}
+                    onChange={(event) => setTemperature(readNumber(event.target.value, 0))}
+                    fullWidth
+                    size="small"
+                  />
+                </Grid>
+                <Grid size={{ xs: 6 }}>
+                  <TextField
+                    label="Rain %"
+                    type="number"
+                    value={rainChance}
+                    onChange={(event) => setRainChance(readNumber(event.target.value, 0))}
+                    fullWidth
+                    size="small"
+                  />
+                </Grid>
+                <Grid size={{ xs: 6 }}>
+                  <StatusPill
+                    label={windGust <= selectedAircraftData.maxWindSpeed ? 'Inside limit' : 'Over wind limit'}
+                    tone={windGust <= selectedAircraftData.maxWindSpeed ? 'success' : 'error'}
+                  />
+                </Grid>
+              </Grid>
+            </Panel>
 
-                {errors.jsa && (
-                  <Alert severity="error" sx={{ mb: 2 }}>
-                    {errors.jsa}
-                  </Alert>
-                )}
+            <Panel title="Cost Estimate" icon={<GavelIcon />} action={<StatusPill label={formatCurrency(totalEstimatedCost)} tone="info" />}>
+              <Grid container spacing={1.25}>
+                <Grid size={{ xs: 6 }}>
+                  <TextField
+                    label="Aircraft"
+                    type="number"
+                    value={aircraftCost}
+                    onChange={(event) => setAircraftCost(readNumber(event.target.value, 0))}
+                    fullWidth
+                    size="small"
+                  />
+                </Grid>
+                <Grid size={{ xs: 6 }}>
+                  <TextField
+                    label="Equipment"
+                    type="number"
+                    value={equipmentCost}
+                    onChange={(event) => setEquipmentCost(readNumber(event.target.value, 0))}
+                    fullWidth
+                    size="small"
+                  />
+                </Grid>
+                <Grid size={{ xs: 6 }}>
+                  <TextField
+                    label="Personnel"
+                    type="number"
+                    value={personnelCost}
+                    onChange={(event) => setPersonnelCost(readNumber(event.target.value, 0))}
+                    fullWidth
+                    size="small"
+                  />
+                </Grid>
+                <Grid size={{ xs: 6 }}>
+                  <TextField
+                    label="Travel"
+                    type="number"
+                    value={travelCost}
+                    onChange={(event) => setTravelCost(readNumber(event.target.value, 0))}
+                    fullWidth
+                    size="small"
+                  />
+                </Grid>
+              </Grid>
+            </Panel>
 
-                {jsaCompleted && (
-                  <Alert severity="success" sx={{ mb: 2 }}>
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                      <CheckCircleIcon />
-                      JSA completed and approved! JSA ID: {jsaId}
-                    </Box>
-                  </Alert>
-                )}
-
-                <JSASystem
-                  missionId={localMission?.id || ''}
-                  existingJSA={null}
-                  onJSAComplete={handleJSAComplete}
-                  onCancel={() => setActiveStep(1)}
-                  industryType={selectedMissionType?.industry}
+            <Panel
+              title="Flight Readiness"
+              icon={<FlightTakeoffIcon />}
+              action={
+                <StatusPill
+                  label={selectedMission?.status || 'No mission'}
+                  tone={selectedMission ? STATUS_TONE[selectedMission.status] : 'warning'}
                 />
-              </CardContent>
-            </Card>
-          )}
+              }
+            >
+              <Stack spacing={1.5}>
+                {!canUseFlightWorkflow && (
+                  <Alert severity="info" sx={{ borderRadius: '8px' }}>
+                    Authorize the mission first, then generate the flight plan and pre-flight authorization here.
+                  </Alert>
+                )}
 
-          {/* Step 3: Final Authorization */}
-          {activeStep === 3 && (
-            <Card>
-              <CardContent sx={{ p: 3 }}>
-                <Typography variant="h5" gutterBottom sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                  <CheckCircleIcon /> Mission Ready for Flight
-                </Typography>
+                <Stack spacing={0.75}>
+                  <DetailRow
+                    label="Flight Plan"
+                    value={<StatusPill label={selectedMission?.flightPlan ? 'Generated' : 'Missing'} tone={selectedMission?.flightPlan ? 'success' : 'warning'} />}
+                  />
+                  <DetailRow
+                    label="Flight Authorization"
+                    value={<StatusPill label={selectedMission?.approvals.flyingAuthorization ? 'Recorded' : 'Required'} tone={selectedMission?.approvals.flyingAuthorization ? 'success' : 'warning'} />}
+                  />
+                  <DetailRow
+                    label="Execution Record"
+                    value={<StatusPill label={selectedMission?.flightExecution ? 'Captured' : 'Not captured'} tone={selectedMission?.flightExecution ? 'success' : 'warning'} />}
+                  />
+                </Stack>
 
-                <Alert severity="success" sx={{ mb: 3 }}>
-                  All mission planning requirements have been completed successfully!
-                </Alert>
-
-                <Box sx={{ p: 3, bgcolor: alpha(theme.palette.success.main, 0.05), borderRadius: 2, mb: 3 }}>
-                  <Typography variant="h6" gutterBottom>Mission Summary</Typography>
-                  <Grid container spacing={2}>
-                    <Grid size={{ xs: 12, sm: 6 }}>
-                      <Typography variant="body2" color="text.secondary">Mission Name</Typography>
-                      <Typography variant="body1" fontWeight={600}>{missionName}</Typography>
-                    </Grid>
-                    <Grid size={{ xs: 12, sm: 6 }}>
-                      <Typography variant="body2" color="text.secondary">Mission Type</Typography>
-                      <Typography variant="body1" fontWeight={600}>{selectedMissionType?.label}</Typography>
-                    </Grid>
-                    <Grid size={{ xs: 12, sm: 6 }}>
-                      <Typography variant="body2" color="text.secondary">Mission Area</Typography>
-                      <Typography variant="body1" fontWeight={600}>{missionArea.toFixed(1)} hectares</Typography>
-                    </Grid>
-                    <Grid size={{ xs: 12, sm: 6 }}>
-                      <Typography variant="body2" color="text.secondary">Aircraft</Typography>
-                      <Typography variant="body1" fontWeight={600}>{selectedAircraftData?.registration}</Typography>
-                    </Grid>
-                    <Grid size={{ xs: 12, sm: 6 }}>
-                      <Typography variant="body2" color="text.secondary">Equipment</Typography>
-                      <Typography variant="body1" fontWeight={600}>{selectedKitData?.name}</Typography>
-                    </Grid>
-                    <Grid size={{ xs: 12, sm: 6 }}>
-                      <Typography variant="body2" color="text.secondary">JSA Status</Typography>
-                      <Typography variant="body1" fontWeight={600} color="success.main">
-                        ✓ Completed & Approved
-                      </Typography>
-                    </Grid>
+                <Grid container spacing={1.25}>
+                  <Grid size={{ xs: 6 }}>
+                    <TextField
+                      label="Altitude m"
+                      type="number"
+                      value={flightAltitude}
+                      onChange={(event) => setFlightAltitude(readNumber(event.target.value, 0))}
+                      fullWidth
+                      size="small"
+                    />
                   </Grid>
-                </Box>
+                  <Grid size={{ xs: 6 }}>
+                    <TextField
+                      label="Speed km/h"
+                      type="number"
+                      value={groundSpeed}
+                      onChange={(event) => setGroundSpeed(readNumber(event.target.value, 0))}
+                      fullWidth
+                      size="small"
+                    />
+                  </Grid>
+                  <Grid size={{ xs: 6 }}>
+                    <TextField
+                      label="Line spacing m"
+                      type="number"
+                      value={lineSpacing}
+                      onChange={(event) => setLineSpacing(readNumber(event.target.value, 0))}
+                      fullWidth
+                      size="small"
+                    />
+                  </Grid>
+                  <Grid size={{ xs: 6 }}>
+                    <TextField
+                      label="Side overlap %"
+                      type="number"
+                      value={overlapSide}
+                      onChange={(event) => setOverlapSide(readNumber(event.target.value, 0))}
+                      fullWidth
+                      size="small"
+                    />
+                  </Grid>
+                  <Grid size={{ xs: 12 }}>
+                    <TextField
+                      label="Forward overlap %"
+                      type="number"
+                      value={overlapForward}
+                      onChange={(event) => setOverlapForward(readNumber(event.target.value, 0))}
+                      fullWidth
+                      size="small"
+                    />
+                  </Grid>
+                </Grid>
 
                 <Button
-                  variant="contained"
-                  size="large"
-                  startIcon={<PlayArrowIcon />}
-                  onClick={handleStartMission}
-                  sx={{ fontWeight: 700, py: 1.5 }}
+                  variant="outlined"
+                  onClick={handleGenerateFlightPlan}
+                  disabled={saving || !canGenerateFlightPlan}
+                  sx={{ borderRadius: '8px' }}
                 >
-                  Authorize Mission for Flight
+                  {selectedMission?.flightPlan ? 'Regenerate Flight Plan' : 'Generate Flight Plan'}
                 </Button>
-              </CardContent>
-            </Card>
-          )}
-        </Grid>
 
-        {/* Sidebar */}
-        <Grid size={{ xs: 12, lg: 4 }}>
-          <Stack spacing={2}>
-            {/* Progress Card */}
-            <Card>
-              <CardContent>
-                <Typography variant="h6" gutterBottom>Mission Progress</Typography>
-                <Box sx={{ mb: 2 }}>
-                  <Typography variant="body2" color="text.secondary">
-                    Step {activeStep + 1} of {MISSION_STEPS.length}
-                  </Typography>
-                  <Box sx={{
-                    width: '100%',
-                    height: 8,
-                    bgcolor: 'grey.200',
-                    borderRadius: 4,
-                    mt: 1,
-                    overflow: 'hidden'
-                  }}>
-                    <Box sx={{
-                      width: `${((activeStep + 1) / MISSION_STEPS.length) * 100}%`,
-                      height: '100%',
-                      bgcolor: 'primary.main',
-                      borderRadius: 4,
-                      transition: 'width 0.3s ease'
-                    }} />
+                <TextField
+                  label="Flight authorization comments"
+                  value={flightAuthorizationComments}
+                  onChange={(event) => setFlightAuthorizationComments(event.target.value)}
+                  fullWidth
+                  multiline
+                  minRows={2}
+                  size="small"
+                />
+
+                {flyingReadinessIssues.length > 0 && (
+                  <Box sx={{ p: 1, borderRadius: '8px', bgcolor: alpha(theme.palette.warning.main, 0.08) }}>
+                    <Typography sx={{ fontSize: '0.72rem', fontWeight: 900, color: 'warning.dark', mb: 0.5 }}>
+                      Flight blockers
+                    </Typography>
+                    {flyingReadinessIssues.slice(0, 3).map((issue) => (
+                      <Typography key={`${issue.field}-${issue.code}`} sx={{ fontSize: '0.72rem', color: 'text.secondary' }}>
+                        {issue.message}
+                      </Typography>
+                    ))}
                   </Box>
-                </Box>
-                {missionArea > 0 && (
-                  <Chip
-                    label={`${missionArea.toFixed(1)} ha planned`}
-                    color="primary"
-                    size="small"
-                    sx={{ mr: 1, mb: 1 }}
-                  />
                 )}
-                {jsaCompleted && (
-                  <Chip
-                    label="JSA Approved"
-                    color="success"
-                    size="small"
-                    sx={{ mr: 1, mb: 1 }}
-                  />
-                )}
-              </CardContent>
-            </Card>
 
-            {/* Navigation */}
-            <Card>
-              <CardContent>
-                <Stack direction="row" spacing={1}>
+                <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
                   <Button
                     variant="outlined"
-                    onClick={handleBack}
-                    disabled={activeStep === 0}
-                    sx={{ flex: 1 }}
+                    onClick={handleAuthorizeForFlight}
+                    disabled={saving || !canAuthorizeForFlight}
+                    sx={{ flex: 1, borderRadius: '8px' }}
                   >
-                    Back
+                    Authorize Flight
                   </Button>
-                  {activeStep < MISSION_STEPS.length - 1 ? (
-                    <Button
-                      variant="contained"
-                      onClick={handleNext}
-                      sx={{ flex: 1 }}
-                    >
-                      Next
-                    </Button>
-                  ) : (
-                    <Button
-                      variant="contained"
-                      startIcon={<SaveIcon />}
-                      onClick={handleStartMission}
-                      sx={{ flex: 1 }}
-                    >
-                      Complete
-                    </Button>
-                  )}
+                  <Button
+                    variant="contained"
+                    onClick={handleStartFlying}
+                    disabled={saving || !canStartFlight}
+                    sx={{ flex: 1, borderRadius: '8px' }}
+                  >
+                    Start Flying
+                  </Button>
                 </Stack>
-              </CardContent>
-            </Card>
+
+                <Divider />
+
+                <Grid container spacing={1.25}>
+                  <Grid size={{ xs: 6 }}>
+                    <TextField
+                      label="Area completed ha"
+                      type="number"
+                      value={completionArea}
+                      onChange={(event) => setCompletionArea(readNumber(event.target.value, 0))}
+                      fullWidth
+                      size="small"
+                    />
+                  </Grid>
+                  <Grid size={{ xs: 6 }}>
+                    <TextField
+                      label="Flight time min"
+                      type="number"
+                      value={completionFlightTime}
+                      onChange={(event) => setCompletionFlightTime(readNumber(event.target.value, 0))}
+                      fullWidth
+                      size="small"
+                    />
+                  </Grid>
+                  <Grid size={{ xs: 12 }}>
+                    <FormControl fullWidth size="small">
+                      <InputLabel>Mission result</InputLabel>
+                      <Select
+                        value={completionStatus}
+                        label="Mission result"
+                        onChange={(event) => setCompletionStatus(event.target.value as FlightExecution['results']['missionStatus'])}
+                      >
+                        <MenuItem value="successful">Successful</MenuItem>
+                        <MenuItem value="partially-successful">Partially successful</MenuItem>
+                        <MenuItem value="aborted">Aborted</MenuItem>
+                        <MenuItem value="failed">Failed</MenuItem>
+                      </Select>
+                    </FormControl>
+                  </Grid>
+                  <Grid size={{ xs: 12 }}>
+                    <TextField
+                      label="Completion notes"
+                      value={completionNotes}
+                      onChange={(event) => setCompletionNotes(event.target.value)}
+                      fullWidth
+                      multiline
+                      minRows={2}
+                      size="small"
+                    />
+                  </Grid>
+                </Grid>
+
+                {completionReadinessIssues.length > 0 && selectedMission?.status === 'Flying' && (
+                  <Box sx={{ p: 1, borderRadius: '8px', bgcolor: alpha(theme.palette.warning.main, 0.08) }}>
+                    <Typography sx={{ fontSize: '0.72rem', fontWeight: 900, color: 'warning.dark', mb: 0.5 }}>
+                      Completion blockers
+                    </Typography>
+                    {completionReadinessIssues.slice(0, 3).map((issue) => (
+                      <Typography key={`${issue.field}-${issue.code}`} sx={{ fontSize: '0.72rem', color: 'text.secondary' }}>
+                        {issue.message}
+                      </Typography>
+                    ))}
+                  </Box>
+                )}
+
+                <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
+                  <Button
+                    variant="outlined"
+                    onClick={handleRecordCompletion}
+                    disabled={saving || !canRecordCompletion}
+                    sx={{ flex: 1, borderRadius: '8px' }}
+                  >
+                    Record Completion
+                  </Button>
+                  <Button
+                    variant="contained"
+                    onClick={handleCompleteMission}
+                    disabled={saving || !canCompleteMission}
+                    sx={{ flex: 1, borderRadius: '8px' }}
+                  >
+                    Mark Completed
+                  </Button>
+                </Stack>
+              </Stack>
+            </Panel>
+
+            <Panel title="Safety & Compliance" icon={<SecurityIcon />}>
+              <Stack spacing={1}>
+                <DetailRow label="JSA Status" value={<StatusPill label="Approved" tone="success" />} />
+                <DetailRow label="APVMA Compliance" value={<StatusPill label="Compliant" tone="success" />} />
+                <DetailRow label="CASA Restrictions" value={<StatusPill label="None" tone="success" />} />
+                <DetailRow label="Boundary" value={<StatusPill label={boundaryReady ? 'Ready' : 'Needs points'} tone={boundaryReady ? 'success' : 'warning'} />} />
+              </Stack>
+            </Panel>
           </Stack>
         </Grid>
       </Grid>
+
+      <Card
+        elevation={0}
+        sx={{
+          position: 'sticky',
+          bottom: 0,
+          zIndex: 2,
+          mt: 2,
+          borderRadius: '8px 8px 0 0',
+          border: '1px solid rgba(20, 58, 26, 0.12)',
+          bgcolor: 'rgba(243, 247, 243, 0.94)',
+          backdropFilter: 'blur(10px)',
+        }}
+      >
+        <CardContent sx={{ py: 1.5, '&:last-child': { pb: 1.5 } }}>
+          <Grid container spacing={1.5} alignItems="center">
+            <Grid size={{ xs: 12, md: 4 }}>
+              <Stack spacing={0.75}>
+                <Stack direction="row" justifyContent="space-between">
+                  <Typography sx={{ fontSize: '0.78rem', fontWeight: 800 }}>
+                    {selectedMission ? `${selectedMission.missionNumber} readiness` : 'Mission readiness'}
+                  </Typography>
+                  <Typography sx={{ fontSize: '0.78rem', fontWeight: 900 }}>
+                    {readinessPercent}% - {formatCurrency(totalEstimatedCost)}
+                  </Typography>
+                </Stack>
+                <LinearProgress
+                  variant="determinate"
+                  value={readinessPercent}
+                  sx={{
+                    height: 8,
+                    borderRadius: 8,
+                    bgcolor: alpha(theme.palette.primary.main, 0.1),
+                    '& .MuiLinearProgress-bar': {
+                      borderRadius: 8,
+                      bgcolor: readinessPercent === 100 ? theme.palette.success.main : theme.palette.warning.main,
+                    },
+                  }}
+                />
+              </Stack>
+            </Grid>
+            <Grid size={{ xs: 12, md: 8 }}>
+              <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.25} justifyContent="flex-end">
+                <Button
+                  variant="outlined"
+                  startIcon={<SaveIcon />}
+                  onClick={handleSaveDraft}
+                  disabled={saving || !canEditPlanning}
+                  sx={{ minHeight: 44, px: 4 }}
+                >
+                  {canEditPlanning ? selectedMission ? 'Update Plan' : 'Save Draft' : `Plan ${selectedMission?.status}`}
+                </Button>
+                <Button
+                  variant="contained"
+                  startIcon={<CheckCircleIcon />}
+                  onClick={handleAuthorizeMission}
+                  disabled={saving || !canAuthorizePlanning}
+                  sx={{ minHeight: 44, px: 5 }}
+                >
+                  {canAuthorizePlanning
+                    ? selectedMission?.status === 'Approved' ? 'Re-authorize Mission' : 'Authorize Mission'
+                    : `Mission ${selectedMission?.status}`}
+                </Button>
+              </Stack>
+            </Grid>
+          </Grid>
+        </CardContent>
+      </Card>
+
+      <Snackbar
+        open={notice.open}
+        autoHideDuration={4200}
+        onClose={() => setNotice((prev) => ({ ...prev, open: false }))}
+        anchorOrigin={{ vertical: 'top', horizontal: 'center' }}
+      >
+        <Alert severity={notice.severity} variant="filled" sx={{ borderRadius: '8px' }}>
+          {notice.message}
+        </Alert>
+      </Snackbar>
     </Box>
   );
 }

@@ -17,7 +17,7 @@ import {
   safelyTransformJSAData
 } from '../typeGuards';
 
-import { JSAErrorHandler } from '../errorHandling';
+import { JSAErrorHandler, createErrorState } from '../errorHandling';
 
 describe('JSA Security Fixes', () => {
   describe('Input Sanitization (CRITICAL SECURITY)', () => {
@@ -187,15 +187,7 @@ describe('JSA Security Fixes', () => {
     });
 
     test('should create standardized error states', () => {
-      const errorState = JSAErrorHandler['createErrorState'] ||
-        ((message: string, severity: string) => ({
-          hasError: true,
-          message,
-          severity,
-          timestamp: new Date().toISOString()
-        }));
-
-      const result = errorState('Test error', 'error');
+      const result = createErrorState('Test error', 'error');
 
       expect(result.hasError).toBe(true);
       expect(result.message).toBe('Test error');

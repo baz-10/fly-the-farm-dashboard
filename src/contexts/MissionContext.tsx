@@ -27,6 +27,11 @@ interface MissionWithVersion extends MissionRecord {
   version: number;
 }
 
+type MissionDraftInput = Omit<
+  MissionRecord,
+  'id' | 'createdAt' | 'updatedAt' | 'createdBy' | 'lastModifiedBy' | 'auditTrail' | 'approvals'
+>;
+
 // Split Context Types for Better Performance
 interface MissionDataContextType {
   missions: MissionRecord[];
@@ -37,7 +42,8 @@ interface MissionDataContextType {
 }
 
 interface MissionOperationsContextType {
-  createMission: (mission: Omit<MissionRecord, 'id' | 'createdAt' | 'updatedAt' | 'createdBy' | 'lastModifiedBy' | 'auditTrail' | 'approvals'>) => Promise<string>;
+  createMission: (mission: MissionDraftInput) => Promise<string>;
+  createAuthorizedMission: (mission: MissionDraftInput, digitalSignature: string, comments?: string, existingMissionId?: string) => Promise<string>;
   updateMission: (id: string, updates: Partial<Omit<MissionRecord, 'id' | 'createdAt' | 'createdBy' | 'auditTrail'>>, expectedVersion?: number) => Promise<void>;
   deleteMission: (id: string) => Promise<void>;
   getMissionById: (id: string) => MissionRecord | undefined;
@@ -145,6 +151,7 @@ const defaultContext: MissionContextType = {
   error: null,
   statistics: null,
   createMission: async () => '',
+  createAuthorizedMission: async () => '',
   updateMission: async () => {},
   deleteMission: async () => {},
   getMissionById: () => undefined,
@@ -845,7 +852,7 @@ export function MissionProvider({ children }: { children: React.ReactNode }) {
   }, [safeOperation]);
 
   // Mission CRUD Operations
-  const createMission = useCallback(async (missionData: Omit<MissionRecord, 'id' | 'createdAt' | 'updatedAt' | 'createdBy' | 'lastModifiedBy' | 'auditTrail' | 'approvals'>): Promise<string> => {
+  const createMission = useCallback(async (missionData: MissionDraftInput): Promise<string> => {
     if (!user) {
       throw new Error('User must be authenticated to create missions');
     }
@@ -889,6 +896,14 @@ export function MissionProvider({ children }: { children: React.ReactNode }) {
         id,
         missionNumber,
         status: 'Planning',
+        jsaRecord: {
+          ...missionData.jsaRecord,
+          missionId: id,
+        },
+        boundaryFiles: missionData.boundaryFiles.map(file => ({
+          ...file,
+          missionId: id,
+        })),
         approvals,
         auditTrail: [initialAuditEntry],
         createdAt: now,
@@ -904,7 +919,175 @@ export function MissionProvider({ children }: { children: React.ReactNode }) {
 
       return id;
     }, 'Failed to create mission') || '';
-  }, [safeOperation, user, createAuditEntry]);
+  }, [safeOperation, user, createAuditEntry, getAircraftById, getEquipmentKitById, getConfigurationById, validateConfiguration]);
+
+  const createAuthorizedMission = useCallback(async (
+    missionData: MissionDraftInput,
+    digitalSignature: string,
+    comments?: string,
+    existingMissionId?: string
+  ): Promise<string> => {
+    if (!user) {
+      throw new Error('User must be authenticated to authorize missions');
+    }
+
+    return safeOperation(() => {
+      if (user.role !== 'contractor' && user.role !== 'admin') {
+        throw new Error('Only CRP (Chief Remote Pilot) or admin users can authorize missions');
+      }
+
+      const existingMission = existingMissionId
+        ? missions.find(mission => mission.id === existingMissionId)
+        : undefined;
+
+      if (existingMissionId && !existingMission) {
+        throw new Error(`Mission with ID ${existingMissionId} not found`);
+      }
+
+      if (existingMission && ['Flying', 'Completed', 'Locked'].includes(existingMission.status)) {
+        throw new Error(`Cannot re-authorize a mission in ${existingMission.status} status`);
+      }
+
+      const validationErrors = validateMissionData(missionData, {
+        getAircraftById,
+        getEquipmentKitById,
+        getConfigurationById,
+        validateConfiguration
+      });
+      const criticalErrors = validationErrors.filter(error => error.severity === 'error');
+
+      if (criticalErrors.length > 0) {
+        throw new Error(`Validation failed: ${criticalErrors.map(e => e.message).join(', ')}`);
+      }
+
+      const id = existingMission?.id || generateId();
+      const now = new Date().toISOString();
+      const missionNumber = existingMission?.missionNumber || generateMissionNumber();
+      const baseApprovals: MissionApprovals = existingMission?.approvals || {
+        missionId: id,
+        createdAt: now,
+        updatedAt: now,
+      };
+
+      const baseAuditTrail = existingMission
+        ? [
+            ...existingMission.auditTrail,
+            createAuditEntry(
+              id,
+              'updated',
+              [{ field: 'mission', oldValue: 'draft', newValue: 'authorized update' }],
+              undefined,
+              comments
+            ),
+          ]
+        : [
+            createAuditEntry(
+              id,
+              'created',
+              [{ field: 'mission', oldValue: null, newValue: 'created' }],
+              undefined,
+              comments
+            ),
+          ];
+
+      const planningMission: MissionRecord = {
+        ...missionData,
+        id,
+        missionNumber,
+        status: 'Planning',
+        jsaRecord: {
+          ...missionData.jsaRecord,
+          missionId: id,
+        },
+        boundaryFiles: missionData.boundaryFiles.map(file => ({
+          ...file,
+          missionId: id,
+        })),
+        approvals: {
+          ...baseApprovals,
+          missionId: id,
+          planningApproval: {
+            approvedBy: user.id,
+            approvedAt: now,
+            digitalSignature,
+            comments,
+          },
+          updatedAt: now,
+        },
+        auditTrail: baseAuditTrail,
+        createdAt: existingMission?.createdAt || now,
+        updatedAt: now,
+        createdBy: existingMission?.createdBy || user.id,
+        lastModifiedBy: user.id,
+      };
+
+      const readinessErrors = validateStatusTransitionRules('Planning', 'Approved', planningMission, {
+        getAircraftById,
+        getEquipmentKitById,
+        getConfigurationById,
+        validateConfiguration
+      });
+      const readinessCriticalErrors = readinessErrors.filter(error => error.severity === 'error');
+
+      if (readinessCriticalErrors.length > 0) {
+        throw new Error(`Authorization failed: ${readinessCriticalErrors.map(e => e.message).join(', ')}`);
+      }
+
+      const approvalAudit = createAuditEntry(
+        id,
+        'approved',
+        [{ field: 'approvals.planning', oldValue: null, newValue: 'approved' }],
+        undefined,
+        comments
+      );
+
+      const transitionAudit = createAuditEntry(
+        id,
+        'status-changed',
+        [{ field: 'status', oldValue: 'Planning', newValue: 'Approved' }],
+        {
+          fromStatus: 'Planning',
+          toStatus: 'Approved',
+          reason: comments,
+          approvalRequired: true,
+          validationPassed: true,
+        },
+        comments
+      );
+
+      const approvedMission: MissionRecord = {
+        ...planningMission,
+        status: 'Approved',
+        updatedAt: now,
+        auditTrail: [...planningMission.auditTrail, approvalAudit, transitionAudit],
+      };
+
+      setMissions(prev => {
+        const existingIndex = prev.findIndex(mission => mission.id === id);
+        if (existingIndex === -1) {
+          return [...prev, approvedMission];
+        }
+
+        const next = [...prev];
+        next[existingIndex] = approvedMission;
+        return next;
+      });
+
+      const currentVersion = versionMapRef.current.get(id) || 0;
+      versionMapRef.current.set(id, currentVersion + 1);
+
+      return id;
+    }, 'Failed to authorize mission') || '';
+  }, [
+    safeOperation,
+    user,
+    missions,
+    createAuditEntry,
+    getAircraftById,
+    getEquipmentKitById,
+    getConfigurationById,
+    validateConfiguration,
+  ]);
 
   const updateMission = useCallback(async (
     id: string,
@@ -2056,10 +2239,11 @@ export function MissionProvider({ children }: { children: React.ReactNode }) {
   // Memoized function groups for performance optimization
   const missionOperations = useMemo(() => ({
     createMission,
+    createAuthorizedMission,
     updateMission,
     deleteMission,
     getMissionById,
-  }), [createMission, updateMission, deleteMission, getMissionById]);
+  }), [createMission, createAuthorizedMission, updateMission, deleteMission, getMissionById]);
 
   const workflowOperations = useMemo(() => ({
     transitionMissionStatus,

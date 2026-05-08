@@ -30,8 +30,8 @@ import ReceiptLongIcon from '@mui/icons-material/ReceiptLong';
 import AccountBalanceIcon from '@mui/icons-material/AccountBalance';
 import LogoutIcon from '@mui/icons-material/Logout';
 import AccountCircleIcon from '@mui/icons-material/AccountCircle';
-import FlightTakeoffIcon from '@mui/icons-material/FlightTakeoff';
 import AirplanemodeActiveIcon from '@mui/icons-material/AirplanemodeActive';
+import FlightTakeoffIcon from '@mui/icons-material/FlightTakeoff';
 import AdminPanelSettingsIcon from '@mui/icons-material/AdminPanelSettings';
 import SmartToyIcon from '@mui/icons-material/SmartToy';
 import GavelIcon from '@mui/icons-material/Gavel';
@@ -60,6 +60,7 @@ export default function Layout() {
   const isMobile = useMediaQuery(theme.breakpoints.down('md'));
   const [drawerOpen, setDrawerOpen] = React.useState(false);
   const [anchorEl, setAnchorEl] = React.useState<null | HTMLElement>(null);
+  const isOperationsDashboard = location.pathname === '/';
 
   const handleLogout = () => {
     logout();
@@ -73,6 +74,7 @@ export default function Layout() {
     { label: 'Calculator', path: '/calculator', icon: <CalculateIcon />, roles: ['admin', 'contractor'] },
     { label: 'Jobs', path: '/jobs', icon: <AssignmentIcon />, roles: ['admin', 'contractor', 'client'] },
     { label: 'Aircraft', path: '/aircraft', icon: <AirplanemodeActiveIcon />, roles: ['admin', 'contractor'] },
+    { label: 'Missions', path: '/mission-planning', icon: <FlightTakeoffIcon />, roles: ['admin', 'contractor'] },
     { label: 'JSA System', path: '/jsa', icon: <SecurityIcon />, roles: ['admin', 'contractor'] },
     { label: 'Quotes', path: '/quotes', icon: <ReceiptLongIcon />, roles: ['admin', 'contractor'] },
     { label: 'Financials', path: '/financials', icon: <AccountBalanceIcon />, roles: ['admin', 'contractor'] },
@@ -83,6 +85,7 @@ export default function Layout() {
 
   return (
     <Box className="ftf-grain" sx={{ display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
+      {!isOperationsDashboard && (
       <AppBar
         position="sticky"
         elevation={0}
@@ -220,6 +223,7 @@ export default function Layout() {
           )}
         </Toolbar>
       </AppBar>
+      )}
 
       <Drawer
         open={drawerOpen}
@@ -275,12 +279,21 @@ export default function Layout() {
         </List>
       </Drawer>
 
-      <Box component="main" sx={{ flexGrow: 1, bgcolor: 'background.default', position: 'relative' }} className="ftf-topo-bg">
-        <Container maxWidth="lg" sx={{ py: { xs: 2.5, md: 4 }, position: 'relative', zIndex: 1 }}>
+      <Box
+        component="main"
+        sx={{ flexGrow: 1, bgcolor: 'background.default', position: 'relative' }}
+        className={isOperationsDashboard ? undefined : 'ftf-topo-bg'}
+      >
+        {isOperationsDashboard ? (
           <Outlet />
-        </Container>
+        ) : (
+          <Container maxWidth="lg" sx={{ py: { xs: 2.5, md: 4 }, position: 'relative', zIndex: 1 }}>
+            <Outlet />
+          </Container>
+        )}
       </Box>
 
+      {!isOperationsDashboard && (
       <Box
         component="footer"
         sx={{
@@ -342,6 +355,7 @@ export default function Layout() {
           </Stack>
         </Container>
       </Box>
+      )}
     </Box>
   );
 }

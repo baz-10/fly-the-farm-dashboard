@@ -1,17 +1,14 @@
 import { JobActual } from '../types/financials';
+import { PERSISTENCE_KEYS, readCollection, writeCollection } from './persistence';
 
-const ACTUALS_KEY = 'ftf_actuals';
+const ACTUALS_KEY = PERSISTENCE_KEYS.actuals;
 
 function load(): JobActual[] {
-  try {
-    return JSON.parse(localStorage.getItem(ACTUALS_KEY) || '[]');
-  } catch {
-    return [];
-  }
+  return readCollection<JobActual>(ACTUALS_KEY);
 }
 
 function save(actuals: JobActual[]): void {
-  localStorage.setItem(ACTUALS_KEY, JSON.stringify(actuals));
+  writeCollection(ACTUALS_KEY, actuals);
 }
 
 export function getActuals(contractorUserId: string): JobActual[] {

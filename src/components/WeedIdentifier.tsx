@@ -47,8 +47,8 @@ export default function WeedIdentifier() {
       return;
     }
 
-    if (file.size > 10 * 1024 * 1024) {
-      setError('Image must be under 10MB.');
+    if (file.size > 4 * 1024 * 1024) {
+      setError('Image must be under 4MB.');
       return;
     }
 
@@ -156,7 +156,7 @@ export default function WeedIdentifier() {
               Tap to upload a photo
             </Typography>
             <Typography variant="caption" color="text.secondary">
-              JPG, PNG up to 10MB
+              JPG, PNG up to 4MB
             </Typography>
           </Box>
         ) : (
