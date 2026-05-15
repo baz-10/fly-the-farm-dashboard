@@ -54,6 +54,7 @@ type MissionPayload = Omit<
   MissionRecord,
   'id' | 'createdAt' | 'updatedAt' | 'createdBy' | 'lastModifiedBy' | 'auditTrail' | 'approvals'
 >;
+type PendingPlannerAction = 'save' | 'authorize' | null;
 
 interface PanelProps {
   title: string;
@@ -394,6 +395,9 @@ export default function MissionPlanning() {
   const [completionNotes, setCompletionNotes] = React.useState('Coverage complete. No rework required.');
   const [saving, setSaving] = React.useState(false);
   const [seedingFleet, setSeedingFleet] = React.useState(false);
+  const [pendingPlannerAction, setPendingPlannerAction] = React.useState<PendingPlannerAction>(null);
+  const saveDraftHandlerRef = React.useRef<(() => Promise<void>) | null>(null);
+  const authorizeMissionHandlerRef = React.useRef<(() => Promise<void>) | null>(null);
   const [notice, setNotice] = React.useState<{ open: boolean; severity: 'success' | 'info' | 'warning' | 'error'; message: string }>({
     open: false,
     severity: 'info',
@@ -611,6 +615,195 @@ export default function MissionPlanning() {
     setNotice({ open: true, severity, message });
   };
 
+  const ensureStarterFleet = async () => {
+    const futureDate = (daysFromNow: number) => new Date(Date.now() + daysFromNow * 24 * 60 * 60 * 1000).toISOString();
+    const now = new Date().toISOString();
+
+    const starterAircraft = aircraft.find((item) => item.serialNumber === 'T50-STARTER-001' || item.registration === 'DJI T50-001');
+    const aircraftId = starterAircraft?.id || await createAircraft({
+      registration: 'DJI T50-001',
+      manufacturer: 'DJI',
+      model: 'Agras T50',
+      serialNumber: 'T50-STARTER-001',
+      mtow: 103,
+      maxAltitude: 120,
+      maxWindSpeed: 18,
+      maintenanceDates: {
+        lastInspection: now,
+        nextInspectionDue: futureDate(180),
+        lastMajorService: now,
+        nextMajorServiceDue: futureDate(365),
+        totalFlightHours: 0,
+        hoursSinceLastService: 0,
+      },
+      insurance: {
+        policyNumber: 'FTF-STARTER-DRONE',
+        provider: 'Fly the Farm Insurance',
+        expiryDate: futureDate(365),
+        coverageAmount: 10000000,
+        hullValue: 32000,
+      },
+      status: 'operational',
+      assignedKits: [],
+      operationalLimits: {
+        minOperatingTemp: 0,
+        maxOperatingTemp: 45,
+        maxPayloadWeight: 40,
+        batteryLife: 22,
+        maxFlightTime: 22,
+        serviceRange: 2,
+        minimumCrewSize: 2,
+      },
+      documentation: {
+        manuals: ['DJI Agras T50 operator manual'],
+        certificates: ['CASA RPA registration'],
+        logbooks: ['Starter fleet logbook'],
+        complianceChecks: {
+          casaCompliant: true,
+          lastCasaInspection: now,
+          nextCasaInspectionDue: futureDate(180),
+        },
+      },
+    });
+
+    if (!aircraftId) {
+      throw new Error('Starter aircraft could not be created.');
+    }
+
+    const starterKit = equipmentKits.find((kit) => kit.name === 'K1-T Standard Spray Kit');
+    const kitId = starterKit?.id || await createEquipmentKit({
+      name: 'K1-T Standard Spray Kit',
+      type: 'spray-system',
+      description: 'Standard herbicide spray kit for starter mission planning.',
+      specifications: {
+        weight: 32,
+        dimensions: {
+          length: 80,
+          width: 64,
+          height: 48,
+        },
+        powerRequirement: 600,
+        operatingVoltage: '48V',
+        temperatureRange: {
+          min: 0,
+          max: 45,
+        },
+        weatherResistance: 'IPX6',
+      },
+      components: [
+        {
+          id: 'starter-nozzle-bank',
+          name: 'Centrifugal nozzle bank',
+          partNumber: 'K1T-NOZZLE',
+          manufacturer: 'DJI Agriculture',
+          quantity: 1,
+          unitCost: 2800,
+        },
+        {
+          id: 'starter-flow-meter',
+          name: 'Flow meter',
+          partNumber: 'K1T-FLOW',
+          manufacturer: 'DJI Agriculture',
+          quantity: 1,
+          unitCost: 650,
+        },
+      ],
+      operationalData: {
+        status: 'available',
+        totalOperatingHours: 0,
+        lastCalibrationDate: now,
+        nextCalibrationDue: futureDate(90),
+        lastMaintenanceDate: now,
+        nextMaintenanceDue: futureDate(120),
+        averageSetupTime: 18,
+        averagePackupTime: 16,
+      },
+      financialData: {
+        purchasePrice: 14500,
+        currentValue: 14500,
+        depreciationRate: 18,
+        maintenanceCostPerHour: 24,
+        insuranceValue: 14500,
+      },
+      compatibleAircraft: [aircraftId, 'Agras T50', 'DJI Agras T50'],
+    });
+
+    if (!kitId) {
+      throw new Error('Starter spray kit could not be created.');
+    }
+
+    const starterConfiguration = configurations.find((config) => (
+      config.aircraftId === aircraftId &&
+      config.kitId === kitId &&
+      config.configurationName === 'K1-T Standard Spray Configuration'
+    ));
+    const configurationId = starterConfiguration?.id || await createConfiguration({
+      aircraftId,
+      kitId,
+      configurationName: 'K1-T Standard Spray Configuration',
+      weightAndBalance: {
+        totalWeight: 32,
+        centerOfGravity: {
+          x: 0,
+          y: 0,
+          z: -8,
+        },
+        momentArm: 0,
+        withinLimits: true,
+        maxPayloadRemaining: 8,
+      },
+      operationalLimits: {
+        maxWindSpeed: 18,
+        maxAltitude: 120,
+        maxFlightTime: 22,
+        recommendedCrewSize: 2,
+        specialRequirements: ['Chemical handling certificate', 'Visual observer'],
+      },
+      pricingModel: {
+        type: 'per-hectare',
+        baseRate: 28,
+        setupFee: 260,
+        minimumCharge: 900,
+        additionalFees: [],
+      },
+      performance: {
+        sprayRate: {
+          hectaresPerHour: 32,
+          litresPerMinute: 8,
+          swathWidth: 9,
+        },
+        enduranceModifier: 0.85,
+      },
+    });
+
+    if (!configurationId) {
+      throw new Error('Starter aircraft configuration could not be created.');
+    }
+
+    setSelectedAircraft(aircraftId);
+    setSelectedConfiguration(configurationId);
+
+    return { aircraftId, configurationId };
+  };
+
+  const prepareStarterFleetForAction = async (action: Exclude<PendingPlannerAction, null>) => {
+    setSaving(true);
+    setPendingPlannerAction(action);
+
+    try {
+      await ensureStarterFleet();
+      showNotice('info', action === 'save'
+        ? 'Starter fleet added. Saving the mission draft now.'
+        : 'Starter fleet added. Authorizing the mission now.'
+      );
+    } catch (error) {
+      setPendingPlannerAction(null);
+      showNotice('error', error instanceof Error ? error.message : 'Failed to create starter fleet data.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const resetPlanner = () => {
     const nextAircraft = aircraft[0]?.id || DEMO_AIRCRAFT.id;
     const nextConfiguration = configurations.find((config) => config.aircraftId === nextAircraft)?.id || configurations[0]?.id || DEMO_CONFIG.id;
@@ -760,160 +953,7 @@ export default function MissionPlanning() {
   const handleSeedStarterFleet = async () => {
     setSeedingFleet(true);
     try {
-      const futureDate = (daysFromNow: number) => new Date(Date.now() + daysFromNow * 24 * 60 * 60 * 1000).toISOString();
-      const now = new Date().toISOString();
-
-      const starterAircraft = aircraft.find((item) => item.serialNumber === 'T50-STARTER-001' || item.registration === 'DJI T50-001');
-      const aircraftId = starterAircraft?.id || await createAircraft({
-        registration: 'DJI T50-001',
-        manufacturer: 'DJI',
-        model: 'Agras T50',
-        serialNumber: 'T50-STARTER-001',
-        mtow: 103,
-        maxAltitude: 120,
-        maxWindSpeed: 18,
-        maintenanceDates: {
-          lastInspection: now,
-          nextInspectionDue: futureDate(180),
-          lastMajorService: now,
-          nextMajorServiceDue: futureDate(365),
-          totalFlightHours: 0,
-          hoursSinceLastService: 0,
-        },
-        insurance: {
-          policyNumber: 'FTF-STARTER-DRONE',
-          provider: 'Fly the Farm Insurance',
-          expiryDate: futureDate(365),
-          coverageAmount: 10000000,
-          hullValue: 32000,
-        },
-        status: 'operational',
-        assignedKits: [],
-        operationalLimits: {
-          minOperatingTemp: 0,
-          maxOperatingTemp: 45,
-          maxPayloadWeight: 40,
-          batteryLife: 22,
-          maxFlightTime: 22,
-          serviceRange: 2,
-          minimumCrewSize: 2,
-        },
-        documentation: {
-          manuals: ['DJI Agras T50 operator manual'],
-          certificates: ['CASA RPA registration'],
-          logbooks: ['Starter fleet logbook'],
-          complianceChecks: {
-            casaCompliant: true,
-            lastCasaInspection: now,
-            nextCasaInspectionDue: futureDate(180),
-          },
-        },
-      });
-
-      const starterKit = equipmentKits.find((kit) => kit.name === 'K1-T Standard Spray Kit');
-      const kitId = starterKit?.id || await createEquipmentKit({
-        name: 'K1-T Standard Spray Kit',
-        type: 'spray-system',
-        description: 'Standard herbicide spray kit for starter mission planning.',
-        specifications: {
-          weight: 32,
-          dimensions: {
-            length: 80,
-            width: 64,
-            height: 48,
-          },
-          powerRequirement: 600,
-          operatingVoltage: '48V',
-          temperatureRange: {
-            min: 0,
-            max: 45,
-          },
-          weatherResistance: 'IPX6',
-        },
-        components: [
-          {
-            id: 'starter-nozzle-bank',
-            name: 'Centrifugal nozzle bank',
-            partNumber: 'K1T-NOZZLE',
-            manufacturer: 'DJI Agriculture',
-            quantity: 1,
-            unitCost: 2800,
-          },
-          {
-            id: 'starter-flow-meter',
-            name: 'Flow meter',
-            partNumber: 'K1T-FLOW',
-            manufacturer: 'DJI Agriculture',
-            quantity: 1,
-            unitCost: 650,
-          },
-        ],
-        operationalData: {
-          status: 'available',
-          totalOperatingHours: 0,
-          lastCalibrationDate: now,
-          nextCalibrationDue: futureDate(90),
-          lastMaintenanceDate: now,
-          nextMaintenanceDue: futureDate(120),
-          averageSetupTime: 18,
-          averagePackupTime: 16,
-        },
-        financialData: {
-          purchasePrice: 14500,
-          currentValue: 14500,
-          depreciationRate: 18,
-          maintenanceCostPerHour: 24,
-          insuranceValue: 14500,
-        },
-        compatibleAircraft: [aircraftId, 'Agras T50', 'DJI Agras T50'],
-      });
-
-      const starterConfiguration = configurations.find((config) => (
-        config.aircraftId === aircraftId &&
-        config.kitId === kitId &&
-        config.configurationName === 'K1-T Standard Spray Configuration'
-      ));
-      const configurationId = starterConfiguration?.id || await createConfiguration({
-        aircraftId,
-        kitId,
-        configurationName: 'K1-T Standard Spray Configuration',
-        weightAndBalance: {
-          totalWeight: 32,
-          centerOfGravity: {
-            x: 0,
-            y: 0,
-            z: -8,
-          },
-          momentArm: 0,
-          withinLimits: true,
-          maxPayloadRemaining: 8,
-        },
-        operationalLimits: {
-          maxWindSpeed: 18,
-          maxAltitude: 120,
-          maxFlightTime: 22,
-          recommendedCrewSize: 2,
-          specialRequirements: ['Chemical handling certificate', 'Visual observer'],
-        },
-        pricingModel: {
-          type: 'per-hectare',
-          baseRate: 28,
-          setupFee: 260,
-          minimumCharge: 900,
-          additionalFees: [],
-        },
-        performance: {
-          sprayRate: {
-            hectaresPerHour: 32,
-            litresPerMinute: 8,
-            swathWidth: 9,
-          },
-          enduranceModifier: 0.85,
-        },
-      });
-
-      setSelectedAircraft(aircraftId);
-      setSelectedConfiguration(configurationId);
+      await ensureStarterFleet();
       showNotice('success', 'Starter aircraft, spray kit, and configuration are ready for mission authorization.');
     } catch (error) {
       showNotice('error', error instanceof Error ? error.message : 'Failed to create starter fleet data.');
@@ -924,7 +964,7 @@ export default function MissionPlanning() {
 
   const handleSaveDraft = async () => {
     if (!canPersistMission) {
-      showNotice('warning', 'Planning preview saved visually. Add a real aircraft configuration before persisting a mission record.');
+      await prepareStarterFleetForAction('save');
       return;
     }
 
@@ -967,7 +1007,7 @@ export default function MissionPlanning() {
     }
 
     if (!canPersistMission) {
-      showNotice('info', 'Mission is ready as a planning preview. Add real aircraft/configuration data to authorize and persist it.');
+      await prepareStarterFleetForAction('authorize');
       return;
     }
 
@@ -1296,6 +1336,25 @@ export default function MissionPlanning() {
     }
   };
 
+  saveDraftHandlerRef.current = handleSaveDraft;
+  authorizeMissionHandlerRef.current = handleAuthorizeMission;
+
+  React.useEffect(() => {
+    if (!pendingPlannerAction || !canPersistMission || saving) {
+      return;
+    }
+
+    const action = pendingPlannerAction;
+    setPendingPlannerAction(null);
+
+    if (action === 'save') {
+      void saveDraftHandlerRef.current?.();
+      return;
+    }
+
+    void authorizeMissionHandlerRef.current?.();
+  }, [pendingPlannerAction, canPersistMission, saving]);
+
   return (
     <Box sx={{ maxWidth: 1500, mx: 'auto' }}>
       <Stack
@@ -1385,14 +1444,30 @@ export default function MissionPlanning() {
       {!canPersistMission && (
         <Alert
           severity="info"
-          sx={{ mb: 2, borderRadius: '8px' }}
+          sx={{
+            mb: 2,
+            borderRadius: '8px',
+            alignItems: 'center',
+            '& .MuiAlert-action': {
+              alignItems: 'center',
+              pl: 2,
+              pr: 1,
+              pt: 0,
+            },
+          }}
           action={
-            <Button color="inherit" size="small" onClick={handleSeedStarterFleet} disabled={seedingFleet}>
+            <Button
+              color="inherit"
+              size="small"
+              onClick={handleSeedStarterFleet}
+              disabled={seedingFleet || saving}
+              sx={{ whiteSpace: 'nowrap', minWidth: 144 }}
+            >
               {seedingFleet ? 'Adding...' : 'Add starter fleet'}
             </Button>
           }
         >
-          This planner is using demo aircraft/equipment values because no compatible aircraft configuration is saved yet. The UI is usable for planning, but mission persistence needs real fleet data.
+          No saved aircraft/equipment configuration is available yet. Save Draft or Authorize Mission will add the starter fleet automatically before creating the mission.
         </Alert>
       )}
 

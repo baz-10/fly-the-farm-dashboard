@@ -51,7 +51,11 @@ function saveStoredUsers(users: Record<string, StoredUser>): void {
 }
 
 function genId(): string {
-  return crypto.randomUUID();
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+
+  return `user_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
 }
 
 function genInviteCode(): string {
