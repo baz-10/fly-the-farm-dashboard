@@ -5,9 +5,11 @@ import {
   Button,
   Card,
   CardContent,
+  Checkbox,
   Chip,
   Divider,
   FormControl,
+  FormControlLabel,
   Grid,
   InputLabel,
   LinearProgress,
@@ -25,6 +27,7 @@ import AirplanemodeActiveIcon from '@mui/icons-material/AirplanemodeActive';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import CloudQueueIcon from '@mui/icons-material/CloudQueue';
 import FlightTakeoffIcon from '@mui/icons-material/FlightTakeoff';
+import ForestIcon from '@mui/icons-material/Forest';
 import GavelIcon from '@mui/icons-material/Gavel';
 import GrassIcon from '@mui/icons-material/Grass';
 import LayersIcon from '@mui/icons-material/Layers';
@@ -36,7 +39,14 @@ import WarningAmberIcon from '@mui/icons-material/WarningAmber';
 import FieldBoundaryEditor from '../components/FieldBoundaryEditor';
 import { useAircraft } from '../contexts/AircraftContext';
 import { useMission } from '../contexts/MissionContext';
+import { getLatestVegetationCheckForLotPlan, getSavedVegetationChecks } from '../services/pmavCheckStore';
+import {
+  getVegetationCategorySummary,
+  hasVegetationReviewCategories,
+  sanitizeLotPlan,
+} from '../services/pmavService';
 import { LatLng, BoundaryFileRef } from '../types/fieldManagement';
+import { SavedVegetationCheck } from '../types/pmav';
 import {
   BoundaryFile,
   FlightExecution,
@@ -354,6 +364,9 @@ export default function MissionPlanning() {
   const [clientName, setClientName] = React.useState('Hillside Farms');
   const [propertyName, setPropertyName] = React.useState('North Block');
   const [fieldName, setFieldName] = React.useState('Paddock 3');
+  const [missionLotPlan, setMissionLotPlan] = React.useState('');
+  const [vegetationReviewAcknowledged, setVegetationReviewAcknowledged] = React.useState(false);
+  const [savedVegetationChecks, setSavedVegetationChecks] = React.useState<SavedVegetationCheck[]>(() => getSavedVegetationChecks());
   const [missionType, setMissionType] = React.useState<MissionType>('spray');
   const [priority, setPriority] = React.useState<MissionPriority>('medium');
   const [selectedMissionId, setSelectedMissionId] = React.useState('');
@@ -457,6 +470,33 @@ export default function MissionPlanning() {
   const selectedMission = missions.find((mission) => mission.id === selectedMissionId);
   const canPersistMission = !!actualAircraft && !!actualConfiguration;
   const boundaryReady = boundaryCoords.length >= 3;
+  const cleanMissionLotPlan = sanitizeLotPlan(missionLotPlan);
+  const currentVegetationCheck = React.useMemo(
+    () => cleanMissionLotPlan
+      ? savedVegetationChecks.find((check) => sanitizeLotPlan(check.lotPlan) === cleanMissionLotPlan) || getLatestVegetationCheckForLotPlan(cleanMissionLotPlan)
+      : undefined,
+    [cleanMissionLotPlan, savedVegetationChecks]
+  );
+  const vegetationReviewRequired = currentVegetationCheck
+    ? hasVegetationReviewCategories(currentVegetationCheck.categories)
+    : Boolean(cleanMissionLotPlan);
+  const vegetationClearanceReady = Boolean(currentVegetationCheck && !vegetationReviewRequired) || vegetationReviewAcknowledged;
+  const vegetationCategorySummary = currentVegetationCheck
+    ? getVegetationCategorySummary(currentVegetationCheck.categories)
+    : 'No PMAV check saved';
+  const vegetationWarningMessage = currentVegetationCheck
+    ? vegetationReviewRequired
+      ? `${currentVegetationCheck.sourceLabel} for ${currentVegetationCheck.lotPlan} returned ${vegetationCategorySummary}. Environmental review must be acknowledged before approval.`
+      : `${currentVegetationCheck.sourceLabel} for ${currentVegetationCheck.lotPlan} is attached.`
+    : cleanMissionLotPlan
+      ? `No saved PMAV/RVM check found for ${cleanMissionLotPlan}. Open the vegetation screen and save a check, or acknowledge that review has been completed separately.`
+      : 'No PMAV lot/plan is attached. Add a lot/plan or acknowledge that PMAV is not required for this mission.';
+  const vegetationClearanceLabel = vegetationClearanceReady
+    ? currentVegetationCheck && !vegetationReviewRequired ? 'Clear' : 'Acknowledged'
+    : currentVegetationCheck ? 'Review required' : 'Needs check';
+  const vegetationClearanceTone: 'success' | 'warning' | 'error' | 'info' = vegetationClearanceReady
+    ? currentVegetationCheck && !vegetationReviewRequired ? 'success' : 'warning'
+    : 'warning';
   const flyingReadinessIssues = selectedMission ? validateMissionReadiness(selectedMission.id, 'Flying') : [];
   const completionReadinessIssues = selectedMission ? validateMissionReadiness(selectedMission.id, 'Completed') : [];
   const canUseFlightWorkflow = !!selectedMission && ['Approved', 'Flying', 'Completed'].includes(selectedMission.status);
@@ -480,6 +520,7 @@ export default function MissionPlanning() {
     Boolean(selectedAircraftData),
     applicationRate > 0,
     estimatedDuration > 0,
+    vegetationClearanceReady,
   ];
   const readinessPercent = Math.round((readyChecks.filter(Boolean).length / readyChecks.length) * 100);
 
@@ -520,8 +561,21 @@ export default function MissionPlanning() {
           flightLines,
           turnAroundCount,
         },
-        riskFactors: [],
-        complianceIssues: [],
+        riskFactors: vegetationReviewRequired ? [{
+          id: 'pmav-vegetation-category',
+          type: 'environmental',
+          description: vegetationWarningMessage,
+          severity: currentVegetationCheck ? 'high' : 'medium',
+          mitigationRequired: true,
+          bufferZoneRequired: 0,
+        }] : [],
+        complianceIssues: !vegetationClearanceReady ? [{
+          id: 'pmav-environmental-clearance',
+          type: 'environmental',
+          description: vegetationWarningMessage,
+          requiresApproval: true,
+          approvalType: 'Environmental clearance / PMAV review',
+        }] : [],
       },
       version: 1,
       createdAt: now,
@@ -535,6 +589,17 @@ export default function MissionPlanning() {
     fieldName,
     missionNotes,
     boundaryCoords,
+    vegetationClearance: {
+      lotPlan: cleanMissionLotPlan,
+      checkId: currentVegetationCheck?.id,
+      sourceLabel: currentVegetationCheck?.sourceLabel,
+      checkedAt: currentVegetationCheck?.checkedAt,
+      categories: currentVegetationCheck?.categories,
+      reviewStatus: currentVegetationCheck
+        ? vegetationReviewRequired ? 'requires-review' : 'clear'
+        : cleanMissionLotPlan ? 'not-checked' : 'not-applicable',
+      acknowledged: vegetationReviewAcknowledged,
+    },
     operation: {
       applicationRateLHa: applicationRate,
       perimeterKm,
@@ -604,7 +669,7 @@ export default function MissionPlanning() {
         casaNotification: true,
         airspaceApproval: true,
         localPermits: true,
-        environmentalClearance: true,
+        environmentalClearance: vegetationClearanceReady,
         insuranceCoverage: true,
       },
       planningState: buildPlanningState(),
@@ -813,6 +878,9 @@ export default function MissionPlanning() {
     setClientName('Hillside Farms');
     setPropertyName('North Block');
     setFieldName('Paddock 3');
+    setMissionLotPlan('');
+    setVegetationReviewAcknowledged(false);
+    setSavedVegetationChecks(getSavedVegetationChecks());
     setMissionType('spray');
     setPriority('medium');
     setSelectedAircraft(nextAircraft);
@@ -872,6 +940,9 @@ export default function MissionPlanning() {
     setClientName(planning?.clientName || mission.clientId);
     setPropertyName(planning?.propertyName || locationParts[0] || 'Property');
     setFieldName(planning?.fieldName || locationParts[1] || 'Field');
+    setMissionLotPlan(planning?.vegetationClearance?.lotPlan || '');
+    setVegetationReviewAcknowledged(Boolean(planning?.vegetationClearance?.acknowledged || mission.complianceChecks.environmentalClearance));
+    setSavedVegetationChecks(getSavedVegetationChecks());
     setMissionType(mission.missionType);
     setPriority(mission.priority);
     setSelectedAircraft(mission.aircraftConfiguration.aircraftId);
@@ -1008,6 +1079,11 @@ export default function MissionPlanning() {
 
     if (!canPersistMission) {
       await prepareStarterFleetForAction('authorize');
+      return;
+    }
+
+    if (!vegetationClearanceReady) {
+      showNotice('warning', vegetationWarningMessage);
       return;
     }
 
@@ -1698,6 +1774,20 @@ export default function MissionPlanning() {
                     <TextField label="Field / Paddock" value={fieldName} onChange={(event) => setFieldName(event.target.value)} fullWidth size="small" />
                   </Grid>
                   <Grid size={{ xs: 12, sm: 6 }}>
+                    <TextField
+                      label="PMAV Lot/Plan"
+                      value={missionLotPlan}
+                      onChange={(event) => {
+                        setMissionLotPlan(sanitizeLotPlan(event.target.value));
+                        setVegetationReviewAcknowledged(false);
+                      }}
+                      placeholder="e.g. 2RP884818"
+                      fullWidth
+                      size="small"
+                      inputProps={{ spellCheck: false }}
+                    />
+                  </Grid>
+                  <Grid size={{ xs: 12, sm: 6 }}>
                     <TextField label="Mission Name" value={missionName} onChange={(event) => setMissionName(event.target.value)} fullWidth size="small" />
                   </Grid>
                   <Grid size={{ xs: 12 }}>
@@ -2208,6 +2298,62 @@ export default function MissionPlanning() {
                 <DetailRow label="APVMA Compliance" value={<StatusPill label="Compliant" tone="success" />} />
                 <DetailRow label="CASA Restrictions" value={<StatusPill label="None" tone="success" />} />
                 <DetailRow label="Boundary" value={<StatusPill label={boundaryReady ? 'Ready' : 'Needs points'} tone={boundaryReady ? 'success' : 'warning'} />} />
+                <DetailRow label="Environmental Clearance" value={<StatusPill label={vegetationClearanceLabel} tone={vegetationClearanceTone} />} />
+
+                <Alert severity={vegetationClearanceReady && !vegetationReviewRequired ? 'success' : 'warning'} sx={{ borderRadius: '8px' }}>
+                  {vegetationWarningMessage}
+                </Alert>
+
+                <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
+                  <Button
+                    component="a"
+                    href={`/compliance/vegetation${cleanMissionLotPlan ? `?lotPlan=${encodeURIComponent(cleanMissionLotPlan)}` : ''}`}
+                    variant="outlined"
+                    startIcon={<ForestIcon />}
+                    sx={{ borderRadius: '8px', fontWeight: 800, flex: 1 }}
+                  >
+                    Open PMAV Check
+                  </Button>
+                  <Button
+                    variant="outlined"
+                    onClick={() => {
+                      setSavedVegetationChecks(getSavedVegetationChecks());
+                      showNotice('info', 'Vegetation check evidence refreshed.');
+                    }}
+                    sx={{ borderRadius: '8px', fontWeight: 800, flex: 1 }}
+                  >
+                    Refresh Checks
+                  </Button>
+                </Stack>
+
+                {currentVegetationCheck && (
+                  <Box sx={{ p: 1.25, borderRadius: '8px', bgcolor: alpha(theme.palette.primary.main, 0.04) }}>
+                    <Typography sx={{ fontSize: '0.74rem', fontWeight: 900, color: 'primary.dark' }}>
+                      {currentVegetationCheck.sourceLabel}
+                    </Typography>
+                    <Typography sx={{ fontSize: '0.72rem', color: 'text.secondary' }}>
+                      {currentVegetationCheck.lotPlan} - {vegetationCategorySummary} - checked {new Date(currentVegetationCheck.checkedAt).toLocaleString('en-AU')}
+                    </Typography>
+                  </Box>
+                )}
+
+                <FormControlLabel
+                  control={
+                    <Checkbox
+                      checked={vegetationReviewAcknowledged}
+                      onChange={(event) => setVegetationReviewAcknowledged(event.target.checked)}
+                      size="small"
+                    />
+                  }
+                  label="Environmental review acknowledged or PMAV not required for this mission"
+                  sx={{
+                    alignItems: 'flex-start',
+                    '& .MuiFormControlLabel-label': {
+                      fontSize: '0.78rem',
+                      color: 'text.secondary',
+                    },
+                  }}
+                />
               </Stack>
             </Panel>
           </Stack>

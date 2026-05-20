@@ -6,6 +6,9 @@
   "functions": {
     "api/identify-weed.js": {
       "maxDuration": 30
+    },
+    "api/pmav.js": {
+      "maxDuration": 30
     }
   },
   "rewrites": [

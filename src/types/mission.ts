@@ -34,6 +34,15 @@ export interface MissionPlanningState {
   fieldName: string;
   missionNotes: string;
   boundaryCoords: Array<[number, number]>;
+  vegetationClearance?: {
+    lotPlan: string;
+    checkId?: string;
+    sourceLabel?: string;
+    checkedAt?: string;
+    categories?: Record<string, number>;
+    reviewStatus: 'clear' | 'requires-review' | 'not-checked' | 'not-applicable';
+    acknowledged: boolean;
+  };
   operation: {
     applicationRateLHa: number;
     perimeterKm: number;

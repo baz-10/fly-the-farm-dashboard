@@ -1,6 +1,104 @@
 const { createProxyMiddleware } = require('http-proxy-middleware');
 
+const VEGETATION_BASE_URL = 'https://spatial-gis.information.qld.gov.au/arcgis/rest/services/Biota/VegetationManagement/MapServer';
+const VEGETATION_LAYERS = {
+  pmav: 146,
+  rvm: 109,
+};
+const PMAV_CATEGORY_LAYERS = {
+  A: 141,
+  B: 142,
+  C: 143,
+  R: 144,
+  X: 145,
+};
+
+function sanitizeLotPlan(input) {
+  if (!input) return null;
+  return String(input).replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
+}
+
+async function fetchVegetationWithRetry(url, retries = 3, delay = 700) {
+  let lastError;
+  for (let attempt = 0; attempt < retries; attempt += 1) {
+    try {
+      const response = await fetch(url, {
+        headers: { 'User-Agent': 'FlyTheFarm-PMAV/1.0' },
+      });
+      if (!response.ok) throw new Error(`Queensland vegetation service returned HTTP ${response.status}`);
+      return await response.json();
+    } catch (error) {
+      lastError = error;
+      if (attempt < retries - 1) {
+        await new Promise((resolve) => setTimeout(resolve, delay));
+      }
+    }
+  }
+  throw lastError;
+}
+
+function buildVegetationQueryUrl(query) {
+  const dataset = query.dataset === 'rvm' ? 'rvm' : 'pmav';
+  const cleanCategory = query.category ? String(query.category).toUpperCase() : '';
+  const layerId = cleanCategory ? PMAV_CATEGORY_LAYERS[cleanCategory] : VEGETATION_LAYERS[dataset];
+
+  if (!layerId) {
+    const error = new Error('Invalid vegetation dataset');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  let whereClause = '1=1';
+  if (query.lotplan) {
+    const cleanLotPlan = sanitizeLotPlan(query.lotplan);
+    if (!cleanLotPlan || cleanLotPlan.length < 4) {
+      const error = new Error('Invalid lot/plan format. Expected format: 10SP234567');
+      error.statusCode = 400;
+      throw error;
+    }
+    whereClause = `lotplan='${cleanLotPlan}'`;
+  }
+
+  const params = new URLSearchParams({
+    where: whereClause,
+    outFields: '*',
+    returnGeometry: 'true',
+    f: 'geojson',
+    outSR: '4326',
+  });
+
+  if (query.bbox) {
+    params.set('geometry', String(query.bbox));
+    params.set('geometryType', 'esriGeometryEnvelope');
+    params.set('spatialRel', 'esriSpatialRelIntersects');
+    params.set('inSR', '4326');
+  } else if (query.geometry && query.geometryType) {
+    params.set('geometry', String(query.geometry));
+    params.set('geometryType', String(query.geometryType));
+    params.set('spatialRel', 'esriSpatialRelIntersects');
+    params.set('inSR', '4326');
+  }
+
+  return `${VEGETATION_BASE_URL}/${layerId}/query?${params.toString()}`;
+}
+
 module.exports = function (app) {
+  app.get('/api/pmav', async (req, res) => {
+    try {
+      const url = buildVegetationQueryUrl(req.query);
+      const data = await fetchVegetationWithRetry(url);
+      return res.json(data);
+    } catch (error) {
+      const status = error.statusCode || 500;
+      console.error('PMAV proxy error:', error);
+      return res.status(status).json({
+        error: status === 400
+          ? error.message
+          : 'Failed to query Queensland vegetation mapping. The government service may be temporarily unavailable.',
+      });
+    }
+  });
+
   // Proxy for weed identification via Claude Vision API
   app.post('/api/identify-weed', async (req, res) => {
     const chunks = [];

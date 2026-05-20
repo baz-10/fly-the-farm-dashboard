@@ -31,6 +31,7 @@ import BugReportIcon from '@mui/icons-material/BugReport';
 import UploadFileIcon from '@mui/icons-material/UploadFile';
 import MapIcon from '@mui/icons-material/Map';
 import DownloadIcon from '@mui/icons-material/Download';
+import ForestIcon from '@mui/icons-material/Forest';
 import {
   getFieldById,
   getPropertyById,
@@ -244,9 +245,22 @@ export default function FieldDetail() {
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
             <MapIcon sx={{ color: 'primary.main', fontSize: 20 }} />
             <Typography variant="subtitle1" fontWeight={700} color="primary.dark">Field Boundary</Typography>
-            {field.sizeHa > 0 && field.boundaryCoords && field.boundaryCoords.length >= 3 && (
-              <Chip label={`${field.sizeHa} ha`} size="small" color="primary" sx={{ fontWeight: 700, ml: 'auto' }} />
-            )}
+            <Stack direction="row" spacing={1} sx={{ ml: 'auto' }} alignItems="center">
+              {property.lotPlan && (
+                <Button
+                  size="small"
+                  variant="outlined"
+                  startIcon={<ForestIcon />}
+                  onClick={() => navigate(`/compliance/vegetation?lotPlan=${encodeURIComponent(property.lotPlan)}&propertyId=${property.id}&fieldId=${field.id}`)}
+                  sx={{ borderRadius: '8px', fontWeight: 700 }}
+                >
+                  Check PMAV
+                </Button>
+              )}
+              {field.sizeHa > 0 && field.boundaryCoords && field.boundaryCoords.length >= 3 && (
+                <Chip label={`${field.sizeHa} ha`} size="small" color="primary" sx={{ fontWeight: 700 }} />
+              )}
+            </Stack>
           </Box>
 
           {field.boundaryCoords && field.boundaryCoords.length >= 3 ? (

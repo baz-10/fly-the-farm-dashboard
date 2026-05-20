@@ -33,6 +33,7 @@ import ComplianceChemical from './pages/ComplianceChemical';
 import ComplianceTransport from './pages/ComplianceTransport';
 import ComplianceLicensing from './pages/ComplianceLicensing';
 import ComplianceEnvironmental from './pages/ComplianceEnvironmental';
+import ComplianceVegetation from './pages/ComplianceVegetation';
 import ComplianceSafety from './pages/ComplianceSafety';
 import ComplianceDocumentation from './pages/ComplianceDocumentation';
 import MissionPlanning from './pages/MissionPlanning';
@@ -79,6 +80,7 @@ function App() {
           <Route path="/compliance/transport" element={<ComplianceTransport />} />
           <Route path="/compliance/licensing" element={<ComplianceLicensing />} />
           <Route path="/compliance/environmental" element={<ComplianceEnvironmental />} />
+          <Route path="/compliance/vegetation" element={<ComplianceVegetation />} />
           <Route path="/compliance/safety" element={<ComplianceSafety />} />
           <Route path="/compliance/documentation" element={<ComplianceDocumentation />} />
           <Route path="/admin" element={<Admin />} />

@@ -617,6 +617,15 @@ const validateStatusTransitionRules = (
           code: 'COMPLIANCE_CHECK_FAILED'
         });
       }
+
+      if (!mission.complianceChecks.environmentalClearance) {
+        errors.push({
+          field: 'complianceChecks.environmentalClearance',
+          message: 'Environmental clearance warning is active and should be acknowledged before approval',
+          severity: 'warning',
+          code: 'ENVIRONMENTAL_CLEARANCE_WARNING'
+        });
+      }
       break;
 
     case 'Flying':

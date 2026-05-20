@@ -18,6 +18,7 @@ import AssignmentTurnedInIcon from '@mui/icons-material/AssignmentTurnedIn';
 import DocumentScannerIcon from '@mui/icons-material/DocumentScanner';
 import ShieldIcon from '@mui/icons-material/Shield';
 import FlightTakeoffIcon from '@mui/icons-material/FlightTakeoff';
+import ForestIcon from '@mui/icons-material/Forest';
 import ArrowForwardIcon from '@mui/icons-material/ArrowForward';
 
 interface ComplianceArea {
@@ -73,6 +74,15 @@ const COMPLIANCE_AREAS: ComplianceArea[] = [
     description: 'Waterway protection, buffer zones, sensitive area compliance, and environmental impact assessments.',
     icon: <ShieldIcon />,
     route: '/compliance/environmental',
+    status: 'available',
+    priority: 'high',
+  },
+  {
+    id: 'vegetation',
+    title: 'Vegetation / PMAV Mapping',
+    description: 'Queensland PMAV and regulated vegetation map checks for clearing-sensitive field work and mission planning.',
+    icon: <ForestIcon />,
+    route: '/compliance/vegetation',
     status: 'available',
     priority: 'high',
   },
