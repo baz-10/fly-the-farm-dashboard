@@ -1,5 +1,15 @@
 # Getting Started with Create React App
 
+## Fly the Farm Notes
+
+Mission planning can run in two persistence modes:
+
+- `local`: browser-only storage for quick local development.
+- `remote`: shared Supabase-backed storage through `/api/store`.
+
+See [docs/persistent-storage.md](docs/persistent-storage.md) for the Supabase
+schema, Vercel environment variables, and beta migration behavior.
+
 This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
 
 ## Available Scripts

@@ -21,6 +21,7 @@ import {
 import { useAuth } from './AuthContext';
 import { useAircraft } from './AircraftContext';
 import MissionErrorBoundary from '../components/MissionErrorBoundary';
+import { clearSharedCollection, PERSISTENCE_KEYS, readSharedCollection, writeSharedCollection } from '../services/persistence';
 
 // Enhanced mission record with version tracking for optimistic locking
 interface MissionWithVersion extends MissionRecord {
@@ -198,8 +199,8 @@ const defaultContext: MissionContextType = {
 const MissionContext = createContext<MissionContextType>(defaultContext);
 
 // Storage Keys
-const STORAGE_KEY = 'ftf_missions';
-const TEMPLATES_STORAGE_KEY = 'ftf_mission_templates';
+const STORAGE_KEY = PERSISTENCE_KEYS.missions;
+const TEMPLATES_STORAGE_KEY = PERSISTENCE_KEYS.missionTemplates;
 
 // Helper Functions
 const generateId = (): string => {
@@ -242,40 +243,6 @@ const debounce = <T extends (...args: any[]) => any>(
   };
 
   return debouncedFn;
-};
-
-// Safe localStorage operations with async support for large datasets
-const safeLocalStorageOperation = <T extends unknown>(
-  operation: () => T,
-  fallback: T,
-  errorMessage: string
-): T => {
-  try {
-    return operation();
-  } catch (error) {
-    console.error(errorMessage, error);
-    return fallback;
-  }
-};
-
-// Async localStorage operations for large datasets
-const safeAsyncLocalStorageOperation = <T extends unknown>(
-  operation: () => T,
-  fallback: T,
-  errorMessage: string
-): Promise<T> => {
-  return new Promise((resolve) => {
-    // Use setTimeout to make localStorage operations non-blocking
-    setTimeout(() => {
-      try {
-        const result = operation();
-        resolve(result);
-      } catch (error) {
-        console.error(errorMessage, error);
-        resolve(fallback);
-      }
-    }, 0);
-  });
 };
 
 // Data validation for loaded mission data
@@ -755,25 +722,16 @@ export function MissionProvider({ children }: { children: React.ReactNode }) {
     setError(null);
 
     try {
-      // Load mission data asynchronously
-      const missionsData = await safeAsyncLocalStorageOperation(() => {
-        const stored = localStorage.getItem(STORAGE_KEY);
-        if (!stored) return [];
+      const loadedMissions = await readSharedCollection<MissionRecord>(STORAGE_KEY);
+      const missionsData = validateMissionArray(loadedMissions)
+        ? loadedMissions
+        : [];
 
-        const parsed = JSON.parse(stored);
-        if (!validateMissionArray(parsed)) {
-          console.warn('Invalid mission data detected, using empty array');
-          return [];
-        }
+      if (loadedMissions.length > 0 && missionsData.length === 0) {
+        console.warn('Invalid mission data detected, using empty array');
+      }
 
-        return parsed;
-      }, [], 'Failed to load mission data from localStorage');
-
-      // Load templates data asynchronously
-      const templatesData = await safeAsyncLocalStorageOperation(() => {
-        const stored = localStorage.getItem(TEMPLATES_STORAGE_KEY);
-        return stored ? JSON.parse(stored) : [];
-      }, [], 'Failed to load template data from localStorage');
+      const templatesData = await readSharedCollection<MissionTemplate>(TEMPLATES_STORAGE_KEY);
 
       // Initialize version map for optimistic locking
       const versionMap = new Map<string, number>();
@@ -804,11 +762,10 @@ export function MissionProvider({ children }: { children: React.ReactNode }) {
     saveInProgressRef.current = true;
 
     try {
-      await safeAsyncLocalStorageOperation(() => {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(missions));
-        localStorage.setItem(TEMPLATES_STORAGE_KEY, JSON.stringify(missionTemplates));
-        return true;
-      }, false, 'Failed to save mission data to localStorage');
+      await Promise.all([
+        writeSharedCollection(STORAGE_KEY, missions),
+        writeSharedCollection(TEMPLATES_STORAGE_KEY, missionTemplates),
+      ]);
     } catch (error) {
       console.error('Save operation failed:', error);
       throw error;
@@ -850,15 +807,17 @@ export function MissionProvider({ children }: { children: React.ReactNode }) {
     setMissions([]);
     setMissionTemplates([]);
     setStatistics(null);
-    safeOperation(
-      () => {
-        localStorage.removeItem(STORAGE_KEY);
-        localStorage.removeItem(TEMPLATES_STORAGE_KEY);
-        return true;
-      },
-      'Failed to clear mission data from localStorage'
-    );
-  }, [safeOperation]);
+    try {
+      await Promise.all([
+        clearSharedCollection(STORAGE_KEY),
+        clearSharedCollection(TEMPLATES_STORAGE_KEY),
+      ]);
+    } catch (error) {
+      const message = `Failed to clear mission data: ${error instanceof Error ? error.message : String(error)}`;
+      setError(message);
+      console.error(message, error);
+    }
+  }, []);
 
   // Mission CRUD Operations
   const createMission = useCallback(async (missionData: MissionDraftInput): Promise<string> => {

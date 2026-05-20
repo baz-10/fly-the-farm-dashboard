@@ -40,7 +40,8 @@ import {
 } from '../services/pmavService';
 import {
   getSavedVegetationChecks,
-  saveVegetationCheck,
+  loadSavedVegetationChecks,
+  saveVegetationCheckAsync,
 } from '../services/pmavCheckStore';
 import {
   getFieldsByProperty,
@@ -278,14 +279,28 @@ export default function ComplianceVegetation() {
     void handleSearch(initialLotPlan.current);
   }, [handleSearch]);
 
-  const handleSaveCheck = () => {
+  React.useEffect(() => {
+    let cancelled = false;
+
+    loadSavedVegetationChecks().then((checks) => {
+      if (!cancelled) {
+        setSavedChecks(checks);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const handleSaveCheck = async () => {
     if (!result) return;
 
-    const saved = saveVegetationCheck(result.summary, {
+    const saved = await saveVegetationCheckAsync(result.summary, {
       propertyId: selectedPropertyId || undefined,
       fieldId: selectedFieldId || undefined,
     });
-    setSavedChecks(getSavedVegetationChecks());
+    setSavedChecks(await loadSavedVegetationChecks());
     showNotice('success', `Vegetation check saved for ${saved.lotPlan}.`);
   };
 

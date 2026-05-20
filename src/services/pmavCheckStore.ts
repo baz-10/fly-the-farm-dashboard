@@ -1,7 +1,8 @@
 import { SavedVegetationCheck, VegetationSummary } from '../types/pmav';
 import { sanitizeLotPlan } from './pmavService';
+import { PERSISTENCE_KEYS, readSharedCollection, writeSharedCollection } from './persistence';
 
-const STORAGE_KEY = 'ftf_pmav_checks';
+const STORAGE_KEY = PERSISTENCE_KEYS.pmavChecks;
 
 function loadChecks(): SavedVegetationCheck[] {
   try {
@@ -16,8 +17,16 @@ function saveChecks(checks: SavedVegetationCheck[]): void {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(checks));
 }
 
+function sortChecks(checks: SavedVegetationCheck[]): SavedVegetationCheck[] {
+  return checks.sort((a, b) => b.checkedAt.localeCompare(a.checkedAt));
+}
+
 export function getSavedVegetationChecks(): SavedVegetationCheck[] {
-  return loadChecks().sort((a, b) => b.checkedAt.localeCompare(a.checkedAt));
+  return sortChecks(loadChecks());
+}
+
+export async function loadSavedVegetationChecks(): Promise<SavedVegetationCheck[]> {
+  return sortChecks(await readSharedCollection<SavedVegetationCheck>(STORAGE_KEY));
 }
 
 export function getLatestVegetationCheckForLotPlan(lotPlan: string): SavedVegetationCheck | undefined {
@@ -43,5 +52,15 @@ export function saveVegetationCheck(
   ].slice(0, 30);
 
   saveChecks(nextChecks);
+  void writeSharedCollection(STORAGE_KEY, nextChecks);
+  return saved;
+}
+
+export async function saveVegetationCheckAsync(
+  summary: VegetationSummary,
+  context: { propertyId?: string; fieldId?: string } = {}
+): Promise<SavedVegetationCheck> {
+  const saved = saveVegetationCheck(summary, context);
+  await writeSharedCollection(STORAGE_KEY, getSavedVegetationChecks());
   return saved;
 }

@@ -39,7 +39,7 @@ import WarningAmberIcon from '@mui/icons-material/WarningAmber';
 import FieldBoundaryEditor from '../components/FieldBoundaryEditor';
 import { useAircraft } from '../contexts/AircraftContext';
 import { useMission } from '../contexts/MissionContext';
-import { getLatestVegetationCheckForLotPlan, getSavedVegetationChecks } from '../services/pmavCheckStore';
+import { getLatestVegetationCheckForLotPlan, getSavedVegetationChecks, loadSavedVegetationChecks } from '../services/pmavCheckStore';
 import {
   getVegetationCategorySummary,
   hasVegetationReviewCategories,
@@ -416,6 +416,20 @@ export default function MissionPlanning() {
     severity: 'info',
     message: '',
   });
+
+  React.useEffect(() => {
+    let cancelled = false;
+
+    loadSavedVegetationChecks().then((checks) => {
+      if (!cancelled) {
+        setSavedVegetationChecks(checks);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const realAircraftOptions = aircraft.map((item) => ({
     id: item.id,
@@ -2317,7 +2331,7 @@ export default function MissionPlanning() {
                   <Button
                     variant="outlined"
                     onClick={() => {
-                      setSavedVegetationChecks(getSavedVegetationChecks());
+                      loadSavedVegetationChecks().then(setSavedVegetationChecks);
                       showNotice('info', 'Vegetation check evidence refreshed.');
                     }}
                     sx={{ borderRadius: '8px', fontWeight: 800, flex: 1 }}
