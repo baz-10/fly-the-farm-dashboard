@@ -342,6 +342,7 @@ export default function MissionPlanning() {
   const theme = useTheme();
   const {
     missions,
+    isLoading: missionDataLoading,
     createMission,
     createAuthorizedMission,
     updateMission,
@@ -355,10 +356,12 @@ export default function MissionPlanning() {
     aircraft,
     equipmentKits,
     configurations,
+    isLoading: aircraftDataLoading,
     createAircraft,
     createEquipmentKit,
     createConfiguration,
   } = useAircraft();
+  const dataLoading = missionDataLoading || aircraftDataLoading;
 
   const [missionName, setMissionName] = React.useState('Broadleaf Weed Control');
   const [clientName, setClientName] = React.useState('Hillside Farms');
@@ -1488,6 +1491,12 @@ export default function MissionPlanning() {
         </Stack>
       </Stack>
 
+      {dataLoading && (
+        <Alert severity="info" sx={{ mb: 2, borderRadius: '8px' }}>
+          Loading saved fleet and mission data. Planning actions will be available when this finishes.
+        </Alert>
+      )}
+
       <Card
         elevation={0}
         sx={{
@@ -1531,7 +1540,7 @@ export default function MissionPlanning() {
         </CardContent>
       </Card>
 
-      {!canPersistMission && (
+      {!dataLoading && !canPersistMission && (
         <Alert
           severity="info"
           sx={{
@@ -1550,7 +1559,7 @@ export default function MissionPlanning() {
               color="inherit"
               size="small"
               onClick={handleSeedStarterFleet}
-              disabled={seedingFleet || saving}
+              disabled={dataLoading || seedingFleet || saving}
               sx={{ whiteSpace: 'nowrap', minWidth: 144 }}
             >
               {seedingFleet ? 'Adding...' : 'Add starter fleet'}
@@ -2173,7 +2182,7 @@ export default function MissionPlanning() {
                 <Button
                   variant="outlined"
                   onClick={handleGenerateFlightPlan}
-                  disabled={saving || !canGenerateFlightPlan}
+                  disabled={dataLoading || saving || !canGenerateFlightPlan}
                   sx={{ borderRadius: '8px' }}
                 >
                   {selectedMission?.flightPlan ? 'Regenerate Flight Plan' : 'Generate Flight Plan'}
@@ -2206,7 +2215,7 @@ export default function MissionPlanning() {
                   <Button
                     variant="outlined"
                     onClick={handleAuthorizeForFlight}
-                    disabled={saving || !canAuthorizeForFlight}
+                    disabled={dataLoading || saving || !canAuthorizeForFlight}
                     sx={{ flex: 1, borderRadius: '8px' }}
                   >
                     Authorize Flight
@@ -2214,7 +2223,7 @@ export default function MissionPlanning() {
                   <Button
                     variant="contained"
                     onClick={handleStartFlying}
-                    disabled={saving || !canStartFlight}
+                    disabled={dataLoading || saving || !canStartFlight}
                     sx={{ flex: 1, borderRadius: '8px' }}
                   >
                     Start Flying
@@ -2289,7 +2298,7 @@ export default function MissionPlanning() {
                   <Button
                     variant="outlined"
                     onClick={handleRecordCompletion}
-                    disabled={saving || !canRecordCompletion}
+                    disabled={dataLoading || saving || !canRecordCompletion}
                     sx={{ flex: 1, borderRadius: '8px' }}
                   >
                     Record Completion
@@ -2297,7 +2306,7 @@ export default function MissionPlanning() {
                   <Button
                     variant="contained"
                     onClick={handleCompleteMission}
-                    disabled={saving || !canCompleteMission}
+                    disabled={dataLoading || saving || !canCompleteMission}
                     sx={{ flex: 1, borderRadius: '8px' }}
                   >
                     Mark Completed
@@ -2420,7 +2429,7 @@ export default function MissionPlanning() {
                   variant="outlined"
                   startIcon={<SaveIcon />}
                   onClick={handleSaveDraft}
-                  disabled={saving || !canEditPlanning}
+                  disabled={dataLoading || saving || !canEditPlanning}
                   sx={{ minHeight: 44, px: 4 }}
                 >
                   {canEditPlanning ? selectedMission ? 'Update Plan' : 'Save Draft' : `Plan ${selectedMission?.status}`}
@@ -2429,7 +2438,7 @@ export default function MissionPlanning() {
                   variant="contained"
                   startIcon={<CheckCircleIcon />}
                   onClick={handleAuthorizeMission}
-                  disabled={saving || !canAuthorizePlanning}
+                  disabled={dataLoading || saving || !canAuthorizePlanning}
                   sx={{ minHeight: 44, px: 5 }}
                 >
                   {canAuthorizePlanning

@@ -7,7 +7,6 @@ import {
   Typography,
   MenuItem,
   Paper,
-  Divider,
   Alert,
   FormControl,
   InputLabel,
@@ -108,6 +107,7 @@ export default function AircraftForm({ aircraftId, onSave, onCancel }: AircraftF
   const [formData, setFormData] = useState<FormData>(initialFormData);
   const [errors, setErrors] = useState<FormErrors>({});
   const [saving, setSaving] = useState(false);
+  const [submitError, setSubmitError] = useState('');
 
   // Load aircraft data if editing
   useEffect(() => {
@@ -155,7 +155,7 @@ export default function AircraftForm({ aircraftId, onSave, onCancel }: AircraftF
     // Required fields
     if (!formData.registration.trim()) {
       newErrors.registration = 'Registration is required';
-    } else if (!/^[A-Z0-9-]+$/.test(formData.registration.trim())) {
+    } else if (!/^[A-Z0-9-]+$/.test(formData.registration.trim().toUpperCase())) {
       newErrors.registration = 'Registration must contain only uppercase letters, numbers, and hyphens';
     }
 
@@ -279,7 +279,9 @@ export default function AircraftForm({ aircraftId, onSave, onCancel }: AircraftF
   const handleInputChange = (field: keyof FormData) => (
     event: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement> | SelectChangeEvent
   ) => {
-    const value = event.target.value;
+    const value = field === 'registration'
+      ? event.target.value.toUpperCase()
+      : event.target.value;
     setFormData(prev => ({
       ...prev,
       [field]: value,
@@ -314,8 +316,10 @@ export default function AircraftForm({ aircraftId, onSave, onCancel }: AircraftF
 
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
+    setSubmitError('');
 
     if (!validateForm()) {
+      setSubmitError('Some required aircraft details are missing or invalid. Review the highlighted fields before saving.');
       return;
     }
 
@@ -371,12 +375,16 @@ export default function AircraftForm({ aircraftId, onSave, onCancel }: AircraftF
       if (aircraftId) {
         await updateAircraft(aircraftId, aircraftData);
       } else {
-        await createAircraft(aircraftData);
+        const createdAircraftId = await createAircraft(aircraftData);
+        if (!createdAircraftId) {
+          throw new Error('The aircraft record could not be created. Review the highlighted details and try again.');
+        }
       }
 
       onSave();
     } catch (error) {
       console.error('Failed to save aircraft:', error);
+      setSubmitError(error instanceof Error ? error.message : 'The aircraft record could not be saved.');
     } finally {
       setSaving(false);
     }
@@ -384,6 +392,12 @@ export default function AircraftForm({ aircraftId, onSave, onCancel }: AircraftF
 
   return (
       <Box component="form" onSubmit={handleSubmit} sx={{ mt: 2 }}>
+        {submitError && (
+          <Alert severity="error" sx={{ mb: 3 }}>
+            {submitError}
+          </Alert>
+        )}
+
         {error && (
           <Alert severity="error" sx={{ mb: 3 }}>
             {error}

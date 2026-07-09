@@ -201,18 +201,6 @@ const validateStoredData = (data: unknown): boolean => {
   return true;
 };
 
-// Debounce utility function
-const debounce = <T extends (...args: any[]) => any>(
-  func: T,
-  delay: number
-): ((...args: Parameters<T>) => void) => {
-  let timeoutId: NodeJS.Timeout;
-  return (...args: Parameters<T>) => {
-    clearTimeout(timeoutId);
-    timeoutId = setTimeout(() => func(...args), delay);
-  };
-};
-
 // Aircraft Context Provider
 export function AircraftProvider({ children }: { children: React.ReactNode }) {
   const [aircraft, setAircraft] = useState<Aircraft[]>([]);
@@ -221,6 +209,8 @@ export function AircraftProvider({ children }: { children: React.ReactNode }) {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const saveQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const hasLoadedRef = useRef(false);
 
   // Enhanced error handling function
   const safeOperation = useCallback(<T,>(operation: () => T, errorMessage: string): T | null => {
@@ -237,13 +227,13 @@ export function AircraftProvider({ children }: { children: React.ReactNode }) {
 
   // Load data from localStorage with validation
   const loadData = useCallback(async () => {
+    hasLoadedRef.current = false;
     setIsLoading(true);
     setError(null);
 
     try {
       const data = await readSharedValue<AircraftStoreData | null>(STORAGE_KEY, null);
       if (!data) {
-        setIsLoading(false);
         return;
       }
 
@@ -259,35 +249,37 @@ export function AircraftProvider({ children }: { children: React.ReactNode }) {
       setError(message);
       console.error(message, error);
     } finally {
+      hasLoadedRef.current = true;
       setIsLoading(false);
     }
   }, []);
 
   // Save data to localStorage with error handling
   const saveData = useCallback(async () => {
-    const data = {
+    const snapshot = {
       aircraft,
       equipmentKits,
       configurations,
       lastUpdated: new Date().toISOString(),
     };
 
-    try {
-      await writeSharedValue(STORAGE_KEY, data);
-    } catch (error) {
-      const message = `Failed to save aircraft data: ${error instanceof Error ? error.message : String(error)}`;
-      setError(message);
-      console.error(message, error);
-    }
-  }, [aircraft, equipmentKits, configurations]);
+    const persistSnapshot = async () => {
+      try {
+        await writeSharedValue(STORAGE_KEY, snapshot);
+      } catch (error) {
+        const message = `Failed to save aircraft data: ${error instanceof Error ? error.message : String(error)}`;
+        setError(message);
+        console.error(message, error);
+        throw error;
+      }
+    };
 
-  // Debounced save function
-  const debouncedSave = useCallback(
-    debounce(() => {
-      saveData();
-    }, 1000),
-    [saveData]
-  );
+    const queuedSave = saveQueueRef.current
+      .catch(() => undefined)
+      .then(persistSnapshot);
+    saveQueueRef.current = queuedSave;
+    await queuedSave;
+  }, [aircraft, equipmentKits, configurations]);
 
   // Clear all data
   const clearData = useCallback(async () => {
@@ -581,18 +573,27 @@ export function AircraftProvider({ children }: { children: React.ReactNode }) {
     return isCompatible && weightWithinLimits && bothOperational;
   }, [aircraft, equipmentKits]);
 
-  // Auto-save when data changes (debounced to prevent excessive saves)
+  // Auto-save the latest fleet snapshot, including an intentionally empty fleet.
   useEffect(() => {
-    if (aircraft.length > 0 || equipmentKits.length > 0 || configurations.length > 0) {
-      // Cancel any pending save
+    if (!hasLoadedRef.current) {
+      return;
+    }
+
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current);
+    }
+
+    saveTimeoutRef.current = setTimeout(() => {
+      saveData().catch(() => undefined);
+    }, 250);
+
+    return () => {
       if (saveTimeoutRef.current) {
         clearTimeout(saveTimeoutRef.current);
+        saveTimeoutRef.current = null;
       }
-
-      // Schedule a new debounced save
-      debouncedSave();
-    }
-  }, [aircraft, equipmentKits, configurations, debouncedSave]);
+    };
+  }, [aircraft, equipmentKits, configurations, saveData]);
 
   // Load data on mount
   useEffect(() => {

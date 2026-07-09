@@ -213,38 +213,6 @@ const generateMissionNumber = (): string => {
   return `MSN-${year}-${timestamp}`;
 };
 
-// Enhanced Debounce utility with cleanup support
-interface DebouncedFunction<T extends (...args: any[]) => any> {
-  (...args: Parameters<T>): void;
-  cancel: () => void;
-}
-
-const debounce = <T extends (...args: any[]) => any>(
-  func: T,
-  delay: number
-): DebouncedFunction<T> => {
-  let timeoutId: NodeJS.Timeout | null = null;
-
-  const debouncedFn = ((...args: Parameters<T>) => {
-    if (timeoutId) {
-      clearTimeout(timeoutId);
-    }
-    timeoutId = setTimeout(() => {
-      func(...args);
-      timeoutId = null;
-    }, delay);
-  }) as DebouncedFunction<T>;
-
-  debouncedFn.cancel = () => {
-    if (timeoutId) {
-      clearTimeout(timeoutId);
-      timeoutId = null;
-    }
-  };
-
-  return debouncedFn;
-};
-
 // Data validation for loaded mission data
 const validateMissionRecord = (data: any): data is MissionRecord => {
   return (
@@ -667,10 +635,10 @@ export function MissionProvider({ children }: { children: React.ReactNode }) {
   const [error, setError] = useState<string | null>(null);
   const [statistics, setStatistics] = useState<MissionStatistics | null>(null);
 
-  // Refs for cleanup and concurrency control
+  // Refs for cleanup and ordered persistence
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const debouncedSaveRef = useRef<DebouncedFunction<() => Promise<void>> | null>(null);
-  const saveInProgressRef = useRef<boolean>(false);
+  const saveQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const hasLoadedRef = useRef(false);
   const versionMapRef = useRef<Map<string, number>>(new Map());
 
   const { user } = useAuth();
@@ -718,6 +686,7 @@ export function MissionProvider({ children }: { children: React.ReactNode }) {
 
   // Enhanced async data loading with validation
   const loadData = useCallback(async () => {
+    hasLoadedRef.current = false;
     setIsLoading(true);
     setError(null);
 
@@ -747,60 +716,28 @@ export function MissionProvider({ children }: { children: React.ReactNode }) {
       setError(message);
       console.error(message, error);
     } finally {
+      hasLoadedRef.current = true;
       setIsLoading(false);
     }
   }, []);
 
-  // Enhanced async save with concurrency protection
+  // Save snapshots in order so a slower request cannot overwrite newer state.
   const saveData = useCallback(async () => {
-    // Prevent concurrent save operations
-    if (saveInProgressRef.current) {
-      console.log('Save operation already in progress, skipping...');
-      return;
-    }
-
-    saveInProgressRef.current = true;
-
-    try {
+    const missionsSnapshot = missions;
+    const templatesSnapshot = missionTemplates;
+    const persistSnapshot = async () => {
       await Promise.all([
-        writeSharedCollection(STORAGE_KEY, missions),
-        writeSharedCollection(TEMPLATES_STORAGE_KEY, missionTemplates),
+        writeSharedCollection(STORAGE_KEY, missionsSnapshot),
+        writeSharedCollection(TEMPLATES_STORAGE_KEY, templatesSnapshot),
       ]);
-    } catch (error) {
-      console.error('Save operation failed:', error);
-      throw error;
-    } finally {
-      saveInProgressRef.current = false;
-    }
+    };
+
+    const queuedSave = saveQueueRef.current
+      .catch(() => undefined)
+      .then(persistSnapshot);
+    saveQueueRef.current = queuedSave;
+    await queuedSave;
   }, [missions, missionTemplates]);
-
-  // Enhanced debounced save with proper cleanup
-  const createDebouncedSave = useCallback(() => {
-    // Cancel previous debounced function if it exists
-    if (debouncedSaveRef.current) {
-      debouncedSaveRef.current.cancel();
-    }
-
-    // Create new debounced function
-    debouncedSaveRef.current = debounce(async () => {
-      try {
-        await saveData();
-      } catch (error) {
-        console.error('Auto-save failed:', error);
-        setError('Auto-save failed. Your changes may not be saved.');
-      }
-    }, 1000);
-
-    return debouncedSaveRef.current;
-  }, [saveData]);
-
-  // Get or create debounced save function
-  const getDebouncedSave = useCallback(() => {
-    if (!debouncedSaveRef.current) {
-      return createDebouncedSave();
-    }
-    return debouncedSaveRef.current;
-  }, [createDebouncedSave]);
 
   // Clear all data
   const clearData = useCallback(async () => {
@@ -2162,13 +2099,31 @@ export function MissionProvider({ children }: { children: React.ReactNode }) {
     return versionMapRef.current.get(id) || 1;
   }, []);
 
-  // Auto-save when data changes with proper cleanup
+  // Auto-save the latest render snapshot. The previous implementation retained
+  // the first Planning snapshot and silently discarded later workflow states.
   useEffect(() => {
-    if (missions.length > 0 || missionTemplates.length > 0) {
-      const debouncedSave = getDebouncedSave();
-      debouncedSave();
+    if (!hasLoadedRef.current) {
+      return;
     }
-  }, [missions, missionTemplates, getDebouncedSave]);
+
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current);
+    }
+
+    saveTimeoutRef.current = setTimeout(() => {
+      saveData().catch((error) => {
+        console.error('Auto-save failed:', error);
+        setError('Auto-save failed. Your changes may not be saved.');
+      });
+    }, 250);
+
+    return () => {
+      if (saveTimeoutRef.current) {
+        clearTimeout(saveTimeoutRef.current);
+        saveTimeoutRef.current = null;
+      }
+    };
+  }, [missions, missionTemplates, saveData]);
 
   // Load data on mount
   useEffect(() => {
@@ -2192,12 +2147,6 @@ export function MissionProvider({ children }: { children: React.ReactNode }) {
   // Cleanup resources on unmount
   useEffect(() => {
     return () => {
-      // Cancel any pending debounced saves
-      if (debouncedSaveRef.current) {
-        debouncedSaveRef.current.cancel();
-      }
-
-      // Clear timeout refs
       if (saveTimeoutRef.current) {
         clearTimeout(saveTimeoutRef.current);
       }
