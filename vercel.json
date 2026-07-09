@@ -4,11 +4,17 @@
   "outputDirectory": "build",
   "framework": "create-react-app",
   "functions": {
+    "api/auth.js": {
+      "maxDuration": 15
+    },
     "api/identify-weed.js": {
       "maxDuration": 30
     },
     "api/pmav.js": {
       "maxDuration": 30
+    },
+    "api/store.js": {
+      "maxDuration": 15
     }
   },
   "rewrites": [

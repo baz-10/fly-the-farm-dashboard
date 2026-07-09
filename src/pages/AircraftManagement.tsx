@@ -326,11 +326,7 @@ export default function AircraftManagement() {
     equipmentKits,
     isLoading,
     error,
-    createAircraft,
-    updateAircraft,
     deleteAircraft,
-    createEquipmentKit,
-    updateEquipmentKit,
     deleteEquipmentKit,
     getAircraftById,
     getEquipmentKitById,
@@ -529,6 +525,12 @@ export default function AircraftManagement() {
         </Alert>
       )}
 
+      {isLoading && (
+        <Alert severity="info" sx={{ mb: 3 }}>
+          Loading saved aircraft and equipment. Fleet changes will be available when this finishes.
+        </Alert>
+      )}
+
       <Paper sx={{ bgcolor: 'background.paper' }}>
         <Tabs
           value={tabValue}
@@ -589,6 +591,7 @@ export default function AircraftManagement() {
                 variant="contained"
                 startIcon={<AddIcon />}
                 onClick={handleCreateAircraft}
+                disabled={isLoading}
                 sx={{ ml: 2 }}
                 aria-label="Add new aircraft to fleet"
               >
@@ -666,6 +669,7 @@ export default function AircraftManagement() {
                 variant="contained"
                 startIcon={<AddIcon />}
                 onClick={handleCreateKit}
+                disabled={isLoading}
                 sx={{ ml: 2 }}
                 aria-label="Add new equipment kit to inventory"
               >

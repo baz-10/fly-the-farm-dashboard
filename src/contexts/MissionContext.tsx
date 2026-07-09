@@ -21,6 +21,7 @@ import {
 import { useAuth } from './AuthContext';
 import { useAircraft } from './AircraftContext';
 import MissionErrorBoundary from '../components/MissionErrorBoundary';
+import { clearSharedCollection, deleteSharedRecord, PERSISTENCE_KEYS, readSharedCollection, writeSharedCollection } from '../services/persistence';
 
 // Enhanced mission record with version tracking for optimistic locking
 interface MissionWithVersion extends MissionRecord {
@@ -198,8 +199,8 @@ const defaultContext: MissionContextType = {
 const MissionContext = createContext<MissionContextType>(defaultContext);
 
 // Storage Keys
-const STORAGE_KEY = 'ftf_missions';
-const TEMPLATES_STORAGE_KEY = 'ftf_mission_templates';
+const STORAGE_KEY = PERSISTENCE_KEYS.missions;
+const TEMPLATES_STORAGE_KEY = PERSISTENCE_KEYS.missionTemplates;
 
 // Helper Functions
 const generateId = (): string => {
@@ -210,72 +211,6 @@ const generateMissionNumber = (): string => {
   const year = new Date().getFullYear();
   const timestamp = Date.now().toString().slice(-6);
   return `MSN-${year}-${timestamp}`;
-};
-
-// Enhanced Debounce utility with cleanup support
-interface DebouncedFunction<T extends (...args: any[]) => any> {
-  (...args: Parameters<T>): void;
-  cancel: () => void;
-}
-
-const debounce = <T extends (...args: any[]) => any>(
-  func: T,
-  delay: number
-): DebouncedFunction<T> => {
-  let timeoutId: NodeJS.Timeout | null = null;
-
-  const debouncedFn = ((...args: Parameters<T>) => {
-    if (timeoutId) {
-      clearTimeout(timeoutId);
-    }
-    timeoutId = setTimeout(() => {
-      func(...args);
-      timeoutId = null;
-    }, delay);
-  }) as DebouncedFunction<T>;
-
-  debouncedFn.cancel = () => {
-    if (timeoutId) {
-      clearTimeout(timeoutId);
-      timeoutId = null;
-    }
-  };
-
-  return debouncedFn;
-};
-
-// Safe localStorage operations with async support for large datasets
-const safeLocalStorageOperation = <T extends unknown>(
-  operation: () => T,
-  fallback: T,
-  errorMessage: string
-): T => {
-  try {
-    return operation();
-  } catch (error) {
-    console.error(errorMessage, error);
-    return fallback;
-  }
-};
-
-// Async localStorage operations for large datasets
-const safeAsyncLocalStorageOperation = <T extends unknown>(
-  operation: () => T,
-  fallback: T,
-  errorMessage: string
-): Promise<T> => {
-  return new Promise((resolve) => {
-    // Use setTimeout to make localStorage operations non-blocking
-    setTimeout(() => {
-      try {
-        const result = operation();
-        resolve(result);
-      } catch (error) {
-        console.error(errorMessage, error);
-        resolve(fallback);
-      }
-    }, 0);
-  });
 };
 
 // Data validation for loaded mission data
@@ -700,10 +635,10 @@ export function MissionProvider({ children }: { children: React.ReactNode }) {
   const [error, setError] = useState<string | null>(null);
   const [statistics, setStatistics] = useState<MissionStatistics | null>(null);
 
-  // Refs for cleanup and concurrency control
+  // Refs for cleanup and ordered persistence
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const debouncedSaveRef = useRef<DebouncedFunction<() => Promise<void>> | null>(null);
-  const saveInProgressRef = useRef<boolean>(false);
+  const saveQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const hasLoadedRef = useRef(false);
   const versionMapRef = useRef<Map<string, number>>(new Map());
 
   const { user } = useAuth();
@@ -712,7 +647,6 @@ export function MissionProvider({ children }: { children: React.ReactNode }) {
     getEquipmentKitById,
     getConfigurationById,
     validateConfiguration,
-    getAvailableAircraft,
     getAircraftConfigurations
   } = useAircraft();
 
@@ -751,29 +685,21 @@ export function MissionProvider({ children }: { children: React.ReactNode }) {
 
   // Enhanced async data loading with validation
   const loadData = useCallback(async () => {
+    hasLoadedRef.current = false;
     setIsLoading(true);
     setError(null);
 
     try {
-      // Load mission data asynchronously
-      const missionsData = await safeAsyncLocalStorageOperation(() => {
-        const stored = localStorage.getItem(STORAGE_KEY);
-        if (!stored) return [];
+      const loadedMissions = await readSharedCollection<MissionRecord>(STORAGE_KEY);
+      const missionsData = validateMissionArray(loadedMissions)
+        ? loadedMissions
+        : [];
 
-        const parsed = JSON.parse(stored);
-        if (!validateMissionArray(parsed)) {
-          console.warn('Invalid mission data detected, using empty array');
-          return [];
-        }
+      if (loadedMissions.length > 0 && missionsData.length === 0) {
+        console.warn('Invalid mission data detected, using empty array');
+      }
 
-        return parsed;
-      }, [], 'Failed to load mission data from localStorage');
-
-      // Load templates data asynchronously
-      const templatesData = await safeAsyncLocalStorageOperation(() => {
-        const stored = localStorage.getItem(TEMPLATES_STORAGE_KEY);
-        return stored ? JSON.parse(stored) : [];
-      }, [], 'Failed to load template data from localStorage');
+      const templatesData = await readSharedCollection<MissionTemplate>(TEMPLATES_STORAGE_KEY);
 
       // Initialize version map for optimistic locking
       const versionMap = new Map<string, number>();
@@ -789,76 +715,45 @@ export function MissionProvider({ children }: { children: React.ReactNode }) {
       setError(message);
       console.error(message, error);
     } finally {
+      hasLoadedRef.current = true;
       setIsLoading(false);
     }
   }, []);
 
-  // Enhanced async save with concurrency protection
+  // Save snapshots in order so a slower request cannot overwrite newer state.
   const saveData = useCallback(async () => {
-    // Prevent concurrent save operations
-    if (saveInProgressRef.current) {
-      console.log('Save operation already in progress, skipping...');
-      return;
-    }
+    const missionsSnapshot = missions;
+    const templatesSnapshot = missionTemplates;
+    const persistSnapshot = async () => {
+      await Promise.all([
+        writeSharedCollection(STORAGE_KEY, missionsSnapshot),
+        writeSharedCollection(TEMPLATES_STORAGE_KEY, templatesSnapshot),
+      ]);
+    };
 
-    saveInProgressRef.current = true;
-
-    try {
-      await safeAsyncLocalStorageOperation(() => {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(missions));
-        localStorage.setItem(TEMPLATES_STORAGE_KEY, JSON.stringify(missionTemplates));
-        return true;
-      }, false, 'Failed to save mission data to localStorage');
-    } catch (error) {
-      console.error('Save operation failed:', error);
-      throw error;
-    } finally {
-      saveInProgressRef.current = false;
-    }
+    const queuedSave = saveQueueRef.current
+      .catch(() => undefined)
+      .then(persistSnapshot);
+    saveQueueRef.current = queuedSave;
+    await queuedSave;
   }, [missions, missionTemplates]);
-
-  // Enhanced debounced save with proper cleanup
-  const createDebouncedSave = useCallback(() => {
-    // Cancel previous debounced function if it exists
-    if (debouncedSaveRef.current) {
-      debouncedSaveRef.current.cancel();
-    }
-
-    // Create new debounced function
-    debouncedSaveRef.current = debounce(async () => {
-      try {
-        await saveData();
-      } catch (error) {
-        console.error('Auto-save failed:', error);
-        setError('Auto-save failed. Your changes may not be saved.');
-      }
-    }, 1000);
-
-    return debouncedSaveRef.current;
-  }, [saveData]);
-
-  // Get or create debounced save function
-  const getDebouncedSave = useCallback(() => {
-    if (!debouncedSaveRef.current) {
-      return createDebouncedSave();
-    }
-    return debouncedSaveRef.current;
-  }, [createDebouncedSave]);
 
   // Clear all data
   const clearData = useCallback(async () => {
     setMissions([]);
     setMissionTemplates([]);
     setStatistics(null);
-    safeOperation(
-      () => {
-        localStorage.removeItem(STORAGE_KEY);
-        localStorage.removeItem(TEMPLATES_STORAGE_KEY);
-        return true;
-      },
-      'Failed to clear mission data from localStorage'
-    );
-  }, [safeOperation]);
+    try {
+      await Promise.all([
+        clearSharedCollection(STORAGE_KEY),
+        clearSharedCollection(TEMPLATES_STORAGE_KEY),
+      ]);
+    } catch (error) {
+      const message = `Failed to clear mission data: ${error instanceof Error ? error.message : String(error)}`;
+      setError(message);
+      console.error(message, error);
+    }
+  }, []);
 
   // Mission CRUD Operations
   const createMission = useCallback(async (missionData: MissionDraftInput): Promise<string> => {
@@ -1164,30 +1059,15 @@ export function MissionProvider({ children }: { children: React.ReactNode }) {
       throw new Error('User must be authenticated to delete missions');
     }
 
-    safeOperation(() => {
-      if (!id) {
-        throw new Error('Mission ID is required');
-      }
+    if (!id) throw new Error('Mission ID is required');
+    const mission = missions.find((candidate) => candidate.id === id);
+    if (!mission) throw new Error(`Mission with ID ${id} not found`);
+    if (mission.status === 'Flying') throw new Error('Cannot delete missions that are currently flying');
+    if (mission.status === 'Locked') throw new Error('Cannot delete locked missions');
 
-      setMissions(prev => {
-        const mission = prev.find(m => m.id === id);
-        if (!mission) {
-          throw new Error(`Mission with ID ${id} not found`);
-        }
-
-        // Check if mission can be deleted
-        if (mission.status === 'Flying') {
-          throw new Error('Cannot delete missions that are currently flying');
-        }
-
-        if (mission.status === 'Locked') {
-          throw new Error('Cannot delete locked missions');
-        }
-
-        return prev.filter(mission => mission.id !== id);
-      });
-    }, 'Failed to delete mission');
-  }, [safeOperation, user]);
+    await deleteSharedRecord(STORAGE_KEY, id);
+    setMissions((previous) => previous.filter((candidate) => candidate.id !== id));
+  }, [missions, user]);
 
   const getMissionById = useCallback((id: string): MissionRecord | undefined => {
     return missions.find(m => m.id === id);
@@ -1267,7 +1147,7 @@ export function MissionProvider({ children }: { children: React.ReactNode }) {
         )
       );
     }, 'Failed to transition mission status');
-  }, [missions, user, safeOperation, createAuditEntry]);
+  }, [missions, user, safeOperation, createAuditEntry, getAircraftById, getEquipmentKitById, getConfigurationById, validateConfiguration]);
 
   // Approval Management
   const approveMission = useCallback(async (
@@ -2075,10 +1955,9 @@ export function MissionProvider({ children }: { children: React.ReactNode }) {
       throw new Error('User must be authenticated to delete templates');
     }
 
-    safeOperation(() => {
-      setMissionTemplates(prev => prev.filter(template => template.id !== id));
-    }, 'Failed to delete mission template');
-  }, [user, safeOperation]);
+    await deleteSharedRecord(TEMPLATES_STORAGE_KEY, id);
+    setMissionTemplates((previous) => previous.filter((template) => template.id !== id));
+  }, [user]);
 
   const getTemplateById = useCallback((id: string): MissionTemplate | undefined => {
     return missionTemplates.find(t => t.id === id);
@@ -2203,13 +2082,31 @@ export function MissionProvider({ children }: { children: React.ReactNode }) {
     return versionMapRef.current.get(id) || 1;
   }, []);
 
-  // Auto-save when data changes with proper cleanup
+  // Auto-save the latest render snapshot. The previous implementation retained
+  // the first Planning snapshot and silently discarded later workflow states.
   useEffect(() => {
-    if (missions.length > 0 || missionTemplates.length > 0) {
-      const debouncedSave = getDebouncedSave();
-      debouncedSave();
+    if (!hasLoadedRef.current) {
+      return;
     }
-  }, [missions, missionTemplates, getDebouncedSave]);
+
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current);
+    }
+
+    saveTimeoutRef.current = setTimeout(() => {
+      saveData().catch((error) => {
+        console.error('Auto-save failed:', error);
+        setError('Auto-save failed. Your changes may not be saved.');
+      });
+    }, 250);
+
+    return () => {
+      if (saveTimeoutRef.current) {
+        clearTimeout(saveTimeoutRef.current);
+        saveTimeoutRef.current = null;
+      }
+    };
+  }, [missions, missionTemplates, saveData]);
 
   // Load data on mount
   useEffect(() => {
@@ -2233,12 +2130,6 @@ export function MissionProvider({ children }: { children: React.ReactNode }) {
   // Cleanup resources on unmount
   useEffect(() => {
     return () => {
-      // Cancel any pending debounced saves
-      if (debouncedSaveRef.current) {
-        debouncedSaveRef.current.cancel();
-      }
-
-      // Clear timeout refs
       if (saveTimeoutRef.current) {
         clearTimeout(saveTimeoutRef.current);
       }

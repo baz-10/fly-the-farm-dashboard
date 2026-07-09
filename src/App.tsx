@@ -37,6 +37,23 @@ import ComplianceVegetation from './pages/ComplianceVegetation';
 import ComplianceSafety from './pages/ComplianceSafety';
 import ComplianceDocumentation from './pages/ComplianceDocumentation';
 import MissionPlanning from './pages/MissionPlanning';
+import { UserLicenseProvider } from './contexts/UserLicenseContext';
+import { AircraftProvider } from './contexts/AircraftContext';
+import { MissionProvider } from './contexts/MissionContext';
+import { useAuth } from './contexts/AuthContext';
+
+function WorkflowProviders({ children }: { children: React.ReactNode }) {
+  const { user } = useAuth();
+  if (user?.role !== 'admin' && user?.role !== 'contractor') return <>{children}</>;
+
+  return (
+    <UserLicenseProvider>
+      <AircraftProvider>
+        <MissionProvider>{children}</MissionProvider>
+      </AircraftProvider>
+    </UserLicenseProvider>
+  );
+}
 
 function App() {
   return (
@@ -47,7 +64,9 @@ function App() {
         <Route
           element={
             <ProtectedRoute>
-              <Layout />
+              <WorkflowProviders>
+                <Layout />
+              </WorkflowProviders>
             </ProtectedRoute>
           }
         >
@@ -71,9 +90,9 @@ function App() {
           <Route path="/financials" element={<FinancialsList />} />
           <Route path="/financials/new" element={<ActualCreate />} />
           <Route path="/financials/:actualId" element={<ActualDetail />} />
-          <Route path="/aircraft" element={<AircraftManagement />} />
+          <Route path="/aircraft" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><AircraftManagement /></ProtectedRoute>} />
           <Route path="/jsa" element={<JSAManagement />} />
-          <Route path="/mission-planning" element={<MissionPlanning />} />
+          <Route path="/mission-planning" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><MissionPlanning /></ProtectedRoute>} />
           <Route path="/compliance" element={<ComplianceMenu />} />
           <Route path="/compliance/flight" element={<ComplianceFlight />} />
           <Route path="/compliance/chemical" element={<ComplianceChemical />} />

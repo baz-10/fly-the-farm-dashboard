@@ -1,4 +1,6 @@
 const { createProxyMiddleware } = require('http-proxy-middleware');
+const authHandler = require('../api/auth');
+const persistentStoreHandler = require('../api/store');
 
 const VEGETATION_BASE_URL = 'https://spatial-gis.information.qld.gov.au/arcgis/rest/services/Biota/VegetationManagement/MapServer';
 const VEGETATION_LAYERS = {
@@ -83,6 +85,27 @@ function buildVegetationQueryUrl(query) {
 }
 
 module.exports = function (app) {
+  const registerJsonApi = (path, handler) => app.all(path, (req, res) => {
+    if (req.method === 'GET' || req.method === 'DELETE' || req.method === 'OPTIONS') {
+      return handler(req, res);
+    }
+
+    const chunks = [];
+    req.on('data', (chunk) => chunks.push(chunk));
+    req.on('end', () => {
+      try {
+        const rawBody = Buffer.concat(chunks).toString();
+        req.body = rawBody ? JSON.parse(rawBody) : {};
+        return handler(req, res);
+      } catch (error) {
+        return res.status(400).json({ error: 'Invalid JSON body.' });
+      }
+    });
+  });
+
+  registerJsonApi('/api/auth', authHandler);
+  registerJsonApi('/api/store', persistentStoreHandler);
+
   app.get('/api/pmav', async (req, res) => {
     try {
       const url = buildVegetationQueryUrl(req.query);

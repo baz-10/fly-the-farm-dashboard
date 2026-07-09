@@ -17,7 +17,6 @@ import {
 import FlightTakeoffIcon from '@mui/icons-material/FlightTakeoff';
 import ArrowForwardIcon from '@mui/icons-material/ArrowForward';
 import AgricultureIcon from '@mui/icons-material/Agriculture';
-import PersonIcon from '@mui/icons-material/Person';
 import { useAuth } from '../contexts/AuthContext';
 import { UserRole } from '../contexts/AuthContext';
 
@@ -49,7 +48,7 @@ export default function Register() {
     const result = await register(email, name, password, role, contractorCode || undefined);
     setLoading(false);
     if (result.success) {
-      navigate('/');
+      navigate(result.requiresLogin ? '/login' : '/');
     } else {
       setError(result.error || 'Registration failed.');
     }

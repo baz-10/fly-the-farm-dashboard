@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { Aircraft, EquipmentKit, AircraftKitConfiguration, AircraftStatus, EquipmentKitType, OperationalStatus } from '../types/aircraft';
+import { clearSharedValue, PERSISTENCE_KEYS, readSharedValue, writeSharedValue } from '../services/persistence';
 
 // Context type definition
 interface AircraftContextType {
@@ -84,7 +85,14 @@ const defaultContext: AircraftContextType = {
 const AircraftContext = createContext<AircraftContextType>(defaultContext);
 
 // Storage key
-const STORAGE_KEY = 'ftf_aircraft_data';
+const STORAGE_KEY = PERSISTENCE_KEYS.aircraft;
+
+interface AircraftStoreData {
+  aircraft: Aircraft[];
+  equipmentKits: EquipmentKit[];
+  configurations: AircraftKitConfiguration[];
+  lastUpdated?: string;
+}
 
 // Helper function to generate timestamp-based IDs
 const generateId = (): string => {
@@ -193,32 +201,6 @@ const validateStoredData = (data: unknown): boolean => {
   return true;
 };
 
-// Debounce utility function
-const debounce = <T extends (...args: any[]) => any>(
-  func: T,
-  delay: number
-): ((...args: Parameters<T>) => void) => {
-  let timeoutId: NodeJS.Timeout;
-  return (...args: Parameters<T>) => {
-    clearTimeout(timeoutId);
-    timeoutId = setTimeout(() => func(...args), delay);
-  };
-};
-
-// Helper function for localStorage operations with error handling
-const safeLocalStorageOperation = <T extends unknown>(
-  operation: () => T,
-  fallback: T,
-  errorMessage: string
-): T => {
-  try {
-    return operation();
-  } catch (error) {
-    console.error(errorMessage, error);
-    return fallback;
-  }
-};
-
 // Aircraft Context Provider
 export function AircraftProvider({ children }: { children: React.ReactNode }) {
   const [aircraft, setAircraft] = useState<Aircraft[]>([]);
@@ -227,6 +209,8 @@ export function AircraftProvider({ children }: { children: React.ReactNode }) {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const saveQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const hasLoadedRef = useRef(false);
 
   // Enhanced error handling function
   const safeOperation = useCallback(<T,>(operation: () => T, errorMessage: string): T | null => {
@@ -243,68 +227,73 @@ export function AircraftProvider({ children }: { children: React.ReactNode }) {
 
   // Load data from localStorage with validation
   const loadData = useCallback(async () => {
+    hasLoadedRef.current = false;
     setIsLoading(true);
     setError(null);
 
-    const data = safeOperation(() => {
-      const stored = localStorage.getItem(STORAGE_KEY);
-      if (!stored) return null;
-
-      const parsed = JSON.parse(stored);
-
-      // Validate the stored data structure
-      if (!validateStoredData(parsed)) {
-        throw new Error('Invalid data format in localStorage');
+    try {
+      const data = await readSharedValue<AircraftStoreData | null>(STORAGE_KEY, null);
+      if (!data) {
+        return;
       }
 
-      return parsed;
-    }, 'Failed to load aircraft data from localStorage');
+      if (!validateStoredData(data)) {
+        throw new Error('Invalid aircraft data format in persistent storage');
+      }
 
-    if (data) {
       setAircraft(data.aircraft || []);
       setEquipmentKits(data.equipmentKits || []);
       setConfigurations(data.configurations || []);
+    } catch (error) {
+      const message = `Failed to load aircraft data: ${error instanceof Error ? error.message : String(error)}`;
+      setError(message);
+      console.error(message, error);
+    } finally {
+      hasLoadedRef.current = true;
+      setIsLoading(false);
     }
-
-    setIsLoading(false);
-  }, [safeOperation]);
+  }, []);
 
   // Save data to localStorage with error handling
   const saveData = useCallback(async () => {
-    const data = {
+    const snapshot = {
       aircraft,
       equipmentKits,
       configurations,
       lastUpdated: new Date().toISOString(),
     };
 
-    safeOperation(() => {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
-      return true;
-    }, 'Failed to save aircraft data to localStorage');
-  }, [aircraft, equipmentKits, configurations, safeOperation]);
+    const persistSnapshot = async () => {
+      try {
+        await writeSharedValue(STORAGE_KEY, snapshot);
+      } catch (error) {
+        const message = `Failed to save aircraft data: ${error instanceof Error ? error.message : String(error)}`;
+        setError(message);
+        console.error(message, error);
+        throw error;
+      }
+    };
 
-  // Debounced save function
-  const debouncedSave = useCallback(
-    debounce(() => {
-      saveData();
-    }, 1000),
-    [saveData]
-  );
+    const queuedSave = saveQueueRef.current
+      .catch(() => undefined)
+      .then(persistSnapshot);
+    saveQueueRef.current = queuedSave;
+    await queuedSave;
+  }, [aircraft, equipmentKits, configurations]);
 
   // Clear all data
   const clearData = useCallback(async () => {
     setAircraft([]);
     setEquipmentKits([]);
     setConfigurations([]);
-    safeOperation(
-      () => {
-        localStorage.removeItem(STORAGE_KEY);
-        return true;
-      },
-      'Failed to clear aircraft data from localStorage'
-    );
-  }, [safeOperation]);
+    try {
+      await clearSharedValue(STORAGE_KEY);
+    } catch (error) {
+      const message = `Failed to clear aircraft data: ${error instanceof Error ? error.message : String(error)}`;
+      setError(message);
+      console.error(message, error);
+    }
+  }, []);
 
   // Clear error state
   const clearError = useCallback(() => {
@@ -584,18 +573,27 @@ export function AircraftProvider({ children }: { children: React.ReactNode }) {
     return isCompatible && weightWithinLimits && bothOperational;
   }, [aircraft, equipmentKits]);
 
-  // Auto-save when data changes (debounced to prevent excessive saves)
+  // Auto-save the latest fleet snapshot, including an intentionally empty fleet.
   useEffect(() => {
-    if (aircraft.length > 0 || equipmentKits.length > 0 || configurations.length > 0) {
-      // Cancel any pending save
+    if (!hasLoadedRef.current) {
+      return;
+    }
+
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current);
+    }
+
+    saveTimeoutRef.current = setTimeout(() => {
+      saveData().catch(() => undefined);
+    }, 250);
+
+    return () => {
       if (saveTimeoutRef.current) {
         clearTimeout(saveTimeoutRef.current);
+        saveTimeoutRef.current = null;
       }
-
-      // Schedule a new debounced save
-      debouncedSave();
-    }
-  }, [aircraft, equipmentKits, configurations, debouncedSave]);
+    };
+  }, [aircraft, equipmentKits, configurations, saveData]);
 
   // Load data on mount
   useEffect(() => {

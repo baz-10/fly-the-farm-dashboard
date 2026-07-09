@@ -12,7 +12,6 @@ import {
   alpha,
   useTheme,
 } from '@mui/material';
-import FlightTakeoffIcon from '@mui/icons-material/FlightTakeoff';
 import ArrowForwardIcon from '@mui/icons-material/ArrowForward';
 import { useAuth } from '../contexts/AuthContext';
 
@@ -29,12 +28,12 @@ export default function Login() {
     e.preventDefault();
     setError('');
     setLoading(true);
-    const success = await login(email, password);
+    const result = await login(email, password);
     setLoading(false);
-    if (success) {
+    if (result.success) {
       navigate('/');
     } else {
-      setError('Invalid email or password.');
+      setError(result.error || 'Authentication request failed.');
     }
   };
 
