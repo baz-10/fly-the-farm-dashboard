@@ -21,7 +21,7 @@ import {
 import { useAuth } from './AuthContext';
 import { useAircraft } from './AircraftContext';
 import MissionErrorBoundary from '../components/MissionErrorBoundary';
-import { clearSharedCollection, PERSISTENCE_KEYS, readSharedCollection, writeSharedCollection } from '../services/persistence';
+import { clearSharedCollection, deleteSharedRecord, PERSISTENCE_KEYS, readSharedCollection, writeSharedCollection } from '../services/persistence';
 
 // Enhanced mission record with version tracking for optimistic locking
 interface MissionWithVersion extends MissionRecord {
@@ -647,7 +647,6 @@ export function MissionProvider({ children }: { children: React.ReactNode }) {
     getEquipmentKitById,
     getConfigurationById,
     validateConfiguration,
-    getAvailableAircraft,
     getAircraftConfigurations
   } = useAircraft();
 
@@ -1060,30 +1059,15 @@ export function MissionProvider({ children }: { children: React.ReactNode }) {
       throw new Error('User must be authenticated to delete missions');
     }
 
-    safeOperation(() => {
-      if (!id) {
-        throw new Error('Mission ID is required');
-      }
+    if (!id) throw new Error('Mission ID is required');
+    const mission = missions.find((candidate) => candidate.id === id);
+    if (!mission) throw new Error(`Mission with ID ${id} not found`);
+    if (mission.status === 'Flying') throw new Error('Cannot delete missions that are currently flying');
+    if (mission.status === 'Locked') throw new Error('Cannot delete locked missions');
 
-      setMissions(prev => {
-        const mission = prev.find(m => m.id === id);
-        if (!mission) {
-          throw new Error(`Mission with ID ${id} not found`);
-        }
-
-        // Check if mission can be deleted
-        if (mission.status === 'Flying') {
-          throw new Error('Cannot delete missions that are currently flying');
-        }
-
-        if (mission.status === 'Locked') {
-          throw new Error('Cannot delete locked missions');
-        }
-
-        return prev.filter(mission => mission.id !== id);
-      });
-    }, 'Failed to delete mission');
-  }, [safeOperation, user]);
+    await deleteSharedRecord(STORAGE_KEY, id);
+    setMissions((previous) => previous.filter((candidate) => candidate.id !== id));
+  }, [missions, user]);
 
   const getMissionById = useCallback((id: string): MissionRecord | undefined => {
     return missions.find(m => m.id === id);
@@ -1163,7 +1147,7 @@ export function MissionProvider({ children }: { children: React.ReactNode }) {
         )
       );
     }, 'Failed to transition mission status');
-  }, [missions, user, safeOperation, createAuditEntry]);
+  }, [missions, user, safeOperation, createAuditEntry, getAircraftById, getEquipmentKitById, getConfigurationById, validateConfiguration]);
 
   // Approval Management
   const approveMission = useCallback(async (
@@ -1971,10 +1955,9 @@ export function MissionProvider({ children }: { children: React.ReactNode }) {
       throw new Error('User must be authenticated to delete templates');
     }
 
-    safeOperation(() => {
-      setMissionTemplates(prev => prev.filter(template => template.id !== id));
-    }, 'Failed to delete mission template');
-  }, [user, safeOperation]);
+    await deleteSharedRecord(TEMPLATES_STORAGE_KEY, id);
+    setMissionTemplates((previous) => previous.filter((template) => template.id !== id));
+  }, [user]);
 
   const getTemplateById = useCallback((id: string): MissionTemplate | undefined => {
     return missionTemplates.find(t => t.id === id);

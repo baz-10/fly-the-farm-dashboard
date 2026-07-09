@@ -1,4 +1,5 @@
-import React, { createContext, useContext, useState, useCallback } from 'react';
+import React, { createContext, useContext, useState, useCallback, useEffect } from 'react';
+import { getPersistenceMode } from '../services/persistence';
 
 export type UserRole = 'admin' | 'contractor' | 'client';
 
@@ -7,9 +8,10 @@ export interface User {
   email: string;
   name: string;
   role: UserRole;
-  contractorId?: string;    // For client users — which contractor they belong to
-  clientRecordId?: string;  // For client users — linked Client business record
-  inviteCode?: string;      // For contractors — shareable code for client registration
+  tenantId?: string;
+  contractorId?: string;
+  clientRecordId?: string;
+  inviteCode?: string;
   tier: 'free' | 'pro';
 }
 
@@ -17,24 +19,36 @@ interface StoredUser {
   id: string;
   email: string;
   name: string;
-  password: string;
+  password?: string;
   role: UserRole;
+  tenantId?: string;
   contractorId?: string;
   clientRecordId?: string;
   inviteCode?: string;
 }
 
+interface RegistrationResult {
+  success: boolean;
+  error?: string;
+  requiresLogin?: boolean;
+}
+
+interface LoginResult {
+  success: boolean;
+  error?: string;
+}
+
 interface AuthContextType {
   user: User | null;
   isAuthenticated: boolean;
-  login: (email: string, password: string) => Promise<boolean>;
-  register: (email: string, name: string, password: string, role: UserRole, contractorCode?: string) => Promise<{ success: boolean; error?: string }>;
+  isLoading: boolean;
+  login: (email: string, password: string) => Promise<LoginResult>;
+  register: (email: string, name: string, password: string, role: UserRole, contractorCode?: string) => Promise<RegistrationResult>;
   logout: () => void;
   updateUser: (updates: Partial<User>) => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
-
 const STORAGE_KEY = 'ftf_users';
 const SESSION_KEY = 'ftf_session';
 
@@ -50,11 +64,34 @@ function saveStoredUsers(users: Record<string, StoredUser>): void {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(users));
 }
 
+function cacheUser(user: User | null, cacheLocalAccount: boolean): void {
+  if (!user) {
+    localStorage.removeItem(SESSION_KEY);
+    return;
+  }
+
+  localStorage.setItem(SESSION_KEY, JSON.stringify(user));
+  if (!cacheLocalAccount) return;
+
+  const users = getStoredUsers();
+  users[user.email] = {
+    ...users[user.email],
+    id: user.id,
+    email: user.email,
+    name: user.name,
+    role: user.role,
+    tenantId: user.tenantId,
+    contractorId: user.contractorId,
+    clientRecordId: user.clientRecordId,
+    inviteCode: user.inviteCode,
+  };
+  saveStoredUsers(users);
+}
+
 function genId(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
     return crypto.randomUUID();
   }
-
   return `user_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
 }
 
@@ -62,28 +99,59 @@ function genInviteCode(): string {
   return Math.random().toString(36).substring(2, 8).toUpperCase();
 }
 
-// Seed the Fly the Farm admin account on first load
-function ensureAdminExists(): void {
+function ensureLocalAdminExists(): void {
   const users = getStoredUsers();
-  const hasAdmin = Object.values(users).some((u) => u.role === 'admin');
-  if (!hasAdmin) {
-    const id = genId();
-    users['admin@flythefarm.com.au'] = {
-      id,
-      email: 'admin@flythefarm.com.au',
-      name: 'Fly the Farm',
-      password: 'ftfadmin',
-      role: 'admin',
-    };
-    saveStoredUsers(users);
+  const hasAdmin = Object.values(users).some((storedUser) => storedUser.role === 'admin');
+  if (hasAdmin) return;
+
+  const id = genId();
+  users['admin@flythefarm.com.au'] = {
+    id,
+    email: 'admin@flythefarm.com.au',
+    name: 'Fly the Farm',
+    password: 'ftfadmin',
+    role: 'admin',
+    tenantId: id,
+  };
+  saveStoredUsers(users);
+}
+
+async function requestRemoteAuth(body?: Record<string, unknown>): Promise<any> {
+  const response = await fetch('/api/auth', {
+    method: body ? 'POST' : 'GET',
+    credentials: 'same-origin',
+    headers: body ? { 'Content-Type': 'application/json' } : undefined,
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(result.error || 'Authentication request failed.');
+  return result;
+}
+
+function migrateContractorClients(stored: StoredUser): void {
+  if (stored.role !== 'contractor') return;
+  try {
+    const clientsKey = 'ftf_clients';
+    const clients = JSON.parse(localStorage.getItem(clientsKey) || '[]');
+    let changed = false;
+    for (const client of clients) {
+      if (!client.contractorUserId) {
+        client.contractorUserId = stored.id;
+        changed = true;
+      }
+    }
+    if (changed) localStorage.setItem(clientsKey, JSON.stringify(clients));
+  } catch {
+    // Legacy migration should not block sign-in.
   }
 }
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  // Ensure admin exists on mount
-  ensureAdminExists();
+  const remoteMode = getPersistenceMode() === 'remote';
+  if (!remoteMode) ensureLocalAdminExists();
 
   const [user, setUser] = useState<User | null>(() => {
+    if (remoteMode) return null;
     try {
       const session = localStorage.getItem(SESSION_KEY);
       return session ? JSON.parse(session) : null;
@@ -91,51 +159,75 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       return null;
     }
   });
+  const [isLoading, setIsLoading] = useState(remoteMode);
 
-  const login = useCallback(async (email: string, password: string): Promise<boolean> => {
-    const users = getStoredUsers();
-    const stored = users[email];
-    if (stored && stored.password === password) {
-      // Migrate old users that don't have id/role
-      if (!stored.id) {
-        stored.id = genId();
-        stored.role = 'contractor'; // Default legacy users to contractor
-        stored.inviteCode = genInviteCode();
-        users[email] = stored;
-        saveStoredUsers(users);
-      }
-      // Migrate orphan Client records (no contractorUserId) to this contractor
-      if (stored.role === 'contractor') {
-        try {
-          const clientsKey = 'ftf_clients';
-          const clients = JSON.parse(localStorage.getItem(clientsKey) || '[]');
-          let changed = false;
-          for (const c of clients) {
-            if (!c.contractorUserId) {
-              c.contractorUserId = stored.id;
-              changed = true;
-            }
-          }
-          if (changed) localStorage.setItem(clientsKey, JSON.stringify(clients));
-        } catch { /* ignore */ }
-      }
+  useEffect(() => {
+    if (!remoteMode) return;
+    let cancelled = false;
 
-      const u: User = {
-        id: stored.id,
-        email: stored.email,
-        name: stored.name,
-        role: stored.role || 'contractor',
-        contractorId: stored.contractorId,
-        clientRecordId: stored.clientRecordId,
-        inviteCode: stored.inviteCode,
-        tier: 'free',
-      };
-      setUser(u);
-      localStorage.setItem(SESSION_KEY, JSON.stringify(u));
-      return true;
+    requestRemoteAuth()
+      .then((result) => {
+        if (cancelled) return;
+        const authenticatedUser = result.user || null;
+        setUser(authenticatedUser);
+        cacheUser(authenticatedUser, false);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setUser(null);
+          cacheUser(null, false);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setIsLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [remoteMode]);
+
+  const login = useCallback(async (email: string, password: string): Promise<LoginResult> => {
+    if (remoteMode) {
+      try {
+        const result = await requestRemoteAuth({ action: 'login', email, password });
+        setUser(result.user);
+        cacheUser(result.user, false);
+        return { success: true };
+      } catch (error) {
+        return { success: false, error: error instanceof Error ? error.message : 'Authentication request failed.' };
+      }
     }
-    return false;
-  }, []);
+
+    const users = getStoredUsers();
+    const stored = users[email.trim().toLowerCase()];
+    if (!stored || stored.password !== password) return { success: false, error: 'Invalid email or password.' };
+
+    if (!stored.id) {
+      stored.id = genId();
+      stored.role = 'contractor';
+      stored.inviteCode = genInviteCode();
+      stored.tenantId = stored.id;
+      users[stored.email] = stored;
+      saveStoredUsers(users);
+    }
+    migrateContractorClients(stored);
+
+    const authenticatedUser: User = {
+      id: stored.id,
+      email: stored.email,
+      name: stored.name,
+      role: stored.role || 'contractor',
+      tenantId: stored.tenantId || stored.contractorId || stored.id,
+      contractorId: stored.contractorId,
+      clientRecordId: stored.clientRecordId,
+      inviteCode: stored.inviteCode,
+      tier: 'free',
+    };
+    setUser(authenticatedUser);
+    cacheUser(authenticatedUser, true);
+    return { success: true };
+  }, [remoteMode]);
 
   const register = useCallback(async (
     email: string,
@@ -143,32 +235,50 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     password: string,
     role: UserRole,
     contractorCode?: string,
-  ): Promise<{ success: boolean; error?: string }> => {
-    const users = getStoredUsers();
-    if (users[email]) return { success: false, error: 'An account with this email already exists.' };
+  ): Promise<RegistrationResult> => {
+    if (remoteMode) {
+      try {
+        const result = await requestRemoteAuth({ action: 'register', email, name, password, role, contractorCode });
+        if (result.user) {
+          setUser(result.user);
+          cacheUser(result.user, false);
+        }
+        return { success: true, requiresLogin: Boolean(result.requiresEmailConfirmation) };
+      } catch (error) {
+        return { success: false, error: error instanceof Error ? error.message : 'Registration failed.' };
+      }
+    }
 
-    // Validate contractor code for client registrations
+    const normalizedEmail = email.trim().toLowerCase();
+    const users = getStoredUsers();
+    if (users[normalizedEmail]) return { success: false, error: 'An account with this email already exists.' };
+
     let contractorId: string | undefined;
     if (role === 'client') {
       if (!contractorCode) return { success: false, error: 'Contractor code is required.' };
       const contractor = Object.values(users).find(
-        (u) => u.role === 'contractor' && u.inviteCode === contractorCode.toUpperCase()
+        (storedUser) => storedUser.role === 'contractor' && storedUser.inviteCode === contractorCode.toUpperCase()
       );
       if (!contractor) return { success: false, error: 'Invalid contractor code. Check with your spray contractor.' };
       contractorId = contractor.id;
     }
-
-    // Prevent registering as admin
     if (role === 'admin') return { success: false, error: 'Admin accounts cannot be registered.' };
 
     const id = genId();
     const inviteCode = role === 'contractor' ? genInviteCode() : undefined;
-
-    const stored: StoredUser = { id, email, name, password, role, contractorId, inviteCode };
-    users[email] = stored;
+    const stored: StoredUser = {
+      id,
+      email: normalizedEmail,
+      name,
+      password,
+      role,
+      tenantId: contractorId || id,
+      contractorId,
+      inviteCode,
+    };
+    users[normalizedEmail] = stored;
     saveStoredUsers(users);
 
-    // For client users, auto-create a Client business record linked to this user
     let clientRecordId: string | undefined;
     if (role === 'client' && contractorId) {
       const clientsKey = 'ftf_clients';
@@ -179,7 +289,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         linkedUserId: id,
         name,
         phone: '',
-        email,
+        email: normalizedEmail,
         notes: '',
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
@@ -187,35 +297,44 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       clients.push(clientRecord);
       localStorage.setItem(clientsKey, JSON.stringify(clients));
       clientRecordId = clientRecord.id;
-
-      // Update stored user with clientRecordId
       stored.clientRecordId = clientRecordId;
-      users[email] = stored;
+      users[normalizedEmail] = stored;
       saveStoredUsers(users);
     }
 
-    const u: User = { id, email, name, role, contractorId, clientRecordId, inviteCode, tier: 'free' };
-    setUser(u);
-    localStorage.setItem(SESSION_KEY, JSON.stringify(u));
+    const registeredUser: User = {
+      id,
+      email: normalizedEmail,
+      name,
+      role,
+      tenantId: contractorId || id,
+      contractorId,
+      clientRecordId,
+      inviteCode,
+      tier: 'free',
+    };
+    setUser(registeredUser);
+    cacheUser(registeredUser, true);
     return { success: true };
-  }, []);
+  }, [remoteMode]);
 
   const logout = useCallback(() => {
     setUser(null);
-    localStorage.removeItem(SESSION_KEY);
-  }, []);
+    cacheUser(null, false);
+    if (remoteMode) void requestRemoteAuth({ action: 'logout' });
+  }, [remoteMode]);
 
   const updateUser = useCallback((updates: Partial<User>) => {
-    setUser((prev) => {
-      if (!prev) return null;
-      const updated = { ...prev, ...updates };
-      localStorage.setItem(SESSION_KEY, JSON.stringify(updated));
+    setUser((previous) => {
+      if (!previous) return null;
+      const updated = { ...previous, ...updates };
+      cacheUser(updated, !remoteMode);
       return updated;
     });
-  }, []);
+  }, [remoteMode]);
 
   return (
-    <AuthContext.Provider value={{ user, isAuthenticated: !!user, login, register, logout, updateUser }}>
+    <AuthContext.Provider value={{ user, isAuthenticated: Boolean(user), isLoading, login, register, logout, updateUser }}>
       {children}
     </AuthContext.Provider>
   );

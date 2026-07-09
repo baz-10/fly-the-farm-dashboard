@@ -343,6 +343,7 @@ export default function MissionPlanning() {
   const {
     missions,
     isLoading: missionDataLoading,
+    error: missionDataError,
     createMission,
     createAuthorizedMission,
     updateMission,
@@ -357,11 +358,13 @@ export default function MissionPlanning() {
     equipmentKits,
     configurations,
     isLoading: aircraftDataLoading,
+    error: aircraftDataError,
     createAircraft,
     createEquipmentKit,
     createConfiguration,
   } = useAircraft();
   const dataLoading = missionDataLoading || aircraftDataLoading;
+  const dataError = missionDataError || aircraftDataError;
 
   const [missionName, setMissionName] = React.useState('Broadleaf Weed Control');
   const [clientName, setClientName] = React.useState('Hillside Farms');
@@ -1494,6 +1497,12 @@ export default function MissionPlanning() {
       {dataLoading && (
         <Alert severity="info" sx={{ mb: 2, borderRadius: '8px' }}>
           Loading saved fleet and mission data. Planning actions will be available when this finishes.
+        </Alert>
+      )}
+
+      {dataError && (
+        <Alert severity="error" sx={{ mb: 2, borderRadius: '8px' }}>
+          {dataError}
         </Alert>
       )}
 

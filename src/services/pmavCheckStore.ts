@@ -1,6 +1,6 @@
 import { SavedVegetationCheck, VegetationSummary } from '../types/pmav';
 import { sanitizeLotPlan } from './pmavService';
-import { PERSISTENCE_KEYS, readSharedCollection, writeSharedCollection } from './persistence';
+import { getPersistenceMode, PERSISTENCE_KEYS, readSharedCollection, writeSharedCollection } from './persistence';
 
 const STORAGE_KEY = PERSISTENCE_KEYS.pmavChecks;
 
@@ -22,6 +22,7 @@ function sortChecks(checks: SavedVegetationCheck[]): SavedVegetationCheck[] {
 }
 
 export function getSavedVegetationChecks(): SavedVegetationCheck[] {
+  if (getPersistenceMode() === 'remote') return [];
   return sortChecks(loadChecks());
 }
 
@@ -52,7 +53,6 @@ export function saveVegetationCheck(
   ].slice(0, 30);
 
   saveChecks(nextChecks);
-  void writeSharedCollection(STORAGE_KEY, nextChecks);
   return saved;
 }
 
@@ -60,7 +60,22 @@ export async function saveVegetationCheckAsync(
   summary: VegetationSummary,
   context: { propertyId?: string; fieldId?: string } = {}
 ): Promise<SavedVegetationCheck> {
-  const saved = saveVegetationCheck(summary, context);
-  await writeSharedCollection(STORAGE_KEY, getSavedVegetationChecks());
+  if (getPersistenceMode() === 'local') {
+    const saved = saveVegetationCheck(summary, context);
+    await writeSharedCollection(STORAGE_KEY, getSavedVegetationChecks());
+    return saved;
+  }
+
+  const checks = await loadSavedVegetationChecks();
+  const saved: SavedVegetationCheck = {
+    ...summary,
+    ...context,
+    id: `pmav_${Date.now()}`,
+  };
+  const nextChecks = [
+    saved,
+    ...checks.filter((check) => check.lotPlan !== saved.lotPlan || check.propertyId !== saved.propertyId),
+  ].slice(0, 30);
+  await writeSharedCollection(STORAGE_KEY, nextChecks);
   return saved;
 }

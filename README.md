@@ -5,7 +5,8 @@
 Mission planning can run in two persistence modes:
 
 - `local`: browser-only storage for quick local development.
-- `remote`: shared Supabase-backed storage through `/api/store`.
+- `remote`: authenticated, tenant-scoped Supabase storage through `/api/auth`
+  and `/api/store`.
 
 See [docs/persistent-storage.md](docs/persistent-storage.md) for the Supabase
 schema, Vercel environment variables, and beta migration behavior.
