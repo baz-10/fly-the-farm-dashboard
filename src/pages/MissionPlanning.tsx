@@ -24,6 +24,7 @@ import {
 } from '@mui/material';
 import type { SxProps, Theme } from '@mui/material/styles';
 import AirplanemodeActiveIcon from '@mui/icons-material/AirplanemodeActive';
+import AddIcon from '@mui/icons-material/Add';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import CloudQueueIcon from '@mui/icons-material/CloudQueue';
 import FlightTakeoffIcon from '@mui/icons-material/FlightTakeoff';
@@ -111,19 +112,8 @@ const PLANNER_STEPS = [
   { label: 'Authorize', detail: 'Final checks' },
 ];
 
-const DEFAULT_BOUNDARY: LatLng[] = [
-  [-27.4828, 153.0078],
-  [-27.4786, 153.0146],
-  [-27.4821, 153.0228],
-  [-27.4892, 153.0241],
-  [-27.4946, 153.0176],
-  [-27.4928, 153.0101],
-];
-
-const DEFAULT_CHEMICALS: MissionPlanningChemical[] = [
-  { product: 'Glyphosate 540', ratePerHa: 1.5, unit: 'L', totalRequired: 63.9 },
-  { product: 'Surfactant 1000', ratePerHa: 0.1, unit: 'L', totalRequired: 4.3 },
-  { product: 'AMS', ratePerHa: 2, unit: 'kg', totalRequired: 85.2 },
+const NEW_MISSION_CHEMICALS: MissionPlanningChemical[] = [
+  { product: '', ratePerHa: 0, unit: 'L', totalRequired: 0 },
 ];
 
 const DEMO_AIRCRAFT = {
@@ -366,10 +356,10 @@ export default function MissionPlanning() {
   const dataLoading = missionDataLoading || aircraftDataLoading;
   const dataError = missionDataError || aircraftDataError;
 
-  const [missionName, setMissionName] = React.useState('Broadleaf Weed Control');
-  const [clientName, setClientName] = React.useState('Hillside Farms');
-  const [propertyName, setPropertyName] = React.useState('North Block');
-  const [fieldName, setFieldName] = React.useState('Paddock 3');
+  const [missionName, setMissionName] = React.useState('');
+  const [clientName, setClientName] = React.useState('');
+  const [propertyName, setPropertyName] = React.useState('');
+  const [fieldName, setFieldName] = React.useState('');
   const [missionLotPlan, setMissionLotPlan] = React.useState('');
   const [vegetationReviewAcknowledged, setVegetationReviewAcknowledged] = React.useState(false);
   const [savedVegetationChecks, setSavedVegetationChecks] = React.useState<SavedVegetationCheck[]>(() => getSavedVegetationChecks());
@@ -378,40 +368,40 @@ export default function MissionPlanning() {
   const [selectedMissionId, setSelectedMissionId] = React.useState('');
   const [selectedAircraft, setSelectedAircraft] = React.useState(DEMO_AIRCRAFT.id);
   const [selectedConfiguration, setSelectedConfiguration] = React.useState(DEMO_CONFIG.id);
-  const [boundaryCoords, setBoundaryCoords] = React.useState<LatLng[]>(DEFAULT_BOUNDARY);
-  const [missionArea, setMissionArea] = React.useState(42.6);
+  const [boundaryCoords, setBoundaryCoords] = React.useState<LatLng[]>([]);
+  const [missionArea, setMissionArea] = React.useState(0);
   const [boundaryFile, setBoundaryFile] = React.useState<BoundaryFileRef | null>(null);
   const [scheduledDate, setScheduledDate] = React.useState(defaultScheduledDateInput);
   const [estimatedDuration, setEstimatedDuration] = React.useState(120);
   const [applicationRate, setApplicationRate] = React.useState(15);
-  const [perimeterKm, setPerimeterKm] = React.useState(2.84);
-  const [bufferZones, setBufferZones] = React.useState(3);
-  const [exclusionZones, setExclusionZones] = React.useState(2);
-  const [batteryChanges, setBatteryChanges] = React.useState(3);
-  const [flightLines, setFlightLines] = React.useState(42);
-  const [turnAroundCount, setTurnAroundCount] = React.useState(41);
+  const [perimeterKm, setPerimeterKm] = React.useState(0);
+  const [bufferZones, setBufferZones] = React.useState(0);
+  const [exclusionZones, setExclusionZones] = React.useState(0);
+  const [batteryChanges, setBatteryChanges] = React.useState(0);
+  const [flightLines, setFlightLines] = React.useState(0);
+  const [turnAroundCount, setTurnAroundCount] = React.useState(0);
   const [windDirection, setWindDirection] = React.useState('ESE');
   const [windSpeed, setWindSpeed] = React.useState(12);
   const [windGust, setWindGust] = React.useState(15);
   const [temperature, setTemperature] = React.useState(22);
   const [rainChance, setRainChance] = React.useState(0);
-  const [aircraftCost, setAircraftCost] = React.useState(1200);
-  const [equipmentCost, setEquipmentCost] = React.useState(420);
-  const [personnelCost, setPersonnelCost] = React.useState(680);
-  const [travelCost, setTravelCost] = React.useState(260);
-  const [chemicalCost, setChemicalCost] = React.useState(1430);
-  const [missionNotes, setMissionNotes] = React.useState('Approach from the south. Watch for stock in adjacent paddock.');
-  const [chemicals, setChemicals] = React.useState<MissionPlanningChemical[]>(DEFAULT_CHEMICALS);
+  const [aircraftCost, setAircraftCost] = React.useState(0);
+  const [equipmentCost, setEquipmentCost] = React.useState(0);
+  const [personnelCost, setPersonnelCost] = React.useState(0);
+  const [travelCost, setTravelCost] = React.useState(0);
+  const [chemicalCost, setChemicalCost] = React.useState(0);
+  const [missionNotes, setMissionNotes] = React.useState('');
+  const [chemicals, setChemicals] = React.useState<MissionPlanningChemical[]>(NEW_MISSION_CHEMICALS);
   const [flightAltitude, setFlightAltitude] = React.useState(35);
   const [groundSpeed, setGroundSpeed] = React.useState(18);
   const [lineSpacing, setLineSpacing] = React.useState(9);
   const [overlapForward, setOverlapForward] = React.useState(30);
   const [overlapSide, setOverlapSide] = React.useState(25);
-  const [flightAuthorizationComments, setFlightAuthorizationComments] = React.useState('Pre-flight checks complete. Weather remains inside operating limits.');
-  const [completionArea, setCompletionArea] = React.useState(42.6);
+  const [flightAuthorizationComments, setFlightAuthorizationComments] = React.useState('');
+  const [completionArea, setCompletionArea] = React.useState(0);
   const [completionFlightTime, setCompletionFlightTime] = React.useState(120);
   const [completionStatus, setCompletionStatus] = React.useState<FlightExecution['results']['missionStatus']>('successful');
-  const [completionNotes, setCompletionNotes] = React.useState('Coverage complete. No rework required.');
+  const [completionNotes, setCompletionNotes] = React.useState('');
   const [saving, setSaving] = React.useState(false);
   const [seedingFleet, setSeedingFleet] = React.useState(false);
   const [pendingPlannerAction, setPendingPlannerAction] = React.useState<PendingPlannerAction>(null);
@@ -536,6 +526,8 @@ export default function MissionPlanning() {
   const readyChecks = [
     Boolean(missionName.trim()),
     Boolean(clientName.trim()),
+    Boolean(propertyName.trim()),
+    Boolean(fieldName.trim()),
     boundaryReady,
     Boolean(selectedAircraftData),
     applicationRate > 0,
@@ -647,19 +639,19 @@ export default function MissionPlanning() {
     return {
       missionNumber: 'MSN-DRAFT',
       status: 'Planning' as MissionStatus,
-      missionName: missionName.trim() || 'Untitled Mission',
+      missionName: missionName.trim(),
       missionType,
       priority,
-      description: missionNotes.trim() || `${selectedMissionType?.label || 'Mission'} for ${clientName || 'client'} at ${propertyName || 'property'}.`,
-      clientId: clientName.trim() || 'hillside-farms',
+      description: missionNotes.trim() || `${selectedMissionType?.label || 'Mission'} for ${clientName.trim()} at ${propertyName.trim()}.`,
+      clientId: clientName.trim(),
       location: {
-        name: `${propertyName || 'Property'} / ${fieldName || 'Field'}`,
-        address: 'North Block, Brisbane QLD',
+        name: [propertyName.trim(), fieldName.trim()].filter(Boolean).join(' / ') || 'Location not set',
+        address: [fieldName.trim(), propertyName.trim()].filter(Boolean).join(', ') || 'Address not set',
         coordinates: {
-          latitude: boundaryCoords[0]?.[0] || -27.4828,
-          longitude: boundaryCoords[0]?.[1] || 153.0078,
+          latitude: boundaryCoords[0]?.[0] || -25.2744,
+          longitude: boundaryCoords[0]?.[1] || 133.7751,
         },
-        elevation: 27,
+        elevation: 0,
       },
       scheduledDate: toIsoFromInput(scheduledDate),
       estimatedDuration,
@@ -894,10 +886,10 @@ export default function MissionPlanning() {
     const nextConfiguration = configurations.find((config) => config.aircraftId === nextAircraft)?.id || configurations[0]?.id || DEMO_CONFIG.id;
 
     setSelectedMissionId('');
-    setMissionName('Broadleaf Weed Control');
-    setClientName('Hillside Farms');
-    setPropertyName('North Block');
-    setFieldName('Paddock 3');
+    setMissionName('');
+    setClientName('');
+    setPropertyName('');
+    setFieldName('');
     setMissionLotPlan('');
     setVegetationReviewAcknowledged(false);
     setSavedVegetationChecks(getSavedVegetationChecks());
@@ -905,55 +897,53 @@ export default function MissionPlanning() {
     setPriority('medium');
     setSelectedAircraft(nextAircraft);
     setSelectedConfiguration(nextConfiguration);
-    setBoundaryCoords(DEFAULT_BOUNDARY);
-    setMissionArea(42.6);
+    setBoundaryCoords([]);
+    setMissionArea(0);
     setBoundaryFile(null);
     setScheduledDate(defaultScheduledDateInput());
     setEstimatedDuration(120);
     setApplicationRate(15);
-    setPerimeterKm(2.84);
-    setBufferZones(3);
-    setExclusionZones(2);
-    setBatteryChanges(3);
-    setFlightLines(42);
-    setTurnAroundCount(41);
+    setPerimeterKm(0);
+    setBufferZones(0);
+    setExclusionZones(0);
+    setBatteryChanges(0);
+    setFlightLines(0);
+    setTurnAroundCount(0);
     setWindDirection('ESE');
     setWindSpeed(12);
     setWindGust(15);
     setTemperature(22);
     setRainChance(0);
-    setAircraftCost(1200);
-    setEquipmentCost(420);
-    setPersonnelCost(680);
-    setTravelCost(260);
-    setChemicalCost(1430);
-    setMissionNotes('Approach from the south. Watch for stock in adjacent paddock.');
-    setChemicals(DEFAULT_CHEMICALS);
+    setAircraftCost(0);
+    setEquipmentCost(0);
+    setPersonnelCost(0);
+    setTravelCost(0);
+    setChemicalCost(0);
+    setMissionNotes('');
+    setChemicals(NEW_MISSION_CHEMICALS);
     setFlightAltitude(35);
     setGroundSpeed(18);
     setLineSpacing(9);
     setOverlapForward(30);
     setOverlapSide(25);
-    setFlightAuthorizationComments('Pre-flight checks complete. Weather remains inside operating limits.');
-    setCompletionArea(42.6);
+    setFlightAuthorizationComments('');
+    setCompletionArea(0);
     setCompletionFlightTime(120);
     setCompletionStatus('successful');
-    setCompletionNotes('Coverage complete. No rework required.');
+    setCompletionNotes('');
   };
 
   const loadMissionIntoPlanner = (mission: MissionRecord) => {
     const planning = mission.planningState;
     const locationParts = mission.location.name.split('/').map((part) => part.trim());
     const boundaryAnalysis = mission.boundaryFiles[0]?.analysis;
-    const missionAreaHa = planning?.boundaryCoords?.length
-      ? boundaryAnalysis?.geometry.totalArea || missionArea
-      : boundaryAnalysis?.geometry.totalArea || missionArea || 42.6;
+    const missionAreaHa = boundaryAnalysis?.geometry.totalArea || 0;
     const plannedChemicals = planning?.chemicals?.length
       ? planning.chemicals.map((chemical) => ({
           ...chemical,
           totalRequired: roundOne(chemical.ratePerHa * missionAreaHa),
         }))
-      : DEFAULT_CHEMICALS;
+      : NEW_MISSION_CHEMICALS;
 
     setSelectedMissionId(mission.id);
     setMissionName(mission.missionName);
@@ -967,7 +957,7 @@ export default function MissionPlanning() {
     setPriority(mission.priority);
     setSelectedAircraft(mission.aircraftConfiguration.aircraftId);
     setSelectedConfiguration(mission.aircraftConfiguration.configurationId);
-    setBoundaryCoords(planning?.boundaryCoords?.length ? planning.boundaryCoords : DEFAULT_BOUNDARY);
+    setBoundaryCoords(planning?.boundaryCoords?.length ? planning.boundaryCoords : []);
     setMissionArea(missionAreaHa);
     setBoundaryFile(null);
     setScheduledDate(formatDateTimeInput(new Date(mission.scheduledDate)));
@@ -1054,6 +1044,11 @@ export default function MissionPlanning() {
   };
 
   const handleSaveDraft = async () => {
+    if (!missionName.trim() || !clientName.trim() || !propertyName.trim() || !fieldName.trim()) {
+      showNotice('error', 'Enter a mission name, client, property, and field before saving.');
+      return;
+    }
+
     if (!canPersistMission) {
       await prepareStarterFleetForAction('save');
       return;
@@ -1092,6 +1087,11 @@ export default function MissionPlanning() {
   };
 
   const handleAuthorizeMission = async () => {
+    if (!missionName.trim() || !clientName.trim() || !propertyName.trim() || !fieldName.trim()) {
+      showNotice('error', 'Enter a mission name, client, property, and field before authorization.');
+      return;
+    }
+
     if (!boundaryReady) {
       showNotice('error', 'Draw or upload a valid mission boundary before authorization.');
       return;
@@ -1730,8 +1730,8 @@ export default function MissionPlanning() {
               title="Mission State"
               icon={<FlightTakeoffIcon />}
               action={
-                <Button size="small" variant="text" onClick={resetPlanner}>
-                  New
+                <Button size="small" variant="contained" startIcon={<AddIcon />} onClick={resetPlanner}>
+                  New Mission
                 </Button>
               }
             >
@@ -1752,7 +1752,7 @@ export default function MissionPlanning() {
                   </Box>
                 ) : (
                   <Typography sx={{ fontSize: '0.78rem', color: 'text.secondary' }}>
-                    Build a new mission plan, or load a saved mission below.
+                    New mission draft
                   </Typography>
                 )}
 
@@ -1797,13 +1797,13 @@ export default function MissionPlanning() {
               <Stack spacing={1.5}>
                 <Grid container spacing={1.25}>
                   <Grid size={{ xs: 12, sm: 6 }}>
-                    <TextField label="Client" value={clientName} onChange={(event) => setClientName(event.target.value)} fullWidth size="small" />
+                    <TextField label="Client" required value={clientName} onChange={(event) => setClientName(event.target.value)} fullWidth size="small" />
                   </Grid>
                   <Grid size={{ xs: 12, sm: 6 }}>
-                    <TextField label="Property" value={propertyName} onChange={(event) => setPropertyName(event.target.value)} fullWidth size="small" />
+                    <TextField label="Property" required value={propertyName} onChange={(event) => setPropertyName(event.target.value)} fullWidth size="small" />
                   </Grid>
                   <Grid size={{ xs: 12, sm: 6 }}>
-                    <TextField label="Field / Paddock" value={fieldName} onChange={(event) => setFieldName(event.target.value)} fullWidth size="small" />
+                    <TextField label="Field / Paddock" required value={fieldName} onChange={(event) => setFieldName(event.target.value)} fullWidth size="small" />
                   </Grid>
                   <Grid size={{ xs: 12, sm: 6 }}>
                     <TextField
@@ -1820,7 +1820,7 @@ export default function MissionPlanning() {
                     />
                   </Grid>
                   <Grid size={{ xs: 12, sm: 6 }}>
-                    <TextField label="Mission Name" value={missionName} onChange={(event) => setMissionName(event.target.value)} fullWidth size="small" />
+                    <TextField label="Mission Name" required value={missionName} onChange={(event) => setMissionName(event.target.value)} fullWidth size="small" />
                   </Grid>
                   <Grid size={{ xs: 12 }}>
                     <FormControl fullWidth size="small">

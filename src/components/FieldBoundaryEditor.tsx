@@ -139,24 +139,24 @@ function FlyToProperty({ lat, lng }: { lat?: number; lng?: number }) {
 
 // ─── Fit Bounds Component ───────────────────────────────────
 
-function FitBounds({ coords }: { coords: LatLng[] }) {
+function FitBounds({
+  coords,
+  emptyCenter,
+  emptyZoom,
+}: {
+  coords: LatLng[];
+  emptyCenter: [number, number];
+  emptyZoom: number;
+}) {
   const map = useMap();
-  const fitted = useRef(false);
-  useEffect(() => {
-    if (coords.length >= 2 && !fitted.current) {
-      const bounds = L.latLngBounds(coords.map(([lat, lng]) => [lat, lng]));
-      map.fitBounds(bounds, { padding: [40, 40], maxZoom: 16 });
-      fitted.current = true;
-    }
-  }, [coords, map]);
-
-  // Reset when coords change significantly (new upload/clear)
   useEffect(() => {
     if (coords.length >= 2) {
       const bounds = L.latLngBounds(coords.map(([lat, lng]) => [lat, lng]));
       map.fitBounds(bounds, { padding: [40, 40], maxZoom: 16 });
+    } else if (coords.length === 0) {
+      map.setView(emptyCenter, emptyZoom);
     }
-  }, [coords.length]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [coords, emptyCenter, emptyZoom, map]);
 
   return null;
 }
@@ -203,10 +203,10 @@ export default function FieldBoundaryEditor({
     }
   }, [propertyLat, propertyLng]);
 
-  const defaultCenter: [number, number] = [
-    propertyLat || -27.5,
-    propertyLng || 133.0,
-  ];
+  const defaultCenter = React.useMemo<[number, number]>(() => [
+    propertyLat || -25.2744,
+    propertyLng || 133.7751,
+  ], [propertyLat, propertyLng]);
   const defaultZoom = propertyLat ? 14 : 5;
 
   const area = calculateAreaHectares(coords);
@@ -452,8 +452,8 @@ export default function FieldBoundaryEditor({
             />
           ))}
 
-          {/* Auto-fit when coords loaded */}
-          {coords.length >= 2 && <FitBounds coords={coords} />}
+          {/* Auto-fit when coords load and return to the neutral view when cleared. */}
+          <FitBounds coords={coords} emptyCenter={defaultCenter} emptyZoom={defaultZoom} />
         </MapContainer>
       </Box>
     </Box>
