@@ -38,6 +38,7 @@ import ScienceIcon from '@mui/icons-material/Science';
 import SecurityIcon from '@mui/icons-material/Security';
 import WarningAmberIcon from '@mui/icons-material/WarningAmber';
 import FieldBoundaryEditor from '../components/FieldBoundaryEditor';
+import MissionJsaDialog from '../components/MissionJsaDialog';
 import { useAircraft } from '../contexts/AircraftContext';
 import { useMission } from '../contexts/MissionContext';
 import { getLatestVegetationCheckForLotPlan, getSavedVegetationChecks, loadSavedVegetationChecks } from '../services/pmavCheckStore';
@@ -184,12 +185,9 @@ function createMissionJSA(missionId: string): JSARecord {
     id: `jsa_${Date.now()}`,
     missionId,
     jsaType: 'standard-spray',
-    status: 'approved',
+    status: 'pending',
     jsaNumber: `JSA-${new Date().getFullYear()}-${String(Date.now()).slice(-6)}`,
-    completedBy: 'current_user',
-    reviewedBy: 'current_user',
-    completedDate: now,
-    reviewedDate: now,
+    completedBy: '',
     hazardIdentification: [
       {
         id: 'wind-drift',
@@ -243,18 +241,28 @@ function createMissionJSA(missionId: string): JSARecord {
     signOffs: {
       pilot: {
         userId: 'current_user',
-        signature: 'Planning pilot',
-        signedAt: now,
-      },
-      crp: {
-        userId: 'current_user',
-        signature: 'CRP',
-        signedAt: now,
-        comments: 'Approved for planning preview.',
+        signature: '',
+        signedAt: '',
       },
     },
     createdAt: now,
     updatedAt: now,
+  };
+}
+
+function reopenApprovedJSA(jsa: JSARecord): JSARecord {
+  if (jsa.status !== 'approved') return jsa;
+
+  return {
+    ...jsa,
+    status: 'in-progress',
+    reviewedBy: undefined,
+    completedDate: undefined,
+    reviewedDate: undefined,
+    signOffs: {
+      pilot: { userId: 'current_user', signature: '', signedAt: '' },
+    },
+    updatedAt: new Date().toISOString(),
   };
 }
 
@@ -360,6 +368,9 @@ export default function MissionPlanning() {
   const [clientName, setClientName] = React.useState('');
   const [propertyName, setPropertyName] = React.useState('');
   const [fieldName, setFieldName] = React.useState('');
+  const [siteAddress, setSiteAddress] = React.useState('');
+  const [siteLatitude, setSiteLatitude] = React.useState<number | undefined>();
+  const [siteLongitude, setSiteLongitude] = React.useState<number | undefined>();
   const [missionLotPlan, setMissionLotPlan] = React.useState('');
   const [vegetationReviewAcknowledged, setVegetationReviewAcknowledged] = React.useState(false);
   const [savedVegetationChecks, setSavedVegetationChecks] = React.useState<SavedVegetationCheck[]>(() => getSavedVegetationChecks());
@@ -371,6 +382,8 @@ export default function MissionPlanning() {
   const [boundaryCoords, setBoundaryCoords] = React.useState<LatLng[]>([]);
   const [missionArea, setMissionArea] = React.useState(0);
   const [boundaryFile, setBoundaryFile] = React.useState<BoundaryFileRef | null>(null);
+  const [jsaRecord, setJsaRecord] = React.useState<JSARecord>(() => createMissionJSA('draft'));
+  const [jsaDialogOpen, setJsaDialogOpen] = React.useState(false);
   const [scheduledDate, setScheduledDate] = React.useState(defaultScheduledDateInput);
   const [estimatedDuration, setEstimatedDuration] = React.useState(120);
   const [applicationRate, setApplicationRate] = React.useState(15);
@@ -533,8 +546,15 @@ export default function MissionPlanning() {
     applicationRate > 0,
     estimatedDuration > 0,
     vegetationClearanceReady,
+    jsaRecord.status === 'approved',
   ];
   const readinessPercent = Math.round((readyChecks.filter(Boolean).length / readyChecks.length) * 100);
+  const plannerStepComplete = [
+    boundaryReady,
+    Boolean(selectedAircraftData),
+    jsaRecord.status === 'approved',
+    readinessPercent === 100,
+  ];
 
   const buildBoundaryRecord = (missionId: string): BoundaryFile => {
     const now = new Date().toISOString();
@@ -599,6 +619,9 @@ export default function MissionPlanning() {
     clientName,
     propertyName,
     fieldName,
+    siteAddress,
+    siteLatitude,
+    siteLongitude,
     missionNotes,
     boundaryCoords,
     vegetationClearance: {
@@ -646,10 +669,10 @@ export default function MissionPlanning() {
       clientId: clientName.trim(),
       location: {
         name: [propertyName.trim(), fieldName.trim()].filter(Boolean).join(' / ') || 'Location not set',
-        address: [fieldName.trim(), propertyName.trim()].filter(Boolean).join(', ') || 'Address not set',
+        address: siteAddress.trim() || [fieldName.trim(), propertyName.trim()].filter(Boolean).join(', ') || 'Address not set',
         coordinates: {
-          latitude: boundaryCoords[0]?.[0] || -25.2744,
-          longitude: boundaryCoords[0]?.[1] || 133.7751,
+          latitude: boundaryCoords[0]?.[0] ?? siteLatitude ?? -25.2744,
+          longitude: boundaryCoords[0]?.[1] ?? siteLongitude ?? 133.7751,
         },
         elevation: 0,
       },
@@ -667,7 +690,7 @@ export default function MissionPlanning() {
         estimatedFlightTime: estimatedDuration,
         maxPayloadWeight: selectedAircraftData.maxPayloadWeight,
       },
-      jsaRecord: createMissionJSA(missionId),
+      jsaRecord: { ...jsaRecord, missionId, updatedAt: new Date().toISOString() },
       boundaryFiles: boundaryReady ? [buildBoundaryRecord(missionId)] : [],
       financialEstimate: {
         aircraftCost,
@@ -890,6 +913,9 @@ export default function MissionPlanning() {
     setClientName('');
     setPropertyName('');
     setFieldName('');
+    setSiteAddress('');
+    setSiteLatitude(undefined);
+    setSiteLongitude(undefined);
     setMissionLotPlan('');
     setVegetationReviewAcknowledged(false);
     setSavedVegetationChecks(getSavedVegetationChecks());
@@ -900,6 +926,8 @@ export default function MissionPlanning() {
     setBoundaryCoords([]);
     setMissionArea(0);
     setBoundaryFile(null);
+    setJsaRecord(createMissionJSA('draft'));
+    setJsaDialogOpen(false);
     setScheduledDate(defaultScheduledDateInput());
     setEstimatedDuration(120);
     setApplicationRate(15);
@@ -950,6 +978,9 @@ export default function MissionPlanning() {
     setClientName(planning?.clientName || mission.clientId);
     setPropertyName(planning?.propertyName || locationParts[0] || 'Property');
     setFieldName(planning?.fieldName || locationParts[1] || 'Field');
+    setSiteAddress(planning?.siteAddress || mission.location.address || '');
+    setSiteLatitude(planning?.siteLatitude ?? mission.location.coordinates.latitude);
+    setSiteLongitude(planning?.siteLongitude ?? mission.location.coordinates.longitude);
     setMissionLotPlan(planning?.vegetationClearance?.lotPlan || '');
     setVegetationReviewAcknowledged(Boolean(planning?.vegetationClearance?.acknowledged || mission.complianceChecks.environmentalClearance));
     setSavedVegetationChecks(getSavedVegetationChecks());
@@ -960,6 +991,7 @@ export default function MissionPlanning() {
     setBoundaryCoords(planning?.boundaryCoords?.length ? planning.boundaryCoords : []);
     setMissionArea(missionAreaHa);
     setBoundaryFile(null);
+    setJsaRecord(mission.jsaRecord);
     setScheduledDate(formatDateTimeInput(new Date(mission.scheduledDate)));
     setEstimatedDuration(mission.estimatedDuration);
     setApplicationRate(planning?.operation.applicationRateLHa || 15);
@@ -998,6 +1030,7 @@ export default function MissionPlanning() {
     field: 'product' | 'ratePerHa' | 'unit',
     value: string
   ) => {
+    setJsaRecord(reopenApprovedJSA);
     setChemicals((prev) => prev.map((chemical, chemicalIndex) => {
       if (chemicalIndex !== index) {
         return chemical;
@@ -1016,6 +1049,7 @@ export default function MissionPlanning() {
   };
 
   const addChemical = () => {
+    setJsaRecord(reopenApprovedJSA);
     setChemicals((prev) => [
       ...prev,
       {
@@ -1028,6 +1062,7 @@ export default function MissionPlanning() {
   };
 
   const removeChemical = (index: number) => {
+    setJsaRecord(reopenApprovedJSA);
     setChemicals((prev) => prev.filter((_, chemicalIndex) => chemicalIndex !== index));
   };
 
@@ -1094,6 +1129,12 @@ export default function MissionPlanning() {
 
     if (!boundaryReady) {
       showNotice('error', 'Draw or upload a valid mission boundary before authorization.');
+      return;
+    }
+
+    if (jsaRecord.status !== 'approved') {
+      setJsaDialogOpen(true);
+      showNotice('warning', 'Complete and approve the mission JSA and risk assessment before authorization.');
       return;
     }
 
@@ -1518,7 +1559,7 @@ export default function MissionPlanning() {
         <CardContent sx={{ py: 2, '&:last-child': { pb: 2 } }}>
           <Grid container spacing={1.5}>
             {PLANNER_STEPS.map((step, index) => {
-              const complete = index < 3 || readinessPercent === 100;
+              const complete = plannerStepComplete[index];
               return (
                 <Grid key={step.label} size={{ xs: 6, md: 3 }}>
                   <Stack direction="row" alignItems="center" spacing={1.25}>
@@ -1556,11 +1597,18 @@ export default function MissionPlanning() {
             mb: 2,
             borderRadius: '8px',
             alignItems: 'center',
+            flexWrap: { xs: 'wrap', sm: 'nowrap' },
+            '& .MuiAlert-message': {
+              flex: 1,
+              minWidth: { xs: 'calc(100% - 40px)', sm: 0 },
+            },
             '& .MuiAlert-action': {
               alignItems: 'center',
-              pl: 2,
+              justifyContent: 'flex-end',
+              width: { xs: '100%', sm: 'auto' },
+              pl: { xs: 0, sm: 2 },
               pr: 1,
-              pt: 0,
+              pt: { xs: 1, sm: 0 },
             },
           }}
           action={
@@ -1595,16 +1643,32 @@ export default function MissionPlanning() {
             >
               <FieldBoundaryEditor
                 coords={boundaryCoords}
-                onCoordsChange={setBoundaryCoords}
+                onCoordsChange={(coords) => {
+                  setBoundaryCoords(coords);
+                  setJsaRecord(reopenApprovedJSA);
+                }}
                 onAreaChange={setMissionArea}
                 onBoundaryFile={setBoundaryFile}
+                initialAddress={siteAddress}
+                propertyLat={siteLatitude}
+                propertyLng={siteLongitude}
+                onAddressSelect={(address, lat, lng) => {
+                  setSiteAddress(address);
+                  setSiteLatitude(lat);
+                  setSiteLongitude(lng);
+                  setJsaRecord(reopenApprovedJSA);
+                }}
+                onPropertyPinMove={(lat, lng) => {
+                  setSiteLatitude(lat);
+                  setSiteLongitude(lng);
+                }}
                 mapHeight={580}
               />
               <Box
                 sx={{
                   position: 'absolute',
                   left: 16,
-                  top: 66,
+                  bottom: 16,
                   zIndex: 500,
                   borderRadius: '8px',
                   bgcolor: 'rgba(6, 36, 7, 0.88)',
@@ -1878,7 +1942,14 @@ export default function MissionPlanning() {
               <Stack spacing={1.5}>
                 <FormControl fullWidth size="small">
                   <InputLabel>Aircraft</InputLabel>
-                  <Select value={selectedAircraft} label="Aircraft" onChange={(event) => setSelectedAircraft(event.target.value)}>
+                  <Select
+                    value={selectedAircraft}
+                    label="Aircraft"
+                    onChange={(event) => {
+                      setSelectedAircraft(event.target.value);
+                      setJsaRecord(reopenApprovedJSA);
+                    }}
+                  >
                     {aircraftOptions.map((item) => (
                       <MenuItem key={item.id} value={item.id}>
                         {item.registration} - {item.model}
@@ -1888,7 +1959,14 @@ export default function MissionPlanning() {
                 </FormControl>
                 <FormControl fullWidth size="small">
                   <InputLabel>Equipment Kit</InputLabel>
-                  <Select value={selectedConfiguration} label="Equipment Kit" onChange={(event) => setSelectedConfiguration(event.target.value)}>
+                  <Select
+                    value={selectedConfiguration}
+                    label="Equipment Kit"
+                    onChange={(event) => {
+                      setSelectedConfiguration(event.target.value);
+                      setJsaRecord(reopenApprovedJSA);
+                    }}
+                  >
                     {configurationOptions
                       .filter((item) => !('aircraftId' in item) || item.aircraftId === selectedAircraft)
                       .map((item) => (
@@ -2326,7 +2404,21 @@ export default function MissionPlanning() {
 
             <Panel title="Safety & Compliance" icon={<SecurityIcon />}>
               <Stack spacing={1}>
-                <DetailRow label="JSA Status" value={<StatusPill label="Approved" tone="success" />} />
+                <DetailRow
+                  label="JSA Status"
+                  value={(
+                    <StatusPill
+                      label={jsaRecord.status === 'in-progress'
+                        ? 'In Progress'
+                        : `${jsaRecord.status.charAt(0).toUpperCase()}${jsaRecord.status.slice(1)}`}
+                      tone={jsaRecord.status === 'approved' ? 'success' : jsaRecord.status === 'rejected' ? 'error' : 'warning'}
+                    />
+                  )}
+                />
+                <DetailRow
+                  label="Risk Assessment"
+                  value={`${jsaRecord.hazardIdentification.length} hazard${jsaRecord.hazardIdentification.length === 1 ? '' : 's'} ${jsaRecord.status === 'approved' ? 'assessed' : 'to review'}`}
+                />
                 <DetailRow label="APVMA Compliance" value={<StatusPill label="Compliant" tone="success" />} />
                 <DetailRow label="CASA Restrictions" value={<StatusPill label="None" tone="success" />} />
                 <DetailRow label="Boundary" value={<StatusPill label={boundaryReady ? 'Ready' : 'Needs points'} tone={boundaryReady ? 'success' : 'warning'} />} />
@@ -2335,6 +2427,16 @@ export default function MissionPlanning() {
                 <Alert severity={vegetationClearanceReady && !vegetationReviewRequired ? 'success' : 'warning'} sx={{ borderRadius: '8px' }}>
                   {vegetationWarningMessage}
                 </Alert>
+
+                <Button
+                  variant={jsaRecord.status === 'approved' ? 'outlined' : 'contained'}
+                  startIcon={<SecurityIcon />}
+                  onClick={() => setJsaDialogOpen(true)}
+                  disabled={!canEditPlanning}
+                  sx={{ borderRadius: '8px', fontWeight: 800 }}
+                >
+                  {jsaRecord.status === 'approved' ? 'Edit JSA & Risk' : 'Complete JSA & Risk'}
+                </Button>
 
                 <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
                   <Button
@@ -2459,6 +2561,22 @@ export default function MissionPlanning() {
           </Grid>
         </CardContent>
       </Card>
+
+      <MissionJsaDialog
+        open={jsaDialogOpen}
+        missionName={missionName}
+        value={jsaRecord}
+        onClose={() => setJsaDialogOpen(false)}
+        onSave={(record) => {
+          setJsaRecord(record);
+          showNotice(
+            record.status === 'approved' ? 'success' : 'info',
+            record.status === 'approved'
+              ? 'JSA and risk assessment approved. The mission can now be authorized.'
+              : 'JSA draft updated. Save the mission draft to persist it.'
+          );
+        }}
+      />
 
       <Snackbar
         open={notice.open}

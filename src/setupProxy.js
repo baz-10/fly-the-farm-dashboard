@@ -1,6 +1,7 @@
 const { createProxyMiddleware } = require('http-proxy-middleware');
 const authHandler = require('../api/auth');
 const persistentStoreHandler = require('../api/store');
+const geocodeHandler = require('../api/geocode');
 
 const VEGETATION_BASE_URL = 'https://spatial-gis.information.qld.gov.au/arcgis/rest/services/Biota/VegetationManagement/MapServer';
 const VEGETATION_LAYERS = {
@@ -105,6 +106,7 @@ module.exports = function (app) {
 
   registerJsonApi('/api/auth', authHandler);
   registerJsonApi('/api/store', persistentStoreHandler);
+  registerJsonApi('/api/geocode', geocodeHandler);
 
   app.get('/api/pmav', async (req, res) => {
     try {
