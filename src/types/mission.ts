@@ -32,6 +32,9 @@ export interface MissionPlanningState {
   clientName: string;
   propertyName: string;
   fieldName: string;
+  siteAddress?: string;
+  siteLatitude?: number;
+  siteLongitude?: number;
   missionNotes: string;
   boundaryCoords: Array<[number, number]>;
   vegetationClearance?: {

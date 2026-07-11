@@ -1,7 +1,9 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import {
+  Alert,
   Box,
   Button,
+  CircularProgress,
   Typography,
   Stack,
   Chip,
@@ -11,6 +13,7 @@ import {
   ToggleButtonGroup,
   ToggleButton,
   Tooltip,
+  TextField,
 } from '@mui/material';
 import UploadFileIcon from '@mui/icons-material/UploadFile';
 import DeleteIcon from '@mui/icons-material/Delete';
@@ -18,10 +21,16 @@ import UndoIcon from '@mui/icons-material/Undo';
 import PolylineIcon from '@mui/icons-material/Polyline';
 import TouchAppIcon from '@mui/icons-material/TouchApp';
 import SquareFootIcon from '@mui/icons-material/SquareFoot';
+import SearchIcon from '@mui/icons-material/Search';
 import { MapContainer, TileLayer, Polygon, Marker, useMapEvents, useMap, LayersControl } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { LatLng, BoundaryFileRef } from '../types/fieldManagement';
+import {
+  calculateBoundaryAreaHectares,
+  parseKmlBoundary,
+  parseShapefileBoundary,
+} from '../utils/boundaryImport';
 
 const TILE_LAYERS = {
   street: {
@@ -55,61 +64,6 @@ const boundaryPointIcon = L.divIcon({
   iconAnchor: [6, 6],
 });
 
-// ─── Area Calculation ───────────────────────────────────────
-
-function calculateAreaHectares(coords: LatLng[]): number {
-  if (coords.length < 3) return 0;
-  // Shoelace formula on projected coordinates (approximate for small areas)
-  // Convert lat/lng to metres using the mean latitude
-  const meanLat = coords.reduce((s, c) => s + c[0], 0) / coords.length;
-  const latRad = (meanLat * Math.PI) / 180;
-  const mPerDegLat = 111320;
-  const mPerDegLng = 111320 * Math.cos(latRad);
-
-  let area = 0;
-  for (let i = 0; i < coords.length; i++) {
-    const j = (i + 1) % coords.length;
-    const xi = coords[i][1] * mPerDegLng;
-    const yi = coords[i][0] * mPerDegLat;
-    const xj = coords[j][1] * mPerDegLng;
-    const yj = coords[j][0] * mPerDegLat;
-    area += xi * yj - xj * yi;
-  }
-  return Math.abs(area / 2) / 10000; // m² to hectares
-}
-
-// ─── KML Parser ─────────────────────────────────────────────
-
-function parseKMLCoordinates(kmlText: string): LatLng[] {
-  const coords: LatLng[] = [];
-  // Find <coordinates> tags
-  const coordRegex = /<coordinates[^>]*>([\s\S]*?)<\/coordinates>/gi;
-  let match;
-  while ((match = coordRegex.exec(kmlText)) !== null) {
-    const raw = match[1].trim();
-    const points = raw.split(/\s+/);
-    for (const pt of points) {
-      const parts = pt.split(',');
-      if (parts.length >= 2) {
-        const lng = parseFloat(parts[0]);
-        const lat = parseFloat(parts[1]);
-        if (!isNaN(lat) && !isNaN(lng)) {
-          coords.push([lat, lng]);
-        }
-      }
-    }
-  }
-  // Remove duplicate closing point if present
-  if (coords.length > 1) {
-    const first = coords[0];
-    const last = coords[coords.length - 1];
-    if (first[0] === last[0] && first[1] === last[1]) {
-      coords.pop();
-    }
-  }
-  return coords;
-}
-
 // ─── Map Click Handler ─────────────────────────────────────
 
 function MapClickHandler({ onMapClick, drawing }: { onMapClick: (lat: number, lng: number) => void; drawing: boolean }) {
@@ -127,11 +81,9 @@ function MapClickHandler({ onMapClick, drawing }: { onMapClick: (lat: number, ln
 
 function FlyToProperty({ lat, lng }: { lat?: number; lng?: number }) {
   const map = useMap();
-  const flown = useRef(false);
   useEffect(() => {
-    if (lat && lng && !flown.current) {
+    if (typeof lat === 'number' && typeof lng === 'number' && Number.isFinite(lat) && Number.isFinite(lng)) {
       map.flyTo([lat, lng], 16, { duration: 1.2 });
-      flown.current = true;
     }
   }, [lat, lng, map]);
   return null;
@@ -171,6 +123,8 @@ interface Props {
   propertyLat?: number;
   propertyLng?: number;
   onPropertyPinMove?: (lat: number, lng: number) => void;
+  initialAddress?: string;
+  onAddressSelect?: (address: string, lat: number, lng: number) => void;
   mapHeight?: number;
   readOnly?: boolean;
 }
@@ -185,16 +139,28 @@ export default function FieldBoundaryEditor({
   propertyLat,
   propertyLng,
   onPropertyPinMove,
+  initialAddress = '',
+  onAddressSelect,
   mapHeight = 350,
   readOnly = false,
 }: Props) {
   const theme = useTheme();
   const [drawing, setDrawing] = useState(false);
   const [mode, setMode] = useState<'draw' | 'upload'>('draw');
+  const [addressQuery, setAddressQuery] = useState(initialAddress);
+  const [addressResults, setAddressResults] = useState<Array<{ label: string; lat: number; lng: number }>>([]);
+  const [addressLoading, setAddressLoading] = useState(false);
+  const [addressError, setAddressError] = useState('');
+  const [importNotice, setImportNotice] = useState<{ severity: 'success' | 'warning' | 'error'; message: string } | null>(null);
   const [pinPos, setPinPos] = useState<{ lat: number; lng: number } | null>(
     propertyLat && propertyLng ? { lat: propertyLat, lng: propertyLng } : null
   );
   const markerRef = useRef<L.Marker | null>(null);
+  const onAreaChangeRef = useRef(onAreaChange);
+
+  useEffect(() => {
+    onAreaChangeRef.current = onAreaChange;
+  }, [onAreaChange]);
 
   // Sync if parent props change
   useEffect(() => {
@@ -203,17 +169,21 @@ export default function FieldBoundaryEditor({
     }
   }, [propertyLat, propertyLng]);
 
+  useEffect(() => {
+    setAddressQuery(initialAddress);
+  }, [initialAddress]);
+
   const defaultCenter = React.useMemo<[number, number]>(() => [
     propertyLat || -25.2744,
     propertyLng || 133.7751,
   ], [propertyLat, propertyLng]);
   const defaultZoom = propertyLat ? 14 : 5;
 
-  const area = calculateAreaHectares(coords);
+  const area = calculateBoundaryAreaHectares(coords);
 
   useEffect(() => {
-    onAreaChange(Math.round(area * 100) / 100);
-  }, [area]); // eslint-disable-line react-hooks/exhaustive-deps
+    onAreaChangeRef.current(Math.round(area * 100) / 100);
+  }, [area]);
 
   const handleMapClick = useCallback((lat: number, lng: number) => {
     const updated = [...coords, [lat, lng] as LatLng];
@@ -231,57 +201,130 @@ export default function FieldBoundaryEditor({
     onBoundaryFile?.(null);
   };
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const ext = file.name.split('.').pop()?.toLowerCase();
-
-    const reader = new FileReader();
-    reader.onload = () => {
-      const content = reader.result as string;
-      let parsed: LatLng[] = [];
-
-      if (ext === 'kml' || ext === 'kmz') {
-        parsed = parseKMLCoordinates(content);
-      } else if (ext === 'shp') {
-        // SHP is binary — for now just store the file reference
-        // Full SHP parsing would need a library like shapefile.js
-      }
-
-      if (parsed.length > 0) {
-        onCoordsChange(parsed);
-      }
-
-      // Store the file reference
-      const dataUrlReader = new FileReader();
-      dataUrlReader.onload = () => {
-        onBoundaryFile?.({
-          fileName: file.name,
-          fileType: (ext as 'kml' | 'shp' | 'kmz') || 'kml',
-          sizeBytes: file.size,
-          dataUrl: dataUrlReader.result as string,
-          boundingBox: parsed.length > 0 ? {
-            north: Math.max(...parsed.map(c => c[0])),
-            south: Math.min(...parsed.map(c => c[0])),
-            east: Math.max(...parsed.map(c => c[1])),
-            west: Math.min(...parsed.map(c => c[1])),
-          } : undefined,
-          uploadedAt: new Date().toISOString(),
-        });
-      };
-      dataUrlReader.readAsDataURL(file);
-    };
-
-    if (ext === 'shp') {
-      reader.readAsArrayBuffer(file);
-    } else {
-      reader.readAsText(file);
-    }
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
     e.target.value = '';
+    if (files.length === 0) return;
+
+    try {
+      setImportNotice(null);
+      const kml = files.find((file) => file.name.toLowerCase().endsWith('.kml'));
+      const result = kml
+        ? parseKmlBoundary(await kml.text())
+        : await parseShapefileBoundary(files);
+      const primaryFile = kml || files.find((file) => file.name.toLowerCase().endsWith('.zip')) || files[0];
+
+      onCoordsChange(result.coords);
+      onBoundaryFile?.({
+        fileName: files.length === 1 ? primaryFile.name : files.map((file) => file.name).join(', '),
+        fileType: kml ? 'kml' : 'shp',
+        sizeBytes: files.reduce((total, file) => total + file.size, 0),
+        dataUrl: await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(String(reader.result));
+          reader.onerror = () => reject(new Error('Could not read the selected boundary file.'));
+          reader.readAsDataURL(primaryFile);
+        }),
+        boundingBox: {
+          north: Math.max(...result.coords.map((coord) => coord[0])),
+          south: Math.min(...result.coords.map((coord) => coord[0])),
+          east: Math.max(...result.coords.map((coord) => coord[1])),
+          west: Math.min(...result.coords.map((coord) => coord[1])),
+        },
+        uploadedAt: new Date().toISOString(),
+      });
+      setImportNotice({
+        severity: result.warning ? 'warning' : 'success',
+        message: `${result.areaHa.toFixed(1)} ha boundary imported. ${result.warning || ''}`.trim(),
+      });
+    } catch (error) {
+      setImportNotice({
+        severity: 'error',
+        message: error instanceof Error ? error.message : 'The selected boundary could not be imported.',
+      });
+    }
+  };
+
+  const handleAddressSearch = async () => {
+    const query = addressQuery.trim();
+    if (query.length < 3) {
+      setAddressError('Enter at least 3 characters.');
+      return;
+    }
+
+    setAddressLoading(true);
+    setAddressError('');
+    setAddressResults([]);
+    try {
+      const response = await fetch(`/api/geocode?q=${encodeURIComponent(query)}`);
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Address search failed.');
+      setAddressResults(data.results || []);
+      if (!data.results?.length) setAddressError('No Australian addresses matched that search.');
+    } catch (error) {
+      setAddressError(error instanceof Error ? error.message : 'Address search failed.');
+    } finally {
+      setAddressLoading(false);
+    }
+  };
+
+  const selectAddress = (result: { label: string; lat: number; lng: number }) => {
+    setAddressQuery(result.label);
+    setAddressResults([]);
+    setPinPos({ lat: result.lat, lng: result.lng });
+    onAddressSelect?.(result.label, result.lat, result.lng);
   };
 
   return (
     <Box>
+      {!readOnly && (
+        <Box sx={{ mb: 1.5 }}>
+          <Stack direction="row" spacing={1} alignItems="flex-start">
+            <TextField
+              value={addressQuery}
+              onChange={(event) => setAddressQuery(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') {
+                  event.preventDefault();
+                  void handleAddressSearch();
+                }
+              }}
+              label="Search Australian address"
+              size="small"
+              fullWidth
+              error={Boolean(addressError)}
+              helperText={addressError || undefined}
+            />
+            <Tooltip title="Search address">
+              <span>
+                <IconButton
+                  aria-label="Search address"
+                  color="primary"
+                  onClick={() => void handleAddressSearch()}
+                  disabled={addressLoading}
+                  sx={{ width: 40, height: 40, border: `1px solid ${alpha(theme.palette.primary.main, 0.25)}` }}
+                >
+                  {addressLoading ? <CircularProgress size={18} /> : <SearchIcon />}
+                </IconButton>
+              </span>
+            </Tooltip>
+          </Stack>
+          {addressResults.length > 0 && (
+            <Stack sx={{ mt: 0.75, border: `1px solid ${alpha(theme.palette.primary.main, 0.14)}`, borderRadius: '8px', overflow: 'hidden' }}>
+              {addressResults.map((result, index) => (
+                <Button
+                  key={`${result.lat}-${result.lng}-${index}`}
+                  onClick={() => selectAddress(result)}
+                  sx={{ justifyContent: 'flex-start', textAlign: 'left', borderRadius: 0, px: 1.25, py: 0.8, fontSize: '0.75rem' }}
+                >
+                  {result.label}
+                </Button>
+              ))}
+            </Stack>
+          )}
+        </Box>
+      )}
+
       {/* Mode toggle + controls */}
       {!readOnly && (
         <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 1.5 }} flexWrap="wrap" useFlexGap>
@@ -308,8 +351,8 @@ export default function FieldBoundaryEditor({
               startIcon={<UploadFileIcon />}
               sx={{ borderRadius: '8px', fontWeight: 600, fontSize: '0.75rem' }}
             >
-              KML / SHP
-              <input type="file" hidden accept=".kml,.kmz,.shp" onChange={handleFileUpload} />
+              KML / SHP / ZIP
+              <input type="file" hidden multiple accept=".kml,.zip,.shp,.dbf,.prj,.cpg" onChange={handleFileUpload} />
             </Button>
           )}
 
@@ -361,6 +404,12 @@ export default function FieldBoundaryEditor({
         </Stack>
       )}
 
+      {importNotice && (
+        <Alert severity={importNotice.severity} onClose={() => setImportNotice(null)} sx={{ mb: 1, borderRadius: '8px' }}>
+          {importNotice.message}
+        </Alert>
+      )}
+
       {/* Drawing instructions */}
       {!readOnly && mode === 'draw' && drawing && (
         <Typography variant="caption" color="primary.main" sx={{ display: 'block', mb: 1, fontWeight: 600 }}>
@@ -371,13 +420,13 @@ export default function FieldBoundaryEditor({
       {/* Map */}
       <Box
         sx={{
-          borderRadius: '12px',
+          borderRadius: '8px',
           overflow: 'hidden',
           border: `1.5px solid ${alpha(theme.palette.primary.main, drawing ? 0.4 : 0.12)}`,
           height: mapHeight,
           cursor: !readOnly && drawing ? 'crosshair' : 'grab',
           transition: 'border-color 0.2s',
-          '& .leaflet-container': { height: '100%', width: '100%', borderRadius: '12px' },
+          '& .leaflet-container': { height: '100%', width: '100%', borderRadius: '8px' },
         }}
       >
         <MapContainer
@@ -401,7 +450,7 @@ export default function FieldBoundaryEditor({
           <MapClickHandler onMapClick={handleMapClick} drawing={!readOnly && drawing} />
 
           {/* Fly to property address on open */}
-          {coords.length === 0 && <FlyToProperty lat={propertyLat} lng={propertyLng} />}
+          <FlyToProperty lat={pinPos?.lat || propertyLat} lng={pinPos?.lng || propertyLng} />
 
           {/* Property address pin — draggable */}
           {pinPos && (
