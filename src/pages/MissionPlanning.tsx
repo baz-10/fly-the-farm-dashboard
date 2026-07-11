@@ -1932,7 +1932,7 @@ export default function MissionPlanning() {
                 </Grid>
 
                 {chemicalRows.map((chemical, index) => (
-                  <Box key={`${chemical.product}-${index}`} sx={{ p: 1, borderRadius: '8px', bgcolor: alpha(theme.palette.primary.main, 0.04) }}>
+                  <Box key={`chemical-${index}`} sx={{ p: 1, borderRadius: '8px', bgcolor: alpha(theme.palette.primary.main, 0.04) }}>
                     <Grid container spacing={1} alignItems="center">
                       <Grid size={{ xs: 12, sm: 5 }}>
                         <TextField
