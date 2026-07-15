@@ -273,7 +273,7 @@ export default function Home() {
           </Typography>
         </Box>
         <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
-          <Button variant="outlined" startIcon={<CalendarTodayIcon />} onClick={() => navigate('/jobs/history')}>
+          <Button variant="outlined" startIcon={<CalendarTodayIcon />} onClick={() => navigate('/mission-planning')}>
             View Schedule
           </Button>
           <Button variant="contained" startIcon={<FlightTakeoffIcon />} onClick={() => navigate('/mission-planning')}>
