@@ -1030,7 +1030,11 @@ export default function MissionPlanning() {
   };
 
   React.useEffect(() => {
-    if (!requestedMissionId || loadedMissionLinkRef.current === requestedMissionId) return;
+    if (!requestedMissionId) {
+      loadedMissionLinkRef.current = '';
+      return;
+    }
+    if (loadedMissionLinkRef.current === requestedMissionId) return;
     const requestedMission = missions.find((mission) => mission.id === requestedMissionId);
     if (!requestedMission) return;
     loadMissionIntoPlanner(requestedMission);

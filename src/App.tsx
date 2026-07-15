@@ -1,5 +1,5 @@
 import React from 'react';
-import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { BrowserRouter, Navigate, Routes, Route } from 'react-router-dom';
 import Layout from './components/Layout';
 import ProtectedRoute from './components/ProtectedRoute';
 import Login from './pages/Login';
@@ -57,6 +57,17 @@ function WorkflowProviders({ children }: { children: React.ReactNode }) {
   );
 }
 
+function HomeRoute() {
+  const { user } = useAuth();
+  if (user?.role === 'client') {
+    const clientPath = user.clientRecordId
+      ? `/jobs/client/${encodeURIComponent(user.clientRecordId)}`
+      : '/jobs';
+    return <Navigate to={clientPath} replace />;
+  }
+  return <Home />;
+}
+
 function App() {
   return (
     <BrowserRouter>
@@ -72,11 +83,11 @@ function App() {
             </ProtectedRoute>
           }
         >
-          <Route path="/" element={<Home />} />
+          <Route path="/" element={<HomeRoute />} />
           <Route path="/database" element={<Dashboard />} />
           <Route path="/search" element={<SearchResults />} />
           <Route path="/treatment/:id" element={<TreatmentDetail />} />
-          <Route path="/calculator" element={<Calculator />} />
+          <Route path="/calculator" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><Calculator /></ProtectedRoute>} />
           <Route path="/jobs" element={<ClientList />} />
           <Route path="/jobs/import" element={<SprayRecImport />} />
           <Route path="/jobs/history" element={<JobHistory />} />
@@ -85,28 +96,28 @@ function App() {
           <Route path="/jobs/client/:clientId/property/:propertyId/field/:fieldId" element={<FieldDetail />} />
           <Route path="/jobs/client/:clientId/property/:propertyId/field/:fieldId/new-job" element={<JobCreate />} />
           <Route path="/jobs/client/:clientId/property/:propertyId/field/:fieldId/job/:jobId" element={<JobDetail />} />
-          <Route path="/quotes" element={<QuoteList />} />
-          <Route path="/quotes/new" element={<QuoteCreate />} />
-          <Route path="/quotes/settings" element={<QuoteSettings />} />
-          <Route path="/quotes/:quoteId" element={<QuoteDetail />} />
-          <Route path="/financials" element={<FinancialsList />} />
-          <Route path="/financials/new" element={<ActualCreate />} />
-          <Route path="/financials/:actualId" element={<ActualDetail />} />
+          <Route path="/quotes" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><QuoteList /></ProtectedRoute>} />
+          <Route path="/quotes/new" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><QuoteCreate /></ProtectedRoute>} />
+          <Route path="/quotes/settings" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><QuoteSettings /></ProtectedRoute>} />
+          <Route path="/quotes/:quoteId" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><QuoteDetail /></ProtectedRoute>} />
+          <Route path="/financials" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><FinancialsList /></ProtectedRoute>} />
+          <Route path="/financials/new" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><ActualCreate /></ProtectedRoute>} />
+          <Route path="/financials/:actualId" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><ActualDetail /></ProtectedRoute>} />
           <Route path="/ask-ftf" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><AskFTF /></ProtectedRoute>} />
           <Route path="/aircraft" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><AircraftManagement /></ProtectedRoute>} />
-          <Route path="/jsa" element={<JSAManagement />} />
+          <Route path="/jsa" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><JSAManagement /></ProtectedRoute>} />
           <Route path="/mission-planning" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><MissionPlanning /></ProtectedRoute>} />
-          <Route path="/compliance" element={<ComplianceMenu />} />
-          <Route path="/compliance/flight" element={<ComplianceFlight />} />
-          <Route path="/compliance/chemical" element={<ComplianceChemical />} />
-          <Route path="/compliance/transport" element={<ComplianceTransport />} />
-          <Route path="/compliance/licensing" element={<ComplianceLicensing />} />
-          <Route path="/compliance/environmental" element={<ComplianceEnvironmental />} />
-          <Route path="/compliance/vegetation" element={<ComplianceVegetation />} />
-          <Route path="/compliance/safety" element={<ComplianceSafety />} />
-          <Route path="/compliance/documentation" element={<ComplianceDocumentation />} />
+          <Route path="/compliance" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><ComplianceMenu /></ProtectedRoute>} />
+          <Route path="/compliance/flight" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><ComplianceFlight /></ProtectedRoute>} />
+          <Route path="/compliance/chemical" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><ComplianceChemical /></ProtectedRoute>} />
+          <Route path="/compliance/transport" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><ComplianceTransport /></ProtectedRoute>} />
+          <Route path="/compliance/licensing" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><ComplianceLicensing /></ProtectedRoute>} />
+          <Route path="/compliance/environmental" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><ComplianceEnvironmental /></ProtectedRoute>} />
+          <Route path="/compliance/vegetation" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><ComplianceVegetation /></ProtectedRoute>} />
+          <Route path="/compliance/safety" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><ComplianceSafety /></ProtectedRoute>} />
+          <Route path="/compliance/documentation" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><ComplianceDocumentation /></ProtectedRoute>} />
           <Route path="/license-settings" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><UserLicenseSettings /></ProtectedRoute>} />
-          <Route path="/admin" element={<Admin />} />
+          <Route path="/admin" element={<ProtectedRoute allowedRoles={['admin']}><Admin /></ProtectedRoute>} />
         </Route>
       </Routes>
     </BrowserRouter>

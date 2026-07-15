@@ -1,6 +1,7 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
+  Alert,
   Box,
   Button,
   Card,
@@ -36,6 +37,7 @@ import type { MissionRecord, MissionStatus } from '../types/mission';
 import type { QuoteStatus } from '../types/quote';
 import {
   getMissionActivity,
+  getMissionNextAction,
   getMissionReadiness,
   getTodaysChemicalAllocations,
   getTodaysSprayMissions,
@@ -86,6 +88,16 @@ const QUOTE_STATUS_TONES: Record<QuoteStatus, string> = {
   declined: '#c62828',
   expired: '#d4860a',
   invoiced: '#2e9e3c',
+};
+
+const MISSION_ACTION_META = {
+  'complete-jsa': { tone: '#c62828', icon: <SecurityIcon /> },
+  'authorize-mission': { tone: '#d4860a', icon: <FlightTakeoffIcon /> },
+  'generate-flight-plan': { tone: '#00897b', icon: <AssignmentIcon /> },
+  'authorize-flight': { tone: '#d4860a', icon: <SecurityIcon /> },
+  'start-flight': { tone: '#1b8a5a', icon: <FlightTakeoffIcon /> },
+  'record-completion': { tone: '#1b8a5a', icon: <FlightTakeoffIcon /> },
+  'complete-mission': { tone: '#1b8a5a', icon: <CheckCircleIcon /> },
 };
 
 function Panel({ title, children, action, sx }: PanelProps) {
@@ -189,8 +201,18 @@ function formatAuditAction(action: string) {
 
 export default function Home() {
   const { user } = useAuth();
-  const { missions, isLoading: missionsLoading } = useMission();
-  const { aircraft, isLoading: aircraftLoading } = useAircraft();
+  const {
+    missions,
+    isLoading: missionsLoading,
+    error: missionsError,
+    loadData: reloadMissions,
+  } = useMission();
+  const {
+    aircraft,
+    isLoading: aircraftLoading,
+    error: aircraftError,
+    loadData: reloadAircraft,
+  } = useAircraft();
   const navigate = useNavigate();
   const theme = useTheme();
 
@@ -216,42 +238,10 @@ export default function Home() {
   );
 
   const actions = React.useMemo(() => activeMissions.slice(0, 4).map((mission) => {
-    if (mission.status === 'Planning' && mission.jsaRecord?.status !== 'approved') {
-      return {
-        label: 'Complete JSA',
-        detail: `${mission.missionName} needs safety sign-off`,
-        action: 'Review',
-        tone: '#c62828',
-        icon: <SecurityIcon />,
-        path: `/mission-planning?mission=${encodeURIComponent(mission.id)}`,
-      };
-    }
-    if (mission.status === 'Planning') {
-      return {
-        label: 'Authorize Mission',
-        detail: `${mission.missionName} is ready for approval review`,
-        action: 'Review',
-        tone: '#d4860a',
-        icon: <FlightTakeoffIcon />,
-        path: `/mission-planning?mission=${encodeURIComponent(mission.id)}`,
-      };
-    }
-    if (mission.status === 'Approved' && !mission.flightPlan) {
-      return {
-        label: 'Generate Flight Plan',
-        detail: `${mission.missionName} is approved without a flight plan`,
-        action: 'Plan',
-        tone: '#00897b',
-        icon: <AssignmentIcon />,
-        path: `/mission-planning?mission=${encodeURIComponent(mission.id)}`,
-      };
-    }
+    const nextAction = getMissionNextAction(mission);
     return {
-      label: mission.status === 'Flying' ? 'Record Completion' : 'Prepare Flight',
-      detail: `${mission.missionName} is ${mission.status.toLowerCase()}`,
-      action: 'Open',
-      tone: '#1b8a5a',
-      icon: <FlightTakeoffIcon />,
+      ...nextAction,
+      ...MISSION_ACTION_META[nextAction.kind],
       path: `/mission-planning?mission=${encodeURIComponent(mission.id)}`,
     };
   }), [activeMissions]);
@@ -291,6 +281,26 @@ export default function Home() {
           </Button>
         </Stack>
       </Stack>
+
+      {(missionsError || aircraftError) && (
+        <Alert
+          severity="error"
+          action={(
+            <Button
+              color="inherit"
+              size="small"
+              onClick={() => {
+                void Promise.all([reloadMissions(), reloadAircraft()]);
+              }}
+            >
+              Retry
+            </Button>
+          )}
+          sx={{ mb: 2 }}
+        >
+          Mission or fleet data could not be loaded. Dashboard figures may be incomplete; retry before relying on this view.
+        </Alert>
+      )}
 
       {(missionsLoading || aircraftLoading) && (
         <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 2, color: 'text.secondary' }}>

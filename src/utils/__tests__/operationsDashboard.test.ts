@@ -1,6 +1,7 @@
 import type { MissionRecord } from '../../types/mission';
 import {
   getMissionActivity,
+  getMissionNextAction,
   getMissionReadiness,
   getTodaysChemicalAllocations,
   getTodaysSprayMissions,
@@ -82,5 +83,37 @@ describe('operations dashboard selectors', () => {
     const older = mission({ id: 'older' });
     const newer = mission({ id: 'newer', auditTrail: [{ id: 'latest', missionId: 'newer', timestamp: '2026-07-15T01:00:00Z', userId: 'user-1', action: 'approved', changes: [] }] });
     expect(getMissionActivity([older, newer], 1)[0].entry.id).toBe('latest');
+  });
+
+  it('follows every operational step after planning approval', () => {
+    const approved = mission({ id: 'approved', status: 'Approved' });
+    expect(getMissionNextAction(approved).kind).toBe('generate-flight-plan');
+
+    const planned = mission({
+      id: 'planned',
+      status: 'Approved',
+      flightPlan: {} as MissionRecord['flightPlan'],
+    });
+    expect(getMissionNextAction(planned).kind).toBe('authorize-flight');
+
+    const authorized = mission({
+      ...planned,
+      id: 'authorized',
+      approvals: {
+        ...planned.approvals,
+        flyingAuthorization: {} as MissionRecord['approvals']['flyingAuthorization'],
+      },
+    });
+    expect(getMissionNextAction(authorized).kind).toBe('start-flight');
+
+    const flying = mission({ id: 'flying', status: 'Flying' });
+    expect(getMissionNextAction(flying).kind).toBe('record-completion');
+
+    const recorded = mission({
+      id: 'recorded',
+      status: 'Flying',
+      flightExecution: {} as MissionRecord['flightExecution'],
+    });
+    expect(getMissionNextAction(recorded).kind).toBe('complete-mission');
   });
 });

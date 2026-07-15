@@ -9,6 +9,13 @@ export interface MissionReadinessSummary {
 
 export type ChemicalAllocation = MissionPlanningChemical;
 
+export interface MissionNextAction {
+  kind: 'complete-jsa' | 'authorize-mission' | 'generate-flight-plan' | 'authorize-flight' | 'start-flight' | 'record-completion' | 'complete-mission';
+  label: string;
+  detail: string;
+  action: string;
+}
+
 function localDateKey(value: string | Date): string {
   const date = typeof value === 'string' ? new Date(value) : value;
   if (Number.isNaN(date.getTime())) return '';
@@ -64,4 +71,61 @@ export function getMissionActivity(
     .flatMap((mission) => (mission.auditTrail || []).map((entry) => ({ mission, entry })))
     .sort((a, b) => b.entry.timestamp.localeCompare(a.entry.timestamp))
     .slice(0, limit);
+}
+
+export function getMissionNextAction(mission: MissionRecord): MissionNextAction {
+  if (mission.status === 'Planning' && mission.jsaRecord?.status !== 'approved') {
+    return {
+      kind: 'complete-jsa',
+      label: 'Complete JSA',
+      detail: `${mission.missionName} needs safety sign-off`,
+      action: 'Review',
+    };
+  }
+  if (mission.status === 'Planning') {
+    return {
+      kind: 'authorize-mission',
+      label: 'Authorize Mission',
+      detail: `${mission.missionName} is ready for approval review`,
+      action: 'Review',
+    };
+  }
+  if (mission.status === 'Approved' && !mission.flightPlan) {
+    return {
+      kind: 'generate-flight-plan',
+      label: 'Generate Flight Plan',
+      detail: `${mission.missionName} is approved without a flight plan`,
+      action: 'Plan',
+    };
+  }
+  if (mission.status === 'Approved' && !mission.approvals.flyingAuthorization) {
+    return {
+      kind: 'authorize-flight',
+      label: 'Authorize Flight',
+      detail: `${mission.missionName} needs CRP flight authorisation`,
+      action: 'Review',
+    };
+  }
+  if (mission.status === 'Approved') {
+    return {
+      kind: 'start-flight',
+      label: 'Start Flight',
+      detail: `${mission.missionName} is authorised and ready to start`,
+      action: 'Open',
+    };
+  }
+  if (mission.flightExecution) {
+    return {
+      kind: 'complete-mission',
+      label: 'Complete Mission',
+      detail: `${mission.missionName} has flight results ready for completion`,
+      action: 'Open',
+    };
+  }
+  return {
+    kind: 'record-completion',
+    label: 'Record Completion',
+    detail: `${mission.missionName} is in flight`,
+    action: 'Open',
+  };
 }
