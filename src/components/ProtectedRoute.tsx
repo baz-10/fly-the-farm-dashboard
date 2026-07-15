@@ -7,6 +7,10 @@ import { UserRole } from '../contexts/AuthContext';
 
 export default function ProtectedRoute({ children, allowedRoles }: { children: React.ReactNode; allowedRoles?: UserRole[] }) {
   const { isAuthenticated, isLoading, user } = useAuth();
+  const userScopeKey = user
+    ? [user.id, user.role, user.contractorId || '', user.clientRecordId || ''].join(':')
+    : 'signed-out';
+  const [appliedUserScopeKey, setAppliedUserScopeKey] = React.useState('');
 
   useEffect(() => {
     if (user) {
@@ -19,9 +23,10 @@ export default function ProtectedRoute({ children, allowedRoles }: { children: R
     } else {
       setCurrentUser(null);
     }
-  }, [user]);
+    setAppliedUserScopeKey(userScopeKey);
+  }, [user, userScopeKey]);
 
-  if (isLoading) {
+  if (isLoading || (isAuthenticated && appliedUserScopeKey !== userScopeKey)) {
     return (
       <Box sx={{ minHeight: '100vh', display: 'grid', placeItems: 'center' }}>
         <CircularProgress aria-label="Checking your session" />

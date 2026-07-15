@@ -37,6 +37,8 @@ import ComplianceVegetation from './pages/ComplianceVegetation';
 import ComplianceSafety from './pages/ComplianceSafety';
 import ComplianceDocumentation from './pages/ComplianceDocumentation';
 import MissionPlanning from './pages/MissionPlanning';
+import AskFTF from './pages/AskFTF';
+import UserLicenseSettings from './pages/UserLicenseSettings';
 import { UserLicenseProvider } from './contexts/UserLicenseContext';
 import { AircraftProvider } from './contexts/AircraftContext';
 import { MissionProvider } from './contexts/MissionContext';
@@ -90,6 +92,7 @@ function App() {
           <Route path="/financials" element={<FinancialsList />} />
           <Route path="/financials/new" element={<ActualCreate />} />
           <Route path="/financials/:actualId" element={<ActualDetail />} />
+          <Route path="/ask-ftf" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><AskFTF /></ProtectedRoute>} />
           <Route path="/aircraft" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><AircraftManagement /></ProtectedRoute>} />
           <Route path="/jsa" element={<JSAManagement />} />
           <Route path="/mission-planning" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><MissionPlanning /></ProtectedRoute>} />
@@ -102,6 +105,7 @@ function App() {
           <Route path="/compliance/vegetation" element={<ComplianceVegetation />} />
           <Route path="/compliance/safety" element={<ComplianceSafety />} />
           <Route path="/compliance/documentation" element={<ComplianceDocumentation />} />
+          <Route path="/license-settings" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><UserLicenseSettings /></ProtectedRoute>} />
           <Route path="/admin" element={<Admin />} />
         </Route>
       </Routes>
