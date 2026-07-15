@@ -1,4 +1,5 @@
 import React from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
   Alert,
   Box,
@@ -338,6 +339,9 @@ function StatusPill({ label, tone = 'success' }: { label: string; tone?: 'succes
 
 export default function MissionPlanning() {
   const theme = useTheme();
+  const [searchParams] = useSearchParams();
+  const requestedMissionId = searchParams.get('mission') || '';
+  const loadedMissionLinkRef = React.useRef('');
   const {
     missions,
     isLoading: missionDataLoading,
@@ -1024,6 +1028,18 @@ export default function MissionPlanning() {
     setCompletionStatus(mission.flightExecution?.results.missionStatus || 'successful');
     setCompletionNotes(mission.flightExecution?.results.reasonsForDeviations[0] || 'Coverage complete. No rework required.');
   };
+
+  React.useEffect(() => {
+    if (!requestedMissionId) {
+      loadedMissionLinkRef.current = '';
+      return;
+    }
+    if (loadedMissionLinkRef.current === requestedMissionId) return;
+    const requestedMission = missions.find((mission) => mission.id === requestedMissionId);
+    if (!requestedMission) return;
+    loadMissionIntoPlanner(requestedMission);
+    loadedMissionLinkRef.current = requestedMissionId;
+  }, [missions, requestedMissionId]);
 
   const updateChemical = (
     index: number,

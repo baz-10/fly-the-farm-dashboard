@@ -1,44 +1,43 @@
 import React from 'react';
-import { Outlet, useNavigate, useLocation } from 'react-router-dom';
+import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import {
-  AppBar,
-  Toolbar,
-  Typography,
-  Button,
+  Avatar,
   Box,
-  Container,
-  IconButton,
-  Menu,
-  MenuItem,
-  useMediaQuery,
-  useTheme,
+  Button,
+  Divider,
   Drawer,
+  IconButton,
+  InputBase,
   List,
   ListItemButton,
-  ListItemText,
   ListItemIcon,
-  alpha,
-  Divider,
+  ListItemText,
+  Menu,
+  MenuItem,
   Stack,
+  Tooltip,
+  Typography,
+  alpha,
+  useMediaQuery,
+  useTheme,
 } from '@mui/material';
-import MenuIcon from '@mui/icons-material/Menu';
-import HomeIcon from '@mui/icons-material/Home';
-import GrassIcon from '@mui/icons-material/Grass';
-import CalculateIcon from '@mui/icons-material/Calculate';
-import AssignmentIcon from '@mui/icons-material/Assignment';
-import ReceiptLongIcon from '@mui/icons-material/ReceiptLong';
 import AccountBalanceIcon from '@mui/icons-material/AccountBalance';
-import LogoutIcon from '@mui/icons-material/Logout';
-import AccountCircleIcon from '@mui/icons-material/AccountCircle';
-import AirplanemodeActiveIcon from '@mui/icons-material/AirplanemodeActive';
-import FlightTakeoffIcon from '@mui/icons-material/FlightTakeoff';
 import AdminPanelSettingsIcon from '@mui/icons-material/AdminPanelSettings';
-import SmartToyIcon from '@mui/icons-material/SmartToy';
+import AirplanemodeActiveIcon from '@mui/icons-material/AirplanemodeActive';
+import AssignmentIcon from '@mui/icons-material/Assignment';
+import CalculateIcon from '@mui/icons-material/Calculate';
+import FlightTakeoffIcon from '@mui/icons-material/FlightTakeoff';
 import GavelIcon from '@mui/icons-material/Gavel';
-import BadgeIcon from '@mui/icons-material/Badge';
+import GrassIcon from '@mui/icons-material/Grass';
+import HomeIcon from '@mui/icons-material/Home';
+import LogoutIcon from '@mui/icons-material/Logout';
+import MenuIcon from '@mui/icons-material/Menu';
+import ReceiptLongIcon from '@mui/icons-material/ReceiptLong';
+import SearchIcon from '@mui/icons-material/Search';
 import SecurityIcon from '@mui/icons-material/Security';
+import SettingsIcon from '@mui/icons-material/Settings';
+import SmartToyIcon from '@mui/icons-material/SmartToy';
 import { useAuth } from '../contexts/AuthContext';
-import { Chip } from '@mui/material';
 
 const ROLE_LABELS: Record<string, string> = {
   admin: 'FTF Admin',
@@ -46,316 +45,269 @@ const ROLE_LABELS: Record<string, string> = {
   client: 'Client',
 };
 
-const ROLE_COLORS: Record<string, string> = {
-  admin: '#ff9800',
-  contractor: '#4caf50',
-  client: '#2196f3',
-};
+const NAV_ITEMS = [
+  { label: 'Operations', shortLabel: 'Operations', path: '/', icon: <HomeIcon />, roles: ['admin', 'contractor'] },
+  { label: 'Database', shortLabel: 'Database', path: '/database', icon: <GrassIcon />, roles: ['admin', 'contractor', 'client'] },
+  { label: 'Calculator', shortLabel: 'Calculator', path: '/calculator', icon: <CalculateIcon />, roles: ['admin', 'contractor'] },
+  { label: 'Jobs', shortLabel: 'Jobs', path: '/jobs', icon: <AssignmentIcon />, roles: ['admin', 'contractor', 'client'] },
+  { label: 'Aircraft', shortLabel: 'Aircraft', path: '/aircraft', icon: <AirplanemodeActiveIcon />, roles: ['admin', 'contractor'] },
+  { label: 'Missions', shortLabel: 'Missions', path: '/mission-planning', icon: <FlightTakeoffIcon />, roles: ['admin', 'contractor'] },
+  { label: 'JSA System', shortLabel: 'JSA', path: '/jsa', icon: <SecurityIcon />, roles: ['admin', 'contractor'] },
+  { label: 'Quotes', shortLabel: 'Quotes', path: '/quotes', icon: <ReceiptLongIcon />, roles: ['admin', 'contractor'] },
+  { label: 'Financials', shortLabel: 'Financials', path: '/financials', icon: <AccountBalanceIcon />, roles: ['admin', 'contractor'] },
+  { label: 'Ask FTF', shortLabel: 'Ask FTF', path: '/ask-ftf', icon: <SmartToyIcon />, roles: ['admin', 'contractor'] },
+  { label: 'Compliance', shortLabel: 'Compliance', path: '/compliance', icon: <GavelIcon />, roles: ['admin', 'contractor'] },
+  { label: 'Settings', shortLabel: 'Settings', path: '/license-settings', icon: <SettingsIcon />, roles: ['admin', 'contractor'] },
+  { label: 'Admin', shortLabel: 'Admin', path: '/admin', icon: <AdminPanelSettingsIcon />, roles: ['admin'] },
+];
+
+function isRouteActive(pathname: string, path: string) {
+  return path === '/' ? pathname === '/' : pathname.startsWith(path);
+}
 
 export default function Layout() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const theme = useTheme();
-  const isMobile = useMediaQuery(theme.breakpoints.down('md'));
+  const isDesktop = useMediaQuery(theme.breakpoints.up('lg'));
   const [drawerOpen, setDrawerOpen] = React.useState(false);
-  const [anchorEl, setAnchorEl] = React.useState<null | HTMLElement>(null);
-  const isOperationsDashboard = location.pathname === '/';
+  const [accountAnchor, setAccountAnchor] = React.useState<null | HTMLElement>(null);
+  const [search, setSearch] = React.useState('');
 
-  const handleLogout = () => {
-    logout();
-    navigate('/login');
-    setAnchorEl(null);
+  const navItems = NAV_ITEMS.filter((item) => !user?.role || item.roles.includes(user.role));
+
+  const navigateAndClose = (path: string) => {
+    setDrawerOpen(false);
+    navigate(path);
   };
 
-  const navItems = [
-    { label: 'Home', path: '/', icon: <HomeIcon />, roles: ['admin', 'contractor', 'client'] },
-    { label: 'Database', path: '/database', icon: <GrassIcon />, roles: ['admin', 'contractor', 'client'] },
-    { label: 'Calculator', path: '/calculator', icon: <CalculateIcon />, roles: ['admin', 'contractor'] },
-    { label: 'Jobs', path: '/jobs', icon: <AssignmentIcon />, roles: ['admin', 'contractor', 'client'] },
-    { label: 'Aircraft', path: '/aircraft', icon: <AirplanemodeActiveIcon />, roles: ['admin', 'contractor'] },
-    { label: 'Missions', path: '/mission-planning', icon: <FlightTakeoffIcon />, roles: ['admin', 'contractor'] },
-    { label: 'JSA System', path: '/jsa', icon: <SecurityIcon />, roles: ['admin', 'contractor'] },
-    { label: 'Quotes', path: '/quotes', icon: <ReceiptLongIcon />, roles: ['admin', 'contractor'] },
-    { label: 'Financials', path: '/financials', icon: <AccountBalanceIcon />, roles: ['admin', 'contractor'] },
-    { label: 'Ask FTF', path: '/ask-ftf', icon: <SmartToyIcon />, roles: ['admin', 'contractor'] },
-    { label: 'Compliance', path: '/compliance', icon: <GavelIcon />, roles: ['admin', 'contractor'] },
-    { label: 'Admin', path: '/admin', icon: <AdminPanelSettingsIcon />, roles: ['admin'] },
-  ].filter((item) => !user?.role || item.roles.includes(user.role));
+  const handleLogout = () => {
+    setAccountAnchor(null);
+    logout();
+    navigate('/login');
+  };
 
-  return (
-    <Box className="ftf-grain" sx={{ display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
-      {!isOperationsDashboard && (
-      <AppBar
-        position="sticky"
-        elevation={0}
-        sx={{
-          bgcolor: 'primary.dark',
-          borderBottom: `1px solid ${alpha(theme.palette.common.white, 0.08)}`,
-          backdropFilter: 'blur(12px)',
-        }}
-      >
-        <Toolbar sx={{ gap: 1, minHeight: { xs: 64, md: 72 } }}>
-          {isMobile && (
-            <IconButton color="inherit" edge="start" onClick={() => setDrawerOpen(true)} sx={{ mr: 0.5 }}>
-              <MenuIcon />
-            </IconButton>
-          )}
+  const handleSearch = (event: React.FormEvent) => {
+    event.preventDefault();
+    const query = search.trim();
+    if (!query) {
+      navigate('/database');
+      return;
+    }
+    navigate(`/search?q=${encodeURIComponent(query)}&mode=chemical`);
+    setSearch('');
+  };
 
-          {/* Logo */}
-          <Box
-            onClick={() => navigate('/')}
+  const navList = (expanded: boolean) => (
+    <List sx={{ px: expanded ? 1.25 : 0.75, py: 1, flex: 1 }}>
+      {navItems.map((item) => {
+        const active = isRouteActive(location.pathname, item.path);
+        const button = (
+          <ListItemButton
+            key={item.path}
+            selected={active}
+            onClick={() => navigateAndClose(item.path)}
+            aria-label={item.label}
             sx={{
-              cursor: 'pointer',
-              mr: 3,
-              display: 'flex',
-              alignItems: 'center',
-              '&:hover': { opacity: 0.9 },
-              transition: 'opacity 0.2s ease',
+              minHeight: expanded ? 46 : 50,
+              mb: 0.4,
+              px: expanded ? 1.25 : 0.5,
+              borderRadius: '8px',
+              color: active ? 'white' : alpha(theme.palette.common.white, 0.68),
+              justifyContent: expanded ? 'flex-start' : 'center',
+              flexDirection: expanded ? 'row' : 'column',
+              gap: expanded ? 0 : 0.3,
+              '&.Mui-selected': {
+                bgcolor: alpha(theme.palette.common.white, 0.12),
+                color: 'white',
+                '&:hover': { bgcolor: alpha(theme.palette.common.white, 0.14) },
+              },
+              '&:hover': {
+                bgcolor: alpha(theme.palette.common.white, 0.09),
+                color: 'white',
+              },
             }}
           >
-            <Box
-              component="img"
-              src="/logo.png"
-              alt="Fly the Farm"
+            <ListItemIcon
               sx={{
-                height: { xs: 44, md: 54 },
-                width: 'auto',
+                minWidth: expanded ? 38 : 0,
+                color: 'inherit',
+                justifyContent: 'center',
+                '& .MuiSvgIcon-root': { fontSize: expanded ? 20 : 18 },
+              }}
+            >
+              {item.icon}
+            </ListItemIcon>
+            {expanded ? (
+              <ListItemText
+                primary={item.label}
+                primaryTypographyProps={{ fontSize: '0.86rem', fontWeight: active ? 800 : 650 }}
+              />
+            ) : (
+              <Typography sx={{ fontSize: '0.56rem', fontWeight: 750, lineHeight: 1.05, textAlign: 'center' }}>
+                {item.shortLabel}
+              </Typography>
+            )}
+          </ListItemButton>
+        );
+
+        return expanded ? button : <Tooltip key={item.path} title={item.label} placement="right">{button}</Tooltip>;
+      })}
+    </List>
+  );
+
+  return (
+    <Box className="ftf-grain" sx={{ minHeight: '100vh', display: 'flex', bgcolor: '#f3f7f3' }}>
+      <Box
+        component="aside"
+        sx={{
+          width: 88,
+          display: { xs: 'none', lg: 'flex' },
+          flexDirection: 'column',
+          position: 'sticky',
+          top: 0,
+          height: '100vh',
+          overflowY: 'auto',
+          bgcolor: '#062407',
+          borderRight: '1px solid rgba(255,255,255,0.08)',
+          zIndex: 5,
+        }}
+      >
+        <Box
+          component="img"
+          src="/logo.png"
+          alt="Fly the Farm"
+          onClick={() => navigate('/')}
+          sx={{ width: 62, mx: 'auto', my: 1.5, cursor: 'pointer' }}
+        />
+        {navList(false)}
+        <Tooltip title="Sign out" placement="right">
+          <IconButton onClick={handleLogout} aria-label="Sign out" sx={{ color: alpha(theme.palette.common.white, 0.68), m: 1 }}>
+            <LogoutIcon fontSize="small" />
+          </IconButton>
+        </Tooltip>
+      </Box>
+
+      <Drawer
+        open={!isDesktop && drawerOpen}
+        onClose={() => setDrawerOpen(false)}
+        PaperProps={{ sx: { width: 280, bgcolor: '#062407', color: 'white' } }}
+      >
+        <Box sx={{ px: 2.5, py: 2 }}>
+          <Box component="img" src="/logo.png" alt="Fly the Farm" sx={{ height: 44, width: 'auto' }} />
+        </Box>
+        <Divider sx={{ borderColor: alpha(theme.palette.common.white, 0.1) }} />
+        {navList(true)}
+        <Button startIcon={<LogoutIcon />} onClick={handleLogout} sx={{ justifyContent: 'flex-start', m: 1.25, color: 'rgba(255,255,255,0.72)' }}>
+          Sign out
+        </Button>
+      </Drawer>
+
+      <Box sx={{ minWidth: 0, flex: 1 }}>
+        <Stack
+          component="header"
+          direction="row"
+          alignItems="center"
+          spacing={1.5}
+          sx={{
+            minHeight: 64,
+            px: { xs: 1.5, md: 2.5 },
+            py: 1,
+            position: 'sticky',
+            top: 0,
+            zIndex: 4,
+            bgcolor: '#062407',
+            color: 'white',
+            borderBottom: '1px solid rgba(255,255,255,0.08)',
+          }}
+        >
+          <IconButton onClick={() => setDrawerOpen(true)} aria-label="Open navigation" sx={{ color: 'white', display: { lg: 'none' } }}>
+            <MenuIcon />
+          </IconButton>
+          <Box component="img" src="/logo.png" alt="Fly the Farm" sx={{ height: 38, display: { xs: 'block', lg: 'none' } }} />
+
+          <Box
+            component="form"
+            onSubmit={handleSearch}
+            sx={{
+              ml: { xs: 'auto', sm: 0 },
+              width: { xs: 40, sm: 330, md: 430 },
+              height: 38,
+              display: 'flex',
+              alignItems: 'center',
+              gap: 1,
+              px: { xs: 1, sm: 1.5 },
+              borderRadius: '8px',
+              border: '1px solid rgba(255,255,255,0.16)',
+              bgcolor: 'rgba(0,0,0,0.14)',
+            }}
+          >
+            <IconButton type="submit" aria-label="Search chemical database" size="small" sx={{ p: 0, color: alpha(theme.palette.common.white, 0.68) }}>
+              <SearchIcon sx={{ fontSize: 18 }} />
+            </IconButton>
+            <InputBase
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="Search chemical database..."
+              inputProps={{ 'aria-label': 'Search chemical database' }}
+              sx={{
+                color: 'white',
+                flex: 1,
+                display: { xs: 'none', sm: 'flex' },
+                fontSize: '0.82rem',
+                '& input::placeholder': { color: alpha(theme.palette.common.white, 0.7), opacity: 1 },
               }}
             />
           </Box>
 
-          <Box sx={{ flexGrow: 1 }} />
-
-          {!isMobile && navItems.map((item) => {
-            const isActive = item.path === '/' ? location.pathname === '/' : location.pathname.startsWith(item.path);
-            return (
-              <Button
-                key={item.path}
-                color="inherit"
-                startIcon={item.icon}
-                onClick={() => navigate(item.path)}
-                sx={{
-                  mx: 0.25,
-                  px: 2,
-                  py: 1,
-                  borderRadius: '10px',
-                  fontSize: '0.875rem',
-                  bgcolor: isActive ? alpha(theme.palette.common.white, 0.1) : 'transparent',
-                  color: isActive ? 'white' : alpha(theme.palette.common.white, 0.7),
-                  '&:hover': {
-                    bgcolor: alpha(theme.palette.common.white, 0.08),
-                    color: 'white',
-                  },
-                }}
-              >
-                {item.label}
-              </Button>
-            );
-          })}
-
+          <Box sx={{ flex: 1 }} />
           {user && (
-            <>
-              <Divider orientation="vertical" flexItem sx={{ mx: 1, borderColor: alpha(theme.palette.common.white, 0.1) }} />
-              <Button
-                color="inherit"
-                onClick={(e) => setAnchorEl(e.currentTarget)}
-                startIcon={<AccountCircleIcon />}
-                sx={{
-                  color: alpha(theme.palette.common.white, 0.7),
-                  textTransform: 'none',
-                  '&:hover': { color: 'white' },
-                }}
-              >
-                {!isMobile && user.name}
-              </Button>
-              <Menu
-                anchorEl={anchorEl}
-                open={!!anchorEl}
-                onClose={() => setAnchorEl(null)}
-                slotProps={{
-                  paper: {
-                    sx: {
-                      mt: 1,
-                      borderRadius: '12px',
-                      minWidth: 200,
-                      border: `1px solid ${alpha(theme.palette.primary.main, 0.08)}`,
-                      boxShadow: '0 8px 32px rgba(10,31,10,0.12)',
-                    },
-                  },
-                }}
-              >
-                <Box sx={{ px: 2, py: 1.5 }}>
-                  <Typography variant="subtitle2" color="text.secondary" sx={{ fontSize: '0.7rem' }}>
-                    Account
+            <Button
+              color="inherit"
+              onClick={(event) => setAccountAnchor(event.currentTarget)}
+              sx={{ minWidth: 0, px: { xs: 0.5, md: 1 }, textTransform: 'none', color: 'white' }}
+            >
+              <Stack direction="row" alignItems="center" spacing={1}>
+                <Avatar sx={{ width: 34, height: 34, bgcolor: '#e7f3e6', color: '#062407', fontWeight: 800 }}>
+                  {user.name?.[0] || 'F'}
+                </Avatar>
+                <Box sx={{ display: { xs: 'none', md: 'block' }, textAlign: 'left' }}>
+                  <Typography sx={{ fontSize: '0.78rem', fontWeight: 800, lineHeight: 1.1 }}>{user.name}</Typography>
+                  <Typography sx={{ fontSize: '0.62rem', color: alpha(theme.palette.common.white, 0.68) }}>
+                    {ROLE_LABELS[user.role] || user.role}
                   </Typography>
-                  <Typography variant="body2" fontWeight={600}>{user.name}</Typography>
-                  <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>{user.email}</Typography>
-                  <Chip
-                    label={ROLE_LABELS[user.role] || user.role}
-                    size="small"
-                    sx={{
-                      mt: 0.75, fontWeight: 700, fontSize: '0.65rem', height: 20,
-                      bgcolor: alpha(ROLE_COLORS[user.role] || '#999', 0.1),
-                      color: ROLE_COLORS[user.role] || '#999',
-                    }}
-                  />
                 </Box>
-                <Divider />
-                <MenuItem
-                  onClick={() => {
-                    navigate('/license-settings');
-                    setAnchorEl(null);
-                  }}
-                  sx={{ gap: 1.5, py: 1.5 }}
-                >
-                  <BadgeIcon sx={{ fontSize: 18 }} /> License Settings
-                </MenuItem>
-                <Divider />
-                <MenuItem
-                  onClick={handleLogout}
-                  sx={{ gap: 1.5, py: 1.5, color: 'error.main' }}
-                >
-                  <LogoutIcon sx={{ fontSize: 18 }} /> Sign out
-                </MenuItem>
-              </Menu>
-            </>
+              </Stack>
+            </Button>
           )}
-        </Toolbar>
-      </AppBar>
-      )}
+          <Menu anchorEl={accountAnchor} open={Boolean(accountAnchor)} onClose={() => setAccountAnchor(null)}>
+            <Box sx={{ px: 2, py: 1.25, minWidth: 220 }}>
+              <Typography variant="body2" fontWeight={800}>{user?.name}</Typography>
+              <Typography variant="caption" color="text.secondary">{user?.email}</Typography>
+            </Box>
+            {user?.role !== 'client' && (
+              <MenuItem onClick={() => { setAccountAnchor(null); navigate('/license-settings'); }}>
+                <SettingsIcon fontSize="small" sx={{ mr: 1.25 }} /> Licence settings
+              </MenuItem>
+            )}
+            <Divider />
+            <MenuItem onClick={handleLogout} sx={{ color: 'error.main' }}>
+              <LogoutIcon fontSize="small" sx={{ mr: 1.25 }} /> Sign out
+            </MenuItem>
+          </Menu>
+        </Stack>
 
-      <Drawer
-        open={drawerOpen}
-        onClose={() => setDrawerOpen(false)}
-        PaperProps={{
-          sx: {
-            width: 280,
-            bgcolor: 'primary.dark',
-            color: 'white',
-          },
-        }}
-      >
-        <Box sx={{ p: 3 }}>
-          <Box
-            component="img"
-            src="/logo.png"
-            alt="Fly the Farm"
-            sx={{ height: 44, width: 'auto' }}
-          />
-        </Box>
-        <Divider sx={{ borderColor: alpha(theme.palette.common.white, 0.08) }} />
-        <List sx={{ px: 1.5, pt: 2 }}>
-          {navItems.map((item) => {
-            const isActive = item.path === '/' ? location.pathname === '/' : location.pathname.startsWith(item.path);
-            return (
-              <ListItemButton
-                key={item.path}
-                selected={isActive}
-                onClick={() => { navigate(item.path); setDrawerOpen(false); }}
-                sx={{
-                  borderRadius: '10px',
-                  mb: 0.5,
-                  '&.Mui-selected': {
-                    bgcolor: alpha(theme.palette.common.white, 0.1),
-                    '&:hover': { bgcolor: alpha(theme.palette.common.white, 0.12) },
-                  },
-                  '&:hover': { bgcolor: alpha(theme.palette.common.white, 0.06) },
-                }}
-              >
-                <ListItemIcon sx={{ color: isActive ? 'white' : alpha(theme.palette.common.white, 0.5), minWidth: 40 }}>
-                  {item.icon}
-                </ListItemIcon>
-                <ListItemText
-                  primary={item.label}
-                  primaryTypographyProps={{
-                    fontWeight: isActive ? 700 : 500,
-                    color: isActive ? 'white' : alpha(theme.palette.common.white, 0.7),
-                  }}
-                />
-              </ListItemButton>
-            );
-          })}
-        </List>
-      </Drawer>
-
-      <Box
-        component="main"
-        sx={{ flexGrow: 1, bgcolor: 'background.default', position: 'relative' }}
-        className={isOperationsDashboard ? undefined : 'ftf-topo-bg'}
-      >
-        {isOperationsDashboard ? (
-          <Outlet />
-        ) : (
-          <Container maxWidth="lg" sx={{ py: { xs: 2.5, md: 4 }, position: 'relative', zIndex: 1 }}>
+        <Box
+          component="main"
+          className="ftf-topo-bg"
+          sx={{ minHeight: 'calc(100vh - 64px)', px: { xs: 2, md: 3 }, py: { xs: 2.5, md: 3 }, position: 'relative' }}
+        >
+          <Box sx={{ width: '100%', maxWidth: 1800, mx: 'auto', position: 'relative', zIndex: 1 }}>
             <Outlet />
-          </Container>
-        )}
+          </Box>
+        </Box>
       </Box>
-
-      {!isOperationsDashboard && (
-      <Box
-        component="footer"
-        sx={{
-          py: 4,
-          px: 3,
-          bgcolor: 'primary.dark',
-          borderTop: `1px solid ${alpha(theme.palette.common.white, 0.06)}`,
-        }}
-      >
-        <Container maxWidth="lg">
-          <Stack direction={{ xs: 'column', md: 'row' }} justifyContent="space-between" alignItems="center" spacing={2}>
-            <Box sx={{ textAlign: { xs: 'center', md: 'left' } }}>
-              <Box
-                component="img"
-                src="/logo.png"
-                alt="Fly the Farm"
-                sx={{ height: 36, width: 'auto', mb: 1, opacity: 0.7 }}
-              />
-              <Typography variant="caption" sx={{ color: alpha(theme.palette.common.white, 0.3), display: 'block' }}>
-                &copy; {new Date().getFullYear()} &mdash; Chemical data for reference only. Always read the product label.
-              </Typography>
-            </Box>
-            <Box sx={{ textAlign: 'center' }}>
-              <Typography
-                variant="overline"
-                sx={{
-                  color: alpha(theme.palette.common.white, 0.35),
-                  fontSize: '0.6rem',
-                  display: 'block',
-                  mb: 0.25,
-                }}
-              >
-                Proud Partner
-              </Typography>
-              <Typography
-                variant="body2"
-                sx={{
-                  color: alpha(theme.palette.common.white, 0.5),
-                  fontWeight: 800,
-                  fontFamily: '"Outfit", system-ui, sans-serif',
-                  letterSpacing: '0.05em',
-                }}
-              >
-                DJI Agriculture
-              </Typography>
-            </Box>
-            <Box sx={{ textAlign: { xs: 'center', md: 'right' } }}>
-              <Typography
-                variant="caption"
-                sx={{
-                  color: alpha(theme.palette.common.white, 0.25),
-                  fontFamily: '"Outfit", system-ui, sans-serif',
-                  letterSpacing: '0.04em',
-                }}
-              >
-                flythefarm.com.au
-              </Typography>
-            </Box>
-          </Stack>
-        </Container>
-      </Box>
-      )}
     </Box>
   );
 }

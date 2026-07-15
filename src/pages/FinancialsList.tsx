@@ -77,87 +77,6 @@ interface ReviewRow {
   nextAction: string;
 }
 
-const demoRows: ReviewRow[] = [
-  {
-    id: 'demo-hillside',
-    title: 'Broadleaf Weed Control',
-    client: 'Hillside Farms',
-    location: 'North Block / Paddock 3',
-    date: 'Today',
-    treatment: 'Glyphosate 540 tank mix',
-    revenue: 8450,
-    totalCost: 5036,
-    grossProfit: 3414,
-    margin: 40.4,
-    quotedMargin: 43.8,
-    variance: -3.4,
-    complianceScore: 94,
-    status: 'Ready',
-    statusTone: 'success',
-    complianceState: 'Ready for close-out',
-    costSegments: [
-      { label: 'Chemical', value: 1438, color: '#1b8a5a' },
-      { label: 'Labour', value: 1680, color: '#00897b' },
-      { label: 'Aircraft', value: 1220, color: '#d4860a' },
-      { label: 'Travel', value: 698, color: '#5f765f' },
-    ],
-    risks: ['Chemical cost drift +4.2%', 'Spray diary needs operator initials'],
-    nextAction: 'Approve close-out pack',
-  },
-  {
-    id: 'demo-greencare',
-    title: 'Barnyard Grass Control',
-    client: 'Greencare Pty Ltd',
-    location: 'Field 2',
-    date: 'Yesterday',
-    treatment: 'Selective herbicide application',
-    revenue: 6420,
-    totalCost: 4560,
-    grossProfit: 1860,
-    margin: 29,
-    quotedMargin: 37.5,
-    variance: -8.5,
-    complianceScore: 76,
-    status: 'Review',
-    statusTone: 'warning',
-    complianceState: 'Margin review required',
-    costSegments: [
-      { label: 'Chemical', value: 1810, color: '#1b8a5a' },
-      { label: 'Labour', value: 1340, color: '#00897b' },
-      { label: 'Aircraft', value: 940, color: '#d4860a' },
-      { label: 'Travel', value: 470, color: '#5f765f' },
-    ],
-    risks: ['Extra ferry time recorded', 'Tank mix label photo missing'],
-    nextAction: 'Review variance before finalising',
-  },
-  {
-    id: 'demo-riverbend',
-    title: 'Lantana Control',
-    client: 'Riverbend Pastoral',
-    location: 'Block 7',
-    date: '2 days ago',
-    treatment: 'Spot spray program',
-    revenue: 3840,
-    totalCost: 3445,
-    grossProfit: 395,
-    margin: 10.3,
-    quotedMargin: 32.2,
-    variance: -21.9,
-    complianceScore: 58,
-    status: 'Review',
-    statusTone: 'error',
-    complianceState: 'Hold for admin review',
-    costSegments: [
-      { label: 'Chemical', value: 980, color: '#1b8a5a' },
-      { label: 'Labour', value: 1325, color: '#00897b' },
-      { label: 'Aircraft', value: 760, color: '#d4860a' },
-      { label: 'Travel', value: 380, color: '#5f765f' },
-    ],
-    risks: ['Low margin', 'Weather record incomplete', 'Client approval note missing'],
-    nextAction: 'Escalate before invoice',
-  },
-];
-
 function Panel({ title, children, action, icon, sx }: PanelProps) {
   return (
     <Card
@@ -353,19 +272,59 @@ export default function FinancialsList() {
     [userId],
   );
 
-  const rows = useMemo(
-    () => (actuals.length > 0 ? actuals.map(buildActualRow) : demoRows),
-    [actuals],
-  );
+  const rows = useMemo(() => actuals.map(buildActualRow), [actuals]);
 
   const selected = rows.find((row) => row.id === selectedId) || rows[0];
-  const isDemoMode = actuals.length === 0;
   const totalRevenue = rows.reduce((sum, row) => sum + row.revenue, 0);
   const totalCost = rows.reduce((sum, row) => sum + row.totalCost, 0);
   const totalProfit = rows.reduce((sum, row) => sum + row.grossProfit, 0);
   const avgMargin = rows.length > 0 ? rows.reduce((sum, row) => sum + row.margin, 0) / rows.length : 0;
   const reviewCount = rows.filter((row) => row.status !== 'Ready').length;
   const readyCount = rows.filter((row) => row.status === 'Ready').length;
+
+  if (!selected) {
+    return (
+      <Box sx={{ pb: 3 }}>
+        <Stack
+          direction={{ xs: 'column', md: 'row' }}
+          justifyContent="space-between"
+          alignItems={{ xs: 'stretch', md: 'flex-start' }}
+          spacing={2}
+          sx={{ mb: 3 }}
+        >
+          <Stack direction="row" spacing={2} alignItems="center">
+            <Box sx={{ width: 54, height: 54, borderRadius: '8px', bgcolor: alpha(theme.palette.primary.main, 0.1), display: 'grid', placeItems: 'center', color: 'primary.main' }}>
+              <AssessmentIcon sx={{ fontSize: 30 }} />
+            </Box>
+            <Box>
+              <Typography variant="h4" sx={{ color: 'primary.dark', fontWeight: 950 }}>Job Profit Review</Typography>
+              <Typography sx={{ color: 'text.secondary', fontSize: '0.95rem' }}>
+                Close the loop between quoted margin, actual costs and compliance sign-off.
+              </Typography>
+            </Box>
+          </Stack>
+          <Button variant="contained" startIcon={<AddIcon />} onClick={() => navigate('/financials/new')}>
+            New Actual
+          </Button>
+        </Stack>
+
+        <Card elevation={0} sx={{ borderRadius: '8px', border: '1px solid rgba(20,58,26,0.1)' }}>
+          <CardContent>
+            <Stack alignItems="center" textAlign="center" sx={{ py: 7 }}>
+              <AccountBalanceIcon sx={{ fontSize: 52, color: 'text.disabled', mb: 1.5 }} />
+              <Typography variant="h6" fontWeight={850}>No job actuals yet</Typography>
+              <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5, mb: 2.5, maxWidth: 480 }}>
+                Financial totals start at zero. Add real revenue and costs after a job to build the margin review.
+              </Typography>
+              <Button variant="contained" startIcon={<AddIcon />} onClick={() => navigate('/financials/new')}>
+                Add first actual
+              </Button>
+            </Stack>
+          </CardContent>
+        </Card>
+      </Box>
+    );
+  }
 
   const complianceChecks = [
     { label: 'Spray diary complete', complete: selected.complianceScore >= 70 },
@@ -435,12 +394,6 @@ export default function FinancialsList() {
           </Button>
         </Stack>
       </Stack>
-
-      {isDemoMode && (
-        <Alert severity="info" sx={{ mb: 2.5, borderRadius: '8px', bgcolor: '#ecf8ee' }}>
-          This review workbench is showing planning sample data because no job actuals are saved yet. Add an actual to switch it to live records.
-        </Alert>
-      )}
 
       <Grid container spacing={2} sx={{ mb: 2.5 }} className="ftf-animate-in-delay-1">
         <Grid size={{ xs: 6, md: 2.4 }}>

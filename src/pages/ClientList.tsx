@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Navigate, useNavigate } from 'react-router-dom';
 import {
   Typography,
   Box,
@@ -262,8 +262,7 @@ export default function ClientList() {
 
   // Client users go straight to their own area
   if (isClient && user?.clientRecordId && clients.length === 1) {
-    navigate(`/jobs/client/${user.clientRecordId}`, { replace: true });
-    return null;
+    return <Navigate to={`/jobs/client/${encodeURIComponent(user.clientRecordId)}`} replace />;
   }
 
   return (
