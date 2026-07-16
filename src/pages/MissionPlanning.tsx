@@ -8,10 +8,15 @@ import {
   CardContent,
   Checkbox,
   Chip,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
   Divider,
   FormControl,
   FormControlLabel,
   Grid,
+  IconButton,
   InputLabel,
   LinearProgress,
   MenuItem,
@@ -19,6 +24,7 @@ import {
   Snackbar,
   Stack,
   TextField,
+  Tooltip,
   Typography,
   alpha,
   useTheme,
@@ -28,6 +34,7 @@ import AirplanemodeActiveIcon from '@mui/icons-material/AirplanemodeActive';
 import AddIcon from '@mui/icons-material/Add';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import CloudQueueIcon from '@mui/icons-material/CloudQueue';
+import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import FlightTakeoffIcon from '@mui/icons-material/FlightTakeoff';
 import ForestIcon from '@mui/icons-material/Forest';
 import GavelIcon from '@mui/icons-material/Gavel';
@@ -50,6 +57,7 @@ import {
 } from '../services/pmavService';
 import { toClosedGeoJsonRing } from '../utils/boundaryImport';
 import { calculateMissionMixVolumes } from '../utils/missionMix';
+import { getMissionWorkflowState, MISSION_WORKFLOW_STEPS } from '../utils/missionWorkflow';
 import { LatLng, BoundaryFileRef } from '../types/fieldManagement';
 import { SavedVegetationCheck } from '../types/pmav';
 import {
@@ -107,13 +115,6 @@ const MISSION_PRIORITIES: { value: MissionPriority; label: string }[] = [
   { value: 'medium', label: 'Medium' },
   { value: 'high', label: 'High' },
   { value: 'critical', label: 'Critical' },
-];
-
-const PLANNER_STEPS = [
-  { label: 'Area', detail: 'Define boundaries' },
-  { label: 'Aircraft', detail: 'Select equipment' },
-  { label: 'Safety', detail: 'Complete CASA JSA' },
-  { label: 'Authorize', detail: 'Final checks' },
 ];
 
 const NEW_MISSION_CHEMICALS: MissionPlanningChemical[] = [
@@ -353,6 +354,7 @@ export default function MissionPlanning() {
     createMission,
     createAuthorizedMission,
     updateMission,
+    deleteMission,
     approveMission,
     transitionMissionStatus,
     updateFlightPlan,
@@ -394,6 +396,8 @@ export default function MissionPlanning() {
   const [boundaryFile, setBoundaryFile] = React.useState<BoundaryFileRef | null>(null);
   const [jsaRecord, setJsaRecord] = React.useState<JSARecord>(() => createMissionJSA('draft'));
   const [jsaDialogOpen, setJsaDialogOpen] = React.useState(false);
+  const [deleteDialogOpen, setDeleteDialogOpen] = React.useState(false);
+  const environmentalReviewRef = React.useRef<HTMLDivElement | null>(null);
   const [scheduledDate, setScheduledDate] = React.useState(defaultScheduledDateInput);
   const [estimatedDuration, setEstimatedDuration] = React.useState(120);
   const [applicationRate, setApplicationRate] = React.useState(15);
@@ -546,30 +550,13 @@ export default function MissionPlanning() {
   const completionReadinessIssues = selectedMission?.status === 'Flying'
     ? validateMissionReadiness(selectedMission.id, 'Completed')
     : [];
-  const canEditPlanning = !selectedMission || !['Flying', 'Completed', 'Locked'].includes(selectedMission.status);
+  const canEditPlanning = !selectedMission || selectedMission.status === 'Planning';
   const canAuthorizePlanning = !selectedMission || ['Planning', 'Approved'].includes(selectedMission.status);
-  const canGenerateFlightPlan = !!selectedMission && ['Planning', 'Approved', 'Flying'].includes(selectedMission.status);
+  const canGenerateFlightPlan = !!selectedMission && selectedMission.status === 'Approved';
   const canAuthorizeForFlight = !!selectedMission && selectedMission.status === 'Approved' && !!selectedMission.flightPlan;
   const canStartFlight = !!selectedMission && selectedMission.status === 'Approved' && !!selectedMission.flightPlan && !!selectedMission.approvals.flyingAuthorization;
   const canRecordCompletion = !!selectedMission && selectedMission.status === 'Flying';
   const canCompleteMission = !!selectedMission && selectedMission.status === 'Flying' && !!selectedMission.flightExecution;
-  const flightWorkflowGuidance = !selectedMission
-    ? 'Next: save the mission draft.'
-    : selectedMission.status === 'Planning'
-      ? 'Next: complete the CASA JSA and environmental review, then authorize the mission.'
-      : selectedMission.status === 'Approved' && !selectedMission.flightPlan
-        ? 'Next: generate the flight plan.'
-        : selectedMission.status === 'Approved' && !selectedMission.approvals.flyingAuthorization
-          ? 'Next: authorize the flight.'
-          : selectedMission.status === 'Approved'
-            ? 'Next: start the mission flying.'
-            : selectedMission.status === 'Flying' && !selectedMission.flightExecution
-              ? 'Next: enter the actual area and flight time, then record completion.'
-              : selectedMission.status === 'Flying'
-                ? 'Next: review the execution record, then mark the mission completed.'
-                : selectedMission.status === 'Completed'
-                  ? 'Mission completed. The execution record is saved.'
-                  : 'This mission is locked and cannot be changed.';
   const chemicalRows = chemicals.map((chemical) => ({
     ...chemical,
     totalRequired: roundOne(chemical.ratePerHa * missionArea),
@@ -621,19 +608,21 @@ export default function MissionPlanning() {
   ];
   const authorizationBlockers = authorizationChecks.filter((check) => !check.ready).map((check) => check.message);
   const readinessPercent = Math.round((authorizationChecks.filter((check) => check.ready).length / authorizationChecks.length) * 100);
-  const missionAuthorizationActionLabel = !canAuthorizePlanning
-    ? `Mission ${selectedMission?.status}`
-    : jsaRecord.status !== 'approved'
-      ? 'Complete CASA JSA First'
-      : !vegetationClearanceReady
-        ? 'Complete Environmental Review'
-        : selectedMission?.status === 'Approved' ? 'Re-authorize Mission' : 'Authorize Mission';
-  const plannerStepComplete = [
-    boundaryReady,
-    aircraftPlanningReady && configurationPlanningReady,
-    jsaRecord.status === 'approved',
-    authorizationBlockers.length === 0,
-  ];
+  const missionWorkflow = getMissionWorkflowState({
+    hasMission: Boolean(selectedMission),
+    status: selectedMission?.status,
+    jsaApproved: jsaRecord.status === 'approved',
+    environmentalReviewComplete: vegetationClearanceReady,
+    hasFlightPlan: Boolean(selectedMission?.flightPlan),
+    hasFlightAuthorization: Boolean(selectedMission?.approvals.flyingAuthorization),
+    hasFlightExecution: Boolean(selectedMission?.flightExecution),
+  });
+  const canDeleteSelectedMission = Boolean(
+    selectedMission && ['Planning', 'Approved'].includes(selectedMission.status),
+  );
+  const flightOperationsUnlocked = Boolean(
+    selectedMission && selectedMission.status !== 'Planning',
+  );
 
   const buildBoundaryRecord = (missionId: string): BoundaryFile => {
     const now = new Date().toISOString();
@@ -1019,6 +1008,7 @@ export default function MissionPlanning() {
     setBoundaryFile(null);
     setJsaRecord(createMissionJSA('draft'));
     setJsaDialogOpen(false);
+    setDeleteDialogOpen(false);
     setScheduledDate(defaultScheduledDateInput());
     setEstimatedDuration(120);
     setApplicationRate(15);
@@ -1050,6 +1040,26 @@ export default function MissionPlanning() {
     setCompletionFlightTime(120);
     setCompletionStatus('successful');
     setCompletionNotes('');
+  };
+
+  const handleDeleteSelectedMission = async () => {
+    if (!selectedMission || !canDeleteSelectedMission) {
+      showNotice('warning', 'Only Planning or Approved missions can be deleted.');
+      return;
+    }
+
+    setSaving(true);
+    try {
+      const deletedMissionName = selectedMission.missionName;
+      await deleteMission(selectedMission.id);
+      setDeleteDialogOpen(false);
+      resetPlanner();
+      showNotice('success', `${deletedMissionName} was deleted.`);
+    } catch (error) {
+      showNotice('error', error instanceof Error ? error.message : 'Failed to delete mission.');
+    } finally {
+      setSaving(false);
+    }
   };
 
   const loadMissionIntoPlanner = (mission: MissionRecord) => {
@@ -1500,6 +1510,11 @@ export default function MissionPlanning() {
       return;
     }
 
+    if (selectedMission.status !== 'Approved') {
+      showNotice('warning', 'Authorize the mission before generating its flight plan.');
+      return;
+    }
+
     if (!boundaryReady) {
       showNotice('warning', 'Add a valid mission boundary before generating a flight plan.');
       return;
@@ -1507,12 +1522,6 @@ export default function MissionPlanning() {
 
     setSaving(true);
     try {
-      if (selectedMission.status === 'Planning') {
-        const planningUpdates = { ...buildMissionPayload(selectedMission.id) } as Partial<MissionRecord>;
-        delete planningUpdates.missionNumber;
-        delete planningUpdates.status;
-        await updateMission(selectedMission.id, planningUpdates);
-      }
       await updateFlightPlan(selectedMission.id, buildFlightPlan(selectedMission));
       showNotice('success', 'Flight plan generated from the current mission area and operating settings.');
     } catch (error) {
@@ -1566,6 +1575,28 @@ export default function MissionPlanning() {
     }
   };
 
+  const handleReturnToPlanning = async () => {
+    if (!selectedMission || selectedMission.status !== 'Approved') {
+      showNotice('warning', 'Select an authorized mission before editing its plan.');
+      return;
+    }
+
+    if (selectedMission.approvals.flyingAuthorization) {
+      showNotice('warning', 'Flight authorization has already been recorded. Do not change the mission plan before takeoff.');
+      return;
+    }
+
+    setSaving(true);
+    try {
+      await transitionMissionStatus(selectedMission.id, 'Planning', 'Returned to planning for operator changes.');
+      showNotice('info', 'Mission returned to Planning. Update the draft, then authorize it again.');
+    } catch (error) {
+      showNotice('error', error instanceof Error ? error.message : 'Failed to return the mission to planning.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const handleRecordCompletion = async () => {
     if (!selectedMission?.flightPlan) {
       showNotice('warning', 'A flight plan is required before recording completion.');
@@ -1605,6 +1636,53 @@ export default function MissionPlanning() {
       setSaving(false);
     }
   };
+
+  const handlePrimaryWorkflowAction = async () => {
+    switch (missionWorkflow.action) {
+      case 'save-draft':
+        await handleSaveDraft();
+        break;
+      case 'complete-jsa':
+        setJsaDialogOpen(true);
+        break;
+      case 'review-environment':
+        environmentalReviewRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        showNotice('info', 'Review the environmental evidence, then acknowledge the outcome.');
+        break;
+      case 'authorize-mission':
+        await handleAuthorizeMission();
+        break;
+      case 'generate-flight-plan':
+        await handleGenerateFlightPlan();
+        break;
+      case 'authorize-flight':
+        await handleAuthorizeForFlight();
+        break;
+      case 'start-flying':
+        await handleStartFlying();
+        break;
+      case 'record-completion':
+        await handleRecordCompletion();
+        break;
+      case 'mark-completed':
+        await handleCompleteMission();
+        break;
+      case 'none':
+        break;
+    }
+  };
+
+  const primaryWorkflowActionDisabled = dataLoading || saving || (
+    (missionWorkflow.action === 'complete-jsa' && !canEditPlanning)
+    || (missionWorkflow.action === 'review-environment' && !canEditPlanning)
+    || (missionWorkflow.action === 'authorize-mission' && !canAuthorizePlanning)
+    || (missionWorkflow.action === 'generate-flight-plan' && !canGenerateFlightPlan)
+    || (missionWorkflow.action === 'authorize-flight' && !canAuthorizeForFlight)
+    || (missionWorkflow.action === 'start-flying' && !canStartFlight)
+    || (missionWorkflow.action === 'record-completion' && !canRecordCompletion)
+    || (missionWorkflow.action === 'mark-completed' && !canCompleteMission)
+    || missionWorkflow.action === 'none'
+  );
 
   saveDraftHandlerRef.current = handleSaveDraft;
   authorizeMissionHandlerRef.current = handleAuthorizeMission;
@@ -1659,7 +1737,7 @@ export default function MissionPlanning() {
         </Stack>
 
         <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
-          <StatusPill label={`${readinessPercent}% Ready`} tone={readinessPercent === 100 ? 'success' : 'warning'} />
+          <StatusPill label={`${readinessPercent}% Planning Ready`} tone={readinessPercent === 100 ? 'success' : 'warning'} />
           {selectedMission && (
             <StatusPill label={`${selectedMission.missionNumber} ${selectedMission.status}`} tone={STATUS_TONE[selectedMission.status]} />
           )}
@@ -1691,8 +1769,9 @@ export default function MissionPlanning() {
       >
         <CardContent sx={{ py: 2, '&:last-child': { pb: 2 } }}>
           <Grid container spacing={1.5}>
-            {PLANNER_STEPS.map((step, index) => {
-              const complete = plannerStepComplete[index];
+            {MISSION_WORKFLOW_STEPS.map((step, index) => {
+              const complete = missionWorkflow.completedSteps[index];
+              const active = missionWorkflow.activeStep === index && !complete;
               return (
                 <Grid key={step.label} size={{ xs: 6, md: 3 }}>
                   <Stack direction="row" alignItems="center" spacing={1.25}>
@@ -1703,8 +1782,11 @@ export default function MissionPlanning() {
                         borderRadius: '50%',
                         display: 'grid',
                         placeItems: 'center',
-                        bgcolor: complete ? 'primary.main' : alpha(theme.palette.primary.main, 0.16),
-                        color: complete ? 'white' : 'primary.dark',
+                        bgcolor: complete
+                          ? 'primary.main'
+                          : active ? alpha(theme.palette.warning.main, 0.18) : alpha(theme.palette.primary.main, 0.1),
+                        color: complete ? 'white' : active ? 'warning.dark' : 'primary.dark',
+                        border: active ? `1px solid ${alpha(theme.palette.warning.main, 0.5)}` : '1px solid transparent',
                         fontSize: '0.78rem',
                         fontWeight: 900,
                       }}
@@ -1712,7 +1794,9 @@ export default function MissionPlanning() {
                       {index + 1}
                     </Box>
                     <Box sx={{ minWidth: 0 }}>
-                      <Typography sx={{ fontSize: '0.82rem', fontWeight: 900 }}>{step.label}</Typography>
+                      <Typography sx={{ fontSize: '0.82rem', fontWeight: 900, color: active ? 'warning.dark' : 'text.primary' }}>
+                        {step.label}
+                      </Typography>
                       <Typography sx={{ fontSize: '0.72rem', color: 'text.secondary' }}>{step.detail}</Typography>
                     </Box>
                   </Stack>
@@ -1932,9 +2016,24 @@ export default function MissionPlanning() {
               title="Mission State"
               icon={<FlightTakeoffIcon />}
               action={
-                <Button size="small" variant="contained" startIcon={<AddIcon />} onClick={resetPlanner}>
-                  New Mission
-                </Button>
+                <Stack direction="row" spacing={0.75} alignItems="center">
+                  {canDeleteSelectedMission && selectedMission && (
+                    <Tooltip title="Delete mission">
+                      <IconButton
+                        aria-label={`Delete ${selectedMission.missionName}`}
+                        color="error"
+                        size="small"
+                        onClick={() => setDeleteDialogOpen(true)}
+                        disabled={saving}
+                      >
+                        <DeleteOutlineIcon fontSize="small" />
+                      </IconButton>
+                    </Tooltip>
+                  )}
+                  <Button size="small" variant="contained" startIcon={<AddIcon />} onClick={resetPlanner}>
+                    New Mission
+                  </Button>
+                </Stack>
               }
             >
               <Stack spacing={1}>
@@ -2321,8 +2420,9 @@ export default function MissionPlanning() {
               </Grid>
             </Panel>
 
-            <Panel
-              title="Flight Readiness"
+            {flightOperationsUnlocked && (
+              <Panel
+              title="Flight Operations"
               icon={<FlightTakeoffIcon />}
               action={
                 <StatusPill
@@ -2336,24 +2436,41 @@ export default function MissionPlanning() {
                   severity={selectedMission?.status === 'Completed' ? 'success' : 'info'}
                   sx={{ borderRadius: '8px' }}
                 >
-                  {flightWorkflowGuidance}
+                  {missionWorkflow.guidance}
                 </Alert>
 
                 <Stack spacing={0.75}>
                   <DetailRow
                     label="Flight Plan"
-                    value={<StatusPill label={selectedMission?.flightPlan ? 'Generated' : 'Missing'} tone={selectedMission?.flightPlan ? 'success' : 'warning'} />}
+                    value={(
+                      <StatusPill
+                        label={selectedMission?.flightPlan ? 'Generated' : 'Not created'}
+                        tone={selectedMission?.flightPlan ? 'success' : 'warning'}
+                      />
+                    )}
                   />
                   <DetailRow
                     label="Flight Authorization"
-                    value={<StatusPill label={selectedMission?.approvals.flyingAuthorization ? 'Recorded' : 'Required'} tone={selectedMission?.approvals.flyingAuthorization ? 'success' : 'warning'} />}
+                    value={(
+                      <StatusPill
+                        label={selectedMission?.approvals.flyingAuthorization ? 'Recorded' : 'Not recorded'}
+                        tone={selectedMission?.approvals.flyingAuthorization ? 'success' : 'warning'}
+                      />
+                    )}
                   />
                   <DetailRow
                     label="Execution Record"
-                    value={<StatusPill label={selectedMission?.flightExecution ? 'Captured' : 'Not captured'} tone={selectedMission?.flightExecution ? 'success' : 'warning'} />}
+                    value={(
+                      <StatusPill
+                        label={selectedMission?.flightExecution ? 'Captured' : 'Not started'}
+                        tone={selectedMission?.flightExecution ? 'success' : 'info'}
+                      />
+                    )}
                   />
                 </Stack>
 
+                {selectedMission?.status === 'Approved' && (
+                  <>
                 <Grid container spacing={1.25}>
                   <Grid size={{ xs: 6 }}>
                     <TextField
@@ -2413,24 +2530,36 @@ export default function MissionPlanning() {
                   )}
                 </Grid>
 
-                <Button
-                  variant="outlined"
-                  onClick={handleGenerateFlightPlan}
-                  disabled={dataLoading || saving || !canGenerateFlightPlan}
-                  sx={{ borderRadius: '8px' }}
-                >
-                  {selectedMission?.flightPlan ? 'Regenerate Flight Plan' : 'Generate Flight Plan'}
-                </Button>
+                {selectedMission.flightPlan && !selectedMission.approvals.flyingAuthorization && (
+                  <>
+                    <Button
+                      variant="outlined"
+                      onClick={handleGenerateFlightPlan}
+                      disabled={dataLoading || saving || !canGenerateFlightPlan}
+                      sx={{ borderRadius: '8px' }}
+                    >
+                      Regenerate Flight Plan
+                    </Button>
 
-                <TextField
-                  label="Flight authorization comments"
-                  value={flightAuthorizationComments}
-                  onChange={(event) => setFlightAuthorizationComments(event.target.value)}
-                  fullWidth
-                  multiline
-                  minRows={2}
-                  size="small"
-                />
+                    <TextField
+                      label="Flight authorization comments"
+                      value={flightAuthorizationComments}
+                      onChange={(event) => setFlightAuthorizationComments(event.target.value)}
+                      fullWidth
+                      multiline
+                      minRows={2}
+                      size="small"
+                    />
+                  </>
+                )}
+
+                {selectedMission.approvals.flyingAuthorization && (
+                  <Alert severity="success" sx={{ borderRadius: '8px' }}>
+                    Flight authorization recorded. Use the action bar to start flying.
+                  </Alert>
+                )}
+                  </>
+                )}
 
                 {flyingReadinessIssues.length > 0 && (
                   <Box sx={{ p: 1, borderRadius: '8px', bgcolor: alpha(theme.palette.warning.main, 0.08) }}>
@@ -2445,25 +2574,8 @@ export default function MissionPlanning() {
                   </Box>
                 )}
 
-                <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
-                  <Button
-                    variant="outlined"
-                    onClick={handleAuthorizeForFlight}
-                    disabled={dataLoading || saving || !canAuthorizeForFlight}
-                    sx={{ flex: 1, borderRadius: '8px' }}
-                  >
-                    Authorize Flight
-                  </Button>
-                  <Button
-                    variant="contained"
-                    onClick={handleStartFlying}
-                    disabled={dataLoading || saving || !canStartFlight}
-                    sx={{ flex: 1, borderRadius: '8px' }}
-                  >
-                    Start Flying
-                  </Button>
-                </Stack>
-
+                {selectedMission?.status === 'Flying' && (
+                  <>
                 <Divider />
 
                 <Grid container spacing={1.25}>
@@ -2528,26 +2640,22 @@ export default function MissionPlanning() {
                   </Box>
                 )}
 
-                <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
-                  <Button
-                    variant="outlined"
-                    onClick={handleRecordCompletion}
-                    disabled={dataLoading || saving || !canRecordCompletion}
-                    sx={{ flex: 1, borderRadius: '8px' }}
-                  >
-                    Record Completion
-                  </Button>
-                  <Button
-                    variant="contained"
-                    onClick={handleCompleteMission}
-                    disabled={dataLoading || saving || !canCompleteMission}
-                    sx={{ flex: 1, borderRadius: '8px' }}
-                  >
-                    Mark Completed
-                  </Button>
-                </Stack>
+                  </>
+                )}
+
+                {selectedMission?.status === 'Completed' && selectedMission.flightExecution && (
+                  <Box sx={{ p: 1.25, borderRadius: '8px', bgcolor: alpha(theme.palette.success.main, 0.06) }}>
+                    <DetailRow label="Area completed" value={`${selectedMission.flightExecution.results.areaCompleted} ha`} />
+                    <DetailRow label="Flight time" value={`${selectedMission.flightExecution.actualFlightData.totalFlightTime} min`} />
+                    <DetailRow
+                      label="Result"
+                      value={selectedMission.flightExecution.results.missionStatus.replace('-', ' ')}
+                    />
+                  </Box>
+                )}
               </Stack>
-            </Panel>
+              </Panel>
+            )}
 
             <Panel title="Safety & Compliance" icon={<SecurityIcon />}>
               <Stack spacing={1}>
@@ -2571,19 +2679,28 @@ export default function MissionPlanning() {
                 <DetailRow label="Boundary" value={<StatusPill label={boundaryReady ? 'Ready' : 'Needs points'} tone={boundaryReady ? 'success' : 'warning'} />} />
                 <DetailRow label="Environmental Clearance" value={<StatusPill label={vegetationClearanceLabel} tone={vegetationClearanceTone} />} />
 
-                <Alert severity={vegetationClearanceReady && !vegetationReviewRequired ? 'success' : 'warning'} sx={{ borderRadius: '8px' }}>
+                <Alert
+                  ref={environmentalReviewRef}
+                  severity={vegetationClearanceReady && !vegetationReviewRequired ? 'success' : 'warning'}
+                  sx={{ borderRadius: '8px' }}
+                >
                   {vegetationWarningMessage}
                 </Alert>
 
-                <Button
-                  variant={jsaRecord.status === 'approved' ? 'outlined' : 'contained'}
-                  startIcon={<SecurityIcon />}
-                  onClick={() => setJsaDialogOpen(true)}
-                  disabled={!canEditPlanning}
-                  sx={{ borderRadius: '8px', fontWeight: 800 }}
-                >
-                  {jsaRecord.status === 'approved' ? 'Edit CASA JSA & Risk' : 'Complete CASA JSA & Risk'}
-                </Button>
+                {canEditPlanning ? (
+                  <Button
+                    variant={jsaRecord.status === 'approved' ? 'outlined' : 'contained'}
+                    startIcon={<SecurityIcon />}
+                    onClick={() => setJsaDialogOpen(true)}
+                    sx={{ borderRadius: '8px', fontWeight: 800 }}
+                  >
+                    {jsaRecord.status === 'approved' ? 'Edit CASA JSA & Risk' : 'Complete CASA JSA & Risk'}
+                  </Button>
+                ) : selectedMission?.status === 'Approved' ? (
+                  <Alert severity="info" sx={{ borderRadius: '8px' }}>
+                    Use Edit Mission Plan before changing the JSA or compliance details.
+                  </Alert>
+                ) : null}
 
                 <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
                   <Button
@@ -2654,22 +2771,23 @@ export default function MissionPlanning() {
           backdropFilter: 'blur(10px)',
         }}
       >
-        <CardContent sx={{ py: 1.5, '&:last-child': { pb: 1.5 } }}>
+        <CardContent sx={{ py: { xs: 1, sm: 1.5 }, '&:last-child': { pb: { xs: 1, sm: 1.5 } } }}>
           <Grid container spacing={1.5} alignItems="center">
             <Grid size={{ xs: 12, md: 4 }}>
               <Stack spacing={0.75}>
-                <Stack direction="row" justifyContent="space-between">
+                <Stack direction="row" justifyContent="space-between" spacing={1}>
                   <Typography sx={{ fontSize: '0.78rem', fontWeight: 800 }}>
-                    {selectedMission ? `${selectedMission.missionNumber} readiness` : 'Mission readiness'}
+                    Step {missionWorkflow.activeStep + 1} of {MISSION_WORKFLOW_STEPS.length}: {MISSION_WORKFLOW_STEPS[missionWorkflow.activeStep].label}
                   </Typography>
-                  <Typography sx={{ fontSize: '0.78rem', fontWeight: 900 }}>
-                    {readinessPercent}% - {formatCurrency(totalEstimatedCost)}
+                  <Typography sx={{ display: { xs: 'none', sm: 'block' }, fontSize: '0.78rem', fontWeight: 900 }}>
+                    Planning checks {readinessPercent}% - {formatCurrency(totalEstimatedCost)}
                   </Typography>
                 </Stack>
                 <LinearProgress
                   variant="determinate"
                   value={readinessPercent}
                   sx={{
+                    display: { xs: 'none', sm: 'block' },
                     height: 8,
                     borderRadius: 8,
                     bgcolor: alpha(theme.palette.primary.main, 0.1),
@@ -2679,38 +2797,78 @@ export default function MissionPlanning() {
                     },
                   }}
                 />
-                {authorizationBlockers.length > 0 && (
-                  <Typography sx={{ fontSize: '0.7rem', color: 'text.secondary' }}>
-                    Next: {authorizationBlockers[0]}
-                  </Typography>
-                )}
+                <Typography sx={{ display: { xs: 'none', sm: 'block' }, fontSize: '0.7rem', color: 'text.secondary' }}>
+                  {missionWorkflow.guidance}
+                </Typography>
               </Stack>
             </Grid>
             <Grid size={{ xs: 12, md: 8 }}>
               <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.25} justifyContent="flex-end">
-                <Button
-                  variant="outlined"
-                  startIcon={<SaveIcon />}
-                  onClick={handleSaveDraft}
-                  disabled={dataLoading || saving || !canEditPlanning}
-                  sx={{ minHeight: 44, px: 4 }}
-                >
-                  {canEditPlanning ? selectedMission ? 'Update Plan' : 'Save Draft' : `Plan ${selectedMission?.status}`}
-                </Button>
+                {selectedMission?.status === 'Planning' && (
+                  <Button
+                    variant="outlined"
+                    startIcon={<SaveIcon />}
+                    onClick={handleSaveDraft}
+                    disabled={dataLoading || saving}
+                    sx={{ minHeight: 44, px: 4 }}
+                  >
+                    Update Mission Draft
+                  </Button>
+                )}
+                {selectedMission?.status === 'Approved' && !selectedMission.approvals.flyingAuthorization && (
+                  <Button
+                    variant="outlined"
+                    onClick={handleReturnToPlanning}
+                    disabled={dataLoading || saving}
+                    sx={{ minHeight: 44, px: 4 }}
+                  >
+                    Edit Mission Plan
+                  </Button>
+                )}
                 <Button
                   variant="contained"
-                  startIcon={<CheckCircleIcon />}
-                  onClick={handleAuthorizeMission}
-                  disabled={dataLoading || saving || !canAuthorizePlanning}
-                  sx={{ minHeight: 44, px: 5 }}
+                  startIcon={missionWorkflow.action === 'save-draft' ? <SaveIcon /> : missionWorkflow.activeStep === 3 ? <FlightTakeoffIcon /> : <CheckCircleIcon />}
+                  onClick={handlePrimaryWorkflowAction}
+                  disabled={primaryWorkflowActionDisabled}
+                  sx={{ minHeight: 44, px: 5, width: { xs: '100%', sm: 'auto' } }}
                 >
-                  {missionAuthorizationActionLabel}
+                  {missionWorkflow.actionLabel}
                 </Button>
               </Stack>
             </Grid>
           </Grid>
         </CardContent>
       </Card>
+
+      <Dialog
+        open={deleteDialogOpen}
+        onClose={() => setDeleteDialogOpen(false)}
+        maxWidth="xs"
+        fullWidth
+      >
+        <DialogTitle>Delete mission?</DialogTitle>
+        <DialogContent>
+          <Typography sx={{ fontSize: '0.86rem', color: 'text.secondary' }}>
+            {selectedMission
+              ? `${selectedMission.missionNumber} - ${selectedMission.missionName} will be permanently deleted.`
+              : 'This mission will be permanently deleted.'}
+          </Typography>
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 2.5 }}>
+          <Button onClick={() => setDeleteDialogOpen(false)} disabled={saving}>
+            Cancel
+          </Button>
+          <Button
+            color="error"
+            variant="contained"
+            startIcon={<DeleteOutlineIcon />}
+            onClick={handleDeleteSelectedMission}
+            disabled={saving || !canDeleteSelectedMission}
+          >
+            Delete Mission
+          </Button>
+        </DialogActions>
+      </Dialog>
 
       <MissionJsaDialog
         open={jsaDialogOpen}
