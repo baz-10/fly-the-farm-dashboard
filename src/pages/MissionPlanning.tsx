@@ -48,6 +48,7 @@ import {
   hasVegetationReviewCategories,
   sanitizeLotPlan,
 } from '../services/pmavService';
+import { calculateMissionMixVolumes } from '../utils/missionMix';
 import { LatLng, BoundaryFileRef } from '../types/fieldManagement';
 import { SavedVegetationCheck } from '../types/pmav';
 import {
@@ -110,7 +111,7 @@ const MISSION_PRIORITIES: { value: MissionPriority; label: string }[] = [
 const PLANNER_STEPS = [
   { label: 'Area', detail: 'Define boundaries' },
   { label: 'Aircraft', detail: 'Select equipment' },
-  { label: 'Safety', detail: 'Complete JSA' },
+  { label: 'Safety', detail: 'Complete CASA JSA' },
   { label: 'Authorize', detail: 'Final checks' },
 ];
 
@@ -124,6 +125,7 @@ const DEMO_AIRCRAFT = {
   model: 'DJI Agras T50',
   maxPayloadWeight: 40,
   maxWindSpeed: 18,
+  maxAltitude: 120,
 };
 
 const DEMO_CONFIG = {
@@ -341,6 +343,7 @@ export default function MissionPlanning() {
   const theme = useTheme();
   const [searchParams] = useSearchParams();
   const requestedMissionId = searchParams.get('mission') || '';
+  const requestedSection = searchParams.get('section') || '';
   const loadedMissionLinkRef = React.useRef('');
   const {
     missions,
@@ -364,6 +367,7 @@ export default function MissionPlanning() {
     createAircraft,
     createEquipmentKit,
     createConfiguration,
+    validateConfiguration,
   } = useAircraft();
   const dataLoading = missionDataLoading || aircraftDataLoading;
   const dataError = missionDataError || aircraftDataError;
@@ -384,6 +388,7 @@ export default function MissionPlanning() {
   const [selectedAircraft, setSelectedAircraft] = React.useState(DEMO_AIRCRAFT.id);
   const [selectedConfiguration, setSelectedConfiguration] = React.useState(DEMO_CONFIG.id);
   const [boundaryCoords, setBoundaryCoords] = React.useState<LatLng[]>([]);
+  const [boundaryPolygons, setBoundaryPolygons] = React.useState<LatLng[][]>([]);
   const [missionArea, setMissionArea] = React.useState(0);
   const [boundaryFile, setBoundaryFile] = React.useState<BoundaryFileRef | null>(null);
   const [jsaRecord, setJsaRecord] = React.useState<JSARecord>(() => createMissionJSA('draft'));
@@ -450,6 +455,7 @@ export default function MissionPlanning() {
     model: item.model,
     maxPayloadWeight: item.operationalLimits.maxPayloadWeight,
     maxWindSpeed: item.maxWindSpeed,
+    maxAltitude: Math.min(item.maxAltitude, 120),
   }));
   const aircraftOptions = realAircraftOptions.length > 0
     ? [
@@ -494,9 +500,16 @@ export default function MissionPlanning() {
   const selectedMissionType = MISSION_TYPES.find((item) => item.value === missionType);
   const actualAircraft = aircraft.find((item) => item.id === selectedAircraft);
   const actualConfiguration = configurations.find((item) => item.id === selectedConfiguration);
+  const selectedEquipmentKit = actualConfiguration
+    ? equipmentKits.find((item) => item.id === actualConfiguration.kitId)
+    : undefined;
   const selectedMission = missions.find((mission) => mission.id === selectedMissionId);
   const canPersistMission = !!actualAircraft && !!actualConfiguration;
-  const boundaryReady = boundaryCoords.length >= 3;
+  const effectiveBoundaryPolygons = boundaryPolygons.length
+    ? boundaryPolygons
+    : boundaryCoords.length ? [boundaryCoords] : [];
+  const allBoundaryCoords = effectiveBoundaryPolygons.flat();
+  const boundaryReady = effectiveBoundaryPolygons.some((polygonCoords) => polygonCoords.length >= 3);
   const cleanMissionLotPlan = sanitizeLotPlan(missionLotPlan);
   const currentVegetationCheck = React.useMemo(
     () => cleanMissionLotPlan
@@ -524,12 +537,16 @@ export default function MissionPlanning() {
   const vegetationClearanceTone: 'success' | 'warning' | 'error' | 'info' = vegetationClearanceReady
     ? currentVegetationCheck && !vegetationReviewRequired ? 'success' : 'warning'
     : 'warning';
-  const flyingReadinessIssues = selectedMission ? validateMissionReadiness(selectedMission.id, 'Flying') : [];
-  const completionReadinessIssues = selectedMission ? validateMissionReadiness(selectedMission.id, 'Completed') : [];
+  const flyingReadinessIssues = selectedMission?.status === 'Approved'
+    ? validateMissionReadiness(selectedMission.id, 'Flying')
+    : [];
+  const completionReadinessIssues = selectedMission?.status === 'Flying'
+    ? validateMissionReadiness(selectedMission.id, 'Completed')
+    : [];
   const canUseFlightWorkflow = !!selectedMission && ['Approved', 'Flying', 'Completed'].includes(selectedMission.status);
   const canEditPlanning = !selectedMission || !['Flying', 'Completed', 'Locked'].includes(selectedMission.status);
   const canAuthorizePlanning = !selectedMission || ['Planning', 'Approved'].includes(selectedMission.status);
-  const canGenerateFlightPlan = !!selectedMission && ['Approved', 'Flying'].includes(selectedMission.status);
+  const canGenerateFlightPlan = !!selectedMission && ['Planning', 'Approved', 'Flying'].includes(selectedMission.status);
   const canAuthorizeForFlight = !!selectedMission && selectedMission.status === 'Approved' && !!selectedMission.flightPlan;
   const canStartFlight = !!selectedMission && selectedMission.status === 'Approved' && !!selectedMission.flightPlan && !!selectedMission.approvals.flyingAuthorization;
   const canRecordCompletion = !!selectedMission && selectedMission.status === 'Flying';
@@ -538,46 +555,84 @@ export default function MissionPlanning() {
     ...chemical,
     totalRequired: roundOne(chemical.ratePerHa * missionArea),
   }));
+  const missionMixVolumes = calculateMissionMixVolumes(missionArea, applicationRate, chemicals);
   const totalEstimatedCost = aircraftCost + equipmentCost + personnelCost + travelCost + chemicalCost;
   const sortedMissions = [...missions].sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
-  const readyChecks = [
-    Boolean(missionName.trim()),
-    Boolean(clientName.trim()),
-    Boolean(propertyName.trim()),
-    Boolean(fieldName.trim()),
-    boundaryReady,
-    Boolean(selectedAircraftData),
-    applicationRate > 0,
-    estimatedDuration > 0,
-    vegetationClearanceReady,
-    jsaRecord.status === 'approved',
+  const scheduledMissionDate = new Date(toIsoFromInput(scheduledDate));
+  const isCurrentAtMissionDate = (value: string | undefined) => {
+    const date = value ? new Date(value) : new Date(Number.NaN);
+    return Number.isFinite(date.getTime()) && date > scheduledMissionDate;
+  };
+  const aircraftPlanningReady = Boolean(
+    actualAircraft
+    && actualAircraft.status === 'operational'
+    && isCurrentAtMissionDate(actualAircraft.maintenanceDates.nextInspectionDue)
+    && isCurrentAtMissionDate(actualAircraft.maintenanceDates.nextMajorServiceDue)
+    && isCurrentAtMissionDate(actualAircraft.insurance.expiryDate),
+  );
+  const configurationPlanningReady = Boolean(
+    actualAircraft
+    && actualConfiguration
+    && selectedEquipmentKit
+    && actualConfiguration.aircraftId === actualAircraft.id
+    && actualConfiguration.weightAndBalance.withinLimits
+    && selectedEquipmentKit.operationalData.status === 'available'
+    && validateConfiguration(actualAircraft.id, selectedEquipmentKit.id),
+  );
+  const missionMaxAltitude = Math.min(
+    selectedAircraftData.maxAltitude,
+    actualConfiguration?.operationalLimits.maxAltitude ?? 120,
+    120,
+  );
+  const authorizationChecks = [
+    { ready: Boolean(missionName.trim()), message: 'Enter a mission name.' },
+    { ready: Boolean(clientName.trim()), message: 'Enter a client.' },
+    { ready: Boolean(propertyName.trim()), message: 'Enter a property.' },
+    { ready: Boolean(fieldName.trim()), message: 'Enter a field.' },
+    { ready: boundaryReady, message: 'Draw or upload a valid mission boundary.' },
+    { ready: aircraftPlanningReady, message: 'Select an operational aircraft with current inspection, major-service and insurance dates.' },
+    { ready: configurationPlanningReady, message: 'Select an available, compatible equipment configuration within weight-and-balance limits.' },
+    { ready: applicationRate > 0, message: 'Enter an application rate.' },
+    { ready: estimatedDuration > 0, message: 'Enter an estimated duration.' },
+    { ready: vegetationClearanceReady, message: 'Complete or acknowledge the environmental clearance review.' },
+    { ready: jsaRecord.status === 'approved', message: 'Complete and approve the CASA JSA and risk assessment.' },
   ];
-  const readinessPercent = Math.round((readyChecks.filter(Boolean).length / readyChecks.length) * 100);
+  const authorizationBlockers = authorizationChecks.filter((check) => !check.ready).map((check) => check.message);
+  const readinessPercent = Math.round((authorizationChecks.filter((check) => check.ready).length / authorizationChecks.length) * 100);
   const plannerStepComplete = [
     boundaryReady,
-    Boolean(selectedAircraftData),
+    aircraftPlanningReady && configurationPlanningReady,
     jsaRecord.status === 'approved',
-    readinessPercent === 100,
+    authorizationBlockers.length === 0,
   ];
 
   const buildBoundaryRecord = (missionId: string): BoundaryFile => {
     const now = new Date().toISOString();
     const boundingBox = boundaryFile?.boundingBox || {
-      north: Math.max(...boundaryCoords.map((point) => point[0])),
-      south: Math.min(...boundaryCoords.map((point) => point[0])),
-      east: Math.max(...boundaryCoords.map((point) => point[1])),
-      west: Math.min(...boundaryCoords.map((point) => point[1])),
+      north: Math.max(...allBoundaryCoords.map((point) => point[0])),
+      south: Math.min(...allBoundaryCoords.map((point) => point[0])),
+      east: Math.max(...allBoundaryCoords.map((point) => point[1])),
+      west: Math.min(...allBoundaryCoords.map((point) => point[1])),
     };
+    const geoJsonGeometry = effectiveBoundaryPolygons.length > 1
+      ? {
+          type: 'MultiPolygon',
+          coordinates: effectiveBoundaryPolygons.map((polygonCoords) => [polygonCoords.map(([lat, lng]) => [lng, lat])]),
+        }
+      : {
+          type: 'Polygon',
+          coordinates: [effectiveBoundaryPolygons[0]?.map(([lat, lng]) => [lng, lat]) || []],
+        };
 
     return {
       id: `boundary_${Date.now()}`,
       missionId,
       fileName: boundaryFile?.fileName || `${fieldName || 'mission'}-drawn-boundary.geojson`,
       fileType: boundaryFile ? (boundaryFile.fileType === 'shp' ? 'shapefile' : boundaryFile.fileType) : 'geojson',
-      fileSize: boundaryFile?.sizeBytes || JSON.stringify(boundaryCoords).length,
+      fileSize: boundaryFile?.sizeBytes || JSON.stringify(effectiveBoundaryPolygons).length,
       uploadedAt: boundaryFile?.uploadedAt || now,
       uploadedBy: 'current_user',
-      fileUrl: boundaryFile?.dataUrl || `data:application/json,${encodeURIComponent(JSON.stringify({ type: 'Polygon', coordinates: [boundaryCoords.map(([lat, lng]) => [lng, lat])] }))}`,
+      fileUrl: boundaryFile?.dataUrl || `data:application/json,${encodeURIComponent(JSON.stringify(geoJsonGeometry))}`,
       originalFileName: boundaryFile?.fileName || `${fieldName || 'mission'}-drawn-boundary.geojson`,
       analysis: {
         status: 'completed',
@@ -586,7 +641,7 @@ export default function MissionPlanning() {
           totalArea: missionArea,
           perimeter: perimeterKm * 1000,
           boundingBox,
-          complexity: boundaryCoords.length > 8 ? 'complex' : boundaryCoords.length > 5 ? 'moderate' : 'simple',
+          complexity: allBoundaryCoords.length > 8 ? 'complex' : allBoundaryCoords.length > 5 ? 'moderate' : 'simple',
           isValid: boundaryReady,
           validationErrors: boundaryReady ? [] : ['Boundary needs at least three points'],
         },
@@ -628,6 +683,7 @@ export default function MissionPlanning() {
     siteLongitude,
     missionNotes,
     boundaryCoords,
+    boundaryPolygons: effectiveBoundaryPolygons,
     vegetationClearance: {
       lotPlan: cleanMissionLotPlan,
       checkId: currentVegetationCheck?.id,
@@ -675,8 +731,8 @@ export default function MissionPlanning() {
         name: [propertyName.trim(), fieldName.trim()].filter(Boolean).join(' / ') || 'Location not set',
         address: siteAddress.trim() || [fieldName.trim(), propertyName.trim()].filter(Boolean).join(', ') || 'Address not set',
         coordinates: {
-          latitude: boundaryCoords[0]?.[0] ?? siteLatitude ?? -25.2744,
-          longitude: boundaryCoords[0]?.[1] ?? siteLongitude ?? 133.7751,
+          latitude: allBoundaryCoords[0]?.[0] ?? siteLatitude ?? -25.2744,
+          longitude: allBoundaryCoords[0]?.[1] ?? siteLongitude ?? 133.7751,
         },
         elevation: 0,
       },
@@ -729,14 +785,15 @@ export default function MissionPlanning() {
       manufacturer: 'DJI',
       model: 'Agras T50',
       serialNumber: 'T50-STARTER-001',
+      activationDate: now,
       mtow: 103,
       maxAltitude: 120,
       maxWindSpeed: 18,
       maintenanceDates: {
         lastInspection: now,
-        nextInspectionDue: futureDate(180),
+        nextInspectionDue: futureDate(90),
         lastMajorService: now,
-        nextMajorServiceDue: futureDate(365),
+        nextMajorServiceDue: futureDate(180),
         totalFlightHours: 0,
         hoursSinceLastService: 0,
       },
@@ -753,7 +810,7 @@ export default function MissionPlanning() {
         minOperatingTemp: 0,
         maxOperatingTemp: 45,
         maxPayloadWeight: 40,
-        batteryLife: 22,
+        batteryCycles: 200,
         maxFlightTime: 22,
         serviceRange: 2,
         minimumCrewSize: 2,
@@ -928,6 +985,7 @@ export default function MissionPlanning() {
     setSelectedAircraft(nextAircraft);
     setSelectedConfiguration(nextConfiguration);
     setBoundaryCoords([]);
+    setBoundaryPolygons([]);
     setMissionArea(0);
     setBoundaryFile(null);
     setJsaRecord(createMissionJSA('draft'));
@@ -992,7 +1050,13 @@ export default function MissionPlanning() {
     setPriority(mission.priority);
     setSelectedAircraft(mission.aircraftConfiguration.aircraftId);
     setSelectedConfiguration(mission.aircraftConfiguration.configurationId);
-    setBoundaryCoords(planning?.boundaryCoords?.length ? planning.boundaryCoords : []);
+    const loadedBoundaryCoords = planning?.boundaryCoords?.length ? planning.boundaryCoords : [];
+    setBoundaryCoords(loadedBoundaryCoords);
+    setBoundaryPolygons(
+      planning?.boundaryPolygons?.length
+        ? planning.boundaryPolygons
+        : loadedBoundaryCoords.length ? [loadedBoundaryCoords] : [],
+    );
     setMissionArea(missionAreaHa);
     setBoundaryFile(null);
     setJsaRecord(mission.jsaRecord);
@@ -1034,12 +1098,14 @@ export default function MissionPlanning() {
       loadedMissionLinkRef.current = '';
       return;
     }
-    if (loadedMissionLinkRef.current === requestedMissionId) return;
+    const requestedLinkKey = `${requestedMissionId}:${requestedSection}`;
+    if (loadedMissionLinkRef.current === requestedLinkKey) return;
     const requestedMission = missions.find((mission) => mission.id === requestedMissionId);
     if (!requestedMission) return;
     loadMissionIntoPlanner(requestedMission);
-    loadedMissionLinkRef.current = requestedMissionId;
-  }, [missions, requestedMissionId]);
+    if (requestedSection === 'jsa') setJsaDialogOpen(true);
+    loadedMissionLinkRef.current = requestedLinkKey;
+  }, [missions, requestedMissionId, requestedSection]);
 
   const updateChemical = (
     index: number,
@@ -1150,7 +1216,7 @@ export default function MissionPlanning() {
 
     if (jsaRecord.status !== 'approved') {
       setJsaDialogOpen(true);
-      showNotice('warning', 'Complete and approve the mission JSA and risk assessment before authorization.');
+      showNotice('warning', 'Complete and approve the CASA JSA and risk assessment before authorization.');
       return;
     }
 
@@ -1161,6 +1227,11 @@ export default function MissionPlanning() {
 
     if (!vegetationClearanceReady) {
       showNotice('warning', vegetationWarningMessage);
+      return;
+    }
+
+    if (authorizationBlockers.length > 0) {
+      showNotice('error', `Mission is not ready: ${authorizationBlockers[0]}`);
       return;
     }
 
@@ -1193,7 +1264,18 @@ export default function MissionPlanning() {
 
   const buildFlightPlan = (mission: MissionRecord): FlightPlan => {
     const now = new Date().toISOString();
-    const home = boundaryCoords[0] || [mission.location.coordinates.latitude, mission.location.coordinates.longitude];
+    const home = allBoundaryCoords[0] || [mission.location.coordinates.latitude, mission.location.coordinates.longitude];
+    const boundaryWaypoints = effectiveBoundaryPolygons.flatMap((polygonCoords, polygonIndex) => (
+      polygonCoords.map(([latitude, longitude], pointIndex) => ({
+        id: `wp_${polygonIndex + 1}_${pointIndex + 1}`,
+        latitude,
+        longitude,
+        altitude: flightAltitude,
+        action: pointIndex === 0
+          ? 'start-spray' as const
+          : pointIndex === polygonCoords.length - 1 ? 'stop-spray' as const : 'fly-to' as const,
+      }))
+    ));
     const waypoints = [
       {
         id: 'wp_home',
@@ -1202,13 +1284,7 @@ export default function MissionPlanning() {
         altitude: 0,
         action: 'fly-to' as const,
       },
-      ...boundaryCoords.map(([latitude, longitude], index) => ({
-        id: `wp_${index + 1}`,
-        latitude,
-        longitude,
-        altitude: flightAltitude,
-        action: index === 0 ? 'start-spray' as const : index === boundaryCoords.length - 1 ? 'stop-spray' as const : 'fly-to' as const,
-      })),
+      ...boundaryWaypoints,
       {
         id: 'wp_rtl',
         latitude: home[0],
@@ -1227,8 +1303,8 @@ export default function MissionPlanning() {
         altitude: flightAltitude,
         groundSpeed,
         flightPattern: 'parallel',
-        overlapForward,
-        overlapSide,
+        overlapForward: missionType === 'spray' ? 0 : overlapForward,
+        overlapSide: missionType === 'spray' ? 0 : overlapSide,
         lineSpacing,
       },
       route: {
@@ -1279,7 +1355,7 @@ export default function MissionPlanning() {
               {
                 id: 'nfz_boundary_buffer',
                 name: 'Mapped exclusion buffer',
-                coordinates: boundaryCoords.slice(0, Math.min(boundaryCoords.length, 4)).map(([latitude, longitude]) => ({
+                coordinates: allBoundaryCoords.slice(0, Math.min(allBoundaryCoords.length, 4)).map(([latitude, longitude]) => ({
                   latitude,
                   longitude,
                 })),
@@ -1390,12 +1466,23 @@ export default function MissionPlanning() {
 
   const handleGenerateFlightPlan = async () => {
     if (!selectedMission) {
-      showNotice('info', 'Save or authorize a mission before generating a flight plan.');
+      showNotice('info', 'Save the mission draft before generating a flight plan.');
+      return;
+    }
+
+    if (!boundaryReady) {
+      showNotice('warning', 'Add a valid mission boundary before generating a flight plan.');
       return;
     }
 
     setSaving(true);
     try {
+      if (selectedMission.status === 'Planning') {
+        const planningUpdates = { ...buildMissionPayload(selectedMission.id) } as Partial<MissionRecord>;
+        delete planningUpdates.missionNumber;
+        delete planningUpdates.status;
+        await updateMission(selectedMission.id, planningUpdates);
+      }
       await updateFlightPlan(selectedMission.id, buildFlightPlan(selectedMission));
       showNotice('success', 'Flight plan generated from the current mission area and operating settings.');
     } catch (error) {
@@ -1659,8 +1746,13 @@ export default function MissionPlanning() {
             >
               <FieldBoundaryEditor
                 coords={boundaryCoords}
+                polygons={boundaryPolygons}
                 onCoordsChange={(coords) => {
                   setBoundaryCoords(coords);
+                  setJsaRecord(reopenApprovedJSA);
+                }}
+                onPolygonsChange={(polygons) => {
+                  setBoundaryPolygons(polygons);
                   setJsaRecord(reopenApprovedJSA);
                 }}
                 onAreaChange={setMissionArea}
@@ -2078,7 +2170,9 @@ export default function MissionPlanning() {
                   </Box>
                 ))}
                 <Divider />
-                <DetailRow label="Water Volume" value={`${(missionArea * applicationRate).toFixed(0)} L`} />
+                <DetailRow label="Total tank mix" value={`${missionMixVolumes.totalTankMixLitres.toFixed(1)} L`} />
+                <DetailRow label="Liquid chemical" value={`${missionMixVolumes.liquidChemicalLitres.toFixed(1)} L`} />
+                <DetailRow label="Water required" value={`${missionMixVolumes.waterRequiredLitres.toFixed(1)} L`} />
                 <DetailRow label="Chemical Total" value={formatCurrency(chemicalCost)} />
                 <Button variant="outlined" size="small" onClick={addChemical} sx={{ borderRadius: '8px' }}>
                   Add product
@@ -2210,7 +2304,9 @@ export default function MissionPlanning() {
               <Stack spacing={1.5}>
                 {!canUseFlightWorkflow && (
                   <Alert severity="info" sx={{ borderRadius: '8px' }}>
-                    Authorize the mission first, then generate the flight plan and pre-flight authorization here.
+                    {selectedMission
+                      ? 'Generate or review the flight plan now. CASA JSA approval and mission authorization are required before flight authorization.'
+                      : 'Save the mission draft before generating its flight plan.'}
                   </Alert>
                 )}
 
@@ -2232,12 +2328,14 @@ export default function MissionPlanning() {
                 <Grid container spacing={1.25}>
                   <Grid size={{ xs: 6 }}>
                     <TextField
-                      label="Altitude m"
+                      label={missionType === 'spray' ? 'Height above crop (m)' : 'Altitude (m AGL)'}
                       type="number"
                       value={flightAltitude}
-                      onChange={(event) => setFlightAltitude(readNumber(event.target.value, 0))}
+                      onChange={(event) => setFlightAltitude(Math.max(0, Math.min(readNumber(event.target.value, 0), missionMaxAltitude)))}
                       fullWidth
                       size="small"
+                      slotProps={{ htmlInput: { min: 0, max: missionMaxAltitude } }}
+                      helperText={`Maximum ${missionMaxAltitude} m AGL`}
                     />
                   </Grid>
                   <Grid size={{ xs: 6 }}>
@@ -2252,7 +2350,7 @@ export default function MissionPlanning() {
                   </Grid>
                   <Grid size={{ xs: 6 }}>
                     <TextField
-                      label="Line spacing m"
+                      label={missionType === 'spray' ? 'Swath (m)' : 'Line spacing (m)'}
                       type="number"
                       value={lineSpacing}
                       onChange={(event) => setLineSpacing(readNumber(event.target.value, 0))}
@@ -2260,26 +2358,30 @@ export default function MissionPlanning() {
                       size="small"
                     />
                   </Grid>
-                  <Grid size={{ xs: 6 }}>
-                    <TextField
-                      label="Side overlap %"
-                      type="number"
-                      value={overlapSide}
-                      onChange={(event) => setOverlapSide(readNumber(event.target.value, 0))}
-                      fullWidth
-                      size="small"
-                    />
-                  </Grid>
-                  <Grid size={{ xs: 12 }}>
-                    <TextField
-                      label="Forward overlap %"
-                      type="number"
-                      value={overlapForward}
-                      onChange={(event) => setOverlapForward(readNumber(event.target.value, 0))}
-                      fullWidth
-                      size="small"
-                    />
-                  </Grid>
+                  {missionType !== 'spray' && (
+                    <>
+                      <Grid size={{ xs: 6 }}>
+                        <TextField
+                          label="Side overlap %"
+                          type="number"
+                          value={overlapSide}
+                          onChange={(event) => setOverlapSide(readNumber(event.target.value, 0))}
+                          fullWidth
+                          size="small"
+                        />
+                      </Grid>
+                      <Grid size={{ xs: 12 }}>
+                        <TextField
+                          label="Forward overlap %"
+                          type="number"
+                          value={overlapForward}
+                          onChange={(event) => setOverlapForward(readNumber(event.target.value, 0))}
+                          fullWidth
+                          size="small"
+                        />
+                      </Grid>
+                    </>
+                  )}
                 </Grid>
 
                 <Button
@@ -2421,7 +2523,7 @@ export default function MissionPlanning() {
             <Panel title="Safety & Compliance" icon={<SecurityIcon />}>
               <Stack spacing={1}>
                 <DetailRow
-                  label="JSA Status"
+                  label="CASA JSA Status"
                   value={(
                     <StatusPill
                       label={jsaRecord.status === 'in-progress'
@@ -2451,7 +2553,7 @@ export default function MissionPlanning() {
                   disabled={!canEditPlanning}
                   sx={{ borderRadius: '8px', fontWeight: 800 }}
                 >
-                  {jsaRecord.status === 'approved' ? 'Edit JSA & Risk' : 'Complete JSA & Risk'}
+                  {jsaRecord.status === 'approved' ? 'Edit CASA JSA & Risk' : 'Complete CASA JSA & Risk'}
                 </Button>
 
                 <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
@@ -2548,6 +2650,11 @@ export default function MissionPlanning() {
                     },
                   }}
                 />
+                {authorizationBlockers.length > 0 && (
+                  <Typography sx={{ fontSize: '0.7rem', color: 'text.secondary' }}>
+                    Next: {authorizationBlockers[0]}
+                  </Typography>
+                )}
               </Stack>
             </Grid>
             <Grid size={{ xs: 12, md: 8 }}>
@@ -2588,8 +2695,8 @@ export default function MissionPlanning() {
           showNotice(
             record.status === 'approved' ? 'success' : 'info',
             record.status === 'approved'
-              ? 'JSA and risk assessment approved. The mission can now be authorized.'
-              : 'JSA draft updated. Save the mission draft to persist it.'
+              ? 'CASA JSA and risk assessment approved. The mission can now be authorized.'
+              : 'CASA JSA draft updated. Save the mission draft to persist it.'
           );
         }}
       />

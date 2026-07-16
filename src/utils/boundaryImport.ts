@@ -20,6 +20,7 @@ interface GeoJsonObject {
 
 export interface BoundaryImportResult {
   coords: LatLng[];
+  polygons: LatLng[][];
   areaHa: number;
   polygonCount: number;
   warning?: string;
@@ -57,7 +58,7 @@ export function calculateBoundaryAreaHectares(coords: LatLng[]): number {
   return turfArea(polygon([closed])) / 10000;
 }
 
-function selectLargestBoundary(rings: LatLng[][]): BoundaryImportResult {
+function buildBoundaryResult(rings: LatLng[][]): BoundaryImportResult {
   const candidates = rings
     .filter((ring) => ring.length >= 3)
     .map((coords) => ({ coords, areaHa: calculateBoundaryAreaHectares(coords) }))
@@ -69,11 +70,10 @@ function selectLargestBoundary(rings: LatLng[][]): BoundaryImportResult {
   }
 
   return {
-    ...candidates[0],
+    coords: candidates[0].coords,
+    polygons: candidates.map((candidate) => candidate.coords),
+    areaHa: candidates.reduce((total, candidate) => total + candidate.areaHa, 0),
     polygonCount: candidates.length,
-    warning: candidates.length > 1
-      ? `This file contains ${candidates.length} polygons. The largest polygon was imported; create separate missions for the others.`
-      : undefined,
   };
 }
 
@@ -115,7 +115,7 @@ export function parseKmlBoundary(kmlText: string): BoundaryImportResult {
     });
   }
 
-  return selectLargestBoundary(rings);
+  return buildBoundaryResult(rings);
 }
 
 function collectGeometryRings(geometry: GeoJsonGeometry | null | undefined, rings: LatLng[][]) {
@@ -161,7 +161,7 @@ function collectGeoJsonRings(value: unknown, rings: LatLng[][]) {
 export function boundaryFromGeoJson(value: unknown): BoundaryImportResult {
   const rings: LatLng[][] = [];
   collectGeoJsonRings(value, rings);
-  return selectLargestBoundary(rings);
+  return buildBoundaryResult(rings);
 }
 
 export async function parseShapefileBoundary(files: File[]): Promise<BoundaryImportResult> {

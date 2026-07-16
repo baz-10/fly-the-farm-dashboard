@@ -37,6 +37,7 @@ export interface MissionPlanningState {
   siteLongitude?: number;
   missionNotes: string;
   boundaryCoords: Array<[number, number]>;
+  boundaryPolygons?: Array<Array<[number, number]>>;
   vegetationClearance?: {
     lotPlan: string;
     checkId?: string;

@@ -102,7 +102,7 @@ export default function MissionJsaDialog({ open, missionName, value, onClose, on
     ));
 
     if (approve && draft.hazardIdentification.length === 0) {
-      setError('Add at least one assessed hazard before approving the JSA.');
+      setError('Add at least one assessed hazard before approving the CASA JSA.');
       return null;
     }
     if (approve && invalidHazard) {
@@ -110,7 +110,7 @@ export default function MissionJsaDialog({ open, missionName, value, onClose, on
       return null;
     }
     if (approve && !pilotSignature.trim()) {
-      setError('Enter the pilot name to sign this JSA.');
+      setError('Enter the pilot name to sign this CASA JSA.');
       return null;
     }
     if (approve && highResidualRisk && !crpSignature.trim()) {
@@ -156,7 +156,7 @@ export default function MissionJsaDialog({ open, missionName, value, onClose, on
         <Stack direction="row" spacing={1} alignItems="center">
           <VerifiedUserIcon color="primary" />
           <Box>
-            <Typography variant="h6" sx={{ fontSize: '1.05rem' }}>JSA & Risk Assessment</Typography>
+            <Typography variant="h6" sx={{ fontSize: '1.05rem' }}>CASA JSA & Risk Assessment</Typography>
             <Typography sx={{ fontSize: '0.76rem', color: 'text.secondary' }}>
               {missionName.trim() || 'New mission'} · {draft.jsaNumber}
             </Typography>
@@ -304,14 +304,14 @@ export default function MissionJsaDialog({ open, missionName, value, onClose, on
             </Grid>
           </Grid>
           {highResidualRisk && (
-            <Alert severity="warning">High or critical residual risk requires CRP sign-off before this JSA can be approved.</Alert>
+            <Alert severity="warning">High or critical residual risk requires CRP sign-off before this CASA JSA can be approved.</Alert>
           )}
         </Stack>
       </DialogContent>
       <DialogActions sx={{ px: 3, py: 1.5 }}>
         <Button onClick={onClose}>Cancel</Button>
         <Button variant="outlined" onClick={() => save(false)}>Save Draft</Button>
-        <Button variant="contained" onClick={() => save(true)}>Approve JSA</Button>
+        <Button variant="contained" onClick={() => save(true)}>Approve CASA JSA</Button>
       </DialogActions>
     </Dialog>
   );

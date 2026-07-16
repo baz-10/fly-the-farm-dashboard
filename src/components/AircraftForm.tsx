@@ -18,6 +18,7 @@ import {
 // import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
 import { useAircraft } from '../contexts/AircraftContext';
 import { Aircraft, AircraftStatus } from '../types/aircraft';
+import { addMonthsToDateInput } from '../utils/aircraftMaintenance';
 // import { enAU } from 'date-fns/locale';
 
 interface AircraftFormProps {
@@ -31,6 +32,7 @@ interface FormData {
   manufacturer: string;
   model: string;
   serialNumber: string;
+  activationDate: string;
   mtow: string;
   maxAltitude: string;
   maxWindSpeed: string;
@@ -55,7 +57,7 @@ interface FormData {
   minOperatingTemp: string;
   maxOperatingTemp: string;
   maxPayloadWeight: string;
-  batteryLife: string;
+  batteryCycles: string;
   maxFlightTime: string;
   serviceRange: string;
   minimumCrewSize: string;
@@ -71,6 +73,7 @@ const initialFormData: FormData = {
   manufacturer: '',
   model: '',
   serialNumber: '',
+  activationDate: new Date().toISOString().slice(0, 10),
   mtow: '',
   maxAltitude: '',
   maxWindSpeed: '',
@@ -89,7 +92,7 @@ const initialFormData: FormData = {
   minOperatingTemp: '',
   maxOperatingTemp: '',
   maxPayloadWeight: '',
-  batteryLife: '',
+  batteryCycles: '',
   maxFlightTime: '',
   serviceRange: '',
   minimumCrewSize: '1',
@@ -119,6 +122,7 @@ export default function AircraftForm({ aircraftId, onSave, onCancel }: AircraftF
           manufacturer: aircraft.manufacturer,
           model: aircraft.model,
           serialNumber: aircraft.serialNumber,
+          activationDate: (aircraft.activationDate || aircraft.createdAt).split('T')[0],
           mtow: aircraft.mtow.toString(),
           maxAltitude: aircraft.maxAltitude.toString(),
           maxWindSpeed: aircraft.maxWindSpeed.toString(),
@@ -137,7 +141,7 @@ export default function AircraftForm({ aircraftId, onSave, onCancel }: AircraftF
           minOperatingTemp: aircraft.operationalLimits.minOperatingTemp.toString(),
           maxOperatingTemp: aircraft.operationalLimits.maxOperatingTemp.toString(),
           maxPayloadWeight: aircraft.operationalLimits.maxPayloadWeight.toString(),
-          batteryLife: aircraft.operationalLimits.batteryLife.toString(),
+          batteryCycles: String(aircraft.operationalLimits.batteryCycles ?? ''),
           maxFlightTime: aircraft.operationalLimits.maxFlightTime.toString(),
           serviceRange: aircraft.operationalLimits.serviceRange.toString(),
           minimumCrewSize: aircraft.operationalLimits.minimumCrewSize.toString(),
@@ -171,6 +175,10 @@ export default function AircraftForm({ aircraftId, onSave, onCancel }: AircraftF
       newErrors.serialNumber = 'Serial number is required';
     }
 
+    if (!formData.activationDate) {
+      newErrors.activationDate = 'Activation date is required';
+    }
+
     // Numeric validations
     const mtow = parseFloat(formData.mtow);
     if (!formData.mtow || isNaN(mtow) || mtow <= 0) {
@@ -182,8 +190,8 @@ export default function AircraftForm({ aircraftId, onSave, onCancel }: AircraftF
     const maxAltitude = parseFloat(formData.maxAltitude);
     if (!formData.maxAltitude || isNaN(maxAltitude) || maxAltitude <= 0) {
       newErrors.maxAltitude = 'Max altitude must be a positive number';
-    } else if (maxAltitude > 400) {
-      newErrors.maxAltitude = 'Max altitude cannot exceed 400m AGL per CASA regulations';
+    } else if (maxAltitude > 120) {
+      newErrors.maxAltitude = 'Max altitude cannot exceed 120m AGL';
     }
 
     const maxWindSpeed = parseFloat(formData.maxWindSpeed);
@@ -252,9 +260,9 @@ export default function AircraftForm({ aircraftId, onSave, onCancel }: AircraftF
       newErrors.maxPayloadWeight = 'Max payload cannot exceed MTOW';
     }
 
-    const batteryLife = parseFloat(formData.batteryLife);
-    if (!formData.batteryLife || isNaN(batteryLife) || batteryLife <= 0) {
-      newErrors.batteryLife = 'Battery life must be a positive number';
+    const batteryCycles = parseFloat(formData.batteryCycles);
+    if (!formData.batteryCycles || isNaN(batteryCycles) || batteryCycles <= 0) {
+      newErrors.batteryCycles = 'Battery cycles must be a positive number';
     }
 
     const maxFlightTime = parseFloat(formData.maxFlightTime);
@@ -300,10 +308,12 @@ export default function AircraftForm({ aircraftId, onSave, onCancel }: AircraftF
     event: React.ChangeEvent<HTMLInputElement>
   ) => {
     const value = event.target.value;
-    setFormData(prev => ({
-      ...prev,
-      [field]: value,
-    }));
+    setFormData(prev => {
+      const next = { ...prev, [field]: value };
+      if (field === 'lastInspection') next.nextInspectionDue = addMonthsToDateInput(value, 3);
+      if (field === 'lastMajorService') next.nextMajorServiceDue = addMonthsToDateInput(value, 6);
+      return next;
+    });
 
     // Clear error when date is changed
     if (errors[field]) {
@@ -331,6 +341,7 @@ export default function AircraftForm({ aircraftId, onSave, onCancel }: AircraftF
         manufacturer: formData.manufacturer.trim(),
         model: formData.model.trim(),
         serialNumber: formData.serialNumber.trim(),
+        activationDate: new Date(formData.activationDate).toISOString(),
         mtow: parseFloat(formData.mtow),
         maxAltitude: parseFloat(formData.maxAltitude),
         maxWindSpeed: parseFloat(formData.maxWindSpeed),
@@ -355,7 +366,7 @@ export default function AircraftForm({ aircraftId, onSave, onCancel }: AircraftF
           minOperatingTemp: parseFloat(formData.minOperatingTemp) || -20,
           maxOperatingTemp: parseFloat(formData.maxOperatingTemp) || 50,
           maxPayloadWeight: parseFloat(formData.maxPayloadWeight),
-          batteryLife: parseFloat(formData.batteryLife),
+          batteryCycles: parseFloat(formData.batteryCycles),
           maxFlightTime: parseFloat(formData.maxFlightTime),
           serviceRange: parseFloat(formData.serviceRange),
           minimumCrewSize: parseInt(formData.minimumCrewSize),
@@ -448,6 +459,18 @@ export default function AircraftForm({ aircraftId, onSave, onCancel }: AircraftF
             <Grid size={{ xs: 12, sm: 6 }}>
               <TextField
                 fullWidth
+                label="Activation Date *"
+                type="date"
+                value={formData.activationDate}
+                onChange={handleDateChange('activationDate')}
+                error={!!errors.activationDate}
+                helperText={errors.activationDate}
+                InputLabelProps={{ shrink: true }}
+              />
+            </Grid>
+            <Grid size={{ xs: 12, sm: 6 }}>
+              <TextField
+                fullWidth
                 label="Manufacturer *"
                 value={formData.manufacturer}
                 onChange={handleInputChange('manufacturer')}
@@ -488,13 +511,13 @@ export default function AircraftForm({ aircraftId, onSave, onCancel }: AircraftF
             <Grid size={{ xs: 12, sm: 4 }}>
               <TextField
                 fullWidth
-                label="Max Altitude (m) *"
+                label="Max Altitude (m AGL) *"
                 type="number"
                 value={formData.maxAltitude}
                 onChange={handleInputChange('maxAltitude')}
                 error={!!errors.maxAltitude}
-                helperText={errors.maxAltitude || 'Max 400m AGL per CASA'}
-                inputProps={{ min: 0, max: 400 }}
+                helperText={errors.maxAltitude || 'Maximum 120m AGL'}
+                inputProps={{ min: 0, max: 120 }}
               />
             </Grid>
             <Grid size={{ xs: 12, sm: 4 }}>
@@ -584,13 +607,13 @@ export default function AircraftForm({ aircraftId, onSave, onCancel }: AircraftF
             <Grid size={{ xs: 12, sm: 4 }}>
               <TextField
                 fullWidth
-                label="Battery Life (minutes) *"
+                label="Battery Life (cycles) *"
                 type="number"
-                value={formData.batteryLife}
-                onChange={handleInputChange('batteryLife')}
-                error={!!errors.batteryLife}
-                helperText={errors.batteryLife}
-                inputProps={{ min: 0 }}
+                value={formData.batteryCycles}
+                onChange={handleInputChange('batteryCycles')}
+                error={!!errors.batteryCycles}
+                helperText={errors.batteryCycles}
+                inputProps={{ min: 1, step: 1 }}
               />
             </Grid>
             <Grid size={{ xs: 12, sm: 4 }}>
