@@ -118,6 +118,8 @@ function FitBounds({
 interface Props {
   coords: LatLng[];
   onCoordsChange: (coords: LatLng[]) => void;
+  polygons?: LatLng[][];
+  onPolygonsChange?: (polygons: LatLng[][]) => void;
   onAreaChange: (hectares: number) => void;
   onBoundaryFile?: (ref: BoundaryFileRef | null) => void;
   propertyLat?: number;
@@ -134,6 +136,8 @@ interface Props {
 export default function FieldBoundaryEditor({
   coords,
   onCoordsChange,
+  polygons,
+  onPolygonsChange,
   onAreaChange,
   onBoundaryFile,
   propertyLat,
@@ -179,7 +183,18 @@ export default function FieldBoundaryEditor({
   ], [propertyLat, propertyLng]);
   const defaultZoom = propertyLat ? 14 : 5;
 
-  const area = calculateBoundaryAreaHectares(coords);
+  const boundaryPolygons = React.useMemo(
+    () => polygons?.length ? polygons : coords.length ? [coords] : [],
+    [coords, polygons],
+  );
+  const allBoundaryCoords = React.useMemo(() => boundaryPolygons.flat(), [boundaryPolygons]);
+  const area = React.useMemo(
+    () => boundaryPolygons.reduce(
+      (total, polygonCoords) => total + calculateBoundaryAreaHectares(polygonCoords),
+      0,
+    ),
+    [boundaryPolygons],
+  );
 
   useEffect(() => {
     onAreaChangeRef.current(Math.round(area * 100) / 100);
@@ -188,16 +203,20 @@ export default function FieldBoundaryEditor({
   const handleMapClick = useCallback((lat: number, lng: number) => {
     const updated = [...coords, [lat, lng] as LatLng];
     onCoordsChange(updated);
-  }, [coords, onCoordsChange]);
+    onPolygonsChange?.([updated, ...boundaryPolygons.slice(1)]);
+  }, [boundaryPolygons, coords, onCoordsChange, onPolygonsChange]);
 
   const handleUndo = () => {
     if (coords.length > 0) {
-      onCoordsChange(coords.slice(0, -1));
+      const updated = coords.slice(0, -1);
+      onCoordsChange(updated);
+      onPolygonsChange?.(updated.length ? [updated, ...boundaryPolygons.slice(1)] : boundaryPolygons.slice(1));
     }
   };
 
   const handleClear = () => {
     onCoordsChange([]);
+    onPolygonsChange?.([]);
     onBoundaryFile?.(null);
   };
 
@@ -215,6 +234,8 @@ export default function FieldBoundaryEditor({
       const primaryFile = kml || files.find((file) => file.name.toLowerCase().endsWith('.zip')) || files[0];
 
       onCoordsChange(result.coords);
+      onPolygonsChange?.(result.polygons);
+      const importedCoords = result.polygons.flat();
       onBoundaryFile?.({
         fileName: files.length === 1 ? primaryFile.name : files.map((file) => file.name).join(', '),
         fileType: kml ? 'kml' : 'shp',
@@ -226,16 +247,16 @@ export default function FieldBoundaryEditor({
           reader.readAsDataURL(primaryFile);
         }),
         boundingBox: {
-          north: Math.max(...result.coords.map((coord) => coord[0])),
-          south: Math.min(...result.coords.map((coord) => coord[0])),
-          east: Math.max(...result.coords.map((coord) => coord[1])),
-          west: Math.min(...result.coords.map((coord) => coord[1])),
+          north: Math.max(...importedCoords.map((coord) => coord[0])),
+          south: Math.min(...importedCoords.map((coord) => coord[0])),
+          east: Math.max(...importedCoords.map((coord) => coord[1])),
+          west: Math.min(...importedCoords.map((coord) => coord[1])),
         },
         uploadedAt: new Date().toISOString(),
       });
       setImportNotice({
         severity: result.warning ? 'warning' : 'success',
-        message: `${result.areaHa.toFixed(1)} ha boundary imported. ${result.warning || ''}`.trim(),
+        message: `${result.areaHa.toFixed(1)} ha imported across ${result.polygonCount} paddock${result.polygonCount === 1 ? '' : 's'}. ${result.warning || ''}`.trim(),
       });
     } catch (error) {
       setImportNotice({
@@ -390,7 +411,7 @@ export default function FieldBoundaryEditor({
           {coords.length >= 3 && (
             <Chip
               icon={<SquareFootIcon />}
-              label={`${area.toFixed(1)} ha`}
+              label={`${area.toFixed(1)} ha${boundaryPolygons.length > 1 ? ` / ${boundaryPolygons.length} paddocks` : ''}`}
               color="primary"
               sx={{ fontWeight: 700, fontSize: '0.85rem' }}
             />
@@ -472,9 +493,10 @@ export default function FieldBoundaryEditor({
           )}
 
           {/* Boundary polygon */}
-          {coords.length >= 3 && (
+          {boundaryPolygons.map((polygonCoords, polygonIndex) => polygonCoords.length >= 3 && (
             <Polygon
-              positions={coords}
+              key={`boundary-polygon-${polygonIndex}`}
+              positions={polygonCoords}
               pathOptions={{
                 color: '#ffffff',
                 fillColor: theme.palette.primary.main,
@@ -482,7 +504,7 @@ export default function FieldBoundaryEditor({
                 weight: 2.5,
               }}
             />
-          )}
+          ))}
 
           {/* Boundary points — draggable in edit mode */}
           {coords.map((c, idx) => (
@@ -496,13 +518,14 @@ export default function FieldBoundaryEditor({
                   const { lat, lng } = e.target.getLatLng();
                   const updated = coords.map((pt, i) => i === idx ? [lat, lng] as LatLng : pt);
                   onCoordsChange(updated);
+                  onPolygonsChange?.([updated, ...boundaryPolygons.slice(1)]);
                 },
               }}
             />
           ))}
 
           {/* Auto-fit when coords load and return to the neutral view when cleared. */}
-          <FitBounds coords={coords} emptyCenter={defaultCenter} emptyZoom={defaultZoom} />
+          <FitBounds coords={allBoundaryCoords} emptyCenter={defaultCenter} emptyZoom={defaultZoom} />
         </MapContainer>
       </Box>
     </Box>

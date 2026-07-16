@@ -85,7 +85,7 @@ export default function JSAManagement() {
   const highRisk = records.filter((mission) => ['high', 'critical'].includes(highestResidualRisk(mission.jsaRecord))).length;
 
   const openMission = (mission: MissionRecord) => {
-    navigate(`/mission-planning?mission=${encodeURIComponent(mission.id)}`);
+    navigate(`/mission-planning?mission=${encodeURIComponent(mission.id)}&section=jsa`);
   };
 
   return (
@@ -96,12 +96,12 @@ export default function JSAManagement() {
             <SecurityIcon />
           </Box>
           <Box>
-            <Typography variant="h4" fontWeight={900}>Mission JSA Register</Typography>
-            <Typography variant="body2" color="text.secondary">Safety assessments and sign-offs attached to persisted missions.</Typography>
+            <Typography variant="h4" fontWeight={900}>CASA JSA Register</Typography>
+            <Typography variant="body2" color="text.secondary">Mission safety assessments, risk controls and sign-offs.</Typography>
           </Box>
         </Stack>
         <Button variant="contained" startIcon={<AddIcon />} onClick={() => navigate('/mission-planning')}>
-          Plan Mission & JSA
+          Plan Mission & CASA JSA
         </Button>
       </Stack>
 
@@ -109,7 +109,7 @@ export default function JSAManagement() {
       {isLoading && <Alert severity="info" sx={{ mb: 2 }}>Loading mission safety records...</Alert>}
 
       <Grid container spacing={2} sx={{ mb: 3 }}>
-        <Grid size={{ xs: 6, md: 3 }}><StatCard label="Mission JSAs" value={records.length} tone={theme.palette.primary.main} /></Grid>
+        <Grid size={{ xs: 6, md: 3 }}><StatCard label="CASA JSAs" value={records.length} tone={theme.palette.primary.main} /></Grid>
         <Grid size={{ xs: 6, md: 3 }}><StatCard label="Approved" value={approved} tone={theme.palette.success.main} /></Grid>
         <Grid size={{ xs: 6, md: 3 }}><StatCard label="Needs Action" value={pending} tone={theme.palette.warning.main} /></Grid>
         <Grid size={{ xs: 6, md: 3 }}><StatCard label="High Residual Risk" value={highRisk} tone={theme.palette.error.main} /></Grid>
@@ -120,9 +120,9 @@ export default function JSAManagement() {
           {records.length === 0 && !isLoading ? (
             <Stack alignItems="center" textAlign="center" sx={{ py: 7, px: 2 }}>
               <SecurityIcon sx={{ fontSize: 48, color: 'text.disabled', mb: 1.5 }} />
-              <Typography variant="h6" fontWeight={850}>No mission JSAs yet</Typography>
+              <Typography variant="h6" fontWeight={850}>No CASA JSAs yet</Typography>
               <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5, mb: 2.5, maxWidth: 460 }}>
-                A JSA is created with each saved mission. Add hazards, controls and sign-offs in Mission Planning before authorisation.
+                A CASA JSA is created with each saved mission. Add hazards, controls and sign-offs before authorisation.
               </Typography>
               <Button variant="contained" startIcon={<FlightTakeoffIcon />} onClick={() => navigate('/mission-planning')}>
                 Create first mission
@@ -134,7 +134,7 @@ export default function JSAManagement() {
                 <TableHead>
                   <TableRow>
                     <TableCell>Mission</TableCell>
-                    <TableCell>JSA</TableCell>
+                    <TableCell>CASA JSA</TableCell>
                     <TableCell>Status</TableCell>
                     <TableCell>Hazards</TableCell>
                     <TableCell>Residual Risk</TableCell>
@@ -221,7 +221,7 @@ export default function JSAManagement() {
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setViewing(null)}>Close</Button>
-          {viewing && <Button variant="contained" onClick={() => openMission(viewing)}>Open in Mission Planning</Button>}
+          {viewing && <Button variant="contained" onClick={() => openMission(viewing)}>Edit CASA JSA</Button>}
         </DialogActions>
       </Dialog>
     </Box>

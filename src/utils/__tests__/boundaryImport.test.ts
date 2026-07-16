@@ -2,9 +2,17 @@ import {
   boundaryFromGeoJson,
   calculateBoundaryAreaHectares,
   parseKmlBoundary,
+  toClosedGeoJsonRing,
 } from '../boundaryImport';
 
 describe('boundary imports', () => {
+  test('closes GeoJSON rings without duplicating an existing closing point', () => {
+    expect(toClosedGeoJsonRing([[-27, 153], [-27, 154], [-28, 154]])).toEqual([
+      [153, -27], [154, -27], [154, -28], [153, -27],
+    ]);
+    expect(toClosedGeoJsonRing([[-27, 153], [-27, 154], [-27, 153]])).toHaveLength(3);
+  });
+
   test('uses the KML outer boundary instead of flattening the inner hole', () => {
     const kml = `<?xml version="1.0"?>
       <kml xmlns="http://www.opengis.net/kml/2.2"><Placemark><Polygon>
@@ -24,7 +32,7 @@ describe('boundary imports', () => {
     expect(result.polygonCount).toBe(1);
   });
 
-  test('imports the largest KML polygon and reports the remaining polygons', () => {
+  test('imports and totals every KML polygon', () => {
     const kml = `<kml xmlns="http://www.opengis.net/kml/2.2"><Document>
       <Placemark><Polygon><outerBoundaryIs><LinearRing><coordinates>
         153,-27 153.01,-27 153.01,-27.01 153,-27.01 153,-27
@@ -37,11 +45,11 @@ describe('boundary imports', () => {
     const result = parseKmlBoundary(kml);
 
     expect(result.polygonCount).toBe(2);
-    expect(result.warning).toContain('largest polygon');
+    expect(result.polygons).toHaveLength(2);
     expect(result.areaHa).toBeGreaterThan(100);
   });
 
-  test('extracts the largest polygon from shapefile GeoJSON output', () => {
+  test('extracts every polygon from shapefile GeoJSON output', () => {
     const result = boundaryFromGeoJson({
       type: 'FeatureCollection',
       features: [
@@ -59,6 +67,7 @@ describe('boundary imports', () => {
     });
 
     expect(result.polygonCount).toBe(2);
+    expect(result.polygons).toHaveLength(2);
     expect(result.coords).toHaveLength(4);
     expect(result.areaHa).toBeGreaterThan(100);
   });

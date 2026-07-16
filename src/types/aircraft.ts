@@ -10,6 +10,7 @@ export interface Aircraft {
   manufacturer: string;
   model: string;
   serialNumber: string;
+  activationDate?: string;
   mtow: number; // Maximum Take-Off Weight in kg
   maxAltitude: number; // meters AGL
   maxWindSpeed: number; // km/h
@@ -41,7 +42,9 @@ export interface Aircraft {
     minOperatingTemp: number; // Celsius
     maxOperatingTemp: number; // Celsius
     maxPayloadWeight: number; // kg
-    batteryLife: number; // minutes
+    batteryCycles?: number;
+    /** @deprecated Legacy records stored battery duration in this field. */
+    batteryLife?: number;
     maxFlightTime: number; // minutes
     serviceRange: number; // km from base
     minimumCrewSize: number;

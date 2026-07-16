@@ -47,6 +47,7 @@ import { Aircraft, EquipmentKit, AircraftStatus, OperationalStatus } from '../ty
 import AircraftForm from '../components/AircraftForm';
 import EquipmentKitForm from '../components/EquipmentKitForm';
 import ErrorBoundary from '../components/ErrorBoundary';
+import { getAircraftMaintenanceAlerts } from '../utils/aircraftMaintenance';
 
 interface TabPanelProps {
   children?: React.ReactNode;
@@ -177,24 +178,24 @@ const AircraftTableRow = React.memo(({
   aircraft: aircraftItem,
   onEdit,
   onDelete,
-  needsMaintenanceAlert,
   formatDate
 }: {
   aircraft: Aircraft;
   onEdit: (id: string) => void;
   onDelete: (id: string) => void;
-  needsMaintenanceAlert: (aircraft: Aircraft) => boolean;
   formatDate: (date: string) => string;
-}) => (
+}) => {
+  const maintenanceAlerts = getAircraftMaintenanceAlerts(aircraftItem);
+  return (
   <TableRow hover>
     <TableCell>
       <Box sx={{ display: 'flex', alignItems: 'center' }}>
         <Typography variant="body2" sx={{ fontWeight: 600 }}>
           {aircraftItem.registration}
         </Typography>
-        {needsMaintenanceAlert(aircraftItem) && (
-          <Tooltip title="Maintenance or inspection due soon">
-            <WarningIcon sx={{ ml: 1, fontSize: 16, color: 'warning.main' }} />
+        {maintenanceAlerts.length > 0 && (
+          <Tooltip title={maintenanceAlerts.map((alert) => alert.message).join(' • ')}>
+            <WarningIcon sx={{ ml: 1, fontSize: 16, color: maintenanceAlerts.some((alert) => alert.status === 'overdue') ? 'error.main' : 'warning.main' }} />
           </Tooltip>
         )}
       </Box>
@@ -204,6 +205,8 @@ const AircraftTableRow = React.memo(({
         {aircraftItem.manufacturer} {aircraftItem.model}
       </Typography>
     </TableCell>
+    <TableCell><Typography variant="body2">{formatDate(aircraftItem.activationDate || aircraftItem.createdAt)}</Typography></TableCell>
+    <TableCell><Typography variant="body2">{aircraftItem.maintenanceDates.totalFlightHours.toFixed(1)} h</Typography></TableCell>
     <TableCell>
       <Typography variant="body2">{aircraftItem.mtow} kg</Typography>
     </TableCell>
@@ -213,6 +216,11 @@ const AircraftTableRow = React.memo(({
     <TableCell>
       <Typography variant="body2" fontSize="0.8125rem">
         {formatDate(aircraftItem.maintenanceDates.nextInspectionDue)}
+      </Typography>
+    </TableCell>
+    <TableCell>
+      <Typography variant="body2" fontSize="0.8125rem">
+        {formatDate(aircraftItem.maintenanceDates.nextMajorServiceDue)}
       </Typography>
     </TableCell>
     <TableCell>
@@ -241,7 +249,8 @@ const AircraftTableRow = React.memo(({
       </Box>
     </TableCell>
   </TableRow>
-));
+  );
+});
 
 // Optimized Equipment Kit Card Component
 const EquipmentKitCard = React.memo(({
@@ -405,20 +414,6 @@ export default function AircraftManagement() {
         k.operationalData.status.toLowerCase().includes(term)
     );
   }, [equipmentKits, debouncedKitSearch]);
-
-  // Check if aircraft needs maintenance alerts
-  const needsMaintenanceAlert = (aircraft: Aircraft): boolean => {
-    const now = new Date();
-    const nextInspection = new Date(aircraft.maintenanceDates.nextInspectionDue);
-    const nextMajorService = new Date(aircraft.maintenanceDates.nextMajorServiceDue);
-    const insuranceExpiry = new Date(aircraft.insurance.expiryDate);
-
-    const daysUntilInspection = Math.ceil((nextInspection.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
-    const daysUntilService = Math.ceil((nextMajorService.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
-    const daysUntilInsurance = Math.ceil((insuranceExpiry.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
-
-    return daysUntilInspection <= 30 || daysUntilService <= 30 || daysUntilInsurance <= 30;
-  };
 
   // Check if equipment kit needs calibration
   const needsCalibrationAlert = (kit: EquipmentKit): boolean => {
@@ -605,9 +600,12 @@ export default function AircraftManagement() {
                   <TableRow>
                     <TableCell sx={{ fontWeight: 700 }}>Registration</TableCell>
                     <TableCell sx={{ fontWeight: 700 }}>Make/Model</TableCell>
+                    <TableCell sx={{ fontWeight: 700 }}>Activated</TableCell>
+                    <TableCell sx={{ fontWeight: 700 }}>Flight Hours</TableCell>
                     <TableCell sx={{ fontWeight: 700 }}>MTOW</TableCell>
                     <TableCell sx={{ fontWeight: 700 }}>Status</TableCell>
                     <TableCell sx={{ fontWeight: 700 }}>Next Inspection</TableCell>
+                    <TableCell sx={{ fontWeight: 700 }}>Major Inspection</TableCell>
                     <TableCell sx={{ fontWeight: 700 }}>Insurance Expiry</TableCell>
                     <TableCell sx={{ fontWeight: 700 }}>Actions</TableCell>
                   </TableRow>
@@ -615,7 +613,7 @@ export default function AircraftManagement() {
                 <TableBody>
                   {filteredAircraft.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={7} align="center" sx={{ py: 6 }}>
+                      <TableCell colSpan={10} align="center" sx={{ py: 6 }}>
                         <Typography variant="body1" color="text.secondary">
                           No aircraft found
                         </Typography>
@@ -628,7 +626,6 @@ export default function AircraftManagement() {
                         aircraft={aircraftItem}
                         onEdit={handleEditAircraft}
                         onDelete={handleDeleteAircraft}
-                        needsMaintenanceAlert={needsMaintenanceAlert}
                         formatDate={formatDate}
                       />
                     ))
