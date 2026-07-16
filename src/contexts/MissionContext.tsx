@@ -22,6 +22,7 @@ import { useAuth } from './AuthContext';
 import { useAircraft } from './AircraftContext';
 import MissionErrorBoundary from '../components/MissionErrorBoundary';
 import { clearSharedCollection, deleteSharedRecord, PERSISTENCE_KEYS, readSharedCollection, writeSharedCollection } from '../services/persistence';
+import { runMissionOperation } from '../utils/missionOperation';
 
 // Enhanced mission record with version tracking for optimistic locking
 interface MissionWithVersion extends MissionRecord {
@@ -651,16 +652,21 @@ export function MissionProvider({ children }: { children: React.ReactNode }) {
   } = useAircraft();
 
   // Enhanced error handling
-  const safeOperation = useCallback(<T,>(operation: () => T, errorMessage: string): T | null => {
-    try {
-      setError(null);
-      return operation();
-    } catch (error) {
-      const message = `${errorMessage}: ${error instanceof Error ? error.message : String(error)}`;
-      setError(message);
-      console.error(message, error);
-      return null;
-    }
+  const safeOperation = useCallback(<T,>(
+    operation: () => T,
+    errorMessage: string,
+    throwOnError = false,
+  ): T | null => {
+    setError(null);
+    return runMissionOperation(
+      operation,
+      errorMessage,
+      (message, error) => {
+        setError(message);
+        console.error(message, error);
+      },
+      throwOnError,
+    );
   }, []);
 
   // Create audit entry
@@ -981,7 +987,7 @@ export function MissionProvider({ children }: { children: React.ReactNode }) {
       versionMapRef.current.set(id, currentVersion + 1);
 
       return id;
-    }, 'Failed to authorize mission') || '';
+    }, 'Failed to authorize mission', true) || '';
   }, [
     safeOperation,
     user,
@@ -1051,7 +1057,7 @@ export function MissionProvider({ children }: { children: React.ReactNode }) {
       setMissions(newMissions);
 
       return true; // Return success indicator
-    }, 'Failed to update mission');
+    }, 'Failed to update mission', true);
   }, [safeOperation, user, createAuditEntry, missions]);
 
   const deleteMission = useCallback(async (id: string) => {
@@ -1146,7 +1152,7 @@ export function MissionProvider({ children }: { children: React.ReactNode }) {
             : m
         )
       );
-    }, 'Failed to transition mission status');
+    }, 'Failed to transition mission status', true);
   }, [missions, user, safeOperation, createAuditEntry, getAircraftById, getEquipmentKitById, getConfigurationById, validateConfiguration]);
 
   // Approval Management
@@ -1242,7 +1248,7 @@ export function MissionProvider({ children }: { children: React.ReactNode }) {
             : m
         )
       );
-    }, 'Failed to approve mission');
+    }, 'Failed to approve mission', true);
   }, [missions, user, safeOperation, createAuditEntry]);
 
   const rejectMission = useCallback(async (
@@ -1445,7 +1451,7 @@ export function MissionProvider({ children }: { children: React.ReactNode }) {
             : m
         )
       );
-    }, 'Failed to update flight plan');
+    }, 'Failed to update flight plan', true);
   }, [user, safeOperation, createAuditEntry]);
 
   const updateFlightExecution = useCallback(async (missionId: string, flightExecution: FlightExecution) => {
@@ -1472,7 +1478,7 @@ export function MissionProvider({ children }: { children: React.ReactNode }) {
             : m
         )
       );
-    }, 'Failed to update flight execution');
+    }, 'Failed to update flight execution', true);
   }, [user, safeOperation, createAuditEntry]);
 
   // Search and Filtering Functions

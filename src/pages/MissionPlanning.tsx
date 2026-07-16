@@ -546,7 +546,6 @@ export default function MissionPlanning() {
   const completionReadinessIssues = selectedMission?.status === 'Flying'
     ? validateMissionReadiness(selectedMission.id, 'Completed')
     : [];
-  const canUseFlightWorkflow = !!selectedMission && ['Approved', 'Flying', 'Completed'].includes(selectedMission.status);
   const canEditPlanning = !selectedMission || !['Flying', 'Completed', 'Locked'].includes(selectedMission.status);
   const canAuthorizePlanning = !selectedMission || ['Planning', 'Approved'].includes(selectedMission.status);
   const canGenerateFlightPlan = !!selectedMission && ['Planning', 'Approved', 'Flying'].includes(selectedMission.status);
@@ -554,6 +553,23 @@ export default function MissionPlanning() {
   const canStartFlight = !!selectedMission && selectedMission.status === 'Approved' && !!selectedMission.flightPlan && !!selectedMission.approvals.flyingAuthorization;
   const canRecordCompletion = !!selectedMission && selectedMission.status === 'Flying';
   const canCompleteMission = !!selectedMission && selectedMission.status === 'Flying' && !!selectedMission.flightExecution;
+  const flightWorkflowGuidance = !selectedMission
+    ? 'Next: save the mission draft.'
+    : selectedMission.status === 'Planning'
+      ? 'Next: complete the CASA JSA and environmental review, then authorize the mission.'
+      : selectedMission.status === 'Approved' && !selectedMission.flightPlan
+        ? 'Next: generate the flight plan.'
+        : selectedMission.status === 'Approved' && !selectedMission.approvals.flyingAuthorization
+          ? 'Next: authorize the flight.'
+          : selectedMission.status === 'Approved'
+            ? 'Next: start the mission flying.'
+            : selectedMission.status === 'Flying' && !selectedMission.flightExecution
+              ? 'Next: enter the actual area and flight time, then record completion.'
+              : selectedMission.status === 'Flying'
+                ? 'Next: review the execution record, then mark the mission completed.'
+                : selectedMission.status === 'Completed'
+                  ? 'Mission completed. The execution record is saved.'
+                  : 'This mission is locked and cannot be changed.';
   const chemicalRows = chemicals.map((chemical) => ({
     ...chemical,
     totalRequired: roundOne(chemical.ratePerHa * missionArea),
@@ -600,11 +616,18 @@ export default function MissionPlanning() {
     { ready: configurationPlanningReady, message: 'Select an available, compatible equipment configuration within weight-and-balance limits.' },
     { ready: applicationRate > 0, message: 'Enter an application rate.' },
     { ready: estimatedDuration > 0, message: 'Enter an estimated duration.' },
-    { ready: vegetationClearanceReady, message: 'Complete or acknowledge the environmental clearance review.' },
     { ready: jsaRecord.status === 'approved', message: 'Complete and approve the CASA JSA and risk assessment.' },
+    { ready: vegetationClearanceReady, message: 'Complete or acknowledge the environmental clearance review.' },
   ];
   const authorizationBlockers = authorizationChecks.filter((check) => !check.ready).map((check) => check.message);
   const readinessPercent = Math.round((authorizationChecks.filter((check) => check.ready).length / authorizationChecks.length) * 100);
+  const missionAuthorizationActionLabel = !canAuthorizePlanning
+    ? `Mission ${selectedMission?.status}`
+    : jsaRecord.status !== 'approved'
+      ? 'Complete CASA JSA First'
+      : !vegetationClearanceReady
+        ? 'Complete Environmental Review'
+        : selectedMission?.status === 'Approved' ? 'Re-authorize Mission' : 'Authorize Mission';
   const plannerStepComplete = [
     boundaryReady,
     aircraftPlanningReady && configurationPlanningReady,
@@ -2309,13 +2332,12 @@ export default function MissionPlanning() {
               }
             >
               <Stack spacing={1.5}>
-                {!canUseFlightWorkflow && (
-                  <Alert severity="info" sx={{ borderRadius: '8px' }}>
-                    {selectedMission
-                      ? 'Generate or review the flight plan now. CASA JSA approval and mission authorization are required before flight authorization.'
-                      : 'Save the mission draft before generating its flight plan.'}
-                  </Alert>
-                )}
+                <Alert
+                  severity={selectedMission?.status === 'Completed' ? 'success' : 'info'}
+                  sx={{ borderRadius: '8px' }}
+                >
+                  {flightWorkflowGuidance}
+                </Alert>
 
                 <Stack spacing={0.75}>
                   <DetailRow
@@ -2682,9 +2704,7 @@ export default function MissionPlanning() {
                   disabled={dataLoading || saving || !canAuthorizePlanning}
                   sx={{ minHeight: 44, px: 5 }}
                 >
-                  {canAuthorizePlanning
-                    ? selectedMission?.status === 'Approved' ? 'Re-authorize Mission' : 'Authorize Mission'
-                    : `Mission ${selectedMission?.status}`}
+                  {missionAuthorizationActionLabel}
                 </Button>
               </Stack>
             </Grid>
