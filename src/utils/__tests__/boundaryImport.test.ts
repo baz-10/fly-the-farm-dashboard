@@ -2,9 +2,17 @@ import {
   boundaryFromGeoJson,
   calculateBoundaryAreaHectares,
   parseKmlBoundary,
+  toClosedGeoJsonRing,
 } from '../boundaryImport';
 
 describe('boundary imports', () => {
+  test('closes GeoJSON rings without duplicating an existing closing point', () => {
+    expect(toClosedGeoJsonRing([[-27, 153], [-27, 154], [-28, 154]])).toEqual([
+      [153, -27], [154, -27], [154, -28], [153, -27],
+    ]);
+    expect(toClosedGeoJsonRing([[-27, 153], [-27, 154], [-27, 153]])).toHaveLength(3);
+  });
+
   test('uses the KML outer boundary instead of flattening the inner hole', () => {
     const kml = `<?xml version="1.0"?>
       <kml xmlns="http://www.opengis.net/kml/2.2"><Placemark><Polygon>

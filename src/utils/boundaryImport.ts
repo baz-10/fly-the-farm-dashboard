@@ -26,6 +26,14 @@ export interface BoundaryImportResult {
   warning?: string;
 }
 
+export function toClosedGeoJsonRing(coords: LatLng[]): number[][] {
+  const ring = coords.map(([lat, lng]) => [lng, lat]);
+  if (coords.length > 0 && !samePosition(coords[0], coords[coords.length - 1])) {
+    ring.push([...ring[0]]);
+  }
+  return ring;
+}
+
 function samePosition(first: LatLng, second: LatLng) {
   return first[0] === second[0] && first[1] === second[1];
 }
@@ -53,9 +61,7 @@ function normaliseRing(positions: Position[]): LatLng[] {
 export function calculateBoundaryAreaHectares(coords: LatLng[]): number {
   if (coords.length < 3) return 0;
 
-  const closed = coords.map(([lat, lng]) => [lng, lat]);
-  closed.push([...closed[0]]);
-  return turfArea(polygon([closed])) / 10000;
+  return turfArea(polygon([toClosedGeoJsonRing(coords)])) / 10000;
 }
 
 function buildBoundaryResult(rings: LatLng[][]): BoundaryImportResult {

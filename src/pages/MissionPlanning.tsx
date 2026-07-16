@@ -48,6 +48,7 @@ import {
   hasVegetationReviewCategories,
   sanitizeLotPlan,
 } from '../services/pmavService';
+import { toClosedGeoJsonRing } from '../utils/boundaryImport';
 import { calculateMissionMixVolumes } from '../utils/missionMix';
 import { LatLng, BoundaryFileRef } from '../types/fieldManagement';
 import { SavedVegetationCheck } from '../types/pmav';
@@ -508,8 +509,10 @@ export default function MissionPlanning() {
   const effectiveBoundaryPolygons = boundaryPolygons.length
     ? boundaryPolygons
     : boundaryCoords.length ? [boundaryCoords] : [];
+  const validBoundaryPolygons = effectiveBoundaryPolygons.filter((polygonCoords) => polygonCoords.length >= 3);
   const allBoundaryCoords = effectiveBoundaryPolygons.flat();
-  const boundaryReady = effectiveBoundaryPolygons.some((polygonCoords) => polygonCoords.length >= 3);
+  const boundaryReady = effectiveBoundaryPolygons.length > 0
+    && validBoundaryPolygons.length === effectiveBoundaryPolygons.length;
   const cleanMissionLotPlan = sanitizeLotPlan(missionLotPlan);
   const currentVegetationCheck = React.useMemo(
     () => cleanMissionLotPlan
@@ -584,6 +587,9 @@ export default function MissionPlanning() {
     actualConfiguration?.operationalLimits.maxAltitude ?? 120,
     120,
   );
+  React.useEffect(() => {
+    setFlightAltitude((current) => Math.max(0, Math.min(current, missionMaxAltitude)));
+  }, [missionMaxAltitude]);
   const authorizationChecks = [
     { ready: Boolean(missionName.trim()), message: 'Enter a mission name.' },
     { ready: Boolean(clientName.trim()), message: 'Enter a client.' },
@@ -617,11 +623,11 @@ export default function MissionPlanning() {
     const geoJsonGeometry = effectiveBoundaryPolygons.length > 1
       ? {
           type: 'MultiPolygon',
-          coordinates: effectiveBoundaryPolygons.map((polygonCoords) => [polygonCoords.map(([lat, lng]) => [lng, lat])]),
+          coordinates: validBoundaryPolygons.map((polygonCoords) => [toClosedGeoJsonRing(polygonCoords)]),
         }
       : {
           type: 'Polygon',
-          coordinates: [effectiveBoundaryPolygons[0]?.map(([lat, lng]) => [lng, lat]) || []],
+          coordinates: [toClosedGeoJsonRing(validBoundaryPolygons[0] || [])],
         };
 
     return {
@@ -1265,12 +1271,13 @@ export default function MissionPlanning() {
   const buildFlightPlan = (mission: MissionRecord): FlightPlan => {
     const now = new Date().toISOString();
     const home = allBoundaryCoords[0] || [mission.location.coordinates.latitude, mission.location.coordinates.longitude];
+    const plannedAltitude = Math.max(0, Math.min(flightAltitude, missionMaxAltitude));
     const boundaryWaypoints = effectiveBoundaryPolygons.flatMap((polygonCoords, polygonIndex) => (
       polygonCoords.map(([latitude, longitude], pointIndex) => ({
         id: `wp_${polygonIndex + 1}_${pointIndex + 1}`,
         latitude,
         longitude,
-        altitude: flightAltitude,
+        altitude: plannedAltitude,
         action: pointIndex === 0
           ? 'start-spray' as const
           : pointIndex === polygonCoords.length - 1 ? 'stop-spray' as const : 'fly-to' as const,
@@ -1289,7 +1296,7 @@ export default function MissionPlanning() {
         id: 'wp_rtl',
         latitude: home[0],
         longitude: home[1],
-        altitude: flightAltitude,
+        altitude: plannedAltitude,
         action: 'rtl' as const,
       },
     ];
@@ -1300,7 +1307,7 @@ export default function MissionPlanning() {
       planName: `${mission.missionName} operational flight plan`,
       planType: 'automated',
       flightParameters: {
-        altitude: flightAltitude,
+        altitude: plannedAltitude,
         groundSpeed,
         flightPattern: 'parallel',
         overlapForward: missionType === 'spray' ? 0 : overlapForward,
