@@ -280,8 +280,10 @@ export default function MissionJsaDialog({ open, missionName, value, onClose, on
                 label="Pilot name / signature"
                 size="small"
                 fullWidth
+                required
                 value={pilotSignature}
                 onChange={(event) => setPilotSignature(event.target.value)}
+                helperText="Required to approve the CASA JSA"
               />
             </Grid>
             <Grid size={{ xs: 12, sm: 6 }}>
