@@ -11,6 +11,7 @@
 # production
 /build
 /.vercel
+/.worktrees
 
 # misc
 .DS_Store

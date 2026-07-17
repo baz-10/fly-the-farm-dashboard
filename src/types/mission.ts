@@ -106,7 +106,8 @@ export interface MissionRecord {
   // Aircraft and Equipment Assignment
   aircraftConfiguration: {
     aircraftId: string;
-    configurationId: string; // AircraftKitConfiguration ID
+    kitId?: string; // EquipmentKit ID; preferred for model-based compatibility
+    configurationId?: string; // Optional AircraftKitConfiguration override for legacy/performance data
     estimatedFlightTime: number; // minutes
     maxPayloadWeight: number; // kg
   };

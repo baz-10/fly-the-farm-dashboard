@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { Aircraft, EquipmentKit, AircraftKitConfiguration, AircraftStatus, EquipmentKitType, OperationalStatus } from '../types/aircraft';
 import { clearSharedValue, PERSISTENCE_KEYS, readSharedValue, writeSharedValue } from '../services/persistence';
+import { getCompatibleAvailableKits, isKitCompatibleWithAircraft } from '../utils/aircraftKitCompatibility';
 
 // Context type definition
 interface AircraftContextType {
@@ -527,10 +528,7 @@ export function AircraftProvider({ children }: { children: React.ReactNode }) {
     const targetAircraft = aircraft.find(a => a.id === aircraftId);
     if (!targetAircraft) return [];
 
-    return equipmentKits.filter(kit =>
-      kit.compatibleAircraft.includes(targetAircraft.model) ||
-      kit.compatibleAircraft.includes(aircraftId)
-    );
+    return getCompatibleAvailableKits(targetAircraft, equipmentKits);
   }, [aircraft, equipmentKits]);
 
   const getAircraftConfigurations = useCallback((aircraftId: string): AircraftKitConfiguration[] => {
@@ -559,18 +557,8 @@ export function AircraftProvider({ children }: { children: React.ReactNode }) {
 
     if (!targetAircraft || !targetKit) return false;
 
-    // Check compatibility
-    const isCompatible = targetKit.compatibleAircraft.includes(targetAircraft.model) ||
-                        targetKit.compatibleAircraft.includes(aircraftId);
-
-    // Check weight limits
-    const weightWithinLimits = targetKit.specifications.weight <= targetAircraft.operationalLimits.maxPayloadWeight;
-
-    // Check operational status
-    const bothOperational = targetAircraft.status === 'operational' &&
-                           targetKit.operationalData.status === 'available';
-
-    return isCompatible && weightWithinLimits && bothOperational;
+    return targetAircraft.status === 'operational'
+      && isKitCompatibleWithAircraft(targetAircraft, targetKit);
   }, [aircraft, equipmentKits]);
 
   // Auto-save the latest fleet snapshot, including an intentionally empty fleet.
