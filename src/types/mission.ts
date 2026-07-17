@@ -1,3 +1,5 @@
+import { MissionMapFeature } from './missionMap';
+
 // Mission Status Types - 5-Phase Workflow
 export type MissionStatus = 'Planning' | 'Approved' | 'Flying' | 'Completed' | 'Locked';
 
@@ -52,6 +54,7 @@ export interface MissionPlanningState {
   missionNotes: string;
   boundaryCoords: Array<[number, number]>;
   boundaryPolygons?: Array<Array<[number, number]>>;
+  mapFeatures?: MissionMapFeature[];
   vegetationClearance?: {
     lotPlan: string;
     checkId?: string;

@@ -65,6 +65,7 @@ import { fetchWeatherForDate, geocodeLocality } from '../services/weatherService
 import { getMissionWorkflowState, MISSION_WORKFLOW_STEPS } from '../utils/missionWorkflow';
 import { LatLng, BoundaryFileRef } from '../types/fieldManagement';
 import { SavedVegetationCheck } from '../types/pmav';
+import { MissionMapFeature } from '../types/missionMap';
 import {
   BoundaryFile,
   FlightExecution,
@@ -401,6 +402,7 @@ export default function MissionPlanning() {
   const [boundaryPolygons, setBoundaryPolygons] = React.useState<LatLng[][]>([]);
   const [missionArea, setMissionArea] = React.useState(0);
   const [boundaryFile, setBoundaryFile] = React.useState<BoundaryFileRef | null>(null);
+  const [mapFeatures, setMapFeatures] = React.useState<MissionMapFeature[]>([]);
   const [jsaRecord, setJsaRecord] = React.useState<JSARecord>(() => createMissionJSA('draft'));
   const [jsaDialogOpen, setJsaDialogOpen] = React.useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = React.useState(false);
@@ -699,6 +701,7 @@ export default function MissionPlanning() {
     missionNotes,
     boundaryCoords,
     boundaryPolygons: effectiveBoundaryPolygons,
+    mapFeatures,
     vegetationClearance: {
       lotPlan: cleanMissionLotPlan,
       checkId: currentVegetationCheck?.id,
@@ -1005,6 +1008,7 @@ export default function MissionPlanning() {
     setBoundaryPolygons([]);
     setMissionArea(0);
     setBoundaryFile(null);
+    setMapFeatures([]);
     setJsaRecord(createMissionJSA('draft'));
     setJsaDialogOpen(false);
     setDeleteDialogOpen(false);
@@ -1103,6 +1107,7 @@ export default function MissionPlanning() {
     );
     setMissionArea(missionAreaHa);
     setBoundaryFile(null);
+    setMapFeatures(planning?.mapFeatures || []);
     setJsaRecord(mission.jsaRecord);
     setScheduledDate(formatDateTimeInput(new Date(mission.scheduledDate)));
     setEstimatedDuration(mission.estimatedDuration);
@@ -1913,6 +1918,11 @@ export default function MissionPlanning() {
                 }}
                 onAreaChange={setMissionArea}
                 onBoundaryFile={setBoundaryFile}
+                features={mapFeatures}
+                onFeaturesChange={(features) => {
+                  setMapFeatures(features);
+                  setJsaRecord(reopenApprovedJSA);
+                }}
                 initialAddress={siteAddress}
                 propertyLat={siteLatitude}
                 propertyLng={siteLongitude}
