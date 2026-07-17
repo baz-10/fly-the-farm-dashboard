@@ -1,5 +1,5 @@
 import React from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useParams, useSearchParams } from 'react-router-dom';
 import {
   Alert,
   Box,
@@ -58,6 +58,7 @@ import {
 } from '../services/pmavService';
 import { toClosedGeoJsonRing } from '../utils/boundaryImport';
 import { calculateMissionMixVolumes } from '../utils/missionMix';
+import { durationPartsToMinutes, minutesToDurationParts } from '../utils/missionDuration';
 import { getMissionWorkflowState, MISSION_WORKFLOW_STEPS } from '../utils/missionWorkflow';
 import { LatLng, BoundaryFileRef } from '../types/fieldManagement';
 import { SavedVegetationCheck } from '../types/pmav';
@@ -344,8 +345,8 @@ function StatusPill({ label, tone = 'success' }: { label: string; tone?: 'succes
 
 export default function MissionPlanning() {
   const theme = useTheme();
+  const { missionId: requestedMissionId = '' } = useParams<{ missionId: string }>();
   const [searchParams] = useSearchParams();
-  const requestedMissionId = searchParams.get('mission') || '';
   const requestedSection = searchParams.get('section') || '';
   const loadedMissionLinkRef = React.useRef('');
   const {
@@ -554,7 +555,7 @@ export default function MissionPlanning() {
   }));
   const missionMixVolumes = calculateMissionMixVolumes(missionArea, applicationRate, chemicals);
   const totalEstimatedCost = aircraftCost + equipmentCost + personnelCost + travelCost + chemicalCost;
-  const sortedMissions = [...missions].sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+  const durationParts = minutesToDurationParts(estimatedDuration);
   const scheduledMissionDate = new Date(toIsoFromInput(scheduledDate));
   const isCurrentAtMissionDate = (value: string | undefined) => {
     const date = value ? new Date(value) : new Date(Number.NaN);
@@ -2051,40 +2052,6 @@ export default function MissionPlanning() {
                   </Typography>
                 )}
 
-                <Divider />
-
-                {sortedMissions.length === 0 ? (
-                  <Typography sx={{ fontSize: '0.76rem', color: 'text.secondary' }}>
-                    No missions saved yet.
-                  </Typography>
-                ) : (
-                  sortedMissions.slice(0, 5).map((mission) => (
-                    <Button
-                      key={mission.id}
-                      onClick={() => loadMissionIntoPlanner(mission)}
-                      variant={mission.id === selectedMissionId ? 'contained' : 'outlined'}
-                      color={mission.id === selectedMissionId ? 'primary' : 'inherit'}
-                      sx={{
-                        justifyContent: 'space-between',
-                        textTransform: 'none',
-                        borderRadius: '8px',
-                        px: 1.25,
-                        py: 1,
-                        minHeight: 54,
-                      }}
-                    >
-                      <Box sx={{ textAlign: 'left', minWidth: 0, pr: 1 }}>
-                        <Typography sx={{ fontSize: '0.76rem', fontWeight: 900 }} noWrap>
-                          {mission.missionName}
-                        </Typography>
-                        <Typography sx={{ fontSize: '0.66rem', opacity: 0.72 }} noWrap>
-                          {mission.missionNumber} - {new Date(mission.updatedAt).toLocaleDateString('en-AU')}
-                        </Typography>
-                      </Box>
-                      <StatusPill label={mission.status} tone={STATUS_TONE[mission.status]} />
-                    </Button>
-                  ))
-                )}
               </Stack>
             </Panel>
 
@@ -2144,14 +2111,26 @@ export default function MissionPlanning() {
                       </Select>
                     </FormControl>
                   </Grid>
-                  <Grid size={{ xs: 12, sm: 6 }}>
+                  <Grid size={{ xs: 6, sm: 3 }}>
                     <TextField
-                      label="Duration min"
+                      label="Duration hours"
                       type="number"
-                      value={estimatedDuration}
-                      onChange={(event) => setEstimatedDuration(readNumber(event.target.value, 0))}
+                      value={durationParts.hours}
+                      onChange={(event) => setEstimatedDuration(durationPartsToMinutes(readNumber(event.target.value, 0), durationParts.minutes))}
                       fullWidth
                       size="small"
+                      inputProps={{ min: 0 }}
+                    />
+                  </Grid>
+                  <Grid size={{ xs: 6, sm: 3 }}>
+                    <TextField
+                      label="Duration minutes"
+                      type="number"
+                      value={durationParts.minutes}
+                      onChange={(event) => setEstimatedDuration(durationPartsToMinutes(durationParts.hours, readNumber(event.target.value, 0)))}
+                      fullWidth
+                      size="small"
+                      inputProps={{ min: 0, max: 59 }}
                     />
                   </Grid>
                   <Grid size={{ xs: 12 }}>
