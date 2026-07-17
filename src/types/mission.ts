@@ -28,6 +28,20 @@ export interface MissionPlanningChemical {
   totalRequired: number;
 }
 
+export interface MissionWeatherSnapshot {
+  source: 'Open-Meteo';
+  fetchedAt: string;
+  forecastDate: string;
+  plannedStart: string;
+  durationMinutes: number;
+  timezone: string;
+  temperatureC: number;
+  humidityPercent: number;
+  windSpeedKmh: number;
+  windGustKmh: number;
+  windDirection: string;
+}
+
 export interface MissionPlanningState {
   clientName: string;
   propertyName: string;
@@ -65,6 +79,7 @@ export interface MissionPlanningState {
     temperatureC: number;
     rainChancePercent: number;
   };
+  weatherSnapshot?: MissionWeatherSnapshot;
   chemicals: MissionPlanningChemical[];
 }
 

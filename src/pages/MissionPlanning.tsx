@@ -8,6 +8,7 @@ import {
   CardContent,
   Checkbox,
   Chip,
+  CircularProgress,
   Dialog,
   DialogActions,
   DialogContent,
@@ -59,6 +60,8 @@ import {
 import { toClosedGeoJsonRing } from '../utils/boundaryImport';
 import { calculateMissionMixVolumes } from '../utils/missionMix';
 import { durationPartsToMinutes, minutesToDurationParts } from '../utils/missionDuration';
+import { selectWeatherWindow, validateWeatherRequest } from '../utils/missionWeather';
+import { fetchWeatherForDate, geocodeLocality } from '../services/weatherService';
 import { getMissionWorkflowState, MISSION_WORKFLOW_STEPS } from '../utils/missionWorkflow';
 import { LatLng, BoundaryFileRef } from '../types/fieldManagement';
 import { SavedVegetationCheck } from '../types/pmav';
@@ -69,6 +72,7 @@ import {
   JSARecord,
   MissionPlanningChemical,
   MissionPlanningState,
+  MissionWeatherSnapshot,
   MissionPriority,
   MissionRecord,
   MissionStatus,
@@ -415,6 +419,9 @@ export default function MissionPlanning() {
   const [windGust, setWindGust] = React.useState(15);
   const [temperature, setTemperature] = React.useState(22);
   const [rainChance, setRainChance] = React.useState(0);
+  const [weatherSnapshot, setWeatherSnapshot] = React.useState<MissionWeatherSnapshot | undefined>();
+  const [weatherLoading, setWeatherLoading] = React.useState(false);
+  const [weatherError, setWeatherError] = React.useState('');
   const [aircraftCost, setAircraftCost] = React.useState(0);
   const [equipmentCost, setEquipmentCost] = React.useState(0);
   const [personnelCost, setPersonnelCost] = React.useState(0);
@@ -721,6 +728,7 @@ export default function MissionPlanning() {
       temperatureC: temperature,
       rainChancePercent: rainChance,
     },
+    weatherSnapshot,
     chemicals: chemicalRows,
   });
 
@@ -1014,6 +1022,8 @@ export default function MissionPlanning() {
     setWindGust(15);
     setTemperature(22);
     setRainChance(0);
+    setWeatherSnapshot(undefined);
+    setWeatherError('');
     setAircraftCost(0);
     setEquipmentCost(0);
     setPersonnelCost(0);
@@ -1108,6 +1118,8 @@ export default function MissionPlanning() {
     setWindGust(planning?.weatherWindow.windGustKmh || 15);
     setTemperature(planning?.weatherWindow.temperatureC || 22);
     setRainChance(planning?.weatherWindow.rainChancePercent ?? mission.weatherRequirements.maxPrecipitationChance);
+    setWeatherSnapshot(planning?.weatherSnapshot);
+    setWeatherError('');
     setAircraftCost(mission.financialEstimate.aircraftCost);
     setEquipmentCost(mission.financialEstimate.equipmentCost);
     setPersonnelCost(mission.financialEstimate.personnelCost);
@@ -1140,6 +1152,41 @@ export default function MissionPlanning() {
     if (requestedSection === 'jsa') setJsaDialogOpen(true);
     loadedMissionLinkRef.current = requestedLinkKey;
   }, [missions, requestedMissionId, requestedSection]);
+
+  const handleGetWeather = async () => {
+    const validationError = validateWeatherRequest(scheduledDate, siteLatitude, siteLongitude, siteAddress);
+    if (validationError) {
+      setWeatherError(validationError);
+      return;
+    }
+
+    setWeatherLoading(true);
+    setWeatherError('');
+    try {
+      let latitude = siteLatitude;
+      let longitude = siteLongitude;
+      if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+        const location = await geocodeLocality(siteAddress);
+        if (!location) throw new Error(`Could not find weather coordinates for "${siteAddress}".`);
+        latitude = location.latitude;
+        longitude = location.longitude;
+        setSiteLatitude(latitude);
+        setSiteLongitude(longitude);
+      }
+
+      const result = await fetchWeatherForDate(latitude as number, longitude as number, scheduledDate.slice(0, 10));
+      const snapshot = selectWeatherWindow(result.hourly, scheduledDate, estimatedDuration, result.timezone);
+      setWeatherSnapshot(snapshot);
+      setTemperature(snapshot.temperatureC);
+      setWindSpeed(snapshot.windSpeedKmh);
+      setWindGust(snapshot.windGustKmh);
+      setWindDirection(snapshot.windDirection);
+    } catch (error) {
+      setWeatherError(error instanceof Error ? error.message : 'Weather could not be retrieved. Existing conditions have been kept.');
+    } finally {
+      setWeatherLoading(false);
+    }
+  };
 
   const updateChemical = (
     index: number,
@@ -2261,6 +2308,26 @@ export default function MissionPlanning() {
             </Panel>
 
             <Panel title="Weather Window" icon={<CloudQueueIcon />}>
+              <Stack direction={{ xs: 'column', sm: 'row' }} justifyContent="space-between" alignItems={{ sm: 'center' }} spacing={1} sx={{ mb: 1.5 }}>
+                <Box>
+                  <Typography sx={{ fontSize: '0.76rem', fontWeight: 800 }}>
+                    {weatherSnapshot ? `Forecast retrieved for ${new Date(weatherSnapshot.plannedStart).toLocaleString('en-AU')}` : 'Forecast not retrieved'}
+                  </Typography>
+                  <Typography sx={{ fontSize: '0.68rem', color: 'text.secondary' }}>
+                    Open-Meteo forecast · manual values remain editable
+                  </Typography>
+                </Box>
+                <Button
+                  variant="outlined"
+                  size="small"
+                  onClick={handleGetWeather}
+                  disabled={weatherLoading}
+                  startIcon={weatherLoading ? <CircularProgress size={15} /> : <CloudQueueIcon />}
+                >
+                  {weatherLoading ? 'Getting weather' : 'Get Weather'}
+                </Button>
+              </Stack>
+              {weatherError && <Alert severity="warning" sx={{ mb: 1.5 }}>{weatherError}</Alert>}
               <Grid container spacing={1.25}>
                 <Grid size={{ xs: 12 }}>
                   <DetailRow
