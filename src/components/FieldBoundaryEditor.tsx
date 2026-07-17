@@ -14,6 +14,7 @@ import {
   ToggleButton,
   Tooltip,
   TextField,
+  MenuItem,
 } from '@mui/material';
 import UploadFileIcon from '@mui/icons-material/UploadFile';
 import DeleteIcon from '@mui/icons-material/Delete';
@@ -26,6 +27,9 @@ import { MapContainer, TileLayer, Polygon, Marker, useMapEvents, useMap, LayersC
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { LatLng, BoundaryFileRef } from '../types/fieldManagement';
+import { MissionMapFeature, MissionMapFeatureType } from '../types/missionMap';
+import { removeMapFeature, upsertMapFeature } from '../utils/missionMapAnnotations';
+import MissionMapLegend, { MAP_FEATURE_COLORS, MAP_FEATURE_LABELS } from './MissionMapLegend';
 import {
   calculateBoundaryAreaHectares,
   parseKmlBoundary,
@@ -129,6 +133,8 @@ interface Props {
   onAddressSelect?: (address: string, lat: number, lng: number) => void;
   mapHeight?: number;
   readOnly?: boolean;
+  features?: MissionMapFeature[];
+  onFeaturesChange?: (features: MissionMapFeature[]) => void;
 }
 
 // ─── Component ──────────────────────────────────────────────
@@ -147,10 +153,13 @@ export default function FieldBoundaryEditor({
   onAddressSelect,
   mapHeight = 350,
   readOnly = false,
+  features = [],
+  onFeaturesChange,
 }: Props) {
   const theme = useTheme();
   const [drawing, setDrawing] = useState(false);
   const [mode, setMode] = useState<'draw' | 'upload'>('draw');
+  const [activeFeatureType, setActiveFeatureType] = useState<'boundary' | MissionMapFeatureType>('boundary');
   const [addressQuery, setAddressQuery] = useState(initialAddress);
   const [addressResults, setAddressResults] = useState<Array<{ label: string; lat: number; lng: number }>>([]);
   const [addressLoading, setAddressLoading] = useState(false);
@@ -201,10 +210,18 @@ export default function FieldBoundaryEditor({
   }, [area]);
 
   const handleMapClick = useCallback((lat: number, lng: number) => {
+    if (activeFeatureType !== 'boundary' && onFeaturesChange) {
+      const id = `${activeFeatureType}-${Date.now()}`;
+      const geometry: MissionMapFeature['geometry'] = activeFeatureType === 'building'
+        ? { type: 'Polygon', coordinates: [[[lng - 0.00008, lat - 0.00008], [lng + 0.00008, lat - 0.00008], [lng + 0.00008, lat + 0.00008], [lng - 0.00008, lat + 0.00008], [lng - 0.00008, lat - 0.00008]]] }
+        : { type: 'Point', coordinates: [lng, lat] };
+      onFeaturesChange(upsertMapFeature(features, { id, type: activeFeatureType, label: MAP_FEATURE_LABELS[activeFeatureType], geometry }));
+      return;
+    }
     const updated = [...coords, [lat, lng] as LatLng];
     onCoordsChange(updated);
     onPolygonsChange?.([updated, ...boundaryPolygons.slice(1)]);
-  }, [boundaryPolygons, coords, onCoordsChange, onPolygonsChange]);
+  }, [activeFeatureType, boundaryPolygons, coords, features, onCoordsChange, onFeaturesChange, onPolygonsChange]);
 
   const handleUndo = () => {
     if (coords.length > 0) {
@@ -344,6 +361,21 @@ export default function FieldBoundaryEditor({
             </Stack>
           )}
         </Box>
+      )}
+
+      {!readOnly && onFeaturesChange && (
+        <TextField
+          select
+          fullWidth
+          size="small"
+          label="Map drawing tool"
+          value={activeFeatureType}
+          onChange={(event) => { setActiveFeatureType(event.target.value as 'boundary' | MissionMapFeatureType); setDrawing(true); }}
+          sx={{ mb: 1.5 }}
+        >
+          <MenuItem value="boundary">Field boundary</MenuItem>
+          {(Object.keys(MAP_FEATURE_LABELS) as MissionMapFeatureType[]).map((type) => <MenuItem key={type} value={type}>{MAP_FEATURE_LABELS[type]}</MenuItem>)}
+        </TextField>
       )}
 
       {/* Mode toggle + controls */}
@@ -506,6 +538,21 @@ export default function FieldBoundaryEditor({
             />
           ))}
 
+          {features.filter((feature) => feature.geometry.type === 'Polygon').map((feature) => (
+            <Polygon
+              key={feature.id}
+              positions={feature.geometry.type === 'Polygon' ? feature.geometry.coordinates[0].map(([lng, lat]) => [lat, lng] as LatLng) : []}
+              pathOptions={{ color: MAP_FEATURE_COLORS[feature.type], fillColor: MAP_FEATURE_COLORS[feature.type], fillOpacity: 0.45, weight: 2 }}
+            />
+          ))}
+
+          {features.filter((feature) => feature.geometry.type === 'Point').map((feature) => {
+            if (feature.geometry.type !== 'Point') return null;
+            const [lng, lat] = feature.geometry.coordinates;
+            const icon = L.divIcon({ className: '', html: `<div style="width:18px;height:18px;background:${MAP_FEATURE_COLORS[feature.type]};border:3px solid white;border-radius:50%;box-shadow:0 1px 5px rgba(0,0,0,.45)"></div>`, iconSize: [18, 18], iconAnchor: [9, 9] });
+            return <Marker key={feature.id} position={[lat, lng]} icon={icon} />;
+          })}
+
           {/* Boundary points — draggable in edit mode */}
           {coords.map((c, idx) => (
             <Marker
@@ -528,6 +575,17 @@ export default function FieldBoundaryEditor({
           <FitBounds coords={allBoundaryCoords} emptyCenter={defaultCenter} emptyZoom={defaultZoom} />
         </MapContainer>
       </Box>
+      {onFeaturesChange && <MissionMapLegend features={features} />}
+      {!readOnly && onFeaturesChange && features.length > 0 && (
+        <Stack spacing={0.5} sx={{ mt: 1 }}>
+          {features.map((feature) => (
+            <Stack key={feature.id} direction="row" alignItems="center" justifyContent="space-between">
+              <Typography sx={{ fontSize: '0.72rem' }}>{feature.label}</Typography>
+              <IconButton size="small" aria-label={`Remove ${feature.label}`} onClick={() => onFeaturesChange(removeMapFeature(features, feature.id))}><DeleteIcon fontSize="small" /></IconButton>
+            </Stack>
+          ))}
+        </Stack>
+      )}
     </Box>
   );
 }

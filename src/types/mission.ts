@@ -1,3 +1,5 @@
+import { MissionMapFeature } from './missionMap';
+
 // Mission Status Types - 5-Phase Workflow
 export type MissionStatus = 'Planning' | 'Approved' | 'Flying' | 'Completed' | 'Locked';
 
@@ -28,6 +30,20 @@ export interface MissionPlanningChemical {
   totalRequired: number;
 }
 
+export interface MissionWeatherSnapshot {
+  source: 'Open-Meteo';
+  fetchedAt: string;
+  forecastDate: string;
+  plannedStart: string;
+  durationMinutes: number;
+  timezone: string;
+  temperatureC: number;
+  humidityPercent: number;
+  windSpeedKmh: number;
+  windGustKmh: number;
+  windDirection: string;
+}
+
 export interface MissionPlanningState {
   clientName: string;
   propertyName: string;
@@ -38,6 +54,7 @@ export interface MissionPlanningState {
   missionNotes: string;
   boundaryCoords: Array<[number, number]>;
   boundaryPolygons?: Array<Array<[number, number]>>;
+  mapFeatures?: MissionMapFeature[];
   vegetationClearance?: {
     lotPlan: string;
     checkId?: string;
@@ -65,6 +82,7 @@ export interface MissionPlanningState {
     temperatureC: number;
     rainChancePercent: number;
   };
+  weatherSnapshot?: MissionWeatherSnapshot;
   chemicals: MissionPlanningChemical[];
 }
 
@@ -186,6 +204,7 @@ export interface JSARecord {
   reviewedBy?: string; // User ID (CRP/Supervisor)
   completedDate?: string;
   reviewedDate?: string;
+  missionChecks?: MissionSafetyAssessment;
 
   // Hazard Assessment
   hazardIdentification: {
@@ -250,6 +269,27 @@ export interface JSARecord {
 
   createdAt: string;
   updatedAt: string;
+}
+
+export interface MissionCheckAnswer {
+  questionId: string;
+  answer: boolean | null;
+  notes: string;
+}
+
+export interface MissionRiskControl {
+  questionId: string;
+  likelihood: number | null;
+  consequence: number | null;
+  mitigation: string;
+  residualLikelihood: number | null;
+  residualConsequence: number | null;
+}
+
+export interface MissionSafetyAssessment {
+  answers: MissionCheckAnswer[];
+  generalComments: string;
+  riskControls: MissionRiskControl[];
 }
 
 // Boundary File with Analysis Results

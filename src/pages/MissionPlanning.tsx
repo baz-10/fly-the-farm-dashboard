@@ -1,5 +1,5 @@
 import React from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useParams, useSearchParams } from 'react-router-dom';
 import {
   Alert,
   Box,
@@ -8,6 +8,7 @@ import {
   CardContent,
   Checkbox,
   Chip,
+  CircularProgress,
   Dialog,
   DialogActions,
   DialogContent,
@@ -58,9 +59,14 @@ import {
 } from '../services/pmavService';
 import { toClosedGeoJsonRing } from '../utils/boundaryImport';
 import { calculateMissionMixVolumes } from '../utils/missionMix';
+import { durationPartsToMinutes, minutesToDurationParts } from '../utils/missionDuration';
+import { selectWeatherWindow, validateWeatherRequest } from '../utils/missionWeather';
+import { buildEmptyMissionSafetyAssessment, evaluateMissionSafety } from '../utils/missionSafety';
+import { fetchWeatherForDate, geocodeLocality } from '../services/weatherService';
 import { getMissionWorkflowState, MISSION_WORKFLOW_STEPS } from '../utils/missionWorkflow';
 import { LatLng, BoundaryFileRef } from '../types/fieldManagement';
 import { SavedVegetationCheck } from '../types/pmav';
+import { MissionMapFeature } from '../types/missionMap';
 import {
   BoundaryFile,
   FlightExecution,
@@ -68,6 +74,7 @@ import {
   JSARecord,
   MissionPlanningChemical,
   MissionPlanningState,
+  MissionWeatherSnapshot,
   MissionPriority,
   MissionRecord,
   MissionStatus,
@@ -194,6 +201,7 @@ function createMissionJSA(missionId: string): JSARecord {
     status: 'pending',
     jsaNumber: `JSA-${new Date().getFullYear()}-${String(Date.now()).slice(-6)}`,
     completedBy: '',
+    missionChecks: buildEmptyMissionSafetyAssessment(),
     hazardIdentification: [
       {
         id: 'wind-drift',
@@ -344,8 +352,8 @@ function StatusPill({ label, tone = 'success' }: { label: string; tone?: 'succes
 
 export default function MissionPlanning() {
   const theme = useTheme();
+  const { missionId: requestedMissionId = '' } = useParams<{ missionId: string }>();
   const [searchParams] = useSearchParams();
-  const requestedMissionId = searchParams.get('mission') || '';
   const requestedSection = searchParams.get('section') || '';
   const loadedMissionLinkRef = React.useRef('');
   const {
@@ -396,6 +404,7 @@ export default function MissionPlanning() {
   const [boundaryPolygons, setBoundaryPolygons] = React.useState<LatLng[][]>([]);
   const [missionArea, setMissionArea] = React.useState(0);
   const [boundaryFile, setBoundaryFile] = React.useState<BoundaryFileRef | null>(null);
+  const [mapFeatures, setMapFeatures] = React.useState<MissionMapFeature[]>([]);
   const [jsaRecord, setJsaRecord] = React.useState<JSARecord>(() => createMissionJSA('draft'));
   const [jsaDialogOpen, setJsaDialogOpen] = React.useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = React.useState(false);
@@ -414,6 +423,9 @@ export default function MissionPlanning() {
   const [windGust, setWindGust] = React.useState(15);
   const [temperature, setTemperature] = React.useState(22);
   const [rainChance, setRainChance] = React.useState(0);
+  const [weatherSnapshot, setWeatherSnapshot] = React.useState<MissionWeatherSnapshot | undefined>();
+  const [weatherLoading, setWeatherLoading] = React.useState(false);
+  const [weatherError, setWeatherError] = React.useState('');
   const [aircraftCost, setAircraftCost] = React.useState(0);
   const [equipmentCost, setEquipmentCost] = React.useState(0);
   const [personnelCost, setPersonnelCost] = React.useState(0);
@@ -554,7 +566,7 @@ export default function MissionPlanning() {
   }));
   const missionMixVolumes = calculateMissionMixVolumes(missionArea, applicationRate, chemicals);
   const totalEstimatedCost = aircraftCost + equipmentCost + personnelCost + travelCost + chemicalCost;
-  const sortedMissions = [...missions].sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+  const durationParts = minutesToDurationParts(estimatedDuration);
   const scheduledMissionDate = new Date(toIsoFromInput(scheduledDate));
   const isCurrentAtMissionDate = (value: string | undefined) => {
     const date = value ? new Date(value) : new Date(Number.NaN);
@@ -592,7 +604,7 @@ export default function MissionPlanning() {
     { ready: configurationPlanningReady, message: 'Select an available, compatible equipment configuration within weight-and-balance limits.' },
     { ready: applicationRate > 0, message: 'Enter an application rate.' },
     { ready: estimatedDuration > 0, message: 'Enter an estimated duration.' },
-    { ready: jsaRecord.status === 'approved', message: 'Complete and approve the CASA JSA and risk assessment.' },
+    { ready: jsaRecord.status === 'approved' && Boolean(jsaRecord.missionChecks) && evaluateMissionSafety(jsaRecord.missionChecks!).state === 'ready', message: 'Complete the mission checks and reduce every residual risk score below 6.' },
     { ready: vegetationClearanceReady, message: 'Complete or acknowledge the environmental clearance review.' },
   ];
   const authorizationBlockers = authorizationChecks.filter((check) => !check.ready).map((check) => check.message);
@@ -691,6 +703,7 @@ export default function MissionPlanning() {
     missionNotes,
     boundaryCoords,
     boundaryPolygons: effectiveBoundaryPolygons,
+    mapFeatures,
     vegetationClearance: {
       lotPlan: cleanMissionLotPlan,
       checkId: currentVegetationCheck?.id,
@@ -720,6 +733,7 @@ export default function MissionPlanning() {
       temperatureC: temperature,
       rainChancePercent: rainChance,
     },
+    weatherSnapshot,
     chemicals: chemicalRows,
   });
 
@@ -996,6 +1010,7 @@ export default function MissionPlanning() {
     setBoundaryPolygons([]);
     setMissionArea(0);
     setBoundaryFile(null);
+    setMapFeatures([]);
     setJsaRecord(createMissionJSA('draft'));
     setJsaDialogOpen(false);
     setDeleteDialogOpen(false);
@@ -1013,6 +1028,8 @@ export default function MissionPlanning() {
     setWindGust(15);
     setTemperature(22);
     setRainChance(0);
+    setWeatherSnapshot(undefined);
+    setWeatherError('');
     setAircraftCost(0);
     setEquipmentCost(0);
     setPersonnelCost(0);
@@ -1092,6 +1109,7 @@ export default function MissionPlanning() {
     );
     setMissionArea(missionAreaHa);
     setBoundaryFile(null);
+    setMapFeatures(planning?.mapFeatures || []);
     setJsaRecord(mission.jsaRecord);
     setScheduledDate(formatDateTimeInput(new Date(mission.scheduledDate)));
     setEstimatedDuration(mission.estimatedDuration);
@@ -1107,6 +1125,8 @@ export default function MissionPlanning() {
     setWindGust(planning?.weatherWindow.windGustKmh || 15);
     setTemperature(planning?.weatherWindow.temperatureC || 22);
     setRainChance(planning?.weatherWindow.rainChancePercent ?? mission.weatherRequirements.maxPrecipitationChance);
+    setWeatherSnapshot(planning?.weatherSnapshot);
+    setWeatherError('');
     setAircraftCost(mission.financialEstimate.aircraftCost);
     setEquipmentCost(mission.financialEstimate.equipmentCost);
     setPersonnelCost(mission.financialEstimate.personnelCost);
@@ -1139,6 +1159,41 @@ export default function MissionPlanning() {
     if (requestedSection === 'jsa') setJsaDialogOpen(true);
     loadedMissionLinkRef.current = requestedLinkKey;
   }, [missions, requestedMissionId, requestedSection]);
+
+  const handleGetWeather = async () => {
+    const validationError = validateWeatherRequest(scheduledDate, siteLatitude, siteLongitude, siteAddress);
+    if (validationError) {
+      setWeatherError(validationError);
+      return;
+    }
+
+    setWeatherLoading(true);
+    setWeatherError('');
+    try {
+      let latitude = siteLatitude;
+      let longitude = siteLongitude;
+      if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+        const location = await geocodeLocality(siteAddress);
+        if (!location) throw new Error(`Could not find weather coordinates for "${siteAddress}".`);
+        latitude = location.latitude;
+        longitude = location.longitude;
+        setSiteLatitude(latitude);
+        setSiteLongitude(longitude);
+      }
+
+      const result = await fetchWeatherForDate(latitude as number, longitude as number, scheduledDate.slice(0, 10));
+      const snapshot = selectWeatherWindow(result.hourly, scheduledDate, estimatedDuration, result.timezone);
+      setWeatherSnapshot(snapshot);
+      setTemperature(snapshot.temperatureC);
+      setWindSpeed(snapshot.windSpeedKmh);
+      setWindGust(snapshot.windGustKmh);
+      setWindDirection(snapshot.windDirection);
+    } catch (error) {
+      setWeatherError(error instanceof Error ? error.message : 'Weather could not be retrieved. Existing conditions have been kept.');
+    } finally {
+      setWeatherLoading(false);
+    }
+  };
 
   const updateChemical = (
     index: number,
@@ -1865,6 +1920,11 @@ export default function MissionPlanning() {
                 }}
                 onAreaChange={setMissionArea}
                 onBoundaryFile={setBoundaryFile}
+                features={mapFeatures}
+                onFeaturesChange={(features) => {
+                  setMapFeatures(features);
+                  setJsaRecord(reopenApprovedJSA);
+                }}
                 initialAddress={siteAddress}
                 propertyLat={siteLatitude}
                 propertyLng={siteLongitude}
@@ -2051,40 +2111,6 @@ export default function MissionPlanning() {
                   </Typography>
                 )}
 
-                <Divider />
-
-                {sortedMissions.length === 0 ? (
-                  <Typography sx={{ fontSize: '0.76rem', color: 'text.secondary' }}>
-                    No missions saved yet.
-                  </Typography>
-                ) : (
-                  sortedMissions.slice(0, 5).map((mission) => (
-                    <Button
-                      key={mission.id}
-                      onClick={() => loadMissionIntoPlanner(mission)}
-                      variant={mission.id === selectedMissionId ? 'contained' : 'outlined'}
-                      color={mission.id === selectedMissionId ? 'primary' : 'inherit'}
-                      sx={{
-                        justifyContent: 'space-between',
-                        textTransform: 'none',
-                        borderRadius: '8px',
-                        px: 1.25,
-                        py: 1,
-                        minHeight: 54,
-                      }}
-                    >
-                      <Box sx={{ textAlign: 'left', minWidth: 0, pr: 1 }}>
-                        <Typography sx={{ fontSize: '0.76rem', fontWeight: 900 }} noWrap>
-                          {mission.missionName}
-                        </Typography>
-                        <Typography sx={{ fontSize: '0.66rem', opacity: 0.72 }} noWrap>
-                          {mission.missionNumber} - {new Date(mission.updatedAt).toLocaleDateString('en-AU')}
-                        </Typography>
-                      </Box>
-                      <StatusPill label={mission.status} tone={STATUS_TONE[mission.status]} />
-                    </Button>
-                  ))
-                )}
               </Stack>
             </Panel>
 
@@ -2144,14 +2170,26 @@ export default function MissionPlanning() {
                       </Select>
                     </FormControl>
                   </Grid>
-                  <Grid size={{ xs: 12, sm: 6 }}>
+                  <Grid size={{ xs: 6, sm: 3 }}>
                     <TextField
-                      label="Duration min"
+                      label="Duration hours"
                       type="number"
-                      value={estimatedDuration}
-                      onChange={(event) => setEstimatedDuration(readNumber(event.target.value, 0))}
+                      value={durationParts.hours}
+                      onChange={(event) => setEstimatedDuration(durationPartsToMinutes(readNumber(event.target.value, 0), durationParts.minutes))}
                       fullWidth
                       size="small"
+                      inputProps={{ min: 0 }}
+                    />
+                  </Grid>
+                  <Grid size={{ xs: 6, sm: 3 }}>
+                    <TextField
+                      label="Duration minutes"
+                      type="number"
+                      value={durationParts.minutes}
+                      onChange={(event) => setEstimatedDuration(durationPartsToMinutes(durationParts.hours, readNumber(event.target.value, 0)))}
+                      fullWidth
+                      size="small"
+                      inputProps={{ min: 0, max: 59 }}
                     />
                   </Grid>
                   <Grid size={{ xs: 12 }}>
@@ -2282,6 +2320,26 @@ export default function MissionPlanning() {
             </Panel>
 
             <Panel title="Weather Window" icon={<CloudQueueIcon />}>
+              <Stack direction={{ xs: 'column', sm: 'row' }} justifyContent="space-between" alignItems={{ sm: 'center' }} spacing={1} sx={{ mb: 1.5 }}>
+                <Box>
+                  <Typography sx={{ fontSize: '0.76rem', fontWeight: 800 }}>
+                    {weatherSnapshot ? `Forecast retrieved for ${new Date(weatherSnapshot.plannedStart).toLocaleString('en-AU')}` : 'Forecast not retrieved'}
+                  </Typography>
+                  <Typography sx={{ fontSize: '0.68rem', color: 'text.secondary' }}>
+                    Open-Meteo forecast · manual values remain editable
+                  </Typography>
+                </Box>
+                <Button
+                  variant="outlined"
+                  size="small"
+                  onClick={handleGetWeather}
+                  disabled={weatherLoading}
+                  startIcon={weatherLoading ? <CircularProgress size={15} /> : <CloudQueueIcon />}
+                >
+                  {weatherLoading ? 'Getting weather' : 'Get Weather'}
+                </Button>
+              </Stack>
+              {weatherError && <Alert severity="warning" sx={{ mb: 1.5 }}>{weatherError}</Alert>}
               <Grid container spacing={1.25}>
                 <Grid size={{ xs: 12 }}>
                   <DetailRow

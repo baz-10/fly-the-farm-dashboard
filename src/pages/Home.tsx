@@ -242,7 +242,7 @@ export default function Home() {
     return {
       ...nextAction,
       ...MISSION_ACTION_META[nextAction.kind],
-      path: `/mission-planning?mission=${encodeURIComponent(mission.id)}`,
+      path: `/missions/${encodeURIComponent(mission.id)}`,
     };
   }), [activeMissions]);
 
@@ -273,10 +273,10 @@ export default function Home() {
           </Typography>
         </Box>
         <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
-          <Button variant="outlined" startIcon={<CalendarTodayIcon />} onClick={() => navigate('/mission-planning')}>
+          <Button variant="outlined" startIcon={<CalendarTodayIcon />} onClick={() => navigate('/missions')}>
             View Schedule
           </Button>
-          <Button variant="contained" startIcon={<FlightTakeoffIcon />} onClick={() => navigate('/mission-planning')}>
+          <Button variant="contained" startIcon={<FlightTakeoffIcon />} onClick={() => navigate('/missions/new')}>
             Plan Mission
           </Button>
         </Stack>
@@ -313,7 +313,7 @@ export default function Home() {
         <Grid size={{ xs: 12, lg: 5 }}>
           <Panel
             title="Today's Spray Schedule"
-            action={<Button size="small" onClick={() => navigate('/mission-planning')} sx={{ fontWeight: 800 }}>View all</Button>}
+            action={<Button size="small" onClick={() => navigate('/missions')} sx={{ fontWeight: 800 }}>View all</Button>}
             sx={{ minHeight: 280 }}
           >
             {todayMissions.length > 0 ? (
@@ -338,7 +338,7 @@ export default function Home() {
                 title="No spray missions today"
                 body="Missions scheduled for today will appear here once they are saved."
                 action="Plan mission"
-                onAction={() => navigate('/mission-planning')}
+                onAction={() => navigate('/missions/new')}
               />
             )}
           </Panel>
@@ -370,7 +370,7 @@ export default function Home() {
                     ))}
                   </Stack>
                 </Stack>
-                <Button fullWidth variant="outlined" sx={{ mt: 2.5 }} onClick={() => navigate('/mission-planning')}>
+                <Button fullWidth variant="outlined" sx={{ mt: 2.5 }} onClick={() => navigate('/missions')}>
                   View all missions
                 </Button>
               </>
@@ -380,7 +380,7 @@ export default function Home() {
                 title="No active missions"
                 body="Readiness starts calculating when the first mission draft is saved."
                 action="Create mission"
-                onAction={() => navigate('/mission-planning')}
+                onAction={() => navigate('/missions/new')}
               />
             )}
           </Panel>
