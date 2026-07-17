@@ -1,40 +1,14 @@
 import React from 'react';
-import {
-  Alert,
-  Box,
-  Button,
-  Dialog,
-  DialogActions,
-  DialogContent,
-  DialogTitle,
-  Divider,
-  FormControl,
-  Grid,
-  IconButton,
-  InputLabel,
-  MenuItem,
-  Select,
-  Stack,
-  TextField,
-  Tooltip,
-  Typography,
-} from '@mui/material';
-import AddIcon from '@mui/icons-material/Add';
-import DeleteIcon from '@mui/icons-material/Delete';
+import { Alert, Box, Button, Dialog, DialogActions, DialogContent, DialogTitle, FormControl, FormControlLabel, Grid, InputLabel, MenuItem, Radio, RadioGroup, Select, Stack, TextField, Typography } from '@mui/material';
 import VerifiedUserIcon from '@mui/icons-material/VerifiedUser';
-import { JSARecord } from '../types/mission';
+import { JSARecord, MissionSafetyAssessment } from '../types/mission';
+import { buildEmptyMissionSafetyAssessment, calculateRiskScore, evaluateMissionSafety, isUnsafeAnswer, MISSION_CHECKS, syncRiskControls } from '../utils/missionSafety';
 
-type Hazard = JSARecord['hazardIdentification'][number];
-type Likelihood = Hazard['likelihood'];
-type Consequence = Hazard['consequence'];
-type RiskLevel = Hazard['riskLevel'];
+const LIKELIHOODS = ['rare', 'unlikely', 'possible', 'likely', 'almost-certain'] as const;
+const CONSEQUENCES = ['insignificant', 'minor', 'moderate', 'major', 'catastrophic'] as const;
+type LegacyRisk = 'low' | 'medium' | 'high' | 'critical';
 
-const LIKELIHOODS: Likelihood[] = ['rare', 'unlikely', 'possible', 'likely', 'almost-certain'];
-const CONSEQUENCES: Consequence[] = ['insignificant', 'minor', 'moderate', 'major', 'catastrophic'];
-const RISK_LEVELS: RiskLevel[] = ['low', 'medium', 'high', 'critical'];
-const CATEGORIES: Hazard['category'][] = ['operational', 'environmental', 'personnel', 'equipment', 'external'];
-
-export function calculateRiskLevel(likelihood: Likelihood, consequence: Consequence): RiskLevel {
+export function calculateRiskLevel(likelihood: typeof LIKELIHOODS[number], consequence: typeof CONSEQUENCES[number]): LegacyRisk {
   const score = (LIKELIHOODS.indexOf(likelihood) + 1) * (CONSEQUENCES.indexOf(consequence) + 1);
   if (score <= 4) return 'low';
   if (score <= 9) return 'medium';
@@ -42,279 +16,71 @@ export function calculateRiskLevel(likelihood: Likelihood, consequence: Conseque
   return 'critical';
 }
 
-function newHazard(): Hazard {
-  return {
-    id: `hazard_${Date.now()}`,
-    category: 'operational',
-    description: '',
-    riskLevel: 'medium',
-    likelihood: 'possible',
-    consequence: 'moderate',
-    controlMeasures: [],
-    residualRisk: 'low',
-  };
-}
+interface Props { open: boolean; missionName: string; value: JSARecord; onClose: () => void; onSave: (jsa: JSARecord) => void; }
 
-interface MissionJsaDialogProps {
-  open: boolean;
-  missionName: string;
-  value: JSARecord;
-  onClose: () => void;
-  onSave: (jsa: JSARecord) => void;
-}
-
-export default function MissionJsaDialog({ open, missionName, value, onClose, onSave }: MissionJsaDialogProps) {
-  const [draft, setDraft] = React.useState(value);
+export default function MissionJsaDialog({ open, missionName, value, onClose, onSave }: Props) {
+  const [assessment, setAssessment] = React.useState<MissionSafetyAssessment>(value.missionChecks || buildEmptyMissionSafetyAssessment());
   const [pilotSignature, setPilotSignature] = React.useState(value.signOffs.pilot.signature || '');
-  const [crpSignature, setCrpSignature] = React.useState(value.signOffs.crp?.signature || '');
-  const [crpComments, setCrpComments] = React.useState(value.signOffs.crp?.comments || '');
   const [error, setError] = React.useState('');
 
   React.useEffect(() => {
     if (!open) return;
-    setDraft(value);
+    setAssessment(value.missionChecks || buildEmptyMissionSafetyAssessment());
     setPilotSignature(value.signOffs.pilot.signature || '');
-    setCrpSignature(value.signOffs.crp?.signature || '');
-    setCrpComments(value.signOffs.crp?.comments || '');
     setError('');
   }, [open, value]);
 
-  const highResidualRisk = draft.hazardIdentification.some((hazard) => ['high', 'critical'].includes(hazard.residualRisk));
-
-  const updateHazard = (index: number, update: Partial<Hazard>) => {
-    setDraft((current) => ({
-      ...current,
-      hazardIdentification: current.hazardIdentification.map((hazard, hazardIndex) => {
-        if (hazardIndex !== index) return hazard;
-        const next = { ...hazard, ...update };
-        if (update.likelihood || update.consequence) {
-          next.riskLevel = calculateRiskLevel(next.likelihood, next.consequence);
-        }
-        return next;
-      }),
-    }));
-  };
-
-  const buildRecord = (approve: boolean): JSARecord | null => {
-    const invalidHazard = draft.hazardIdentification.find((hazard) => (
-      !hazard.description.trim() || hazard.controlMeasures.length === 0
-      || hazard.controlMeasures.some((control) => !control.trim())
-    ));
-
-    if (approve && draft.hazardIdentification.length === 0) {
-      setError('Add at least one assessed hazard before approving the CASA JSA.');
-      return null;
-    }
-    if (approve && invalidHazard) {
-      setError('Every hazard needs a description and at least one control measure.');
-      return null;
-    }
-    if (approve && !pilotSignature.trim()) {
-      setError('Enter the pilot name to sign this CASA JSA.');
-      return null;
-    }
-    if (approve && highResidualRisk && !crpSignature.trim()) {
-      setError('CRP sign-off is required while residual risk is high or critical.');
-      return null;
-    }
-
-    const now = new Date().toISOString();
-    return {
-      ...draft,
-      status: approve ? 'approved' : 'in-progress',
-      completedBy: pilotSignature.trim() || draft.completedBy,
-      reviewedBy: approve && crpSignature.trim() ? crpSignature.trim() : undefined,
-      completedDate: approve ? now : draft.completedDate,
-      reviewedDate: approve && crpSignature.trim() ? now : undefined,
-      signOffs: {
-        pilot: {
-          userId: 'current_user',
-          signature: approve ? pilotSignature.trim() : '',
-          signedAt: approve ? now : '',
-        },
-        crp: approve && crpSignature.trim() ? {
-          userId: 'current_user',
-          signature: crpSignature.trim(),
-          signedAt: now,
-          comments: crpComments.trim() || undefined,
-        } : undefined,
-      },
-      updatedAt: now,
-    };
-  };
+  const updateAssessment = (next: MissionSafetyAssessment) => setAssessment({ ...next, riskControls: syncRiskControls(next) });
+  const safety = evaluateMissionSafety(assessment);
 
   const save = (approve: boolean) => {
-    const record = buildRecord(approve);
-    if (!record) return;
-    onSave(record);
+    if (approve && safety.state !== 'ready') { setError(safety.blockers[0] || 'Complete the mission checks before approval.'); return; }
+    if (approve && !pilotSignature.trim()) { setError('Enter the pilot name to approve the mission checks.'); return; }
+    const now = new Date().toISOString();
+    onSave({ ...value, missionChecks: assessment, status: approve ? 'approved' : 'in-progress', completedBy: pilotSignature.trim() || value.completedBy, completedDate: approve ? now : value.completedDate, signOffs: { ...value.signOffs, pilot: { userId: 'current_user', signature: approve ? pilotSignature.trim() : '', signedAt: approve ? now : '' } }, updatedAt: now });
     onClose();
   };
 
   return (
-    <Dialog open={open} onClose={onClose} fullWidth maxWidth="md">
-      <DialogTitle sx={{ pb: 1 }}>
-        <Stack direction="row" spacing={1} alignItems="center">
-          <VerifiedUserIcon color="primary" />
-          <Box>
-            <Typography variant="h6" sx={{ fontSize: '1.05rem' }}>CASA JSA & Risk Assessment</Typography>
-            <Typography sx={{ fontSize: '0.76rem', color: 'text.secondary' }}>
-              {missionName.trim() || 'New mission'} · {draft.jsaNumber}
-            </Typography>
-          </Box>
-        </Stack>
-      </DialogTitle>
+    <Dialog open={open} onClose={onClose} fullWidth maxWidth="lg">
+      <DialogTitle><Stack direction="row" spacing={1} alignItems="center"><VerifiedUserIcon color="primary" /><Box><Typography variant="h6">Mission Checks</Typography><Typography variant="caption" color="text.secondary">{missionName || 'New mission'} · {value.jsaNumber}</Typography></Box></Stack></DialogTitle>
       <DialogContent dividers>
         <Stack spacing={2}>
+          <Alert severity={safety.state === 'ready' ? 'success' : safety.state === 'cannot-proceed' ? 'error' : 'warning'}>
+            {safety.state === 'ready' ? 'Mission checks are ready for approval.' : safety.blockers[0] || 'Complete all mission checks.'}
+          </Alert>
           {error && <Alert severity="error" onClose={() => setError('')}>{error}</Alert>}
-
-          {draft.hazardIdentification.map((hazard, index) => (
-            <Box key={hazard.id} sx={{ pb: 2, borderBottom: '1px solid', borderColor: 'divider' }}>
-              <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1 }}>
-                <Typography sx={{ fontSize: '0.82rem', fontWeight: 800 }}>Hazard {index + 1}</Typography>
-                <Tooltip title="Remove hazard">
-                  <IconButton
-                    size="small"
-                    color="error"
-                    onClick={() => setDraft((current) => ({
-                      ...current,
-                      hazardIdentification: current.hazardIdentification.filter((_, hazardIndex) => hazardIndex !== index),
-                    }))}
-                  >
-                    <DeleteIcon fontSize="small" />
-                  </IconButton>
-                </Tooltip>
-              </Stack>
+          {MISSION_CHECKS.map((check, index) => {
+            const answer = assessment.answers.find((item) => item.questionId === check.id) || { questionId: check.id, answer: null, notes: '' };
+            const unsafe = isUnsafeAnswer(check.id, answer.answer);
+            return <Box key={check.id} sx={{ p: 2, border: '1px solid', borderColor: unsafe ? 'warning.main' : 'divider', borderRadius: 2 }}>
+              <Typography sx={{ fontWeight: 800, mb: 0.5 }}>{index + 1}. {check.question}</Typography>
+              <RadioGroup row value={answer.answer === null ? '' : String(answer.answer)} onChange={(event) => updateAssessment({ ...assessment, answers: assessment.answers.map((item) => item.questionId === check.id ? { ...item, answer: event.target.value === 'true' } : item) })}>
+                <FormControlLabel value="true" control={<Radio />} label="Yes" /><FormControlLabel value="false" control={<Radio />} label="No" />
+              </RadioGroup>
+              <TextField fullWidth size="small" multiline minRows={2} label="Notes" value={answer.notes} onChange={(event) => updateAssessment({ ...assessment, answers: assessment.answers.map((item) => item.questionId === check.id ? { ...item, notes: event.target.value } : item) })} />
+            </Box>;
+          })}
+          <TextField fullWidth multiline minRows={3} label="Additional comments" helperText="Add information for operational approvals or stakeholders." value={assessment.generalComments} onChange={(event) => updateAssessment({ ...assessment, generalComments: event.target.value })} />
+          {assessment.riskControls.length > 0 && <Typography variant="h6">Risk Control Forms</Typography>}
+          {assessment.riskControls.map((control) => {
+            const check = MISSION_CHECKS.find((item) => item.id === control.questionId)!;
+            const initialScore = calculateRiskScore(control.likelihood, control.consequence);
+            const residualScore = calculateRiskScore(control.residualLikelihood, control.residualConsequence);
+            const update = (changes: Partial<typeof control>) => setAssessment({ ...assessment, riskControls: assessment.riskControls.map((item) => item.questionId === control.questionId ? { ...item, ...changes } : item) });
+            return <Box key={control.questionId} sx={{ p: 2, bgcolor: 'warning.50', border: '1px solid', borderColor: 'warning.light', borderRadius: 2 }}>
+              <Typography sx={{ fontWeight: 800, mb: 1 }}>{check.question}</Typography>
               <Grid container spacing={1.25}>
-                <Grid size={{ xs: 12, sm: 4 }}>
-                  <FormControl size="small" fullWidth>
-                    <InputLabel>Category</InputLabel>
-                    <Select
-                      label="Category"
-                      value={hazard.category}
-                      onChange={(event) => updateHazard(index, { category: event.target.value as Hazard['category'] })}
-                    >
-                      {CATEGORIES.map((category) => <MenuItem key={category} value={category}>{category}</MenuItem>)}
-                    </Select>
-                  </FormControl>
-                </Grid>
-                <Grid size={{ xs: 12, sm: 8 }}>
-                  <TextField
-                    label="Hazard description"
-                    size="small"
-                    fullWidth
-                    value={hazard.description}
-                    onChange={(event) => updateHazard(index, { description: event.target.value })}
-                  />
-                </Grid>
-                <Grid size={{ xs: 12, sm: 4 }}>
-                  <FormControl size="small" fullWidth>
-                    <InputLabel>Likelihood</InputLabel>
-                    <Select
-                      label="Likelihood"
-                      value={hazard.likelihood}
-                      onChange={(event) => updateHazard(index, { likelihood: event.target.value as Likelihood })}
-                    >
-                      {LIKELIHOODS.map((item) => <MenuItem key={item} value={item}>{item}</MenuItem>)}
-                    </Select>
-                  </FormControl>
-                </Grid>
-                <Grid size={{ xs: 12, sm: 4 }}>
-                  <FormControl size="small" fullWidth>
-                    <InputLabel>Consequence</InputLabel>
-                    <Select
-                      label="Consequence"
-                      value={hazard.consequence}
-                      onChange={(event) => updateHazard(index, { consequence: event.target.value as Consequence })}
-                    >
-                      {CONSEQUENCES.map((item) => <MenuItem key={item} value={item}>{item}</MenuItem>)}
-                    </Select>
-                  </FormControl>
-                </Grid>
-                <Grid size={{ xs: 12, sm: 4 }}>
-                  <TextField label="Initial risk" size="small" fullWidth value={hazard.riskLevel} slotProps={{ input: { readOnly: true } }} />
-                </Grid>
-                <Grid size={{ xs: 12, sm: 8 }}>
-                  <TextField
-                    label="Control measures (one per line)"
-                    size="small"
-                    fullWidth
-                    multiline
-                    minRows={2}
-                    value={hazard.controlMeasures.join('\n')}
-                    onChange={(event) => updateHazard(index, { controlMeasures: event.target.value.split('\n') })}
-                  />
-                </Grid>
-                <Grid size={{ xs: 12, sm: 4 }}>
-                  <FormControl size="small" fullWidth>
-                    <InputLabel>Residual risk</InputLabel>
-                    <Select
-                      label="Residual risk"
-                      value={hazard.residualRisk}
-                      onChange={(event) => updateHazard(index, { residualRisk: event.target.value as RiskLevel })}
-                    >
-                      {RISK_LEVELS.map((item) => <MenuItem key={item} value={item}>{item}</MenuItem>)}
-                    </Select>
-                  </FormControl>
-                </Grid>
+                {(['likelihood', 'consequence'] as const).map((field) => <Grid key={field} size={{ xs: 6, md: 3 }}><FormControl fullWidth size="small"><InputLabel>{field}</InputLabel><Select label={field} value={control[field] || ''} onChange={(e) => update({ [field]: Number(e.target.value) })}>{[1,2,3,4,5].map((n) => <MenuItem key={n} value={n}>{n}</MenuItem>)}</Select></FormControl></Grid>)}
+                <Grid size={{ xs: 12, md: 3 }}><TextField fullWidth size="small" label="Initial score" value={initialScore ?? 'Not assessed'} slotProps={{ input: { readOnly: true } }} /></Grid>
+                {initialScore !== null && initialScore >= 6 && <><Grid size={{ xs: 12 }}><TextField fullWidth multiline minRows={2} label="Mitigation procedures" value={control.mitigation} onChange={(e) => update({ mitigation: e.target.value })} /></Grid>{(['residualLikelihood', 'residualConsequence'] as const).map((field) => <Grid key={field} size={{ xs: 6, md: 3 }}><FormControl fullWidth size="small"><InputLabel>{field === 'residualLikelihood' ? 'Residual likelihood' : 'Residual consequence'}</InputLabel><Select label={field} value={control[field] || ''} onChange={(e) => update({ [field]: Number(e.target.value) })}>{[1,2,3,4,5].map((n) => <MenuItem key={n} value={n}>{n}</MenuItem>)}</Select></FormControl></Grid>)}<Grid size={{ xs: 12, md: 3 }}><TextField fullWidth size="small" error={residualScore !== null && residualScore >= 6} label="Residual score" value={residualScore ?? 'Not assessed'} slotProps={{ input: { readOnly: true } }} /></Grid></>}
               </Grid>
-            </Box>
-          ))}
-
-          <Button
-            variant="outlined"
-            startIcon={<AddIcon />}
-            onClick={() => setDraft((current) => ({
-              ...current,
-              hazardIdentification: [...current.hazardIdentification, newHazard()],
-            }))}
-            sx={{ alignSelf: 'flex-start' }}
-          >
-            Add Hazard
-          </Button>
-
-          <Divider />
-          <Typography sx={{ fontSize: '0.82rem', fontWeight: 800 }}>Sign-off</Typography>
-          <Grid container spacing={1.25}>
-            <Grid size={{ xs: 12, sm: 6 }}>
-              <TextField
-                label="Pilot name / signature"
-                size="small"
-                fullWidth
-                required
-                value={pilotSignature}
-                onChange={(event) => setPilotSignature(event.target.value)}
-                helperText="Required to approve the CASA JSA"
-              />
-            </Grid>
-            <Grid size={{ xs: 12, sm: 6 }}>
-              <TextField
-                label={highResidualRisk ? 'CRP name / signature (required)' : 'CRP name / signature (optional)'}
-                size="small"
-                fullWidth
-                value={crpSignature}
-                onChange={(event) => setCrpSignature(event.target.value)}
-              />
-            </Grid>
-            <Grid size={{ xs: 12 }}>
-              <TextField
-                label="CRP review comments"
-                size="small"
-                fullWidth
-                value={crpComments}
-                onChange={(event) => setCrpComments(event.target.value)}
-              />
-            </Grid>
-          </Grid>
-          {highResidualRisk && (
-            <Alert severity="warning">High or critical residual risk requires CRP sign-off before this CASA JSA can be approved.</Alert>
-          )}
+            </Box>;
+          })}
+          <TextField label="Pilot name / signature" required fullWidth value={pilotSignature} onChange={(event) => setPilotSignature(event.target.value)} />
         </Stack>
       </DialogContent>
-      <DialogActions sx={{ px: 3, py: 1.5 }}>
-        <Button onClick={onClose}>Cancel</Button>
-        <Button variant="outlined" onClick={() => save(false)}>Save Draft</Button>
-        <Button variant="contained" onClick={() => save(true)}>Approve CASA JSA</Button>
-      </DialogActions>
+      <DialogActions><Button onClick={onClose}>Cancel</Button><Button variant="outlined" onClick={() => save(false)}>Save Draft</Button><Button variant="contained" onClick={() => save(true)}>Approve Mission Checks</Button></DialogActions>
     </Dialog>
   );
 }

@@ -61,6 +61,7 @@ import { toClosedGeoJsonRing } from '../utils/boundaryImport';
 import { calculateMissionMixVolumes } from '../utils/missionMix';
 import { durationPartsToMinutes, minutesToDurationParts } from '../utils/missionDuration';
 import { selectWeatherWindow, validateWeatherRequest } from '../utils/missionWeather';
+import { buildEmptyMissionSafetyAssessment, evaluateMissionSafety } from '../utils/missionSafety';
 import { fetchWeatherForDate, geocodeLocality } from '../services/weatherService';
 import { getMissionWorkflowState, MISSION_WORKFLOW_STEPS } from '../utils/missionWorkflow';
 import { LatLng, BoundaryFileRef } from '../types/fieldManagement';
@@ -200,6 +201,7 @@ function createMissionJSA(missionId: string): JSARecord {
     status: 'pending',
     jsaNumber: `JSA-${new Date().getFullYear()}-${String(Date.now()).slice(-6)}`,
     completedBy: '',
+    missionChecks: buildEmptyMissionSafetyAssessment(),
     hazardIdentification: [
       {
         id: 'wind-drift',
@@ -602,7 +604,7 @@ export default function MissionPlanning() {
     { ready: configurationPlanningReady, message: 'Select an available, compatible equipment configuration within weight-and-balance limits.' },
     { ready: applicationRate > 0, message: 'Enter an application rate.' },
     { ready: estimatedDuration > 0, message: 'Enter an estimated duration.' },
-    { ready: jsaRecord.status === 'approved', message: 'Complete and approve the CASA JSA and risk assessment.' },
+    { ready: jsaRecord.status === 'approved' && Boolean(jsaRecord.missionChecks) && evaluateMissionSafety(jsaRecord.missionChecks!).state === 'ready', message: 'Complete the mission checks and reduce every residual risk score below 6.' },
     { ready: vegetationClearanceReady, message: 'Complete or acknowledge the environmental clearance review.' },
   ];
   const authorizationBlockers = authorizationChecks.filter((check) => !check.ready).map((check) => check.message);

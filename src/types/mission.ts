@@ -204,6 +204,7 @@ export interface JSARecord {
   reviewedBy?: string; // User ID (CRP/Supervisor)
   completedDate?: string;
   reviewedDate?: string;
+  missionChecks?: MissionSafetyAssessment;
 
   // Hazard Assessment
   hazardIdentification: {
@@ -268,6 +269,27 @@ export interface JSARecord {
 
   createdAt: string;
   updatedAt: string;
+}
+
+export interface MissionCheckAnswer {
+  questionId: string;
+  answer: boolean | null;
+  notes: string;
+}
+
+export interface MissionRiskControl {
+  questionId: string;
+  likelihood: number | null;
+  consequence: number | null;
+  mitigation: string;
+  residualLikelihood: number | null;
+  residualConsequence: number | null;
+}
+
+export interface MissionSafetyAssessment {
+  answers: MissionCheckAnswer[];
+  generalComments: string;
+  riskControls: MissionRiskControl[];
 }
 
 // Boundary File with Analysis Results
