@@ -46,22 +46,22 @@ describe('Operations schedule navigation', () => {
     mockNavigate.mockReset();
   });
 
-  test('View Schedule opens mission planning instead of job history', async () => {
+  test('View Schedule opens the mission register instead of job history', async () => {
     const user = userEvent.setup();
     renderHome();
 
     await user.click(screen.getByRole('button', { name: 'View Schedule' }));
 
-    expect(mockNavigate).toHaveBeenCalledWith('/mission-planning');
+    expect(mockNavigate).toHaveBeenCalledWith('/missions');
     expect(mockNavigate).not.toHaveBeenCalledWith('/jobs/history');
   });
 
-  test("Today's Spray Schedule View all opens mission planning", async () => {
+  test("Today's Spray Schedule View all opens the mission register", async () => {
     const user = userEvent.setup();
     renderHome();
 
     await user.click(screen.getByRole('button', { name: 'View all' }));
 
-    expect(mockNavigate).toHaveBeenCalledWith('/mission-planning');
+    expect(mockNavigate).toHaveBeenCalledWith('/missions');
   });
 });

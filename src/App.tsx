@@ -37,6 +37,8 @@ import ComplianceVegetation from './pages/ComplianceVegetation';
 import ComplianceSafety from './pages/ComplianceSafety';
 import ComplianceDocumentation from './pages/ComplianceDocumentation';
 import MissionPlanning from './pages/MissionPlanning';
+import MissionRegister from './pages/MissionRegister';
+import MissionRouteRedirect from './components/MissionRouteRedirect';
 import AskFTF from './pages/AskFTF';
 import UserLicenseSettings from './pages/UserLicenseSettings';
 import { UserLicenseProvider } from './contexts/UserLicenseContext';
@@ -111,7 +113,10 @@ function App() {
           <Route path="/aircraft" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><AircraftManagement /></ProtectedRoute>} />
           <Route path="/fleet-work-packs" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><FleetWorkPacks /></ProtectedRoute>} />
           <Route path="/jsa" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><JSAManagement /></ProtectedRoute>} />
-          <Route path="/mission-planning" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><MissionPlanning /></ProtectedRoute>} />
+          <Route path="/missions" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><MissionRegister /></ProtectedRoute>} />
+          <Route path="/missions/new" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><MissionPlanning /></ProtectedRoute>} />
+          <Route path="/missions/:missionId" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><MissionPlanning /></ProtectedRoute>} />
+          <Route path="/mission-planning" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><MissionRouteRedirect /></ProtectedRoute>} />
           <Route path="/compliance" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><ComplianceMenu /></ProtectedRoute>} />
           <Route path="/compliance/flight" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><ComplianceFlight /></ProtectedRoute>} />
           <Route path="/compliance/chemical" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><ComplianceChemical /></ProtectedRoute>} />

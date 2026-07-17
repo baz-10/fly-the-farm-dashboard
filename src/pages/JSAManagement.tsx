@@ -85,7 +85,7 @@ export default function JSAManagement() {
   const highRisk = records.filter((mission) => ['high', 'critical'].includes(highestResidualRisk(mission.jsaRecord))).length;
 
   const openMission = (mission: MissionRecord) => {
-    navigate(`/mission-planning?mission=${encodeURIComponent(mission.id)}&section=jsa`);
+    navigate(`/missions/${encodeURIComponent(mission.id)}?section=jsa`);
   };
 
   return (
@@ -100,7 +100,7 @@ export default function JSAManagement() {
             <Typography variant="body2" color="text.secondary">Mission safety assessments, risk controls and sign-offs.</Typography>
           </Box>
         </Stack>
-        <Button variant="contained" startIcon={<AddIcon />} onClick={() => navigate('/mission-planning')}>
+        <Button variant="contained" startIcon={<AddIcon />} onClick={() => navigate('/missions/new')}>
           Plan Mission & CASA JSA
         </Button>
       </Stack>
@@ -124,7 +124,7 @@ export default function JSAManagement() {
               <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5, mb: 2.5, maxWidth: 460 }}>
                 A CASA JSA is created with each saved mission. Add hazards, controls and sign-offs before authorisation.
               </Typography>
-              <Button variant="contained" startIcon={<FlightTakeoffIcon />} onClick={() => navigate('/mission-planning')}>
+              <Button variant="contained" startIcon={<FlightTakeoffIcon />} onClick={() => navigate('/missions/new')}>
                 Create first mission
               </Button>
             </Stack>
