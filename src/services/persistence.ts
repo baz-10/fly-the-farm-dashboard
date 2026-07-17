@@ -16,6 +16,7 @@ export const PERSISTENCE_KEYS = {
   savedChemicals: 'ftf_saved_chemicals',
   session: 'ftf_session',
   users: 'ftf_users',
+  workPacks: 'ftf_work_packs',
 } as const;
 
 export type PersistenceMode = 'local' | 'remote';
