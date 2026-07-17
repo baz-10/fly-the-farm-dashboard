@@ -255,7 +255,7 @@ const getValidActionsForRole = (userRole: string): string[] => {
 };
 
 // Validation Functions
-const validateMissionData = (
+export const validateMissionData = (
   mission: Partial<MissionRecord>,
   aircraftContext?: {
     getAircraftById: (id: string) => any;
@@ -328,29 +328,41 @@ const validateMissionData = (
     }
   }
 
-  if (!mission.aircraftConfiguration?.configurationId) {
+  const selectedKitId = mission.aircraftConfiguration?.kitId;
+  const selectedConfigurationId = mission.aircraftConfiguration?.configurationId;
+
+  if (!selectedKitId && !selectedConfigurationId) {
     errors.push({
       field: 'aircraftConfiguration.configurationId',
-      message: 'Equipment configuration is required',
+      message: 'Equipment kit is required',
       severity: 'error',
       code: 'REQUIRED_FIELD'
     });
   } else if (aircraftContext && mission.aircraftConfiguration?.aircraftId) {
-    // Validate configuration exists and is compatible
-    const configuration = aircraftContext.getConfigurationById(mission.aircraftConfiguration.configurationId);
-    if (!configuration) {
+    const configuration = selectedConfigurationId
+      ? aircraftContext.getConfigurationById(selectedConfigurationId)
+      : undefined;
+    const kitId = selectedKitId || configuration?.kitId;
+    const kit = kitId ? aircraftContext.getEquipmentKitById(kitId) : undefined;
+
+    if (selectedConfigurationId && !configuration) {
       errors.push({
         field: 'aircraftConfiguration.configurationId',
         message: 'Selected configuration does not exist',
         severity: 'error',
         code: 'INVALID_CONFIGURATION'
       });
+    } else if (!kit) {
+      errors.push({
+        field: 'aircraftConfiguration.kitId',
+        message: 'Selected equipment kit does not exist',
+        severity: 'error',
+        code: 'INVALID_KIT'
+      });
     } else {
-      // Check if configuration matches aircraft and equipment kit compatibility
       const aircraft = aircraftContext.getAircraftById(mission.aircraftConfiguration.aircraftId);
-      const kit = aircraftContext.getEquipmentKitById(configuration.kitId);
 
-      if (configuration.aircraftId !== mission.aircraftConfiguration.aircraftId) {
+      if (configuration && configuration.aircraftId !== mission.aircraftConfiguration.aircraftId) {
         errors.push({
           field: 'aircraftConfiguration.configurationId',
           message: 'Configuration does not match selected aircraft',
@@ -383,7 +395,7 @@ const validateMissionData = (
   return errors;
 };
 
-const validateStatusTransitionRules = (
+export const validateStatusTransitionRules = (
   fromStatus: MissionStatus,
   toStatus: MissionStatus,
   mission: MissionRecord,
@@ -429,7 +441,9 @@ const validateStatusTransitionRules = (
       }
 
       // Enhanced aircraft configuration validation using Aircraft Context
-      if (!mission.aircraftConfiguration.aircraftId || !mission.aircraftConfiguration.configurationId) {
+      if (!mission.aircraftConfiguration.aircraftId || (
+        !mission.aircraftConfiguration.kitId && !mission.aircraftConfiguration.configurationId
+      )) {
         errors.push({
           field: 'aircraftConfiguration',
           message: 'Aircraft and equipment configuration must be selected',
@@ -439,7 +453,11 @@ const validateStatusTransitionRules = (
       } else if (aircraftContext) {
         // Validate aircraft availability and operational status
         const aircraft = aircraftContext.getAircraftById(mission.aircraftConfiguration.aircraftId);
-        const configuration = aircraftContext.getConfigurationById(mission.aircraftConfiguration.configurationId);
+        const configuration = mission.aircraftConfiguration.configurationId
+          ? aircraftContext.getConfigurationById(mission.aircraftConfiguration.configurationId)
+          : undefined;
+        const kitId = mission.aircraftConfiguration.kitId || configuration?.kitId;
+        const kit = kitId ? aircraftContext.getEquipmentKitById(kitId) : undefined;
 
         if (!aircraft) {
           errors.push({
@@ -495,16 +513,23 @@ const validateStatusTransitionRules = (
           }
         }
 
-        if (!configuration) {
+        if (mission.aircraftConfiguration.configurationId && !configuration) {
           errors.push({
             field: 'aircraftConfiguration.configurationId',
             message: 'Selected configuration does not exist',
             severity: 'error',
             code: 'INVALID_CONFIGURATION'
           });
+        } else if (!kit) {
+          errors.push({
+            field: 'aircraftConfiguration.kitId',
+            message: 'Selected equipment kit does not exist',
+            severity: 'error',
+            code: 'INVALID_KIT'
+          });
         } else {
           // Validate configuration safety (weight and balance within limits)
-          if (!configuration.weightAndBalance.withinLimits) {
+          if (configuration && !configuration.weightAndBalance.withinLimits) {
             errors.push({
               field: 'aircraftConfiguration.configurationId',
               message: 'Aircraft-kit configuration weight and balance is not within safe limits',
@@ -514,7 +539,6 @@ const validateStatusTransitionRules = (
           }
 
           // Validate equipment kit availability
-          const kit = aircraftContext.getEquipmentKitById(configuration.kitId);
           if (kit && kit.operationalData.status !== 'available') {
             errors.push({
               field: 'aircraftConfiguration.configurationId',

@@ -47,6 +47,7 @@ import SecurityIcon from '@mui/icons-material/Security';
 import WarningAmberIcon from '@mui/icons-material/WarningAmber';
 import FieldBoundaryEditor from '../components/FieldBoundaryEditor';
 import MissionJsaDialog from '../components/MissionJsaDialog';
+import MissionEquipmentSelector from '../components/mission/MissionEquipmentSelector';
 import { useAircraft } from '../contexts/AircraftContext';
 import { useMission } from '../contexts/MissionContext';
 import { getLatestVegetationCheckForLotPlan, getSavedVegetationChecks, loadSavedVegetationChecks } from '../services/pmavCheckStore';
@@ -370,6 +371,7 @@ export default function MissionPlanning() {
     createAircraft,
     createEquipmentKit,
     createConfiguration,
+    getCompatibleKits,
     validateConfiguration,
   } = useAircraft();
   const dataLoading = missionDataLoading || aircraftDataLoading;
@@ -389,7 +391,7 @@ export default function MissionPlanning() {
   const [priority, setPriority] = React.useState<MissionPriority>('medium');
   const [selectedMissionId, setSelectedMissionId] = React.useState('');
   const [selectedAircraft, setSelectedAircraft] = React.useState(DEMO_AIRCRAFT.id);
-  const [selectedConfiguration, setSelectedConfiguration] = React.useState(DEMO_CONFIG.id);
+  const [selectedKit, setSelectedKit] = React.useState('');
   const [boundaryCoords, setBoundaryCoords] = React.useState<LatLng[]>([]);
   const [boundaryPolygons, setBoundaryPolygons] = React.useState<LatLng[][]>([]);
   const [missionArea, setMissionArea] = React.useState(0);
@@ -469,24 +471,6 @@ export default function MissionPlanning() {
       ]
     : [DEMO_AIRCRAFT];
 
-  const realConfigurationOptions = configurations.map((config) => {
-    const kit = equipmentKits.find((item) => item.id === config.kitId);
-    return {
-      id: config.id,
-      name: config.configurationName,
-      kitName: kit?.name || 'Equipment kit',
-      tankCapacity: kit?.specifications.weight ? `${kit.specifications.weight} kg kit` : '40 L',
-      swathWidth: config.performance.sprayRate ? `${config.performance.sprayRate.swathWidth} m` : '9 m',
-      aircraftId: config.aircraftId,
-    };
-  });
-  const configurationOptions = realConfigurationOptions.length > 0
-    ? [
-        ...realConfigurationOptions,
-        ...(realConfigurationOptions.some((item) => item.id === selectedConfiguration) ? [] : [DEMO_CONFIG]),
-      ]
-    : [DEMO_CONFIG];
-
   React.useEffect(() => {
     if (aircraft.length > 0 && !aircraft.some((item) => item.id === selectedAircraft)) {
       setSelectedAircraft(aircraft[0].id);
@@ -494,22 +478,29 @@ export default function MissionPlanning() {
   }, [aircraft, selectedAircraft]);
 
   React.useEffect(() => {
-    const compatible = configurations.filter((config) => config.aircraftId === selectedAircraft);
-    if (compatible.length > 0 && !compatible.some((config) => config.id === selectedConfiguration)) {
-      setSelectedConfiguration(compatible[0].id);
+    const compatible = getCompatibleKits(selectedAircraft);
+    if (!compatible.some((kit) => kit.id === selectedKit)) {
+      setSelectedKit(compatible[0]?.id || '');
     }
-  }, [configurations, selectedAircraft, selectedConfiguration]);
+  }, [getCompatibleKits, selectedAircraft, selectedKit]);
 
   const selectedAircraftData = aircraftOptions.find((item) => item.id === selectedAircraft) || DEMO_AIRCRAFT;
-  const selectedConfigurationData = configurationOptions.find((item) => item.id === selectedConfiguration) || DEMO_CONFIG;
   const selectedMissionType = MISSION_TYPES.find((item) => item.value === missionType);
   const actualAircraft = aircraft.find((item) => item.id === selectedAircraft);
-  const actualConfiguration = configurations.find((item) => item.id === selectedConfiguration);
-  const selectedEquipmentKit = actualConfiguration
-    ? equipmentKits.find((item) => item.id === actualConfiguration.kitId)
-    : undefined;
+  const selectedEquipmentKit = equipmentKits.find((item) => item.id === selectedKit);
+  const actualConfiguration = configurations.find((item) => (
+    item.aircraftId === selectedAircraft && item.kitId === selectedKit
+  ));
+  const selectedConfiguration = actualConfiguration?.id || '';
+  const selectedConfigurationData = selectedEquipmentKit ? {
+    kitName: selectedEquipmentKit.name,
+    tankCapacity: `${selectedEquipmentKit.specifications.weight} kg kit`,
+    swathWidth: actualConfiguration?.performance.sprayRate
+      ? `${actualConfiguration.performance.sprayRate.swathWidth} m`
+      : 'Not set',
+  } : DEMO_CONFIG;
   const selectedMission = missions.find((mission) => mission.id === selectedMissionId);
-  const canPersistMission = !!actualAircraft && !!actualConfiguration;
+  const canPersistMission = !!actualAircraft && !!selectedEquipmentKit;
   const effectiveBoundaryPolygons = boundaryPolygons.length
     ? boundaryPolygons
     : boundaryCoords.length ? [boundaryCoords] : [];
@@ -578,10 +569,8 @@ export default function MissionPlanning() {
   );
   const configurationPlanningReady = Boolean(
     actualAircraft
-    && actualConfiguration
     && selectedEquipmentKit
-    && actualConfiguration.aircraftId === actualAircraft.id
-    && actualConfiguration.weightAndBalance.withinLimits
+    && (!actualConfiguration || actualConfiguration.weightAndBalance.withinLimits)
     && selectedEquipmentKit.operationalData.status === 'available'
     && validateConfiguration(actualAircraft.id, selectedEquipmentKit.id),
   );
@@ -764,6 +753,7 @@ export default function MissionPlanning() {
       },
       aircraftConfiguration: {
         aircraftId: selectedAircraft,
+        kitId: selectedKit,
         configurationId: selectedConfiguration,
         estimatedFlightTime: estimatedDuration,
         maxPayloadWeight: selectedAircraftData.maxPayloadWeight,
@@ -960,7 +950,7 @@ export default function MissionPlanning() {
     }
 
     setSelectedAircraft(aircraftId);
-    setSelectedConfiguration(configurationId);
+    setSelectedKit(kitId);
 
     return { aircraftId, configurationId };
   };
@@ -985,7 +975,7 @@ export default function MissionPlanning() {
 
   const resetPlanner = () => {
     const nextAircraft = aircraft[0]?.id || DEMO_AIRCRAFT.id;
-    const nextConfiguration = configurations.find((config) => config.aircraftId === nextAircraft)?.id || configurations[0]?.id || DEMO_CONFIG.id;
+    const nextKit = getCompatibleKits(nextAircraft)[0]?.id || '';
 
     setSelectedMissionId('');
     setMissionName('');
@@ -1001,7 +991,7 @@ export default function MissionPlanning() {
     setMissionType('spray');
     setPriority('medium');
     setSelectedAircraft(nextAircraft);
-    setSelectedConfiguration(nextConfiguration);
+    setSelectedKit(nextKit);
     setBoundaryCoords([]);
     setBoundaryPolygons([]);
     setMissionArea(0);
@@ -1088,7 +1078,11 @@ export default function MissionPlanning() {
     setMissionType(mission.missionType);
     setPriority(mission.priority);
     setSelectedAircraft(mission.aircraftConfiguration.aircraftId);
-    setSelectedConfiguration(mission.aircraftConfiguration.configurationId);
+    setSelectedKit(
+      mission.aircraftConfiguration.kitId
+      || configurations.find((config) => config.id === mission.aircraftConfiguration.configurationId)?.kitId
+      || '',
+    );
     const loadedBoundaryCoords = planning?.boundaryCoords?.length ? planning.boundaryCoords : [];
     setBoundaryCoords(loadedBoundaryCoords);
     setBoundaryPolygons(
@@ -2177,42 +2171,20 @@ export default function MissionPlanning() {
 
             <Panel title="Aircraft & Equipment" icon={<AirplanemodeActiveIcon />}>
               <Stack spacing={1.5}>
-                <FormControl fullWidth size="small">
-                  <InputLabel>Aircraft</InputLabel>
-                  <Select
-                    value={selectedAircraft}
-                    label="Aircraft"
-                    onChange={(event) => {
-                      setSelectedAircraft(event.target.value);
-                      setJsaRecord(reopenApprovedJSA);
-                    }}
-                  >
-                    {aircraftOptions.map((item) => (
-                      <MenuItem key={item.id} value={item.id}>
-                        {item.registration} - {item.model}
-                      </MenuItem>
-                    ))}
-                  </Select>
-                </FormControl>
-                <FormControl fullWidth size="small">
-                  <InputLabel>Equipment Kit</InputLabel>
-                  <Select
-                    value={selectedConfiguration}
-                    label="Equipment Kit"
-                    onChange={(event) => {
-                      setSelectedConfiguration(event.target.value);
-                      setJsaRecord(reopenApprovedJSA);
-                    }}
-                  >
-                    {configurationOptions
-                      .filter((item) => !('aircraftId' in item) || item.aircraftId === selectedAircraft)
-                      .map((item) => (
-                        <MenuItem key={item.id} value={item.id}>
-                          {item.name}
-                        </MenuItem>
-                      ))}
-                  </Select>
-                </FormControl>
+                <MissionEquipmentSelector
+                  aircraft={aircraft}
+                  equipmentKits={equipmentKits}
+                  selectedAircraftId={selectedAircraft}
+                  selectedKitId={selectedKit}
+                  onAircraftChange={(aircraftId) => {
+                    setSelectedAircraft(aircraftId);
+                    setJsaRecord(reopenApprovedJSA);
+                  }}
+                  onKitChange={(kitId) => {
+                    setSelectedKit(kitId);
+                    setJsaRecord(reopenApprovedJSA);
+                  }}
+                />
                 <Divider />
                 <DetailRow label="Spray System" value={selectedConfigurationData.kitName} />
                 <DetailRow label="Tank Capacity" value={selectedConfigurationData.tankCapacity} />
