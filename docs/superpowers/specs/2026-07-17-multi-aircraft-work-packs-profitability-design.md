@@ -8,7 +8,7 @@
 
 Turn the dashboard into the operating backbone for an agricultural-drone operator. A company must be able to plan one mission using a truck, one to three mixed-model aircraft, swappable equipment kits, crew, chemicals, and consumables; execute and adjust that deployment in the field; and compare planned and actual profitability without exposing financial information to operational users or platform support.
 
-This design supersedes any earlier document that gives a Fly the Farm or platform administrator access to customer operational or financial data. Platform support is limited to user-account administration and password-reset support.
+The long-term rollout model supersedes any earlier document that gives a Fly the Farm or platform administrator access to customer operational or financial data. During the current internal build and testing phase, the existing platform-admin behaviour will remain unchanged. Tenant isolation and restricted platform-support access are a mandatory production-rollout gate before any independent customer company is onboarded.
 
 ## 2. Delivery Sequence
 
@@ -23,7 +23,9 @@ The releases share one tenant and permissions model so later releases do not req
 
 ## 3. Tenant and Permission Model
 
-Every company-owned record includes a non-null `company_id`. Row-level security is deny-by-default and resolves access through the authenticated user's active company membership.
+The target multi-company model gives every company-owned record a non-null `company_id`. Row-level security will be deny-by-default and resolve access through the authenticated user's active company membership.
+
+This target is not part of the immediate internal feature build. Until the rollout security gate is implemented and verified, the platform must be treated as a single-company/internal environment and must not host independent customer-company financial data.
 
 ### Roles
 
@@ -35,11 +37,11 @@ Every company-owned record includes a non-null `company_id`. Row-level security 
 | Client | Explicitly shared client/job records only | Customer-facing quote/invoice values only; never internal costs or margins | None |
 | Platform support | No tenant operational data | None | User directory and password-reset workflow only |
 
-Platform support is not a tenant superuser. Support tooling must not use a general-purpose service-role query path to tenant tables. Any exceptional production database access remains an infrastructure incident process outside the product, requiring explicit approval and audit; it is not a dashboard capability.
+At external rollout, platform support will cease to be a tenant superuser. Support tooling must not use a general-purpose service-role query path to tenant tables. Any exceptional production database access remains an infrastructure incident process outside the product, requiring explicit approval and audit; it is not a dashboard capability.
 
 ### Financial separation
 
-Operational asset data and internal financial data are exposed through separate services/views. Cost tables are accessible only to company administrators. Hiding fields in React is not considered a security control.
+The immediate build hides financial features from operational roles and separates financial domain services from operational services. Before external rollout, database views, API policies, and row-level security must enforce that cost tables are accessible only to company administrators. Hiding fields in React is not sufficient for the rollout security gate.
 
 ## 4. Core Domain Model
 
@@ -188,8 +190,9 @@ Required coverage includes:
 - Work-pack templates copy rather than live-link.
 - Planned rate snapshots remain unchanged after source rate edits.
 - Company-supplied versus customer-supplied chemical costing.
-- Tenant A cannot read or mutate Tenant B operational or financial records.
-- Operational roles and platform support cannot retrieve financial records through UI, service, direct API, or database policy tests.
+- Immediate role tests confirm operational users cannot access financial screens or financial service methods.
+- Pre-rollout security tests confirm Tenant A cannot read or mutate Tenant B operational or financial records.
+- Pre-rollout security tests confirm operational roles and platform support cannot retrieve financial records through UI, service, direct API, or database policies.
 - Single-aircraft legacy mission regression tests.
 
 ## 11. Deferred Work
@@ -198,6 +201,7 @@ Required coverage includes:
 - Supplier chemical-work-pack transmission.
 - Payroll and accounting integrations.
 - Automated external rate import.
+- Multi-company row-level security and restricted platform-support access (mandatory before external customer rollout).
 - Branding and product rename.
 
 ## 12. Acceptance Criteria
@@ -208,7 +212,6 @@ The programme is complete when:
 2. One mission can plan, authorise, execute, adjust, and complete with up to three mixed-model aircraft.
 3. Reusable truck-based work packs can be copied and customised per job.
 4. Planned and actual costs include truck, aircraft, kits, crew, chemicals, consumables, travel, fuel, and overhead.
-5. Company administrators can view only their own company's profitability.
-6. Crew, contractors, field supervisors, and platform support cannot retrieve protected financial data.
-7. Existing single-aircraft missions and saved configurations continue to work.
-
+5. Company administrators can view profitability while crew, contractors, and field supervisors cannot access financial screens or financial services.
+6. Existing single-aircraft missions and saved configurations continue to work.
+7. Before external customer rollout, company isolation and platform-support restrictions pass UI, API, and database-policy tests.
