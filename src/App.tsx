@@ -42,6 +42,8 @@ import UserLicenseSettings from './pages/UserLicenseSettings';
 import { UserLicenseProvider } from './contexts/UserLicenseContext';
 import { AircraftProvider } from './contexts/AircraftContext';
 import { MissionProvider } from './contexts/MissionContext';
+import { WorkPackProvider } from './contexts/WorkPackContext';
+import FleetWorkPacks from './pages/FleetWorkPacks';
 import { useAuth } from './contexts/AuthContext';
 
 function WorkflowProviders({ children }: { children: React.ReactNode }) {
@@ -51,7 +53,9 @@ function WorkflowProviders({ children }: { children: React.ReactNode }) {
   return (
     <UserLicenseProvider>
       <AircraftProvider>
-        <MissionProvider>{children}</MissionProvider>
+        <WorkPackProvider>
+          <MissionProvider>{children}</MissionProvider>
+        </WorkPackProvider>
       </AircraftProvider>
     </UserLicenseProvider>
   );
@@ -105,6 +109,7 @@ function App() {
           <Route path="/financials/:actualId" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><ActualDetail /></ProtectedRoute>} />
           <Route path="/ask-ftf" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><AskFTF /></ProtectedRoute>} />
           <Route path="/aircraft" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><AircraftManagement /></ProtectedRoute>} />
+          <Route path="/fleet-work-packs" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><FleetWorkPacks /></ProtectedRoute>} />
           <Route path="/jsa" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><JSAManagement /></ProtectedRoute>} />
           <Route path="/mission-planning" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><MissionPlanning /></ProtectedRoute>} />
           <Route path="/compliance" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><ComplianceMenu /></ProtectedRoute>} />
