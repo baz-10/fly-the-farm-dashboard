@@ -221,7 +221,6 @@ export default function Home() {
   const navigate = useNavigate();
   const theme = useTheme();
 
-  const todayMissions = React.useMemo(() => getTodaysSprayMissions(missions), [missions]);
   const upcomingSchedule = React.useMemo(() => groupMissionsByLocalDate(missions.filter((mission) => mission.missionType === 'spray'), getOperationalWeek(new Date())), [missions]);
   const readiness = React.useMemo(() => getMissionReadiness(missions), [missions]);
   const chemicalAllocations = React.useMemo(() => getTodaysChemicalAllocations(missions), [missions]);
