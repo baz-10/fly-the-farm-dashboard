@@ -20,7 +20,7 @@ describe('weather preference store', () => {
 
   test('uses rounded coordinates and expiry for forecast cache', () => {
     const fetchedAt = '2026-07-18T10:00:00.000Z';
-    cacheForecast({ location: brisbane, fetchedAt, timezone: 'Australia/Brisbane', hourly: [] });
+    cacheForecast({ location: brisbane, fetchedAt, timezone: 'Australia/Brisbane', hourly: [], daily: [] });
     expect(getCachedForecast({ ...brisbane, latitude: -27.4701 }, new Date('2026-07-18T10:20:00.000Z'))?.fetchedAt).toBe(fetchedAt);
     expect(getCachedForecast(brisbane, new Date('2026-07-18T11:01:00.000Z'))).toBeNull();
   });

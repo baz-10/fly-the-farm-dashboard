@@ -1,4 +1,4 @@
-import { HourlyWeatherPoint } from '../services/weatherService';
+import { DailyWeatherPoint, HourlyWeatherPoint } from '../services/weatherService';
 
 export interface WeatherLocation { name: string; latitude: number; longitude: number; }
 export interface WeatherPreferences { selected?: WeatherLocation; recent: WeatherLocation[]; }
@@ -9,5 +9,5 @@ export interface CachedOperationalForecast {
   sunrise?: string;
   sunset?: string;
   hourly: HourlyWeatherPoint[];
+  daily: DailyWeatherPoint[];
 }
-

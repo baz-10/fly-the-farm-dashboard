@@ -39,6 +39,7 @@ import ComplianceDocumentation from './pages/ComplianceDocumentation';
 import MissionPlanning from './pages/MissionPlanning';
 import MissionRegister from './pages/MissionRegister';
 import Schedule from './pages/Schedule';
+import Weather from './pages/Weather';
 import MissionRouteRedirect from './components/MissionRouteRedirect';
 import AskFTF from './pages/AskFTF';
 import UserLicenseSettings from './pages/UserLicenseSettings';
@@ -116,6 +117,7 @@ function App() {
           <Route path="/jsa" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><JSAManagement /></ProtectedRoute>} />
           <Route path="/missions" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><MissionRegister /></ProtectedRoute>} />
           <Route path="/schedule" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><Schedule /></ProtectedRoute>} />
+          <Route path="/weather" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><Weather /></ProtectedRoute>} />
           <Route path="/missions/new" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><MissionPlanning /></ProtectedRoute>} />
           <Route path="/missions/:missionId" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><MissionPlanning /></ProtectedRoute>} />
           <Route path="/mission-planning" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><MissionRouteRedirect /></ProtectedRoute>} />

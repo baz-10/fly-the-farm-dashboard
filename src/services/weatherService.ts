@@ -24,6 +24,18 @@ export interface WeatherFetchResult {
   sunrise?: string;
   sunset?: string;
   hourly: HourlyWeatherPoint[];
+  daily: DailyWeatherPoint[];
+}
+
+export interface DailyWeatherPoint {
+  date: string;
+  maxTempC: number;
+  minTempC: number;
+  rainChancePercent: number;
+  maxWindKmh: number;
+  maxGustKmh: number;
+  sunrise?: string;
+  sunset?: string;
 }
 
 const COMPASS_DIRS = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'] as const;
@@ -52,7 +64,7 @@ export async function fetchWeatherForDate(
       + `?latitude=${latitude}&longitude=${longitude}`
       + `&start_date=${date}&end_date=${date}`
       + `&hourly=temperature_2m,relative_humidity_2m,dew_point_2m,wind_speed_10m,wind_direction_10m,wind_gusts_10m,precipitation_probability,cloud_cover,is_day`
-      + `&daily=sunrise,sunset`
+      + `&daily=sunrise,sunset,temperature_2m_max,temperature_2m_min,precipitation_probability_max,wind_speed_10m_max,wind_gusts_10m_max`
       + `&timezone=auto`;
   } else {
     // Use forecast API with past_days for recent + future
@@ -65,7 +77,7 @@ export async function fetchWeatherForDate(
     url = `https://api.open-meteo.com/v1/forecast`
       + `?latitude=${latitude}&longitude=${longitude}`
       + `&hourly=temperature_2m,relative_humidity_2m,dew_point_2m,wind_speed_10m,wind_direction_10m,wind_gusts_10m,precipitation_probability,cloud_cover,is_day`
-      + `&daily=sunrise,sunset`
+      + `&daily=sunrise,sunset,temperature_2m_max,temperature_2m_min,precipitation_probability_max,wind_speed_10m_max,wind_gusts_10m_max`
       + `&timezone=auto`
       + `&past_days=${pastDays}`
       + `&forecast_days=${forecastDays}`;
@@ -116,6 +128,16 @@ export async function fetchWeatherForDate(
     sunrise: data.daily?.sunrise?.find((value: string) => value.startsWith(date)),
     sunset: data.daily?.sunset?.find((value: string) => value.startsWith(date)),
     hourly: points,
+    daily: (data.daily?.time || []).map((day: string, index: number) => ({
+      date: day,
+      maxTempC: Math.round((data.daily.temperature_2m_max?.[index] ?? 0) * 10) / 10,
+      minTempC: Math.round((data.daily.temperature_2m_min?.[index] ?? 0) * 10) / 10,
+      rainChancePercent: Math.round(data.daily.precipitation_probability_max?.[index] ?? 0),
+      maxWindKmh: Math.round(data.daily.wind_speed_10m_max?.[index] ?? 0),
+      maxGustKmh: Math.round(data.daily.wind_gusts_10m_max?.[index] ?? 0),
+      sunrise: data.daily.sunrise?.[index],
+      sunset: data.daily.sunset?.[index],
+    })),
   };
 }
 
@@ -134,7 +156,7 @@ export function filterTo2Hourly(points: HourlyWeatherPoint[]): HourlyWeatherPoin
  */
 export async function geocodeLocality(name: string): Promise<{ latitude: number; longitude: number; name: string } | null> {
   const res = await fetch(
-    `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(name)}&count=5&language=en&format=json&country=AU`
+    `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(name)}&count=5&language=en&format=json`
   );
   if (!res.ok) return null;
   const data = await res.json();

@@ -39,6 +39,7 @@ import SettingsIcon from '@mui/icons-material/Settings';
 import SmartToyIcon from '@mui/icons-material/SmartToy';
 import LocalShippingIcon from '@mui/icons-material/LocalShipping';
 import CalendarMonthIcon from '@mui/icons-material/CalendarMonth';
+import CloudQueueIcon from '@mui/icons-material/CloudQueue';
 import { useAuth } from '../contexts/AuthContext';
 
 const ROLE_LABELS: Record<string, string> = {
@@ -56,6 +57,7 @@ const NAV_ITEMS = [
   { label: 'Fleet & Packs', shortLabel: 'Fleet', path: '/fleet-work-packs', icon: <LocalShippingIcon />, roles: ['admin', 'contractor'] },
   { label: 'Missions', shortLabel: 'Missions', path: '/missions', icon: <FlightTakeoffIcon />, roles: ['admin', 'contractor'] },
   { label: 'Schedule', shortLabel: 'Schedule', path: '/schedule', icon: <CalendarMonthIcon />, roles: ['admin', 'contractor'] },
+  { label: 'Weather', shortLabel: 'Weather', path: '/weather', icon: <CloudQueueIcon />, roles: ['admin', 'contractor'] },
   { label: 'JSA System', shortLabel: 'JSA', path: '/jsa', icon: <SecurityIcon />, roles: ['admin', 'contractor'] },
   { label: 'Quotes', shortLabel: 'Quotes', path: '/quotes', icon: <ReceiptLongIcon />, roles: ['admin', 'contractor'] },
   { label: 'Financials', shortLabel: 'Financials', path: '/financials', icon: <AccountBalanceIcon />, roles: ['admin', 'contractor'] },

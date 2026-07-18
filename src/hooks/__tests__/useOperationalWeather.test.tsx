@@ -10,7 +10,7 @@ describe('useOperationalWeather', () => {
 
   test('searches a location and exposes fresh weather', async () => {
     mockedWeather.geocodeLocality.mockResolvedValue({ name: 'Dalby', latitude: -27.18, longitude: 151.26 });
-    mockedWeather.fetchWeatherForDate.mockResolvedValue({ latitude: -27.18, longitude: 151.26, timezone: 'Australia/Brisbane', hourly: [] });
+    mockedWeather.fetchWeatherForDate.mockResolvedValue({ latitude: -27.18, longitude: 151.26, timezone: 'Australia/Brisbane', hourly: [], daily: [] });
     const { result } = renderHook(() => useOperationalWeather('user-1'));
 
     await act(() => result.current.searchLocation('Dalby'));
@@ -21,7 +21,7 @@ describe('useOperationalWeather', () => {
 
   test('retains the last successful forecast as stale when refresh fails', async () => {
     mockedWeather.geocodeLocality.mockResolvedValue({ name: 'Dalby', latitude: -27.18, longitude: 151.26 });
-    mockedWeather.fetchWeatherForDate.mockResolvedValueOnce({ latitude: -27.18, longitude: 151.26, timezone: 'Australia/Brisbane', hourly: [] }).mockRejectedValueOnce(new Error('offline'));
+    mockedWeather.fetchWeatherForDate.mockResolvedValueOnce({ latitude: -27.18, longitude: 151.26, timezone: 'Australia/Brisbane', hourly: [], daily: [] }).mockRejectedValueOnce(new Error('offline'));
     const { result } = renderHook(() => useOperationalWeather('user-1'));
     await act(() => result.current.searchLocation('Dalby'));
     await act(() => result.current.refresh());
