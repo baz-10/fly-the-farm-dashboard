@@ -81,12 +81,13 @@ function LegacyTruckMutationProbe() {
 }
 
 function StateProbe() {
-  const { assets, loadError, saveError, createAsset } = useWorkPacks();
+  const { assets, loadError, saveError, createAsset, updateAsset } = useWorkPacks();
   return <div>
     <span data-testid="asset-cost">{assets[0]?.costs ? 'has-costs' : 'no-costs'}</span>
     <span data-testid="load-error">{loadError || ''}</span>
     <span data-testid="save-error">{saveError || ''}</span>
     <button onClick={() => createAsset({ ...truck, assetType: 'truck' })}>change store</button>
+    <button onClick={() => assets[0] && updateAsset(assets[0].id, { operationalNotes: 'Contractor updated notes' })}>edit operations</button>
   </div>;
 }
 
@@ -181,6 +182,29 @@ describe('WorkPackContext', () => {
     render(<WorkPackProvider><StateProbe /></WorkPackProvider>);
 
     expect(await screen.findByTestId('asset-cost')).toHaveTextContent('no-costs');
+  });
+
+  test('preserves privileged local costing through a contractor edit and later admin reload', async () => {
+    mockCurrentRole = 'contractor';
+    const now = new Date().toISOString();
+    localStorage.setItem(PERSISTENCE_KEYS.workPacks, JSON.stringify({
+      assets: [{ ...truck, id: 'truck-1', assetType: 'truck', createdAt: now, updatedAt: now }],
+      templates: [], snapshots: [],
+    }));
+
+    const contractorView = render(<WorkPackProvider><StateProbe /></WorkPackProvider>);
+    expect(await screen.findByTestId('asset-cost')).toHaveTextContent('no-costs');
+    fireEvent.click(screen.getByText('edit operations'));
+    await waitFor(() => {
+      const stored = JSON.parse(localStorage.getItem(PERSISTENCE_KEYS.workPacks) || '{}');
+      expect(stored.assets[0].operationalNotes).toBe('Contractor updated notes');
+      expect(stored.assets[0].costs.costPerDay).toBe(480);
+    });
+    contractorView.unmount();
+
+    mockCurrentRole = 'admin';
+    render(<WorkPackProvider><StateProbe /></WorkPackProvider>);
+    expect(await screen.findByTestId('asset-cost')).toHaveTextContent('has-costs');
   });
 
   test('exposes a load error while keeping mission planning usable', async () => {

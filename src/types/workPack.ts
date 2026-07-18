@@ -72,6 +72,20 @@ export interface UnavailableDeploymentAssetReference {
   reason: 'missing' | 'retired' | 'maintenance' | 'assigned';
 }
 
+export interface UnavailableAircraftReference {
+  assignmentId: string;
+  sourceAircraftId: string;
+  label: string;
+  reason: 'missing' | 'maintenance' | 'retired' | 'inspection';
+}
+
+export interface UnavailableKitReference {
+  assignmentId: string;
+  sourceKitId: string;
+  label: string;
+  reason: 'missing' | 'unavailable' | 'incompatible';
+}
+
 export interface TowVehicleDetails {
   registration?: string;
   driver?: string;
@@ -126,6 +140,8 @@ export interface MissionDeploymentWorkPack {
   aircraftAssignments: MissionWorkPackAircraftAssignment[];
   supportingEquipment?: SupportingEquipmentAssignment[];
   unavailableAssetReferences?: UnavailableDeploymentAssetReference[];
+  unavailableAircraftReferences?: UnavailableAircraftReference[];
+  unavailableKitReferences?: UnavailableKitReference[];
   crewRequirements: CrewRequirement[];
   checklist: string[];
   notes: string;
@@ -141,6 +157,8 @@ export interface MissionWorkPackDraft {
   aircraftAssignments?: MissionWorkPackAircraftAssignment[];
   supportingEquipment?: SupportingEquipmentAssignment[];
   unavailableAssetReferences?: UnavailableDeploymentAssetReference[];
+  unavailableAircraftReferences?: UnavailableAircraftReference[];
+  unavailableKitReferences?: UnavailableKitReference[];
   crewRequirements?: CrewRequirement[];
   checklist?: string[];
   notes?: string;

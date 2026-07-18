@@ -70,8 +70,18 @@ export default function MissionDeploymentWorkPack({ assets, templates, aircraft,
   };
 
   const patchAssignment = (index: number, patch: Partial<typeof assignments[number]>) => {
+    const assignmentId = assignments[index]?.id;
     const next = assignments.map((item, itemIndex) => itemIndex === index ? { ...item, ...patch } : item);
-    update({ ...draft, aircraftAssignments: next });
+    update({
+      ...draft,
+      aircraftAssignments: next,
+      ...(Object.prototype.hasOwnProperty.call(patch, 'aircraftId') ? {
+        unavailableAircraftReferences: (draft.unavailableAircraftReferences ?? []).filter((item) => item.assignmentId !== assignmentId),
+        unavailableKitReferences: (draft.unavailableKitReferences ?? []).filter((item) => item.assignmentId !== assignmentId),
+      } : Object.prototype.hasOwnProperty.call(patch, 'kitId') ? {
+        unavailableKitReferences: (draft.unavailableKitReferences ?? []).filter((item) => item.assignmentId !== assignmentId),
+      } : {}),
+    });
   };
 
   return (
@@ -100,7 +110,7 @@ export default function MissionDeploymentWorkPack({ assets, templates, aircraft,
               if (!template) return;
               const templateAssetIds = template.assetIds || (template.truckId ? [template.truckId] : []);
               const templateAssets = assets.filter((asset) => templateAssetIds.includes(asset.id));
-              const next = applyWorkPackTemplate(template, templateAssets);
+              const next = applyWorkPackTemplate(template, templateAssets, aircraft, equipmentKits);
               setDraft(next);
               onChange(next);
             }}>Apply template</Button>
@@ -124,6 +134,22 @@ export default function MissionDeploymentWorkPack({ assets, templates, aircraft,
               {reference.label} — {reference.reason === 'missing' ? 'no longer exists' : reference.reason}. Replace or remove this source reference.
             </Alert>
           ))}
+          {(draft.unavailableAircraftReferences ?? []).map((reference) => (
+            <Alert key={`aircraft-${reference.assignmentId}`} severity="warning" action={<Button size="small" onClick={() => {
+              const index = assignments.findIndex((item) => item.id === reference.assignmentId);
+              if (index >= 0) patchAssignment(index, { aircraftId: '', kitId: '' });
+            }}>Remove reference</Button>}>
+              {reference.label} — {reference.reason === 'missing' ? 'no longer exists' : reference.reason}. Replace or remove this unavailable aircraft.
+            </Alert>
+          ))}
+          {(draft.unavailableKitReferences ?? []).map((reference) => (
+            <Alert key={`kit-${reference.assignmentId}`} severity="warning" action={<Button size="small" onClick={() => {
+              const index = assignments.findIndex((item) => item.id === reference.assignmentId);
+              if (index >= 0) patchAssignment(index, { kitId: '' });
+            }}>Remove reference</Button>}>
+              {reference.label} — {reference.reason === 'missing' ? 'no longer exists' : reference.reason}. Replace or remove this unavailable kit.
+            </Alert>
+          ))}
 
           {selectedAssets.some((asset) => asset.assetType === 'trailer') && (
             <Stack spacing={1}>
@@ -137,17 +163,22 @@ export default function MissionDeploymentWorkPack({ assets, templates, aircraft,
             {assignments.map((assignment, index) => {
               const selectedAircraft = aircraft.find((item) => item.id === assignment.aircraftId);
               const compatibleKits = selectedAircraft ? getCompatibleAvailableKits(selectedAircraft, equipmentKits) : [];
+              const unavailableAircraft = draft.unavailableAircraftReferences?.find((item) => item.assignmentId === assignment.id);
+              const unavailableKit = draft.unavailableKitReferences?.find((item) => item.assignmentId === assignment.id);
               return (
                 <Stack key={assignment.id} data-testid={`aircraft-assignment-${index}`} spacing={1} sx={{ p: 1.5, border: '1px solid', borderColor: 'divider', borderRadius: 1 }}>
                   <FormControl size="small" fullWidth>
                     <InputLabel id={`aircraft-${index}-label`}>Aircraft</InputLabel>
                     <Select labelId={`aircraft-${index}-label`} label="Aircraft" value={assignment.aircraftId} onChange={(event) => patchAssignment(index, { aircraftId: event.target.value, kitId: '' })}>
-                      {aircraft.map((item) => <MenuItem key={item.id} value={item.id}>{item.registration} — {item.model}</MenuItem>)}
+                      {unavailableAircraft && <MenuItem value={assignment.aircraftId} disabled>Unavailable — {unavailableAircraft.label}</MenuItem>}
+                      {aircraft.filter((item) => item.status === 'operational').map((item) => <MenuItem key={item.id} value={item.id}>{item.registration} — {item.model}</MenuItem>)}
                     </Select>
                   </FormControl>
                   <FormControl size="small" fullWidth disabled={!selectedAircraft}>
                     <InputLabel id={`kit-${index}-label`}>Equipment kit</InputLabel>
                     <Select labelId={`kit-${index}-label`} label="Equipment kit" value={assignment.kitId} onChange={(event) => patchAssignment(index, { kitId: event.target.value })}>
+                      <MenuItem value="">No kit assigned</MenuItem>
+                      {unavailableKit && <MenuItem value={assignment.kitId} disabled>Unavailable — {unavailableKit.label}</MenuItem>}
                       {compatibleKits.map((kit) => <MenuItem key={kit.id} value={kit.id}>{kit.name}</MenuItem>)}
                     </Select>
                   </FormControl>
@@ -158,7 +189,12 @@ export default function MissionDeploymentWorkPack({ assets, templates, aircraft,
                       {selectedAssets.map((asset) => <MenuItem key={asset.id} value={asset.id}>{asset.name || asset.registration}</MenuItem>)}
                     </Select>
                   </FormControl>
-                  <Button size="small" color="error" startIcon={<DeleteOutlineIcon />} onClick={() => update({ ...draft, aircraftAssignments: assignments.filter((_, itemIndex) => itemIndex !== index) })}>Remove aircraft</Button>
+                  <Button size="small" color="error" startIcon={<DeleteOutlineIcon />} onClick={() => update({
+                    ...draft,
+                    aircraftAssignments: assignments.filter((_, itemIndex) => itemIndex !== index),
+                    unavailableAircraftReferences: (draft.unavailableAircraftReferences ?? []).filter((item) => item.assignmentId !== assignment.id),
+                    unavailableKitReferences: (draft.unavailableKitReferences ?? []).filter((item) => item.assignmentId !== assignment.id),
+                  })}>Remove aircraft</Button>
                 </Stack>
               );
             })}

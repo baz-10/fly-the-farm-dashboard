@@ -1,5 +1,5 @@
 import { MissionRecord } from '../../types/mission';
-import { redactMissionDeploymentFinancials } from '../MissionContext';
+import { redactMissionDeploymentFinancials, restoreMissionDeploymentFinancials } from '../MissionContext';
 
 const mission = {
   id: 'mission-1',
@@ -17,4 +17,20 @@ test('removes deployment financials from contractor mission runtime records', ()
     costingComplete: true,
   });
   expect(mission.deploymentWorkPack?.estimatedDeploymentCost).toBe(1250);
+});
+
+test('restores privileged costing before persisting a contractor operational edit', () => {
+  const contractorEdit = {
+    ...redactMissionDeploymentFinancials(mission),
+    deploymentWorkPack: {
+      ...redactMissionDeploymentFinancials(mission).deploymentWorkPack!,
+      notes: 'Contractor changed operations',
+    },
+  };
+
+  const restored = restoreMissionDeploymentFinancials(contractorEdit, mission);
+
+  expect(restored.deploymentWorkPack?.notes).toBe('Contractor changed operations');
+  expect(restored.deploymentWorkPack?.estimatedDeploymentCost).toBe(1250);
+  expect(restored.deploymentWorkPack?.assets[0].costs).toEqual({ costPerDay: 450 });
 });

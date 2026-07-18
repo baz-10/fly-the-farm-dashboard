@@ -224,6 +224,39 @@ test('retains and marks missing or unavailable assets when applying an outdated 
   }));
 });
 
+test('marks unavailable aircraft and kit references without opaque select values', async () => {
+  const user = userEvent.setup();
+  const retiredAircraft = { ...aircraft[0], id: 'retired-aircraft', registration: 'RETIRED T50', status: 'retired' } as Aircraft;
+  const staleTemplate = {
+    ...template,
+    aircraftAssignments: [
+      { id: 'missing-row', aircraftId: 'missing-aircraft', kitId: 'missing-kit', label: 'Missing' },
+      { id: 'retired-row', aircraftId: retiredAircraft.id, kitId: 't100-kit', label: 'Retired and incompatible' },
+    ],
+  } as WorkPackTemplate;
+  const onChange = jest.fn();
+  render(<MissionDeploymentWorkPack assets={[truck]} templates={[staleTemplate]} aircraft={[retiredAircraft]} equipmentKits={kits} value={undefined} showFinancials={false} onChange={onChange} />);
+  const panels = screen.getAllByRole('button', { name: /Deployment Work Pack \(Optional\)/i });
+  await user.click(panels[panels.length - 1]);
+  const templateSelectors = screen.getAllByLabelText('Saved template');
+  await user.click(templateSelectors[templateSelectors.length - 1]);
+  await user.click(screen.getByRole('option', { name: staleTemplate.name }));
+  const applyButtons = screen.getAllByRole('button', { name: 'Apply template' });
+  await user.click(applyButtons[applyButtons.length - 1]);
+
+  expect(screen.getByText(/missing-aircraft.*no longer exists/i)).toBeInTheDocument();
+  expect(screen.getByText(/missing-kit.*no longer exists/i)).toBeInTheDocument();
+  expect(screen.getByText(/RETIRED T50.*retired/i)).toBeInTheDocument();
+  expect(screen.getByText(/T100 Spray Kit.*incompatible/i)).toBeInTheDocument();
+  const rows = screen.getAllByTestId(/aircraft-assignment-/).slice(-2);
+  expect(within(rows[0]).getByLabelText('Aircraft')).toHaveTextContent(/Unavailable.*missing-aircraft/i);
+  expect(within(rows[0]).getByLabelText('Equipment kit')).toHaveTextContent(/Unavailable.*missing-kit/i);
+  expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({
+    unavailableAircraftReferences: expect.any(Array),
+    unavailableKitReferences: expect.any(Array),
+  }));
+});
+
 test('shows a non-blocking work-pack persistence warning', async () => {
   render(<MissionDeploymentWorkPack assets={[]} templates={[]} aircraft={aircraft} equipmentKits={kits} value={undefined} showFinancials={false} persistenceWarning="Work packs could not be saved" onChange={jest.fn()} />);
   await expand();

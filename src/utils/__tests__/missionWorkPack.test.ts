@@ -1,4 +1,5 @@
 import { MissionRecord } from '../../types/mission';
+import { Aircraft, EquipmentKit } from '../../types/aircraft';
 import { DeploymentAsset, WorkPackTemplate } from '../../types/workPack';
 import {
   applyWorkPackTemplate,
@@ -134,4 +135,33 @@ test('retains missing and retired template asset references in the draft', () =>
     expect.objectContaining({ sourceAssetId: 'missing-truck', reason: 'missing' }),
     expect.objectContaining({ sourceAssetId: retiredTrailer.id, reason: 'retired' }),
   ]);
+});
+
+test('retains missing or retired aircraft and missing or incompatible kit references', () => {
+  const retiredAircraft = { id: 'retired-aircraft', registration: 'OLD-1', model: 'DJI Agras T50', status: 'retired', operationalLimits: { maxPayloadWeight: 40 } } as Aircraft;
+  const activeAircraft = { id: 'active-aircraft', registration: 'T50-1', model: 'DJI Agras T50', status: 'operational', operationalLimits: { maxPayloadWeight: 40 } } as Aircraft;
+  const incompatibleKit = { id: 't100-kit', name: 'T100 kit', compatibleAircraft: ['T100'], specifications: { weight: 20 }, operationalData: { status: 'available' } } as EquipmentKit;
+  const staleTemplate = {
+    ...template,
+    aircraftAssignments: [
+      { id: 'missing-row', aircraftId: 'missing-aircraft', kitId: 'missing-kit', label: 'Missing' },
+      { id: 'retired-row', aircraftId: retiredAircraft.id, kitId: '', label: 'Retired' },
+      { id: 'incompatible-row', aircraftId: activeAircraft.id, kitId: incompatibleKit.id, label: 'Incompatible' },
+    ],
+  };
+
+  const draft = applyWorkPackTemplate(staleTemplate, [], [retiredAircraft, activeAircraft], [incompatibleKit]);
+
+  expect(draft.unavailableAircraftReferences).toEqual(expect.arrayContaining([
+    expect.objectContaining({ assignmentId: 'missing-row', sourceAircraftId: 'missing-aircraft', reason: 'missing' }),
+    expect.objectContaining({ assignmentId: 'retired-row', sourceAircraftId: retiredAircraft.id, reason: 'retired' }),
+  ]));
+  expect(draft.unavailableKitReferences).toEqual(expect.arrayContaining([
+    expect.objectContaining({ assignmentId: 'missing-row', sourceKitId: 'missing-kit', reason: 'missing' }),
+    expect.objectContaining({ assignmentId: 'incompatible-row', sourceKitId: incompatibleKit.id, reason: 'incompatible' }),
+  ]));
+
+  const snapshot = buildMissionWorkPack(draft);
+  expect(snapshot?.unavailableAircraftReferences).toEqual(draft.unavailableAircraftReferences);
+  expect(snapshot?.unavailableKitReferences).toEqual(draft.unavailableKitReferences);
 });

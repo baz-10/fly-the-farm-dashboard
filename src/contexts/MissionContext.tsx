@@ -246,6 +246,26 @@ export function redactMissionDeploymentFinancials(mission: MissionRecord): Missi
   };
 }
 
+export function restoreMissionDeploymentFinancials(
+  mission: MissionRecord,
+  privilegedMission: MissionRecord | undefined,
+): MissionRecord {
+  if (!mission.deploymentWorkPack || !privilegedMission?.deploymentWorkPack) return mission;
+  const privilegedAssetsById = new Map(privilegedMission.deploymentWorkPack.assets.map((asset) => [asset.id, asset]));
+  const privilegedEstimate = privilegedMission.deploymentWorkPack.estimatedDeploymentCost;
+  return {
+    ...mission,
+    deploymentWorkPack: {
+      ...mission.deploymentWorkPack,
+      assets: mission.deploymentWorkPack.assets.map((asset) => {
+        const costs = privilegedAssetsById.get(asset.id)?.costs;
+        return costs === undefined ? asset : { ...asset, costs };
+      }),
+      ...(privilegedEstimate === undefined ? {} : { estimatedDeploymentCost: privilegedEstimate }),
+    },
+  };
+}
+
 // Status Transition Validation Rules
 const STATUS_TRANSITIONS: Record<MissionStatus, MissionStatus[]> = {
   'Planning': ['Approved'],
@@ -680,6 +700,7 @@ export function MissionProvider({ children }: { children: React.ReactNode }) {
   const saveQueueRef = useRef<Promise<void>>(Promise.resolve());
   const hasLoadedRef = useRef(false);
   const versionMapRef = useRef<Map<string, number>>(new Map());
+  const privilegedMissionsRef = useRef<MissionRecord[]>([]);
 
   const { user } = useAuth();
   const {
@@ -752,6 +773,7 @@ export function MissionProvider({ children }: { children: React.ReactNode }) {
         versionMap.set(mission.id, 1); // Start with version 1 for existing missions
       });
       versionMapRef.current = versionMap;
+      privilegedMissionsRef.current = missionsData;
 
       setMissions(user?.role === 'contractor'
         ? missionsData.map(redactMissionDeploymentFinancials)
@@ -769,7 +791,11 @@ export function MissionProvider({ children }: { children: React.ReactNode }) {
 
   // Save snapshots in order so a slower request cannot overwrite newer state.
   const saveData = useCallback(async () => {
-    const missionsSnapshot = missions;
+    const privilegedById = new Map(privilegedMissionsRef.current.map((mission) => [mission.id, mission]));
+    const missionsSnapshot = user?.role === 'contractor'
+      ? missions.map((mission) => restoreMissionDeploymentFinancials(mission, privilegedById.get(mission.id)))
+      : missions;
+    privilegedMissionsRef.current = missionsSnapshot;
     const templatesSnapshot = missionTemplates;
     const persistSnapshot = async () => {
       await Promise.all([
@@ -783,7 +809,7 @@ export function MissionProvider({ children }: { children: React.ReactNode }) {
       .then(persistSnapshot);
     saveQueueRef.current = queuedSave;
     await queuedSave;
-  }, [missions, missionTemplates]);
+  }, [missions, missionTemplates, user?.role]);
 
   // Clear all data
   const clearData = useCallback(async () => {

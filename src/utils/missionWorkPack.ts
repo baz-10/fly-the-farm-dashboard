@@ -1,11 +1,15 @@
 import { MissionRecord } from '../types/mission';
+import { Aircraft, EquipmentKit } from '../types/aircraft';
 import {
   DeploymentAsset,
   MissionDeploymentWorkPack,
   MissionWorkPackDraft,
   UnavailableDeploymentAssetReference,
+  UnavailableAircraftReference,
+  UnavailableKitReference,
   WorkPackTemplate,
 } from '../types/workPack';
+import { getKitCompatibility } from './aircraftKitCompatibility';
 
 function copyAsset(asset: DeploymentAsset): DeploymentAsset {
   return { ...asset, costs: { ...asset.costs } };
@@ -14,6 +18,8 @@ function copyAsset(asset: DeploymentAsset): DeploymentAsset {
 export function applyWorkPackTemplate(
   template: WorkPackTemplate,
   assets: DeploymentAsset[],
+  aircraft: Aircraft[] = [],
+  equipmentKits: EquipmentKit[] = [],
 ): MissionWorkPackDraft {
   const requestedAssetIds = template.assetIds || (template.truckId ? [template.truckId] : []);
   const suppliedAssetsById = new Map(assets.map((asset) => [asset.id, asset]));
@@ -30,12 +36,41 @@ export function applyWorkPackTemplate(
       });
     }
   });
+  const aircraftById = new Map(aircraft.map((item) => [item.id, item]));
+  const kitsById = new Map(equipmentKits.map((item) => [item.id, item]));
+  const unavailableAircraftReferences: UnavailableAircraftReference[] = [];
+  const unavailableKitReferences: UnavailableKitReference[] = [];
+  template.aircraftAssignments.forEach((assignment) => {
+    const source = aircraftById.get(assignment.aircraftId);
+    if (!source) {
+      unavailableAircraftReferences.push({ assignmentId: assignment.id, sourceAircraftId: assignment.aircraftId, label: assignment.aircraftId, reason: 'missing' });
+    } else if (source.status !== 'operational') {
+      unavailableAircraftReferences.push({ assignmentId: assignment.id, sourceAircraftId: source.id, label: source.registration || source.model, reason: source.status });
+    }
+    if (!assignment.kitId) return;
+    const kit = kitsById.get(assignment.kitId);
+    if (!kit) {
+      unavailableKitReferences.push({ assignmentId: assignment.id, sourceKitId: assignment.kitId, label: assignment.kitId, reason: 'missing' });
+      return;
+    }
+    const sourceAircraft = aircraftById.get(assignment.aircraftId);
+    if (!sourceAircraft || !getKitCompatibility(sourceAircraft, kit).compatible) {
+      unavailableKitReferences.push({
+        assignmentId: assignment.id,
+        sourceKitId: kit.id,
+        label: kit.name,
+        reason: kit.operationalData.status === 'available' ? 'incompatible' : 'unavailable',
+      });
+    }
+  });
   return {
     sourceTemplateId: template.id,
     assets: assets.map(copyAsset),
     aircraftAssignments: template.aircraftAssignments.map((assignment) => ({ ...assignment })),
     supportingEquipment: (template.supportingEquipment ?? []).map((item) => ({ ...item })),
     unavailableAssetReferences,
+    unavailableAircraftReferences,
+    unavailableKitReferences,
     crewRequirements: template.crewRequirements.map((requirement) => ({ ...requirement })),
     checklist: [...template.checklist],
     notes: template.notes,
@@ -55,6 +90,8 @@ function isEmpty(draft: MissionWorkPackDraft): boolean {
     && !(draft.aircraftAssignments?.length)
     && !(draft.supportingEquipment?.length)
     && !(draft.unavailableAssetReferences?.length)
+    && !(draft.unavailableAircraftReferences?.length)
+    && !(draft.unavailableKitReferences?.length)
     && !(draft.crewRequirements?.length)
     && !(draft.checklist?.length)
     && !draft.notes
@@ -77,6 +114,8 @@ export function buildMissionWorkPack(
     aircraftAssignments: (draft.aircraftAssignments ?? []).map((assignment) => ({ ...assignment })),
     supportingEquipment: (draft.supportingEquipment ?? []).map((item) => ({ ...item })),
     unavailableAssetReferences: (draft.unavailableAssetReferences ?? []).map((item) => ({ ...item })),
+    unavailableAircraftReferences: (draft.unavailableAircraftReferences ?? []).map((item) => ({ ...item })),
+    unavailableKitReferences: (draft.unavailableKitReferences ?? []).map((item) => ({ ...item })),
     crewRequirements: (draft.crewRequirements ?? []).map((requirement) => ({ ...requirement })),
     checklist: [...(draft.checklist ?? [])],
     notes: draft.notes ?? '',

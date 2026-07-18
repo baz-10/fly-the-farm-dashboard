@@ -71,6 +71,22 @@ export function redactWorkPackStoreFinancials(store: WorkPackStore): WorkPackSto
   };
 }
 
+function restoreAssetCosts<T extends { id: string; costs?: unknown }>(safeAssets: T[], privilegedAssets: T[]): T[] {
+  const privilegedById = new Map(privilegedAssets.map((asset) => [asset.id, asset]));
+  return safeAssets.map((asset) => {
+    const costs = privilegedById.get(asset.id)?.costs;
+    return costs === undefined ? asset : { ...asset, costs };
+  });
+}
+
+export function restoreWorkPackStoreFinancials(store: WorkPackStore, privileged: WorkPackStore): WorkPackStore {
+  return {
+    ...store,
+    assets: restoreAssetCosts(store.assets, privileged.assets),
+    trucks: restoreAssetCosts(store.trucks, privileged.trucks),
+  };
+}
+
 function createId(prefix: string): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
     return `${prefix}-${crypto.randomUUID()}`;
@@ -85,6 +101,7 @@ export function WorkPackProvider({ children }: { children: React.ReactNode }) {
   const [loadError, setLoadError] = useState<string>();
   const [saveError, setSaveError] = useState<string>();
   const loaded = useRef(false);
+  const privilegedStoreRef = useRef<WorkPackStore>(EMPTY_STORE);
 
   useEffect(() => {
     let cancelled = false;
@@ -98,6 +115,7 @@ export function WorkPackProvider({ children }: { children: React.ReactNode }) {
             templates: Array.isArray(saved.templates) ? saved.templates : [],
             snapshots: Array.isArray(saved.snapshots) ? saved.snapshots : [],
           };
+          privilegedStoreRef.current = nextStore;
           setStore(user?.role === 'contractor' ? redactWorkPackStoreFinancials(nextStore) : nextStore);
           loaded.current = true;
         }
@@ -117,13 +135,17 @@ export function WorkPackProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (!loaded.current) return;
     const timeout = window.setTimeout(() => {
+      const persistedStore = user?.role === 'contractor'
+        ? restoreWorkPackStoreFinancials(store, privilegedStoreRef.current)
+        : store;
+      privilegedStoreRef.current = persistedStore;
       setSaveError(undefined);
-      writeSharedValue(PERSISTENCE_KEYS.workPacks, store).catch((error) => {
+      writeSharedValue(PERSISTENCE_KEYS.workPacks, persistedStore).catch((error) => {
         setSaveError(error instanceof Error ? error.message : 'Unable to save deployment work packs.');
       });
     }, 50);
     return () => window.clearTimeout(timeout);
-  }, [store]);
+  }, [store, user?.role]);
 
   const createAsset = useCallback(async (input: DeploymentAssetInput) => {
     const now = new Date().toISOString();

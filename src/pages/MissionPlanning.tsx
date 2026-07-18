@@ -1112,6 +1112,8 @@ export default function MissionPlanning() {
           aircraftAssignments: mission.deploymentWorkPack.aircraftAssignments,
           supportingEquipment: mission.deploymentWorkPack.supportingEquipment,
           unavailableAssetReferences: mission.deploymentWorkPack.unavailableAssetReferences,
+          unavailableAircraftReferences: mission.deploymentWorkPack.unavailableAircraftReferences,
+          unavailableKitReferences: mission.deploymentWorkPack.unavailableKitReferences,
           crewRequirements: mission.deploymentWorkPack.crewRequirements,
           checklist: mission.deploymentWorkPack.checklist,
           notes: mission.deploymentWorkPack.notes,
