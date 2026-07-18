@@ -23,6 +23,7 @@ import { useAircraft } from './AircraftContext';
 import MissionErrorBoundary from '../components/MissionErrorBoundary';
 import { clearSharedCollection, deleteSharedRecord, PERSISTENCE_KEYS, readSharedCollection, writeSharedCollection } from '../services/persistence';
 import { runMissionOperation } from '../utils/missionOperation';
+import { loadMissionCollections } from '../utils/missionDataLoading';
 
 // Enhanced mission record with version tracking for optimistic locking
 interface MissionWithVersion extends MissionRecord {
@@ -756,7 +757,10 @@ export function MissionProvider({ children }: { children: React.ReactNode }) {
     setError(null);
 
     try {
-      const loadedMissions = await readSharedCollection<MissionRecord>(STORAGE_KEY);
+      const [loadedMissions, templatesData] = await loadMissionCollections(
+        () => readSharedCollection<MissionRecord>(STORAGE_KEY),
+        () => readSharedCollection<MissionTemplate>(TEMPLATES_STORAGE_KEY)
+      );
       const missionsData = validateMissionArray(loadedMissions)
         ? loadedMissions
         : [];
@@ -764,8 +768,6 @@ export function MissionProvider({ children }: { children: React.ReactNode }) {
       if (loadedMissions.length > 0 && missionsData.length === 0) {
         console.warn('Invalid mission data detected, using empty array');
       }
-
-      const templatesData = await readSharedCollection<MissionTemplate>(TEMPLATES_STORAGE_KEY);
 
       // Initialize version map for optimistic locking
       const versionMap = new Map<string, number>();
