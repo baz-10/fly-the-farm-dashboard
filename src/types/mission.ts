@@ -1,4 +1,5 @@
 import { MissionMapFeature } from './missionMap';
+import { MissionDeploymentWorkPack } from './workPack';
 
 // Mission Status Types - 5-Phase Workflow
 export type MissionStatus = 'Planning' | 'Approved' | 'Flying' | 'Completed' | 'Locked';
@@ -129,6 +130,7 @@ export interface MissionRecord {
     estimatedFlightTime: number; // minutes
     maxPayloadWeight: number; // kg
   };
+  deploymentWorkPack?: MissionDeploymentWorkPack;
 
   // Mission Components
   jsaRecord: JSARecord;

@@ -57,6 +57,16 @@ export interface WorkPackAircraftAssignment {
   label: string;
 }
 
+export interface MissionWorkPackAircraftAssignment extends WorkPackAircraftAssignment {
+  carryingAssetId?: string;
+}
+
+export interface TowVehicleDetails {
+  registration?: string;
+  driver?: string;
+  notes?: string;
+}
+
 export interface CrewRequirement {
   id: string;
   role: CrewRole;
@@ -91,6 +101,31 @@ export interface WorkPackSnapshot {
   notes: string;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface MissionDeploymentWorkPack {
+  sourceTemplateId?: string;
+  assets: DeploymentAsset[];
+  towVehicle?: TowVehicleDetails;
+  aircraftAssignments: MissionWorkPackAircraftAssignment[];
+  crewRequirements: CrewRequirement[];
+  checklist: string[];
+  notes: string;
+  estimatedDeploymentCost?: number;
+  costingComplete: boolean;
+  createdAt: string;
+}
+
+export interface MissionWorkPackDraft {
+  sourceTemplateId?: string;
+  assets?: DeploymentAsset[];
+  towVehicle?: TowVehicleDetails;
+  aircraftAssignments?: MissionWorkPackAircraftAssignment[];
+  crewRequirements?: CrewRequirement[];
+  checklist?: string[];
+  notes?: string;
+  estimatedDeploymentCost?: number;
+  costingComplete?: boolean;
 }
 
 export type TruckProfileInput = Omit<TruckProfile, 'id' | 'createdAt' | 'updatedAt'>;
