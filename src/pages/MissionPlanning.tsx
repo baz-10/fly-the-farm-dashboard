@@ -51,6 +51,7 @@ import MissionJsaDialog from '../components/MissionJsaDialog';
 import MissionEquipmentSelector from '../components/mission/MissionEquipmentSelector';
 import MissionDeploymentWorkPack from '../components/mission/MissionDeploymentWorkPack';
 import { useAircraft } from '../contexts/AircraftContext';
+import { useAuth } from '../contexts/AuthContext';
 import { useMission } from '../contexts/MissionContext';
 import { useWorkPacks } from '../contexts/WorkPackContext';
 import { getLatestVegetationCheckForLotPlan, getSavedVegetationChecks, loadSavedVegetationChecks } from '../services/pmavCheckStore';
@@ -355,6 +356,7 @@ function StatusPill({ label, tone = 'success' }: { label: string; tone?: 'succes
 }
 
 export default function MissionPlanning() {
+  const { user } = useAuth();
   const theme = useTheme();
   const { missionId: requestedMissionId = '' } = useParams<{ missionId: string }>();
   const [searchParams] = useSearchParams();
@@ -2262,6 +2264,7 @@ export default function MissionPlanning() {
               aircraft={aircraft}
               equipmentKits={equipmentKits}
               value={missionWorkPackDraft}
+              showFinancials={user?.role === 'admin'}
               onChange={setMissionWorkPackDraft}
             />
 

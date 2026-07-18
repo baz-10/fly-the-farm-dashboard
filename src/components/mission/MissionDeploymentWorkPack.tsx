@@ -17,12 +17,13 @@ interface Props {
   aircraft: Aircraft[];
   equipmentKits: EquipmentKit[];
   value: MissionWorkPackDraft | undefined;
+  showFinancials: boolean;
   onChange: (next: MissionWorkPackDraft | undefined) => void;
 }
 
 const newAssignment = (index: number) => ({ id: `mission-slot-${Date.now()}-${index}`, aircraftId: '', kitId: '', label: `Aircraft ${index + 1}` });
 
-export default function MissionDeploymentWorkPack({ assets, templates, aircraft, equipmentKits, value, onChange }: Props) {
+export default function MissionDeploymentWorkPack({ assets, templates, aircraft, equipmentKits, value, showFinancials, onChange }: Props) {
   const [draft, setDraft] = React.useState<MissionWorkPackDraft>(value ?? {});
   const [templateId, setTemplateId] = React.useState(value?.sourceTemplateId ?? '');
 
@@ -145,6 +146,19 @@ export default function MissionDeploymentWorkPack({ assets, templates, aircraft,
               <Typography variant="subtitle2">Crew and checklist</Typography>
               {draft.crewRequirements?.map((item) => <Typography key={item.id} variant="body2">{item.quantity} × {item.role}{item.notes ? ` — ${item.notes}` : ''}</Typography>)}
               {draft.checklist?.map((item) => <Typography key={item} variant="body2">• {item}</Typography>)}
+            </Box>
+          )}
+          {showFinancials && (
+            <Box>
+              {draft.estimatedDeploymentCost !== undefined && (
+                <Stack direction="row" justifyContent="space-between">
+                  <Typography variant="body2">Estimated deployment cost</Typography>
+                  <Typography variant="body2">{draft.estimatedDeploymentCost.toLocaleString('en-AU', { style: 'currency', currency: 'AUD' })}</Typography>
+                </Stack>
+              )}
+              <Typography variant="caption" color={draft.costingComplete ? 'success.main' : 'warning.main'}>
+                {draft.costingComplete ? 'Costing complete' : 'Costing incomplete'}
+              </Typography>
             </Box>
           )}
           <Button color="inherit" onClick={() => { setDraft({}); setTemplateId(''); onChange(undefined); }}>Skip for now</Button>

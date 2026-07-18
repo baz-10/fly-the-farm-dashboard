@@ -29,6 +29,22 @@ describe('mission workflow state', () => {
     }).action).toBe('authorize-mission');
   });
 
+  test('keeps optional deployment packs and incomplete costing out of mission authorization', () => {
+    const validMission = {
+      ...baseInput,
+      jsaApproved: true,
+      environmentalReviewComplete: true,
+    };
+    const expected = getMissionWorkflowState(validMission);
+
+    expect(getMissionWorkflowState({ ...validMission, hasDeploymentWorkPack: false })).toEqual(expected);
+    expect(getMissionWorkflowState({
+      ...validMission,
+      hasDeploymentWorkPack: true,
+      deploymentCostingComplete: false,
+    })).toEqual(expected);
+  });
+
   test('orders flight planning and authorization after mission authorization', () => {
     const approved = {
       ...baseInput,

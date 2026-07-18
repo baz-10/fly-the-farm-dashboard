@@ -24,11 +24,26 @@ const template = {
   checklist: ['Confirm chemical manifest'], notes: 'Template notes', createdAt: '2026-01-01', updatedAt: '2026-01-01',
 } as WorkPackTemplate;
 
-function renderEditor(options: { assets?: DeploymentAsset[]; templates?: WorkPackTemplate[]; value?: MissionWorkPackDraft } = {}) {
+function renderEditor(options: { assets?: DeploymentAsset[]; templates?: WorkPackTemplate[]; value?: MissionWorkPackDraft; role?: 'admin' | 'contractor' } = {}) {
   const onChange = jest.fn();
-  render(<MissionDeploymentWorkPack assets={options.assets ?? [truck, trailer]} templates={options.templates ?? [template]} aircraft={aircraft} equipmentKits={kits} value={options.value} onChange={onChange} />);
+  render(<MissionDeploymentWorkPack assets={options.assets ?? [truck, trailer]} templates={options.templates ?? [template]} aircraft={aircraft} equipmentKits={kits} value={options.value} showFinancials={options.role === 'admin'} onChange={onChange} />);
   return { onChange };
 }
+
+test('hides deployment costs from contractors', async () => {
+  renderEditor({ role: 'contractor', value: { estimatedDeploymentCost: 1250, costingComplete: true } });
+  await expand();
+  expect(screen.queryByText('Estimated deployment cost')).not.toBeInTheDocument();
+  expect(screen.queryByText(/1,250/)).not.toBeInTheDocument();
+});
+
+test('shows incomplete costing only to administrators', async () => {
+  renderEditor({ role: 'admin', value: { estimatedDeploymentCost: 1250, costingComplete: false } });
+  await expand();
+  expect(screen.getByText('Estimated deployment cost')).toBeInTheDocument();
+  expect(screen.getByText('$1,250.00')).toBeInTheDocument();
+  expect(screen.getByText('Costing incomplete')).toBeInTheDocument();
+});
 
 async function expand() {
   await userEvent.click(screen.getByRole('button', { name: /Deployment Work Pack \(Optional\)/i }));
@@ -120,23 +135,23 @@ test('synchronizes the template selector when a mission value is rerendered', as
   const secondTemplate = { ...template, id: 'template-2', name: 'Second active template' } as WorkPackTemplate;
   const onChange = jest.fn();
   const view = render(
-    <MissionDeploymentWorkPack assets={[truck, trailer]} templates={[template, secondTemplate, archivedTemplate]} aircraft={aircraft} equipmentKits={kits} value={{ sourceTemplateId: template.id }} onChange={onChange} />,
+    <MissionDeploymentWorkPack assets={[truck, trailer]} templates={[template, secondTemplate, archivedTemplate]} aircraft={aircraft} equipmentKits={kits} value={{ sourceTemplateId: template.id }} showFinancials={false} onChange={onChange} />,
   );
   await expand();
   expect(screen.getByLabelText('Saved template')).toHaveTextContent(template.name);
 
   view.rerender(
-    <MissionDeploymentWorkPack assets={[truck, trailer]} templates={[template, secondTemplate, archivedTemplate]} aircraft={aircraft} equipmentKits={kits} value={{ sourceTemplateId: secondTemplate.id }} onChange={onChange} />,
+    <MissionDeploymentWorkPack assets={[truck, trailer]} templates={[template, secondTemplate, archivedTemplate]} aircraft={aircraft} equipmentKits={kits} value={{ sourceTemplateId: secondTemplate.id }} showFinancials={false} onChange={onChange} />,
   );
   expect(screen.getByLabelText('Saved template')).toHaveTextContent(secondTemplate.name);
 
   view.rerender(
-    <MissionDeploymentWorkPack assets={[truck, trailer]} templates={[template, secondTemplate, archivedTemplate]} aircraft={aircraft} equipmentKits={kits} value={{ sourceTemplateId: archivedTemplate.id }} onChange={onChange} />,
+    <MissionDeploymentWorkPack assets={[truck, trailer]} templates={[template, secondTemplate, archivedTemplate]} aircraft={aircraft} equipmentKits={kits} value={{ sourceTemplateId: archivedTemplate.id }} showFinancials={false} onChange={onChange} />,
   );
   expect(screen.getByLabelText('Saved template').parentElement?.querySelector('input')).toHaveValue('');
 
   view.rerender(
-    <MissionDeploymentWorkPack assets={[truck, trailer]} templates={[template, secondTemplate, archivedTemplate]} aircraft={aircraft} equipmentKits={kits} value={{ sourceTemplateId: 'missing-template' }} onChange={onChange} />,
+    <MissionDeploymentWorkPack assets={[truck, trailer]} templates={[template, secondTemplate, archivedTemplate]} aircraft={aircraft} equipmentKits={kits} value={{ sourceTemplateId: 'missing-template' }} showFinancials={false} onChange={onChange} />,
   );
   expect(screen.getByLabelText('Saved template').parentElement?.querySelector('input')).toHaveValue('');
 });
