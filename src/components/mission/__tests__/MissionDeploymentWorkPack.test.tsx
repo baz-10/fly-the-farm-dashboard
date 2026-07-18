@@ -35,6 +35,8 @@ test('hides deployment costs from contractors', async () => {
   await expand();
   expect(screen.queryByText('Estimated deployment cost')).not.toBeInTheDocument();
   expect(screen.queryByText(/1,250/)).not.toBeInTheDocument();
+  expect(screen.queryByText('Costing complete')).not.toBeInTheDocument();
+  expect(screen.queryByText('Costing incomplete')).not.toBeInTheDocument();
 });
 
 test('shows incomplete costing only to administrators', async () => {
