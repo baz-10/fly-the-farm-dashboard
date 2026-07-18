@@ -25,7 +25,6 @@ import LocalFloristIcon from '@mui/icons-material/LocalFlorist';
 import ReceiptLongIcon from '@mui/icons-material/ReceiptLong';
 import SecurityIcon from '@mui/icons-material/Security';
 import WarningAmberIcon from '@mui/icons-material/WarningAmber';
-import WbSunnyIcon from '@mui/icons-material/WbSunny';
 import { useAircraft } from '../contexts/AircraftContext';
 import { useAuth } from '../contexts/AuthContext';
 import { useMission } from '../contexts/MissionContext';
@@ -43,6 +42,8 @@ import {
   getTodaysSprayMissions,
 } from '../utils/operationsDashboard';
 import { formatCurrency } from '../utils/quoteCalculator';
+import { getOperationalWeek, groupMissionsByLocalDate } from '../utils/missionSchedule';
+import OperationalWeatherCard from '../components/weather/OperationalWeatherCard';
 
 interface PanelProps {
   title: string;
@@ -103,23 +104,27 @@ const MISSION_ACTION_META = {
 function Panel({ title, children, action, sx }: PanelProps) {
   return (
     <Card
+      data-testid="operations-panel"
+      data-desktop-height="300"
       elevation={0}
       sx={{
         borderRadius: '8px',
         border: '1px solid rgba(20, 58, 26, 0.1)',
         boxShadow: '0 12px 28px rgba(10, 31, 10, 0.05)',
         bgcolor: 'rgba(255, 255, 255, 0.95)',
+        height: { xs: 'auto', lg: 300 },
+        minHeight: { xs: 236, lg: 300 },
         ...sx,
       }}
     >
-      <CardContent sx={{ p: { xs: 2, md: 2.25 }, '&:last-child': { pb: { xs: 2, md: 2.25 } } }}>
+      <CardContent sx={{ p: { xs: 2, md: 2.25 }, height: '100%', display: 'flex', flexDirection: 'column', '&:last-child': { pb: { xs: 2, md: 2.25 } } }}>
         <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1.75 }}>
           <Typography variant="subtitle2" sx={{ color: 'primary.dark', letterSpacing: '0.04em' }}>
             {title}
           </Typography>
           {action}
         </Stack>
-        {children}
+        <Box sx={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>{children}</Box>
       </CardContent>
     </Card>
   );
@@ -217,6 +222,7 @@ export default function Home() {
   const theme = useTheme();
 
   const todayMissions = React.useMemo(() => getTodaysSprayMissions(missions), [missions]);
+  const upcomingSchedule = React.useMemo(() => groupMissionsByLocalDate(missions.filter((mission) => mission.missionType === 'spray'), getOperationalWeek(new Date())), [missions]);
   const readiness = React.useMemo(() => getMissionReadiness(missions), [missions]);
   const chemicalAllocations = React.useMemo(() => getTodaysChemicalAllocations(missions), [missions]);
   const activity = React.useMemo(() => getMissionActivity(missions, 4), [missions]);
@@ -246,8 +252,6 @@ export default function Home() {
     };
   }), [activeMissions]);
 
-  const plannedWeatherMission = todayMissions.find((mission) => mission.planningState?.weatherWindow);
-  const plannedWeather = plannedWeatherMission?.planningState?.weatherWindow;
   const totalReadiness = readiness.total || 1;
   const readyDegrees = (readiness.ready / totalReadiness) * 360;
   const attentionDegrees = readyDegrees + (readiness.attention / totalReadiness) * 360;
@@ -273,7 +277,7 @@ export default function Home() {
           </Typography>
         </Box>
         <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
-          <Button variant="outlined" startIcon={<CalendarTodayIcon />} onClick={() => navigate('/missions')}>
+          <Button variant="outlined" startIcon={<CalendarTodayIcon />} onClick={() => navigate('/schedule')}>
             View Schedule
           </Button>
           <Button variant="contained" startIcon={<FlightTakeoffIcon />} onClick={() => navigate('/missions/new')}>
@@ -312,13 +316,12 @@ export default function Home() {
       <Grid container spacing={2}>
         <Grid size={{ xs: 12, lg: 5 }}>
           <Panel
-            title="Today's Spray Schedule"
-            action={<Button size="small" onClick={() => navigate('/missions')} sx={{ fontWeight: 800 }}>View all</Button>}
-            sx={{ minHeight: 280 }}
+            title="Today and upcoming"
+            action={<Button size="small" onClick={() => navigate('/schedule')} sx={{ fontWeight: 800 }}>View all</Button>}
           >
-            {todayMissions.length > 0 ? (
+            {upcomingSchedule.length > 0 ? (
               <Stack spacing={1.45}>
-                {todayMissions.map((mission) => (
+                {upcomingSchedule.map((group) => <Box key={group.dateKey}><Typography sx={{ fontSize: '0.68rem', fontWeight: 900, color: 'text.secondary', mb: 0.75 }}>{group.date.toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short' })}</Typography><Stack spacing={1}>{group.missions.map((mission) => (
                   <Stack key={mission.id} direction="row" spacing={1.5} alignItems="flex-start">
                     <Typography sx={{ width: 52, fontSize: '0.78rem', color: 'text.secondary', pt: 0.2 }}>
                       {formatScheduledTime(mission.scheduledDate)}
@@ -330,13 +333,13 @@ export default function Home() {
                     </Box>
                     <StatusChip label={mission.status} color={MISSION_STATUS_TONES[mission.status]} />
                   </Stack>
-                ))}
+                ))}</Stack></Box>)}
               </Stack>
             ) : (
               <EmptyState
                 icon={<CalendarTodayIcon sx={{ fontSize: 34 }} />}
-                title="No spray missions today"
-                body="Missions scheduled for today will appear here once they are saved."
+                title="No missions in the next seven days"
+                body="Today and upcoming spray missions will appear here once they are saved."
                 action="Plan mission"
                 onAction={() => navigate('/missions/new')}
               />
@@ -345,7 +348,7 @@ export default function Home() {
         </Grid>
 
         <Grid size={{ xs: 12, sm: 6, lg: 3 }}>
-          <Panel title="Mission Readiness" sx={{ minHeight: 280 }}>
+          <Panel title="Mission Readiness">
             {readiness.total > 0 ? (
               <>
                 <Stack direction="row" alignItems="center" spacing={2.5}>
@@ -387,7 +390,7 @@ export default function Home() {
         </Grid>
 
         <Grid size={{ xs: 12, sm: 6, lg: 4 }}>
-          <Panel title="Next Best Actions" sx={{ minHeight: 280 }}>
+          <Panel title="Next Best Actions">
             {actions.length > 0 ? (
               <Stack spacing={1.25}>
                 {actions.map((item) => (
@@ -412,33 +415,8 @@ export default function Home() {
         </Grid>
 
         <Grid size={{ xs: 12, md: 4 }}>
-          <Panel title="Weather Window" sx={{ minHeight: 236 }}>
-            {plannedWeather && plannedWeatherMission ? (
-              <>
-                <Stack direction="row" spacing={2} alignItems="flex-start">
-                  <Box>
-                    <Typography sx={{ fontSize: '0.76rem', color: 'text.secondary' }}>{plannedWeatherMission.location.name}</Typography>
-                    <Typography sx={{ fontSize: '2.1rem', fontWeight: 900, lineHeight: 1 }}>{plannedWeather.temperatureC} C</Typography>
-                    <Typography sx={{ fontSize: '0.76rem', color: 'text.secondary', mt: 0.35 }}>Planned conditions</Typography>
-                  </Box>
-                  <Box sx={{ flex: 1, borderLeft: '1px solid rgba(20,58,26,0.12)', pl: 2 }}>
-                    <Typography sx={{ fontSize: '0.76rem', color: 'text.secondary' }}>{plannedWeather.startTime} - {plannedWeather.endTime}</Typography>
-                    <Typography sx={{ fontSize: '0.9rem', fontWeight: 800 }}>{plannedWeather.windDirection} {plannedWeather.windSpeedKmh} km/h</Typography>
-                    <Typography sx={{ fontSize: '0.74rem', color: 'text.secondary' }}>Gusts {plannedWeather.windGustKmh} km/h</Typography>
-                    <Typography sx={{ mt: 0.8, fontSize: '0.74rem', color: 'text.secondary' }}>{plannedWeather.rainChancePercent}% rain chance</Typography>
-                  </Box>
-                </Stack>
-                <Typography sx={{ mt: 2, fontSize: '0.74rem', color: 'text.secondary' }}>
-                  From {plannedWeatherMission.missionNumber}. Confirm live weather before flight.
-                </Typography>
-              </>
-            ) : (
-              <EmptyState
-                icon={<WbSunnyIcon sx={{ fontSize: 34 }} />}
-                title="No planned weather window"
-                body="Today's saved mission conditions will appear here. Live weather must still be confirmed before flight."
-              />
-            )}
+          <Panel title="Weather">
+            <OperationalWeatherCard userId={user?.id || 'anonymous'} onOpenWeather={() => navigate('/weather')} />
           </Panel>
         </Grid>
 
@@ -446,7 +424,6 @@ export default function Home() {
           <Panel
             title="Fleet Status"
             action={<Button size="small" onClick={() => navigate('/aircraft')} sx={{ fontWeight: 800 }}>View aircraft</Button>}
-            sx={{ minHeight: 236 }}
           >
             {aircraft.length > 0 ? (
               <Stack spacing={1.2}>
