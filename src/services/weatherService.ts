@@ -1,5 +1,6 @@
 // Weather data from Open-Meteo (https://open-meteo.com/)
 // Free, no API key, CC-BY 4.0 — attribution required
+import { calculateDeltaT } from '../utils/sprayWeather';
 
 export interface HourlyWeatherPoint {
   time: string;         // ISO 8601
@@ -11,12 +12,17 @@ export interface HourlyWeatherPoint {
   windGustsKmh: number;
   windDirectionDeg: number;
   windDirectionCompass: string;
+  precipitationProbability: number;
+  cloudCoverPercent: number;
+  isDay: boolean;
 }
 
 export interface WeatherFetchResult {
   latitude: number;
   longitude: number;
   timezone: string;
+  sunrise?: string;
+  sunset?: string;
   hourly: HourlyWeatherPoint[];
 }
 
@@ -45,7 +51,8 @@ export async function fetchWeatherForDate(
     url = `https://archive-api.open-meteo.com/v1/archive`
       + `?latitude=${latitude}&longitude=${longitude}`
       + `&start_date=${date}&end_date=${date}`
-      + `&hourly=temperature_2m,relative_humidity_2m,dew_point_2m,wind_speed_10m,wind_direction_10m,wind_gusts_10m`
+      + `&hourly=temperature_2m,relative_humidity_2m,dew_point_2m,wind_speed_10m,wind_direction_10m,wind_gusts_10m,precipitation_probability,cloud_cover,is_day`
+      + `&daily=sunrise,sunset`
       + `&timezone=auto`;
   } else {
     // Use forecast API with past_days for recent + future
@@ -57,7 +64,8 @@ export async function fetchWeatherForDate(
 
     url = `https://api.open-meteo.com/v1/forecast`
       + `?latitude=${latitude}&longitude=${longitude}`
-      + `&hourly=temperature_2m,relative_humidity_2m,dew_point_2m,wind_speed_10m,wind_direction_10m,wind_gusts_10m`
+      + `&hourly=temperature_2m,relative_humidity_2m,dew_point_2m,wind_speed_10m,wind_direction_10m,wind_gusts_10m,precipitation_probability,cloud_cover,is_day`
+      + `&daily=sunrise,sunset`
       + `&timezone=auto`
       + `&past_days=${pastDays}`
       + `&forecast_days=${forecastDays}`;
@@ -90,11 +98,14 @@ export async function fetchWeatherForDate(
       tempC: Math.round(temp * 10) / 10,
       humidity: Math.round(hourly.relative_humidity_2m[i] ?? 0),
       dewpointC: Math.round(dewpoint * 10) / 10,
-      deltaT: Math.round((temp - dewpoint) * 10) / 10,
+      deltaT: calculateDeltaT(temp, hourly.relative_humidity_2m[i] ?? 0),
       windSpeedKmh: Math.round(hourly.wind_speed_10m[i] ?? 0),
       windGustsKmh: Math.round(hourly.wind_gusts_10m?.[i] ?? 0),
       windDirectionDeg: Math.round(windDir),
       windDirectionCompass: degreesToCompass(windDir),
+      precipitationProbability: Math.round(hourly.precipitation_probability?.[i] ?? 0),
+      cloudCoverPercent: Math.round(hourly.cloud_cover?.[i] ?? 0),
+      isDay: Boolean(hourly.is_day?.[i]),
     });
   }
 
@@ -102,6 +113,8 @@ export async function fetchWeatherForDate(
     latitude: data.latitude,
     longitude: data.longitude,
     timezone: data.timezone,
+    sunrise: data.daily?.sunrise?.find((value: string) => value.startsWith(date)),
+    sunset: data.daily?.sunset?.find((value: string) => value.startsWith(date)),
     hourly: points,
   };
 }
