@@ -119,6 +119,15 @@ function FitBounds({
   return null;
 }
 
+function FocusBounds({ coords, token }: { coords: LatLng[]; token: number }) {
+  const map = useMap();
+  useEffect(() => {
+    if (coords.length === 1) map.flyTo(coords[0], 17);
+    else if (coords.length > 1) map.fitBounds(L.latLngBounds(coords), { padding: [50, 50], maxZoom: 17 });
+  }, [coords, map, token]);
+  return null;
+}
+
 // ─── Props ──────────────────────────────────────────────────
 
 interface Props {
@@ -168,6 +177,7 @@ export default function FieldBoundaryEditor({
   const [activeFeatureType, setActiveFeatureType] = useState<'boundary' | MissionMapFeatureType>('boundary');
   const [drawingMode, setDrawingMode] = useState<DrawingMode>('point');
   const [draftFeatureVertices, setDraftFeatureVertices] = useState<Array<[number, number]>>([]);
+  const [focusTarget, setFocusTarget] = useState<{ coords: LatLng[]; token: number }>({ coords: [], token: 0 });
   const [addressQuery, setAddressQuery] = useState(initialAddress);
   const [addressResults, setAddressResults] = useState<Array<{ label: string; lat: number; lng: number }>>([]);
   const [addressLoading, setAddressLoading] = useState(false);
@@ -251,6 +261,7 @@ export default function FieldBoundaryEditor({
   };
 
   const handleClear = () => {
+    if (!window.confirm('Clear the entire mission boundary? The mission and other map items will be preserved.')) return;
     onCoordsChange([]);
     onPolygonsChange?.([]);
     onBoundaryFile?.(null);
@@ -591,28 +602,32 @@ export default function FieldBoundaryEditor({
           })}
 
           {/* Boundary points — draggable in edit mode */}
-          {coords.map((c, idx) => (
+          {boundaryPolygons.flatMap((polygon, polygonIndex) => polygon.map((c, vertexIndex) => (
             <Marker
-              key={idx}
+              key={`${polygonIndex}-${vertexIndex}`}
               position={c}
               icon={boundaryPointIcon}
               draggable={!readOnly}
               eventHandlers={{
                 dragend: (e) => {
                   const { lat, lng } = e.target.getLatLng();
-                  const updated = coords.map((pt, i) => i === idx ? [lat, lng] as LatLng : pt);
-                  onCoordsChange(updated);
-                  onPolygonsChange?.([updated, ...boundaryPolygons.slice(1)]);
+                  const updatedPolygons = boundaryPolygons.map((value, index) => index === polygonIndex ? value.map((point, pointIndex) => pointIndex === vertexIndex ? [lat, lng] as LatLng : point) : value);
+                  onCoordsChange(updatedPolygons[0] || []);
+                  onPolygonsChange?.(updatedPolygons);
                 },
               }}
             />
-          ))}
+          )))}
 
           {/* Auto-fit when coords load and return to the neutral view when cleared. */}
           <FitBounds coords={allBoundaryCoords} emptyCenter={defaultCenter} emptyZoom={defaultZoom} />
+          <FocusBounds coords={focusTarget.coords} token={focusTarget.token} />
         </MapContainer>
       </Box>
-      {!readOnly && onFeaturesChange && <MissionMapFeatureRegister polygons={boundaryPolygons} boundaryMetadata={boundaryMetadata} onBoundaryMetadataChange={onBoundaryMetadataChange} features={features} onFeaturesChange={onFeaturesChange} onPolygonsChange={(next) => { onPolygonsChange?.(next); onCoordsChange(next[0] || []); if (next.length === 0) onBoundaryFile?.(null); }} />}
+      {!readOnly && onFeaturesChange && <MissionMapFeatureRegister polygons={boundaryPolygons} boundaryMetadata={boundaryMetadata} onBoundaryMetadataChange={onBoundaryMetadataChange} features={features} onFeaturesChange={onFeaturesChange} onPolygonsChange={(next) => { onPolygonsChange?.(next); onCoordsChange(next[0] || []); if (next.length === 0) onBoundaryFile?.(null); }} onZoom={(kind, target) => {
+        const selected = kind === 'boundary' ? boundaryPolygons[Number(target)] || [] : (() => { const feature = features.find((item) => item.id === target); if (!feature) return []; if (feature.geometry.type === 'Point') { const [lng, lat] = feature.geometry.coordinates; return [[lat, lng] as LatLng]; } const source = feature.geometry.type === 'Polygon' ? feature.geometry.coordinates[0] : feature.geometry.coordinates; return source.map(([lng, lat]) => [lat, lng] as LatLng); })();
+        setFocusTarget({ coords: selected, token: Date.now() });
+      }} />}
     </Box>
   );
 }
