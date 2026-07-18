@@ -70,7 +70,7 @@ function getSharedCacheKey(key: string): string {
   throw new Error('An authenticated session is required for shared storage.');
 }
 
-async function requestRemote<T>(path: string, options: RequestInit = {}): Promise<T> {
+async function requestRemoteAttempt<T>(path: string, options: RequestInit = {}): Promise<T> {
   const controller = new AbortController();
   const timeout = window.setTimeout(() => controller.abort(), REMOTE_TIMEOUT_MS);
 
@@ -87,18 +87,36 @@ async function requestRemote<T>(path: string, options: RequestInit = {}): Promis
     const result = await response.json().catch(() => null);
 
     if (!response.ok) {
-      throw new Error(result?.error || `Shared storage request failed with HTTP ${response.status}.`);
+      const error = new Error(result?.error || `Shared storage request failed with HTTP ${response.status}.`);
+      (error as Error & { status?: number }).status = response.status;
+      throw error;
     }
 
     return result as T;
-  } catch (error) {
-    if (error instanceof DOMException && error.name === 'AbortError') {
-      throw new Error('Shared storage timed out. Check the connection and try again.');
-    }
-    throw error;
   } finally {
     window.clearTimeout(timeout);
   }
+}
+
+async function requestRemote<T>(path: string, options: RequestInit = {}): Promise<T> {
+  const isRead = !options.method || options.method === 'GET';
+  const attempts = isRead ? 2 : 1;
+
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      return await requestRemoteAttempt<T>(path, options);
+    } catch (error) {
+      const status = (error as Error & { status?: number }).status;
+      const retryable = status === undefined || status >= 500;
+      if (attempt + 1 < attempts && retryable) continue;
+      if (error instanceof DOMException && error.name === 'AbortError') {
+        throw new Error('Shared storage timed out. Check the connection and try again.');
+      }
+      throw error;
+    }
+  }
+
+  throw new Error('Shared storage request failed.');
 }
 
 function readLocalValue<T>(key: string, fallback: T): T {
@@ -112,6 +130,15 @@ function readLocalValue<T>(key: string, fallback: T): T {
 
 function writeLocalValue<T>(key: string, data: T): void {
   localStorage.setItem(key, JSON.stringify(data));
+}
+
+function tryWriteRemoteCache(write: () => void): void {
+  try {
+    write();
+  } catch {
+    // Remote storage is authoritative. A full or unavailable browser cache
+    // must not turn a successful server read/write into an application error.
+  }
 }
 
 async function writeRemoteCollection<T>(key: string, data: T[]): Promise<void> {
@@ -128,21 +155,29 @@ export async function readSharedCollection<T>(key: string, fallback: T[] = []): 
 
   const remote = await requestRemote<{ records: T[] }>(`/api/store?collection=${encodeURIComponent(key)}`);
   const records = Array.isArray(remote.records) ? remote.records : [];
-  writeCollection(cacheKey, records);
-  return records.length > 0 ? records : fallback;
+  tryWriteRemoteCache(() => writeCollection(cacheKey, records));
+  return records;
 }
 
 export async function writeSharedCollection<T>(key: string, data: T[]): Promise<void> {
-  writeCollection(getSharedCacheKey(key), data);
-  if (!shouldUseRemote()) return;
+  const cacheKey = getSharedCacheKey(key);
+  if (!shouldUseRemote()) {
+    writeCollection(cacheKey, data);
+    return;
+  }
+  tryWriteRemoteCache(() => writeCollection(cacheKey, data));
   await writeRemoteCollection(key, data);
 }
 
 export async function deleteSharedRecord(key: string, recordId: string): Promise<void> {
   const cacheKey = getSharedCacheKey(key);
   const localRecords = readCollection<any>(cacheKey);
-  writeCollection(cacheKey, localRecords.filter((record) => record?.id !== recordId));
-  if (!shouldUseRemote()) return;
+  const nextRecords = localRecords.filter((record) => record?.id !== recordId);
+  if (!shouldUseRemote()) {
+    writeCollection(cacheKey, nextRecords);
+    return;
+  }
+  tryWriteRemoteCache(() => writeCollection(cacheKey, nextRecords));
   await requestRemote(
     `/api/store?collection=${encodeURIComponent(key)}&recordId=${encodeURIComponent(recordId)}`,
     { method: 'DELETE' }
@@ -177,13 +212,17 @@ export async function readSharedValue<T>(key: string, fallback: T): Promise<T> {
     return fallback;
   }
 
-  writeLocalValue(cacheKey, remote.payload);
+  tryWriteRemoteCache(() => writeLocalValue(cacheKey, remote.payload));
   return remote.payload;
 }
 
 export async function writeSharedValue<T>(key: string, data: T): Promise<void> {
-  writeLocalValue(getSharedCacheKey(key), data);
-  if (!shouldUseRemote()) return;
+  const cacheKey = getSharedCacheKey(key);
+  if (!shouldUseRemote()) {
+    writeLocalValue(cacheKey, data);
+    return;
+  }
+  tryWriteRemoteCache(() => writeLocalValue(cacheKey, data));
   await writeRemoteValue(key, data);
 }
 
