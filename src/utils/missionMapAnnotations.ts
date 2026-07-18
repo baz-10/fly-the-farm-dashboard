@@ -6,7 +6,12 @@ const UNIQUE_TYPES = new Set<MissionMapFeature['type']>([
 ]);
 
 export function normaliseMapFeatures(features: MissionMapFeature[] | undefined): MissionMapFeature[] {
-  return Array.isArray(features) ? features : [];
+  if (!Array.isArray(features)) return [];
+  return features.filter((feature) => feature && feature.id && feature.geometry).map((feature) => ({
+    ...feature,
+    name: feature.name?.trim() || feature.label || 'Map feature',
+    notes: feature.notes || '',
+  }));
 }
 
 export function upsertMapFeature(features: MissionMapFeature[], feature: MissionMapFeature): MissionMapFeature[] {

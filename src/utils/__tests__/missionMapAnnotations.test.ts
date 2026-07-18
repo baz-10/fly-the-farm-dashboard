@@ -27,4 +27,13 @@ describe('mission map annotations', () => {
   test('defaults legacy missing feature data to an empty list', () => {
     expect(normaliseMapFeatures(undefined)).toEqual([]);
   });
+
+  test('normalises legacy labels and notes and supports line geometry', () => {
+    const legacy = point('gate', 'point-of-interest');
+    const line: MissionMapFeature = { id: 'powerline', type: 'obstacle', label: 'Powerline', geometry: { type: 'LineString', coordinates: [[153.1, -27.4], [153.2, -27.5]] } };
+    expect(normaliseMapFeatures([legacy, line])).toEqual([
+      { ...legacy, name: 'gate', notes: '' },
+      { ...line, name: 'Powerline', notes: '' },
+    ]);
+  });
 });

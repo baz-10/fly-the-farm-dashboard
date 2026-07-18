@@ -16,10 +16,16 @@ export interface MissionMapPolygonGeometry {
   coordinates: Array<Array<[number, number]>>;
 }
 
+export interface MissionMapLineGeometry {
+  type: 'LineString';
+  coordinates: Array<[number, number]>;
+}
+
 export interface MissionMapFeature {
   id: string;
   type: MissionMapFeatureType;
   label: string;
+  name?: string;
   notes?: string;
-  geometry: MissionMapPointGeometry | MissionMapPolygonGeometry;
+  geometry: MissionMapPointGeometry | MissionMapLineGeometry | MissionMapPolygonGeometry;
 }
