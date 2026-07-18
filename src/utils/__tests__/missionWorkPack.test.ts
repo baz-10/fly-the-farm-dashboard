@@ -94,7 +94,7 @@ test('syncs the first work-pack assignment while retaining primary flight estima
   expect(syncPrimaryAircraftConfiguration(undefined, fallback)).toBe(fallback);
 });
 
-test('preserves the legacy aircraft configuration when work-pack rows are placeholders', () => {
+test('syncs the first complete assignment after placeholder work-pack rows', () => {
   const fallback: MissionRecord['aircraftConfiguration'] = {
     aircraftId: 'legacy-aircraft', kitId: 'legacy-kit', configurationId: 'config-1',
     estimatedFlightTime: 60, maxPayloadWeight: 40,
@@ -106,5 +106,9 @@ test('preserves the legacy aircraft configuration when work-pack rows are placeh
     ],
   });
 
-  expect(syncPrimaryAircraftConfiguration(workPack, fallback)).toBe(fallback);
+  expect(syncPrimaryAircraftConfiguration(workPack, fallback)).toEqual({
+    ...fallback,
+    aircraftId: 'aircraft-2',
+    kitId: 'kit-2',
+  });
 });

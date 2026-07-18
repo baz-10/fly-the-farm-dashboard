@@ -82,3 +82,21 @@ Files:
 - `src/utils/missionWorkPack.ts`
 - `src/utils/__tests__/missionWorkPack.test.ts`
 - `.superpowers/sdd/task-3-report.md`
+
+### Follow-up: First complete aircraft assignment
+
+Red command:
+
+`npm test -- --watchAll=false src/utils/__tests__/missionWorkPack.test.ts`
+
+Red result: 1 suite failed; the placeholder-first regression received the unchanged legacy aircraft and kit IDs instead of the complete second assignment.
+
+Green command:
+
+`npm test -- --watchAll=false src/utils/__tests__/missionWorkPack.test.ts src/components/mission/__tests__/MissionDeploymentWorkPack.test.tsx src/components/mission/__tests__/MissionEquipmentSelector.test.tsx src/utils/__tests__/missionWorkflow.test.ts src/utils/__tests__/t100MissionRegression.test.ts src/contexts/__tests__/MissionContext.kitSelection.test.ts`
+
+Green result: 6 suites passed, 22 tests passed, 0 failures.
+
+Change: `syncPrimaryAircraftConfiguration` now selects the first ordered assignment containing both an aircraft ID and kit ID, skipping incomplete placeholder rows while retaining the legacy fallback when no complete assignment exists.
+
+Commit: `fix: sync first complete work-pack aircraft`

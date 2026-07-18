@@ -68,7 +68,7 @@ export function syncPrimaryAircraftConfiguration(
   workPack: MissionDeploymentWorkPack | undefined,
   fallback: MissionRecord['aircraftConfiguration'],
 ): MissionRecord['aircraftConfiguration'] {
-  const primary = workPack?.aircraftAssignments[0];
-  if (!primary?.aircraftId || !primary.kitId) return fallback;
+  const primary = workPack?.aircraftAssignments.find((assignment) => assignment.aircraftId && assignment.kitId);
+  if (!primary) return fallback;
   return { ...fallback, aircraftId: primary.aircraftId, kitId: primary.kitId };
 }
