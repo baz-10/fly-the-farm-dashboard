@@ -71,7 +71,7 @@ import { buildMissionWorkPack, syncPrimaryAircraftConfiguration } from '../utils
 import { reopenApprovedJSA, reopenJSAForWorkPackChange } from '../utils/workPackJsa';
 import { LatLng, BoundaryFileRef } from '../types/fieldManagement';
 import { SavedVegetationCheck } from '../types/pmav';
-import { MissionMapFeature } from '../types/missionMap';
+import { MissionBoundaryMetadata, MissionMapFeature } from '../types/missionMap';
 import {
   BoundaryFile,
   FlightExecution,
@@ -400,6 +400,7 @@ export default function MissionPlanning() {
   const [missionWorkPackDraft, setMissionWorkPackDraft] = React.useState<MissionWorkPackDraft | undefined>();
   const [boundaryCoords, setBoundaryCoords] = React.useState<LatLng[]>([]);
   const [boundaryPolygons, setBoundaryPolygons] = React.useState<LatLng[][]>([]);
+  const [boundaryMetadata, setBoundaryMetadata] = React.useState<MissionBoundaryMetadata[]>([]);
   const [missionArea, setMissionArea] = React.useState(0);
   const [boundaryFile, setBoundaryFile] = React.useState<BoundaryFileRef | null>(null);
   const [mapFeatures, setMapFeatures] = React.useState<MissionMapFeature[]>([]);
@@ -701,6 +702,7 @@ export default function MissionPlanning() {
     missionNotes,
     boundaryCoords,
     boundaryPolygons: effectiveBoundaryPolygons,
+    boundaryMetadata,
     mapFeatures,
     vegetationClearance: {
       lotPlan: cleanMissionLotPlan,
@@ -1012,6 +1014,7 @@ export default function MissionPlanning() {
     setMissionWorkPackDraft(undefined);
     setBoundaryCoords([]);
     setBoundaryPolygons([]);
+    setBoundaryMetadata([]);
     setMissionArea(0);
     setBoundaryFile(null);
     setMapFeatures([]);
@@ -1128,6 +1131,7 @@ export default function MissionPlanning() {
         ? planning.boundaryPolygons
         : loadedBoundaryCoords.length ? [loadedBoundaryCoords] : [],
     );
+    setBoundaryMetadata(planning?.boundaryMetadata || []);
     setMissionArea(missionAreaHa);
     setBoundaryFile(null);
     setMapFeatures(planning?.mapFeatures || []);
@@ -1931,6 +1935,8 @@ export default function MissionPlanning() {
               <FieldBoundaryEditor
                 coords={boundaryCoords}
                 polygons={boundaryPolygons}
+                boundaryMetadata={boundaryMetadata}
+                onBoundaryMetadataChange={(metadata) => { setBoundaryMetadata(metadata); setJsaRecord(reopenApprovedJSA); }}
                 onCoordsChange={(coords) => {
                   setBoundaryCoords(coords);
                   setJsaRecord(reopenApprovedJSA);

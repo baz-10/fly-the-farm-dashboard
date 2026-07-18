@@ -6,6 +6,8 @@ export type MissionMapFeatureType =
   | 'secondary-landing-zone'
   | 'signage';
 
+export interface MissionBoundaryMetadata { name: string; notes: string; }
+
 export interface MissionMapPointGeometry {
   type: 'Point';
   coordinates: [number, number];

@@ -39,7 +39,6 @@ import {
   getMissionNextAction,
   getMissionReadiness,
   getTodaysChemicalAllocations,
-  getTodaysSprayMissions,
 } from '../utils/operationsDashboard';
 import { formatCurrency } from '../utils/quoteCalculator';
 import { getOperationalWeek, groupMissionsByLocalDate } from '../utils/missionSchedule';

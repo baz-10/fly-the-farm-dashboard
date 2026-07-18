@@ -1,4 +1,4 @@
-import { MissionMapFeature } from './missionMap';
+import { MissionBoundaryMetadata, MissionMapFeature } from './missionMap';
 import { MissionDeploymentWorkPack } from './workPack';
 
 // Mission Status Types - 5-Phase Workflow
@@ -55,6 +55,7 @@ export interface MissionPlanningState {
   missionNotes: string;
   boundaryCoords: Array<[number, number]>;
   boundaryPolygons?: Array<Array<[number, number]>>;
+  boundaryMetadata?: MissionBoundaryMetadata[];
   mapFeatures?: MissionMapFeature[];
   vegetationClearance?: {
     lotPlan: string;
