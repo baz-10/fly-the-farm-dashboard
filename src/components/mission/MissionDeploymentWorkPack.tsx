@@ -27,6 +27,12 @@ export default function MissionDeploymentWorkPack({ assets, templates, aircraft,
   const [templateId, setTemplateId] = React.useState(value?.sourceTemplateId ?? '');
 
   React.useEffect(() => setDraft(value ?? {}), [value]);
+  React.useEffect(() => {
+    const sourceTemplateId = value?.sourceTemplateId;
+    setTemplateId(sourceTemplateId && templates.some((item) => item.id === sourceTemplateId && item.status === 'active')
+      ? sourceTemplateId
+      : '');
+  }, [templates, value?.sourceTemplateId]);
 
   const update = (next: MissionWorkPackDraft) => {
     setDraft(next);
@@ -39,10 +45,16 @@ export default function MissionDeploymentWorkPack({ assets, templates, aircraft,
   const appliedTemplate = templates.find((item) => item.id === draft.sourceTemplateId);
 
   const toggleAsset = (asset: DeploymentAsset) => {
-    const nextAssets = selectedAssetIds.has(asset.id)
+    const removing = selectedAssetIds.has(asset.id);
+    const nextAssets = removing
       ? selectedAssets.filter((item) => item.id !== asset.id)
       : [...selectedAssets, asset];
-    update({ ...draft, assets: nextAssets });
+    const nextAssignments = removing
+      ? assignments.map((assignment) => assignment.carryingAssetId === asset.id
+        ? { ...assignment, carryingAssetId: undefined }
+        : assignment)
+      : assignments;
+    update({ ...draft, assets: nextAssets, aircraftAssignments: nextAssignments });
   };
 
   const patchAssignment = (index: number, patch: Partial<typeof assignments[number]>) => {
