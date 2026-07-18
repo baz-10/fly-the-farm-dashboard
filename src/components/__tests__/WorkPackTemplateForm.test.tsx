@@ -91,3 +91,35 @@ test('clears an aircraft carrying assignment when its asset is deselected', () =
     aircraftAssignments: [expect.not.objectContaining({ carryingAssetId: 'trailer-1' })],
   }));
 });
+
+test('saves a support-only template with editable crew notes and supporting equipment', () => {
+  const onSave = jest.fn();
+  render(<WorkPackTemplateForm assets={assets} trucks={trucks} aircraft={aircraft} equipmentKits={kits} onSave={onSave} onCancel={jest.fn()} />);
+
+  fireEvent.change(screen.getByLabelText(/Template name/), { target: { value: 'Chemical support trailer' } });
+  fireEvent.click(screen.getByRole('checkbox', { name: /Chemical Trailer/ }));
+  fireEvent.change(screen.getByLabelText('Support crew'), { target: { value: '1' } });
+  fireEvent.change(screen.getByLabelText('Support crew notes'), { target: { value: 'Chemical handler' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Add supporting equipment' }));
+  fireEvent.change(screen.getByLabelText('Supporting equipment 1'), { target: { value: 'Generator and spill kit' } });
+  fireEvent.mouseDown(screen.getByLabelText('Carrying asset for supporting equipment 1'));
+  fireEvent.click(screen.getByRole('option', { name: /Chemical Trailer/ }));
+  fireEvent.click(screen.getByRole('button', { name: 'Save template' }));
+
+  expect(onSave).toHaveBeenCalledWith(expect.objectContaining({
+    aircraftAssignments: [],
+    crewRequirements: expect.arrayContaining([expect.objectContaining({ role: 'support', quantity: 1, notes: 'Chemical handler' })]),
+    supportingEquipment: [expect.objectContaining({ note: 'Generator and spill kit', carryingAssetId: 'trailer-1' })],
+  }));
+});
+
+test('allows an aircraft assignment to save without an equipment kit', () => {
+  const onSave = jest.fn();
+  render(<WorkPackTemplateForm trucks={trucks} aircraft={aircraft} equipmentKits={[]} onSave={onSave} onCancel={jest.fn()} />);
+  fireEvent.change(screen.getByLabelText(/Template name/), { target: { value: 'Survey aircraft' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Add aircraft' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Save template' }));
+  expect(onSave).toHaveBeenCalledWith(expect.objectContaining({
+    aircraftAssignments: [expect.objectContaining({ aircraftId: 't100-001', kitId: '' })],
+  }));
+});

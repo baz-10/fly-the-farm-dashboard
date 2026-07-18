@@ -112,3 +112,26 @@ test('syncs the first complete assignment after placeholder work-pack rows', () 
     kitId: 'kit-2',
   });
 });
+
+test('copies supporting equipment and stale asset references into the mission snapshot', () => {
+  const workPack = buildMissionWorkPack({
+    supportingEquipment: [{ id: 'support-1', note: 'Generator and spill kit', carryingAssetId: trailerAsset.id }],
+    unavailableAssetReferences: [{ sourceAssetId: 'old-truck', label: 'Old truck', reason: 'missing' }],
+  });
+
+  expect(workPack?.supportingEquipment).toEqual([{ id: 'support-1', note: 'Generator and spill kit', carryingAssetId: trailerAsset.id }]);
+  expect(workPack?.unavailableAssetReferences).toEqual([{ sourceAssetId: 'old-truck', label: 'Old truck', reason: 'missing' }]);
+});
+
+test('retains missing and retired template asset references in the draft', () => {
+  const retiredTrailer = { ...trailerAsset, status: 'retired' as const };
+  const staleTemplate = { ...template, assetIds: ['missing-truck', retiredTrailer.id] };
+
+  const draft = applyWorkPackTemplate(staleTemplate, [retiredTrailer]);
+
+  expect(draft.assets).toEqual([retiredTrailer]);
+  expect(draft.unavailableAssetReferences).toEqual([
+    expect.objectContaining({ sourceAssetId: 'missing-truck', reason: 'missing' }),
+    expect.objectContaining({ sourceAssetId: retiredTrailer.id, reason: 'retired' }),
+  ]);
+});

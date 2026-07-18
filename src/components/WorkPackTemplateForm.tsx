@@ -29,7 +29,7 @@ const id = (prefix: string) => `${prefix}-${Date.now()}-${Math.random().toString
 function emptyTemplate(): TemplateFormInput {
   return {
     name: '', description: '', status: 'active', truckId: '', assetIds: [], aircraftAssignments: [],
-    crewRequirements: CREW.map(({ role }) => ({ id: id('crew'), role, quantity: 0 })), checklist: [], notes: '',
+    supportingEquipment: [], crewRequirements: CREW.map(({ role }) => ({ id: id('crew'), role, quantity: 0 })), checklist: [], notes: '',
   };
 }
 
@@ -40,6 +40,7 @@ export default function WorkPackTemplateForm({ template, trucks, assets, aircraf
         ...input,
         assetIds: input.assetIds || (input.truckId ? [input.truckId] : []),
         aircraftAssignments: input.aircraftAssignments.map((item) => ({ ...item })),
+        supportingEquipment: (input.supportingEquipment ?? []).map((item) => ({ ...item })),
         crewRequirements: input.crewRequirements.map((item) => ({ ...item })),
         checklist: [...input.checklist],
       }))(template)
@@ -72,11 +73,14 @@ export default function WorkPackTemplateForm({ template, trucks, assets, aircraf
     ...current,
     crewRequirements: current.crewRequirements.map((item) => item.role === role ? { ...item, quantity: Math.max(0, quantity) } : item),
   }));
+  const updateCrewNotes = (role: CrewRole, notes: string) => setForm((current) => ({
+    ...current,
+    crewRequirements: current.crewRequirements.map((item) => item.role === role ? { ...item, notes } : item),
+  }));
+  const supportingEquipment = form.supportingEquipment ?? [];
 
   const save = () => {
     if (!form.name.trim()) return setError('Enter a template name.');
-    if (!form.aircraftAssignments.length) return setError('Add at least one aircraft.');
-    if (form.aircraftAssignments.some((slot) => !slot.kitId)) return setError('Select a compatible kit for every aircraft.');
     setError('');
     const firstTruck = availableAssets.find((asset) => asset.assetType === 'truck' && form.assetIds.includes(asset.id));
     onSave({ ...form, truckId: firstTruck?.id || '', name: form.name.trim() });
@@ -99,6 +103,11 @@ export default function WorkPackTemplateForm({ template, trucks, assets, aircraf
                   : current.aircraftAssignments.map((assignment) => assignment.carryingAssetId === asset.id
                     ? { ...assignment, carryingAssetId: undefined }
                     : assignment),
+                supportingEquipment: event.target.checked
+                  ? current.supportingEquipment
+                  : (current.supportingEquipment ?? []).map((item) => item.carryingAssetId === asset.id
+                    ? { ...item, carryingAssetId: undefined }
+                    : item),
               }))} />} label={`${asset.name} · ${asset.registration} (${asset.assetType})`} />
             ))}
           </Stack>
@@ -130,6 +139,7 @@ export default function WorkPackTemplateForm({ template, trucks, assets, aircraf
                     {aircraft.filter((item) => item.status === 'operational').map((item) => <MenuItem key={item.id} value={item.id}>{item.registration} · {item.model}</MenuItem>)}
                   </TextField>
                   <TextField select label={`Equipment kit for slot ${index + 1}`} value={slot.kitId} onChange={(e) => updateSlot(index, { kitId: e.target.value })}>
+                    <MenuItem value="">No kit assigned</MenuItem>
                     {compatibleKits.map((kit) => <MenuItem key={kit.id} value={kit.id}>{kit.name}</MenuItem>)}
                   </TextField>
                   <TextField select label={`Carrying asset for slot ${index + 1}`} value={slot.carryingAssetId || ''} onChange={(e) => updateSlot(index, { carryingAssetId: e.target.value || undefined })}>
@@ -146,11 +156,30 @@ export default function WorkPackTemplateForm({ template, trucks, assets, aircraf
 
       <Box>
         <Typography variant="h6">Crew requirements</Typography>
-        <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr 1fr', md: 'repeat(3, 1fr)' }, gap: 1.5, mt: 1.5 }}>
+        <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: 'repeat(2, 1fr)' }, gap: 1.5, mt: 1.5 }}>
           {CREW.map(({ role, label }) => (
-            <TextField key={role} label={label} type="number" value={form.crewRequirements.find((item) => item.role === role)?.quantity || 0} onChange={(e) => updateCrew(role, Number(e.target.value))} inputProps={{ min: 0 }} />
+            <React.Fragment key={role}>
+              <TextField label={label} type="number" value={form.crewRequirements.find((item) => item.role === role)?.quantity || 0} onChange={(e) => updateCrew(role, Number(e.target.value))} inputProps={{ min: 0 }} />
+              <TextField label={`${label.replace(/s$/, '')} notes`} value={form.crewRequirements.find((item) => item.role === role)?.notes || ''} onChange={(e) => updateCrewNotes(role, e.target.value)} />
+            </React.Fragment>
           ))}
         </Box>
+      </Box>
+      <Box>
+        <Stack direction="row" alignItems="center" justifyContent="space-between">
+          <Typography variant="h6">Supporting equipment</Typography>
+          <Button onClick={() => setForm((current) => ({ ...current, supportingEquipment: [...(current.supportingEquipment ?? []), { id: id('support'), note: '' }] }))}>Add supporting equipment</Button>
+        </Stack>
+        <Stack spacing={1.5} mt={1.5}>
+          {supportingEquipment.map((item, index) => <Box key={item.id} sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: '2fr 1fr auto' }, gap: 1 }}>
+            <TextField label={`Supporting equipment ${index + 1}`} value={item.note} onChange={(event) => setForm((current) => ({ ...current, supportingEquipment: (current.supportingEquipment ?? []).map((entry) => entry.id === item.id ? { ...entry, note: event.target.value } : entry) }))} />
+            <TextField select label={`Carrying asset for supporting equipment ${index + 1}`} value={item.carryingAssetId || ''} onChange={(event) => setForm((current) => ({ ...current, supportingEquipment: (current.supportingEquipment ?? []).map((entry) => entry.id === item.id ? { ...entry, carryingAssetId: event.target.value || undefined } : entry) }))}>
+              <MenuItem value="">Not assigned</MenuItem>
+              {availableAssets.filter((asset) => form.assetIds.includes(asset.id)).map((asset) => <MenuItem key={asset.id} value={asset.id}>{asset.name} · {asset.registration}</MenuItem>)}
+            </TextField>
+            <IconButton aria-label={`Remove supporting equipment ${index + 1}`} onClick={() => setForm((current) => ({ ...current, supportingEquipment: (current.supportingEquipment ?? []).filter((entry) => entry.id !== item.id) }))}><DeleteOutlineIcon /></IconButton>
+          </Box>)}
+        </Stack>
       </Box>
       <TextField label="Pack checklist" helperText="One item per line" multiline minRows={3} value={form.checklist.join('\n')} onChange={(e) => setForm({ ...form, checklist: e.target.value.split('\n').filter(Boolean) })} />
       <TextField label="Setup notes" multiline minRows={2} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} />

@@ -80,8 +80,8 @@ test('applies a saved template and shows its crew and checklist summary', async 
     sourceTemplateId: template.id,
     assets: [expect.objectContaining({ id: truck.id }), expect.objectContaining({ id: trailer.id })],
   }));
-  expect(screen.getByText(/2 × pilot/i)).toBeInTheDocument();
-  expect(screen.getByText(/Confirm chemical manifest/)).toBeInTheDocument();
+  expect(screen.getByLabelText('Crew quantity: pilot')).toHaveValue(2);
+  expect(screen.getByLabelText('Work-pack checklist')).toHaveValue('Confirm chemical manifest');
 });
 
 test('adds mixed aircraft up to three and filters each row to compatible kits', async () => {
@@ -156,4 +156,77 @@ test('synchronizes the template selector when a mission value is rerendered', as
     <MissionDeploymentWorkPack assets={[truck, trailer]} templates={[template, secondTemplate, archivedTemplate]} aircraft={aircraft} equipmentKits={kits} value={{ sourceTemplateId: 'missing-template' }} showFinancials={false} onChange={onChange} />,
   );
   expect(screen.getByLabelText('Saved template').parentElement?.querySelector('input')).toHaveValue('');
+});
+
+test('edits crew requirements, checklist items, operational notes and supporting equipment', async () => {
+  const user = userEvent.setup();
+  const { onChange } = renderEditor({ value: {
+    assets: [trailer],
+    crewRequirements: [{ id: 'crew-1', role: 'support', quantity: 1, notes: '' }],
+    checklist: ['Load PPE'],
+    notes: 'Initial note',
+  } });
+  await expand();
+  await user.clear(screen.getByLabelText('Crew quantity: support'));
+  await user.type(screen.getByLabelText('Crew quantity: support'), '2');
+  await user.type(screen.getByLabelText('Crew notes: support'), 'Chemical handler');
+  const checklist = screen.getByLabelText('Work-pack checklist');
+  await user.clear(checklist);
+  await user.type(checklist, 'Load PPE{enter}Confirm radios');
+  const notes = screen.getByLabelText('Operational work-pack notes');
+  await user.clear(notes);
+  await user.type(notes, 'Meet at gate');
+  await user.click(screen.getByRole('button', { name: 'Add supporting equipment' }));
+  await user.type(screen.getByLabelText('Supporting equipment 1'), 'Generator');
+  await user.click(screen.getByLabelText('Carrying asset for supporting equipment 1'));
+  await user.click(screen.getByRole('option', { name: 'Spray trailer' }));
+
+  expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({
+    supportingEquipment: [expect.objectContaining({ note: 'Generator', carryingAssetId: 'trailer-1' })],
+  }));
+  expect(onChange.mock.calls.some(([draft]) => draft?.crewRequirements?.[0]?.quantity === 2)).toBe(true);
+  expect(onChange.mock.calls.some(([draft]) => draft?.checklist?.includes('Confirm radios'))).toBe(true);
+  expect(onChange.mock.calls.some(([draft]) => draft?.notes === 'Meet at gate')).toBe(true);
+});
+
+test('adds an editable crew requirement to a custom mission pack', async () => {
+  const user = userEvent.setup();
+  const { onChange } = renderEditor({ templates: [], value: {} });
+  await expand();
+  await user.click(screen.getByRole('button', { name: 'Add crew requirement' }));
+  await user.click(screen.getByLabelText('Crew role 1'));
+  await user.click(screen.getByRole('option', { name: 'Driver' }));
+  await user.clear(screen.getByLabelText('Crew quantity: driver'));
+  await user.type(screen.getByLabelText('Crew quantity: driver'), '2');
+
+  expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({
+    crewRequirements: [expect.objectContaining({ role: 'driver', quantity: 2 })],
+  }));
+});
+
+test('retains and marks missing or unavailable assets when applying an outdated template', async () => {
+  const user = userEvent.setup();
+  const archivedTrailer = { ...trailer, status: 'retired' } as DeploymentAsset;
+  const staleTemplate = { ...template, assetIds: ['missing-truck', archivedTrailer.id] } as WorkPackTemplate;
+  const { onChange } = renderEditor({ assets: [archivedTrailer], templates: [staleTemplate] });
+  await expand();
+  await user.click(screen.getByLabelText('Saved template'));
+  await user.click(screen.getByRole('option', { name: staleTemplate.name }));
+  await user.click(screen.getByRole('button', { name: 'Apply template' }));
+
+  expect(screen.getByText(/missing-truck.*no longer exists/i)).toBeInTheDocument();
+  expect(screen.getByText(/Spray trailer.*retired/i)).toBeInTheDocument();
+  expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({
+    unavailableAssetReferences: expect.arrayContaining([
+      expect.objectContaining({ sourceAssetId: 'missing-truck' }),
+      expect.objectContaining({ sourceAssetId: archivedTrailer.id }),
+    ]),
+  }));
+});
+
+test('shows a non-blocking work-pack persistence warning', async () => {
+  render(<MissionDeploymentWorkPack assets={[]} templates={[]} aircraft={aircraft} equipmentKits={kits} value={undefined} showFinancials={false} persistenceWarning="Work packs could not be saved" onChange={jest.fn()} />);
+  await expand();
+  expect(screen.getByText(/Work packs could not be saved.*continue planning/i)).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Skip for now' })).toBeEnabled();
 });

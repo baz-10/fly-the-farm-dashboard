@@ -7,7 +7,7 @@ import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import AddIcon from '@mui/icons-material/Add';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import { Aircraft, EquipmentKit } from '../../types/aircraft';
-import { DeploymentAsset, MissionWorkPackDraft, WorkPackTemplate } from '../../types/workPack';
+import { CrewRole, DeploymentAsset, MissionWorkPackDraft, WorkPackTemplate } from '../../types/workPack';
 import { getCompatibleAvailableKits } from '../../utils/aircraftKitCompatibility';
 import { applyWorkPackTemplate } from '../../utils/missionWorkPack';
 
@@ -18,12 +18,20 @@ interface Props {
   equipmentKits: EquipmentKit[];
   value: MissionWorkPackDraft | undefined;
   showFinancials: boolean;
+  persistenceWarning?: string;
   onChange: (next: MissionWorkPackDraft | undefined) => void;
 }
 
 const newAssignment = (index: number) => ({ id: `mission-slot-${Date.now()}-${index}`, aircraftId: '', kitId: '', label: `Aircraft ${index + 1}` });
+const newSupportingEquipment = (index: number) => ({ id: `mission-support-${Date.now()}-${index}`, note: '' });
+const crewRoles: Array<{ value: CrewRole; label: string }> = [
+  { value: 'pilot', label: 'Pilot' }, { value: 'driver', label: 'Driver' },
+  { value: 'field-supervisor', label: 'Field supervisor' }, { value: 'loader-mixer', label: 'Loader / mixer' },
+  { value: 'spotter', label: 'Spotter' }, { value: 'support', label: 'Support' },
+];
+const newCrewRequirement = (index: number) => ({ id: `mission-crew-${Date.now()}-${index}`, role: 'support' as CrewRole, quantity: 1, notes: '' });
 
-export default function MissionDeploymentWorkPack({ assets, templates, aircraft, equipmentKits, value, showFinancials, onChange }: Props) {
+export default function MissionDeploymentWorkPack({ assets, templates, aircraft, equipmentKits, value, showFinancials, persistenceWarning, onChange }: Props) {
   const [draft, setDraft] = React.useState<MissionWorkPackDraft>(value ?? {});
   const [templateId, setTemplateId] = React.useState(value?.sourceTemplateId ?? '');
 
@@ -55,7 +63,10 @@ export default function MissionDeploymentWorkPack({ assets, templates, aircraft,
         ? { ...assignment, carryingAssetId: undefined }
         : assignment)
       : assignments;
-    update({ ...draft, assets: nextAssets, aircraftAssignments: nextAssignments });
+    const nextSupportingEquipment = removing
+      ? (draft.supportingEquipment ?? []).map((item) => item.carryingAssetId === asset.id ? { ...item, carryingAssetId: undefined } : item)
+      : draft.supportingEquipment;
+    update({ ...draft, assets: nextAssets, aircraftAssignments: nextAssignments, supportingEquipment: nextSupportingEquipment });
   };
 
   const patchAssignment = (index: number, patch: Partial<typeof assignments[number]>) => {
@@ -70,6 +81,13 @@ export default function MissionDeploymentWorkPack({ assets, templates, aircraft,
       </AccordionSummary>
       <AccordionDetails>
         <Stack spacing={2}>
+          {persistenceWarning && <Alert severity="warning">{persistenceWarning} You can continue planning and try saving again.</Alert>}
+          {draft.sourceTemplateId && !appliedTemplate && (
+            <Alert severity="warning">The source template is missing. This mission copy is retained; remove or replace unavailable items before use.</Alert>
+          )}
+          {appliedTemplate?.status === 'archived' && (
+            <Alert severity="warning">The source template is archived. This mission copy is retained; choose an active replacement when ready.</Alert>
+          )}
           <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} alignItems={{ sm: 'center' }}>
             <FormControl size="small" fullWidth>
               <InputLabel id="work-pack-template-label">Saved template</InputLabel>
@@ -100,6 +118,12 @@ export default function MissionDeploymentWorkPack({ assets, templates, aircraft,
               </Stack>
             )}
           </Box>
+
+          {(draft.unavailableAssetReferences ?? []).map((reference) => (
+            <Alert key={reference.sourceAssetId} severity="warning" action={<Button size="small" onClick={() => update({ ...draft, unavailableAssetReferences: (draft.unavailableAssetReferences ?? []).filter((item) => item.sourceAssetId !== reference.sourceAssetId) })}>Remove</Button>}>
+              {reference.label} — {reference.reason === 'missing' ? 'no longer exists' : reference.reason}. Replace or remove this source reference.
+            </Alert>
+          ))}
 
           {selectedAssets.some((asset) => asset.assetType === 'trailer') && (
             <Stack spacing={1}>
@@ -141,13 +165,42 @@ export default function MissionDeploymentWorkPack({ assets, templates, aircraft,
             <Button startIcon={<AddIcon />} disabled={assignments.length >= 3} onClick={() => update({ ...draft, aircraftAssignments: [...assignments, newAssignment(assignments.length)] })}>Add aircraft</Button>
           </Stack>
 
-          {appliedTemplate && (
-            <Box>
-              <Typography variant="subtitle2">Crew and checklist</Typography>
-              {draft.crewRequirements?.map((item) => <Typography key={item.id} variant="body2">{item.quantity} × {item.role}{item.notes ? ` — ${item.notes}` : ''}</Typography>)}
-              {draft.checklist?.map((item) => <Typography key={item} variant="body2">• {item}</Typography>)}
-            </Box>
-          )}
+          <Box>
+            <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1 }}>
+              <Typography variant="subtitle2">Crew requirements</Typography>
+              <Button onClick={() => update({ ...draft, crewRequirements: [...(draft.crewRequirements ?? []), newCrewRequirement((draft.crewRequirements ?? []).length)] })}>Add crew requirement</Button>
+            </Stack>
+            <Stack spacing={1}>
+              {(draft.crewRequirements ?? []).map((item, index) => <Box key={item.id} sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: '160px 140px 1fr auto' }, gap: 1 }}>
+                <TextField size="small" select label={`Crew role ${index + 1}`} value={item.role} onChange={(event) => update({ ...draft, crewRequirements: (draft.crewRequirements ?? []).map((entry) => entry.id === item.id ? { ...entry, role: event.target.value as CrewRole } : entry) })}>
+                  {crewRoles.map((role) => <MenuItem key={role.value} value={role.value}>{role.label}</MenuItem>)}
+                </TextField>
+                <TextField size="small" type="number" label={`Crew quantity: ${item.role}`} value={item.quantity} inputProps={{ min: 0 }} onChange={(event) => update({ ...draft, crewRequirements: (draft.crewRequirements ?? []).map((entry) => entry.id === item.id ? { ...entry, quantity: Math.max(0, Number(event.target.value)) } : entry) })} />
+                <TextField size="small" label={`Crew notes: ${item.role}`} value={item.notes ?? ''} onChange={(event) => update({ ...draft, crewRequirements: (draft.crewRequirements ?? []).map((entry) => entry.id === item.id ? { ...entry, notes: event.target.value } : entry) })} />
+                <Button color="error" onClick={() => update({ ...draft, crewRequirements: (draft.crewRequirements ?? []).filter((entry) => entry.id !== item.id) })}>Remove</Button>
+              </Box>)}
+            </Stack>
+          </Box>
+
+          <Box>
+            <Stack direction="row" justifyContent="space-between" alignItems="center">
+              <Typography variant="subtitle2">Supporting equipment</Typography>
+              <Button startIcon={<AddIcon />} onClick={() => update({ ...draft, supportingEquipment: [...(draft.supportingEquipment ?? []), newSupportingEquipment((draft.supportingEquipment ?? []).length)] })}>Add supporting equipment</Button>
+            </Stack>
+            <Stack spacing={1} mt={1}>
+              {(draft.supportingEquipment ?? []).map((item, index) => <Box key={item.id} sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: '2fr 1fr auto' }, gap: 1 }}>
+                <TextField size="small" label={`Supporting equipment ${index + 1}`} value={item.note} onChange={(event) => update({ ...draft, supportingEquipment: (draft.supportingEquipment ?? []).map((entry) => entry.id === item.id ? { ...entry, note: event.target.value } : entry) })} />
+                <TextField size="small" select label={`Carrying asset for supporting equipment ${index + 1}`} value={item.carryingAssetId ?? ''} onChange={(event) => update({ ...draft, supportingEquipment: (draft.supportingEquipment ?? []).map((entry) => entry.id === item.id ? { ...entry, carryingAssetId: event.target.value || undefined } : entry) })}>
+                  <MenuItem value="">None</MenuItem>
+                  {selectedAssets.map((asset) => <MenuItem key={asset.id} value={asset.id}>{asset.name || asset.registration}</MenuItem>)}
+                </TextField>
+                <Button color="error" onClick={() => update({ ...draft, supportingEquipment: (draft.supportingEquipment ?? []).filter((entry) => entry.id !== item.id) })}>Remove</Button>
+              </Box>)}
+            </Stack>
+          </Box>
+
+          <TextField size="small" label="Work-pack checklist" helperText="One item per line" multiline minRows={3} value={(draft.checklist ?? []).join('\n')} onChange={(event) => update({ ...draft, checklist: event.target.value ? event.target.value.split('\n') : [] })} />
+          <TextField size="small" label="Operational work-pack notes" multiline minRows={2} value={draft.notes ?? ''} onChange={(event) => update({ ...draft, notes: event.target.value })} />
           {showFinancials && (
             <Box>
               {draft.estimatedDeploymentCost !== undefined && (

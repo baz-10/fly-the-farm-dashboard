@@ -2,6 +2,12 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { WorkPackProvider, useWorkPacks } from '../WorkPackContext';
 import { PERSISTENCE_KEYS } from '../../services/persistence';
 import { TruckProfileInput, WorkPackTemplateInput } from '../../types/workPack';
+import * as persistence from '../../services/persistence';
+
+let mockCurrentRole: 'admin' | 'contractor' = 'admin';
+jest.mock('../AuthContext', () => ({
+  useAuth: () => ({ user: { id: 'user-1', role: mockCurrentRole } }),
+}));
 
 const truck: TruckProfileInput = {
   registration: 'FTF-TRUCK-01',
@@ -74,8 +80,22 @@ function LegacyTruckMutationProbe() {
   );
 }
 
+function StateProbe() {
+  const { assets, loadError, saveError, createAsset } = useWorkPacks();
+  return <div>
+    <span data-testid="asset-cost">{assets[0]?.costs ? 'has-costs' : 'no-costs'}</span>
+    <span data-testid="load-error">{loadError || ''}</span>
+    <span data-testid="save-error">{saveError || ''}</span>
+    <button onClick={() => createAsset({ ...truck, assetType: 'truck' })}>change store</button>
+  </div>;
+}
+
 describe('WorkPackContext', () => {
-  beforeEach(() => localStorage.clear());
+  beforeEach(() => {
+    jest.restoreAllMocks();
+    localStorage.clear();
+    mockCurrentRole = 'admin';
+  });
 
   test('persists truck profiles and reusable templates', async () => {
     render(<WorkPackProvider><Probe /></WorkPackProvider>);
@@ -148,5 +168,37 @@ describe('WorkPackContext', () => {
     expect(await screen.findByTestId('trailer-status')).toHaveTextContent('available');
     fireEvent.click(screen.getByText('archive trailer as truck'));
     await waitFor(() => expect(screen.getByTestId('trailer-status')).toHaveTextContent('available'));
+  });
+
+  test('removes financial fields from the contractor runtime store', async () => {
+    mockCurrentRole = 'contractor';
+    const now = new Date().toISOString();
+    localStorage.setItem(PERSISTENCE_KEYS.workPacks, JSON.stringify({
+      assets: [{ ...truck, id: 'truck-1', assetType: 'truck', createdAt: now, updatedAt: now }],
+      templates: [], snapshots: [],
+    }));
+
+    render(<WorkPackProvider><StateProbe /></WorkPackProvider>);
+
+    expect(await screen.findByTestId('asset-cost')).toHaveTextContent('no-costs');
+  });
+
+  test('exposes a load error while keeping mission planning usable', async () => {
+    jest.spyOn(persistence, 'readSharedValue').mockRejectedValueOnce(new Error('Network unavailable'));
+
+    render(<WorkPackProvider><StateProbe /></WorkPackProvider>);
+
+    expect(await screen.findByTestId('load-error')).toHaveTextContent('Network unavailable');
+    expect(screen.getByText('change store')).toBeEnabled();
+  });
+
+  test('exposes a save error instead of swallowing a failed write', async () => {
+    jest.spyOn(persistence, 'writeSharedValue').mockRejectedValueOnce(new Error('Save failed'));
+    render(<WorkPackProvider><StateProbe /></WorkPackProvider>);
+    await screen.findByTestId('save-error');
+
+    fireEvent.click(screen.getByText('change store'));
+
+    await waitFor(() => expect(screen.getByTestId('save-error')).toHaveTextContent('Save failed'));
   });
 });

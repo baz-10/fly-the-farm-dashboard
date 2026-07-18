@@ -10,6 +10,7 @@ import {
   WorkPackTemplateInput,
 } from '../types/workPack';
 import { instantiateWorkPackTemplate } from '../utils/workPackTemplates';
+import { useAuth } from './AuthContext';
 
 interface WorkPackStore {
   assets: DeploymentAsset[];
@@ -20,6 +21,8 @@ interface WorkPackStore {
 
 interface WorkPackContextValue extends WorkPackStore {
   isLoading: boolean;
+  loadError?: string;
+  saveError?: string;
   createAsset: (input: DeploymentAssetInput) => Promise<string>;
   updateAsset: (id: string, updates: Partial<DeploymentAssetInput>) => Promise<void>;
   archiveAsset: (id: string) => Promise<void>;
@@ -55,6 +58,19 @@ function withAssets(store: WorkPackStore, assets: DeploymentAsset[]): WorkPackSt
   return { ...store, assets, trucks: deriveTrucks(assets) };
 }
 
+function withoutCosts<T extends { costs?: unknown }>(asset: T): Omit<T, 'costs'> {
+  const { costs: _costs, ...safeAsset } = asset;
+  return safeAsset;
+}
+
+export function redactWorkPackStoreFinancials(store: WorkPackStore): WorkPackStore {
+  return {
+    ...store,
+    assets: store.assets.map((asset) => withoutCosts(asset) as DeploymentAsset),
+    trucks: store.trucks.map((truck) => withoutCosts(truck) as TruckProfile),
+  };
+}
+
 function createId(prefix: string): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
     return `${prefix}-${crypto.randomUUID()}`;
@@ -63,8 +79,11 @@ function createId(prefix: string): string {
 }
 
 export function WorkPackProvider({ children }: { children: React.ReactNode }) {
+  const { user } = useAuth();
   const [store, setStore] = useState<WorkPackStore>(EMPTY_STORE);
   const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string>();
+  const [saveError, setSaveError] = useState<string>();
   const loaded = useRef(false);
 
   useEffect(() => {
@@ -73,12 +92,19 @@ export function WorkPackProvider({ children }: { children: React.ReactNode }) {
       .then((saved) => {
         if (!cancelled) {
           const assets = normaliseDeploymentAssets(saved);
-          setStore({
+          const nextStore = {
             assets,
             trucks: deriveTrucks(assets),
             templates: Array.isArray(saved.templates) ? saved.templates : [],
             snapshots: Array.isArray(saved.snapshots) ? saved.snapshots : [],
-          });
+          };
+          setStore(user?.role === 'contractor' ? redactWorkPackStoreFinancials(nextStore) : nextStore);
+          loaded.current = true;
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setLoadError(error instanceof Error ? error.message : 'Unable to load deployment work packs.');
           loaded.current = true;
         }
       })
@@ -86,12 +112,15 @@ export function WorkPackProvider({ children }: { children: React.ReactNode }) {
         if (!cancelled) setIsLoading(false);
       });
     return () => { cancelled = true; };
-  }, []);
+  }, [user?.role]);
 
   useEffect(() => {
     if (!loaded.current) return;
     const timeout = window.setTimeout(() => {
-      writeSharedValue(PERSISTENCE_KEYS.workPacks, store).catch(() => undefined);
+      setSaveError(undefined);
+      writeSharedValue(PERSISTENCE_KEYS.workPacks, store).catch((error) => {
+        setSaveError(error instanceof Error ? error.message : 'Unable to save deployment work packs.');
+      });
     }, 50);
     return () => window.clearTimeout(timeout);
   }, [store]);
@@ -157,6 +186,7 @@ export function WorkPackProvider({ children }: { children: React.ReactNode }) {
       ...input,
       name: `${source.name} Copy`,
       aircraftAssignments: source.aircraftAssignments.map((item) => ({ ...item, id: createId('slot') })),
+      supportingEquipment: (source.supportingEquipment ?? []).map((item) => ({ ...item, id: createId('support') })),
       crewRequirements: source.crewRequirements.map((item) => ({ ...item, id: createId('crew') })),
       checklist: [...source.checklist],
     });
@@ -173,6 +203,8 @@ export function WorkPackProvider({ children }: { children: React.ReactNode }) {
   const value = useMemo<WorkPackContextValue>(() => ({
     ...store,
     isLoading,
+    loadError,
+    saveError,
     createAsset,
     updateAsset,
     archiveAsset,
@@ -184,7 +216,7 @@ export function WorkPackProvider({ children }: { children: React.ReactNode }) {
     archiveTemplate,
     duplicateTemplate,
     instantiateTemplate,
-  }), [store, isLoading, createAsset, updateAsset, archiveAsset, createTruck, updateTruck, archiveTruck, createTemplate, updateTemplate, archiveTemplate, duplicateTemplate, instantiateTemplate]);
+  }), [store, isLoading, loadError, saveError, createAsset, updateAsset, archiveAsset, createTruck, updateTruck, archiveTruck, createTemplate, updateTemplate, archiveTemplate, duplicateTemplate, instantiateTemplate]);
 
   return (
     <WorkPackContext.Provider value={value}>

@@ -31,6 +31,7 @@ export function instantiateWorkPackTemplate(
       ...assignment,
       id: createId(),
     })),
+    supportingEquipment: (template.supportingEquipment ?? []).map((item) => ({ ...item, id: createId() })),
     crewRequirements: template.crewRequirements.map((requirement) => ({
       ...requirement,
       id: createId(),

@@ -231,6 +231,21 @@ const validateMissionArray = (data: any): data is MissionRecord[] => {
   return Array.isArray(data) && data.every(validateMissionRecord);
 };
 
+export function redactMissionDeploymentFinancials(mission: MissionRecord): MissionRecord {
+  if (!mission.deploymentWorkPack) return mission;
+  const { estimatedDeploymentCost: _estimatedDeploymentCost, ...safeWorkPack } = mission.deploymentWorkPack;
+  return {
+    ...mission,
+    deploymentWorkPack: {
+      ...safeWorkPack,
+      assets: mission.deploymentWorkPack.assets.map((asset) => {
+        const { costs: _costs, ...safeAsset } = asset;
+        return safeAsset as typeof asset;
+      }),
+    },
+  };
+}
+
 // Status Transition Validation Rules
 const STATUS_TRANSITIONS: Record<MissionStatus, MissionStatus[]> = {
   'Planning': ['Approved'],
@@ -738,7 +753,9 @@ export function MissionProvider({ children }: { children: React.ReactNode }) {
       });
       versionMapRef.current = versionMap;
 
-      setMissions(missionsData);
+      setMissions(user?.role === 'contractor'
+        ? missionsData.map(redactMissionDeploymentFinancials)
+        : missionsData);
       setMissionTemplates(templatesData);
     } catch (error) {
       const message = `Failed to load data: ${error instanceof Error ? error.message : String(error)}`;
@@ -748,7 +765,7 @@ export function MissionProvider({ children }: { children: React.ReactNode }) {
       hasLoadedRef.current = true;
       setIsLoading(false);
     }
-  }, []);
+  }, [user?.role]);
 
   // Save snapshots in order so a slower request cannot overwrite newer state.
   const saveData = useCallback(async () => {

@@ -3,6 +3,7 @@ import {
   DeploymentAsset,
   MissionDeploymentWorkPack,
   MissionWorkPackDraft,
+  UnavailableDeploymentAssetReference,
   WorkPackTemplate,
 } from '../types/workPack';
 
@@ -14,10 +15,27 @@ export function applyWorkPackTemplate(
   template: WorkPackTemplate,
   assets: DeploymentAsset[],
 ): MissionWorkPackDraft {
+  const requestedAssetIds = template.assetIds || (template.truckId ? [template.truckId] : []);
+  const suppliedAssetsById = new Map(assets.map((asset) => [asset.id, asset]));
+  const unavailableAssetReferences: UnavailableDeploymentAssetReference[] = [];
+  requestedAssetIds.forEach((sourceAssetId) => {
+    const source = suppliedAssetsById.get(sourceAssetId);
+    if (!source) {
+      unavailableAssetReferences.push({ sourceAssetId, label: sourceAssetId, reason: 'missing' });
+    } else if (source.status !== 'available') {
+      unavailableAssetReferences.push({
+        sourceAssetId,
+        label: source.name || source.registration || sourceAssetId,
+        reason: source.status,
+      });
+    }
+  });
   return {
     sourceTemplateId: template.id,
     assets: assets.map(copyAsset),
     aircraftAssignments: template.aircraftAssignments.map((assignment) => ({ ...assignment })),
+    supportingEquipment: (template.supportingEquipment ?? []).map((item) => ({ ...item })),
+    unavailableAssetReferences,
     crewRequirements: template.crewRequirements.map((requirement) => ({ ...requirement })),
     checklist: [...template.checklist],
     notes: template.notes,
@@ -35,6 +53,8 @@ function isEmpty(draft: MissionWorkPackDraft): boolean {
     && !(draft.assets?.length)
     && !hasTowDetails(draft)
     && !(draft.aircraftAssignments?.length)
+    && !(draft.supportingEquipment?.length)
+    && !(draft.unavailableAssetReferences?.length)
     && !(draft.crewRequirements?.length)
     && !(draft.checklist?.length)
     && !draft.notes
@@ -55,6 +75,8 @@ export function buildMissionWorkPack(
     assets: (draft.assets ?? []).map(copyAsset),
     ...(hasTowDetails(draft) ? { towVehicle: { ...draft.towVehicle } } : {}),
     aircraftAssignments: (draft.aircraftAssignments ?? []).map((assignment) => ({ ...assignment })),
+    supportingEquipment: (draft.supportingEquipment ?? []).map((item) => ({ ...item })),
+    unavailableAssetReferences: (draft.unavailableAssetReferences ?? []).map((item) => ({ ...item })),
     crewRequirements: (draft.crewRequirements ?? []).map((requirement) => ({ ...requirement })),
     checklist: [...(draft.checklist ?? [])],
     notes: draft.notes ?? '',

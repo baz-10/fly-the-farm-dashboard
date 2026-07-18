@@ -60,6 +60,18 @@ export interface WorkPackAircraftAssignment {
 
 export type MissionWorkPackAircraftAssignment = WorkPackAircraftAssignment;
 
+export interface SupportingEquipmentAssignment {
+  id: string;
+  note: string;
+  carryingAssetId?: string;
+}
+
+export interface UnavailableDeploymentAssetReference {
+  sourceAssetId: string;
+  label: string;
+  reason: 'missing' | 'retired' | 'maintenance' | 'assigned';
+}
+
 export interface TowVehicleDetails {
   registration?: string;
   driver?: string;
@@ -82,6 +94,7 @@ export interface WorkPackTemplate {
   assetIds?: string[];
   truckId: string;
   aircraftAssignments: WorkPackAircraftAssignment[];
+  supportingEquipment?: SupportingEquipmentAssignment[];
   crewRequirements: CrewRequirement[];
   checklist: string[];
   notes: string;
@@ -98,6 +111,7 @@ export interface WorkPackSnapshot {
   assetIds?: string[];
   truckId: string;
   aircraftAssignments: WorkPackAircraftAssignment[];
+  supportingEquipment?: SupportingEquipmentAssignment[];
   crewRequirements: CrewRequirement[];
   checklist: string[];
   notes: string;
@@ -110,6 +124,8 @@ export interface MissionDeploymentWorkPack {
   assets: DeploymentAsset[];
   towVehicle?: TowVehicleDetails;
   aircraftAssignments: MissionWorkPackAircraftAssignment[];
+  supportingEquipment?: SupportingEquipmentAssignment[];
+  unavailableAssetReferences?: UnavailableDeploymentAssetReference[];
   crewRequirements: CrewRequirement[];
   checklist: string[];
   notes: string;
@@ -123,6 +139,8 @@ export interface MissionWorkPackDraft {
   assets?: DeploymentAsset[];
   towVehicle?: TowVehicleDetails;
   aircraftAssignments?: MissionWorkPackAircraftAssignment[];
+  supportingEquipment?: SupportingEquipmentAssignment[];
+  unavailableAssetReferences?: UnavailableDeploymentAssetReference[];
   crewRequirements?: CrewRequirement[];
   checklist?: string[];
   notes?: string;

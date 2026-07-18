@@ -68,6 +68,7 @@ import { buildEmptyMissionSafetyAssessment, evaluateMissionSafety } from '../uti
 import { fetchWeatherForDate, geocodeLocality } from '../services/weatherService';
 import { getMissionWorkflowState, MISSION_WORKFLOW_STEPS } from '../utils/missionWorkflow';
 import { buildMissionWorkPack, syncPrimaryAircraftConfiguration } from '../utils/missionWorkPack';
+import { reopenApprovedJSA, reopenJSAForWorkPackChange } from '../utils/workPackJsa';
 import { LatLng, BoundaryFileRef } from '../types/fieldManagement';
 import { SavedVegetationCheck } from '../types/pmav';
 import { MissionMapFeature } from '../types/missionMap';
@@ -269,22 +270,6 @@ function createMissionJSA(missionId: string): JSARecord {
   };
 }
 
-function reopenApprovedJSA(jsa: JSARecord): JSARecord {
-  if (jsa.status !== 'approved') return jsa;
-
-  return {
-    ...jsa,
-    status: 'in-progress',
-    reviewedBy: undefined,
-    completedDate: undefined,
-    reviewedDate: undefined,
-    signOffs: {
-      pilot: { userId: 'current_user', signature: '', signedAt: '' },
-    },
-    updatedAt: new Date().toISOString(),
-  };
-}
-
 function Panel({ title, children, icon, action, sx }: PanelProps) {
   return (
     <Card
@@ -388,7 +373,12 @@ export default function MissionPlanning() {
     getCompatibleKits,
     validateConfiguration,
   } = useAircraft();
-  const { assets: deploymentAssets, templates: workPackTemplates } = useWorkPacks();
+  const {
+    assets: deploymentAssets,
+    templates: workPackTemplates,
+    loadError: workPackLoadError,
+    saveError: workPackSaveError,
+  } = useWorkPacks();
   const dataLoading = missionDataLoading || aircraftDataLoading;
   const dataError = missionDataError || aircraftDataError;
 
@@ -1120,6 +1110,8 @@ export default function MissionPlanning() {
           assets: mission.deploymentWorkPack.assets,
           towVehicle: mission.deploymentWorkPack.towVehicle,
           aircraftAssignments: mission.deploymentWorkPack.aircraftAssignments,
+          supportingEquipment: mission.deploymentWorkPack.supportingEquipment,
+          unavailableAssetReferences: mission.deploymentWorkPack.unavailableAssetReferences,
           crewRequirements: mission.deploymentWorkPack.crewRequirements,
           checklist: mission.deploymentWorkPack.checklist,
           notes: mission.deploymentWorkPack.notes,
@@ -2265,7 +2257,11 @@ export default function MissionPlanning() {
               equipmentKits={equipmentKits}
               value={missionWorkPackDraft}
               showFinancials={user?.role === 'admin'}
-              onChange={setMissionWorkPackDraft}
+              persistenceWarning={workPackLoadError || workPackSaveError}
+              onChange={(next) => {
+                setJsaRecord((current) => reopenJSAForWorkPackChange(current, missionWorkPackDraft, next));
+                setMissionWorkPackDraft(next);
+              }}
             />
 
             <Panel title="Chemical Mix Summary" icon={<ScienceIcon />}>
