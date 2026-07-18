@@ -1,11 +1,12 @@
 import React from 'react';
 import { Alert, Box, Button, Divider, MenuItem, Stack, TextField, Typography } from '@mui/material';
-import { TruckProfile, TruckProfileInput, TruckOperatingCosts } from '../types/workPack';
+import { DeploymentAsset, DeploymentAssetInput, TruckProfile, TruckOperatingCosts } from '../types/workPack';
 
 interface TruckProfileFormProps {
   truck?: TruckProfile;
+  asset?: DeploymentAsset;
   showFinancials: boolean;
-  onSave: (input: TruckProfileInput) => void | Promise<void>;
+  onSave: (input: DeploymentAssetInput) => void | Promise<void>;
   onCancel: () => void;
 }
 
@@ -25,20 +26,22 @@ const EMPTY_COSTS: TruckOperatingCosts = {
   costPerKm: 0,
 };
 
-function emptyTruck(): TruckProfileInput {
+function emptyTruck(): DeploymentAssetInput {
   return {
+    assetType: 'truck',
     registration: '', name: '', manufacturer: '', model: '', year: new Date().getFullYear(), vin: '',
     ownershipType: 'owned', payloadCapacityKg: 0, operationalNotes: '', status: 'available', costs: EMPTY_COSTS,
   };
 }
 
-export default function TruckProfileForm({ truck, showFinancials, onSave, onCancel }: TruckProfileFormProps) {
-  const [form, setForm] = React.useState<TruckProfileInput>(() => truck
-    ? (({ id: _id, createdAt: _createdAt, updatedAt: _updatedAt, ...input }) => input)(truck)
+export default function TruckProfileForm({ truck, asset, showFinancials, onSave, onCancel }: TruckProfileFormProps) {
+  const existing = asset || (truck ? { ...truck, assetType: 'truck' as const } : undefined);
+  const [form, setForm] = React.useState<DeploymentAssetInput>(() => existing
+    ? (({ id: _id, createdAt: _createdAt, updatedAt: _updatedAt, ...input }) => input)(existing)
     : emptyTruck());
   const [error, setError] = React.useState('');
 
-  const setField = <K extends keyof TruckProfileInput>(field: K, value: TruckProfileInput[K]) => {
+  const setField = <K extends keyof DeploymentAssetInput>(field: K, value: DeploymentAssetInput[K]) => {
     setForm((current) => ({ ...current, [field]: value }));
   };
   const setCost = (field: keyof TruckOperatingCosts, value: string) => {
@@ -48,7 +51,7 @@ export default function TruckProfileForm({ truck, showFinancials, onSave, onCanc
     }));
   };
   const save = () => {
-    if (!form.registration.trim()) return setError('Enter the truck registration.');
+    if (!form.registration.trim()) return setError(`Enter the ${form.assetType} registration.`);
     if (!form.name.trim()) return setError('Enter a name operators will recognise.');
     if (!form.manufacturer.trim() || !form.model.trim()) return setError('Enter the manufacturer and model.');
     setError('');
@@ -69,10 +72,13 @@ export default function TruckProfileForm({ truck, showFinancials, onSave, onCanc
     <Stack spacing={3}>
       {error && <Alert severity="error">{error}</Alert>}
       <Box>
-        <Typography variant="overline" color="text.secondary">Vehicle identity</Typography>
+        <Typography variant="overline" color="text.secondary">Deployment asset identity</Typography>
         <Box sx={fieldGrid}>
+          <TextField select label="Asset type" value={form.assetType} onChange={(e) => setField('assetType', e.target.value as DeploymentAssetInput['assetType'])}>
+            <MenuItem value="truck">Truck</MenuItem><MenuItem value="trailer">Trailer</MenuItem>
+          </TextField>
           <TextField label="Registration" value={form.registration} onChange={(e) => setField('registration', e.target.value)} required />
-          <TextField label="Truck name" value={form.name} onChange={(e) => setField('name', e.target.value)} required />
+          <TextField label="Asset name" value={form.name} onChange={(e) => setField('name', e.target.value)} required />
           <TextField label="Manufacturer" value={form.manufacturer} onChange={(e) => setField('manufacturer', e.target.value)} required />
           <TextField label="Model" value={form.model} onChange={(e) => setField('model', e.target.value)} required />
           <TextField label="Year" type="number" value={form.year} onChange={(e) => setField('year', Number(e.target.value))} />
@@ -83,7 +89,7 @@ export default function TruckProfileForm({ truck, showFinancials, onSave, onCanc
       <Box>
         <Typography variant="overline" color="text.secondary">Operational profile</Typography>
         <Box sx={fieldGrid}>
-          <TextField select label="Status" value={form.status} onChange={(e) => setField('status', e.target.value as TruckProfileInput['status'])}>
+          <TextField select label="Status" value={form.status} onChange={(e) => setField('status', e.target.value as DeploymentAssetInput['status'])}>
             <MenuItem value="available">Available</MenuItem><MenuItem value="assigned">Assigned</MenuItem>
             <MenuItem value="maintenance">Maintenance</MenuItem><MenuItem value="retired">Retired</MenuItem>
           </TextField>
@@ -97,7 +103,7 @@ export default function TruckProfileForm({ truck, showFinancials, onSave, onCanc
           <Box>
             <Typography variant="overline" color="text.secondary">Cost model</Typography>
             <Box sx={fieldGrid}>
-              <TextField select label="Ownership" value={form.ownershipType} onChange={(e) => setField('ownershipType', e.target.value as TruckProfileInput['ownershipType'])}>
+              <TextField select label="Ownership" value={form.ownershipType} onChange={(e) => setField('ownershipType', e.target.value as DeploymentAssetInput['ownershipType'])}>
                 <MenuItem value="owned">Owned</MenuItem><MenuItem value="financed">Financed</MenuItem><MenuItem value="leased">Leased</MenuItem>
               </TextField>
               {moneyFields.map(([field, label]) => (
@@ -109,7 +115,7 @@ export default function TruckProfileForm({ truck, showFinancials, onSave, onCanc
       )}
       <Stack direction="row" justifyContent="flex-end" spacing={1.5}>
         <Button onClick={onCancel}>Cancel</Button>
-        <Button variant="contained" onClick={save}>Save truck</Button>
+        <Button variant="contained" onClick={save}>Save {form.assetType}</Button>
       </Stack>
     </Stack>
   );

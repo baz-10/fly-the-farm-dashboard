@@ -1,18 +1,24 @@
 import React from 'react';
-import { Alert, Box, Button, IconButton, MenuItem, Stack, TextField, Typography } from '@mui/material';
+import { Alert, Box, Button, Checkbox, FormControlLabel, IconButton, MenuItem, Stack, TextField, Typography } from '@mui/material';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import { Aircraft, EquipmentKit } from '../types/aircraft';
-import { CrewRole, TruckProfile, WorkPackTemplate, WorkPackTemplateInput } from '../types/workPack';
+import { CrewRole, DeploymentAsset, TruckProfile, WorkPackAircraftAssignment, WorkPackTemplate, WorkPackTemplateInput } from '../types/workPack';
 import { getCompatibleAvailableKits } from '../utils/aircraftKitCompatibility';
 
 interface WorkPackTemplateFormProps {
   template?: WorkPackTemplate;
   trucks: TruckProfile[];
+  assets?: DeploymentAsset[];
   aircraft: Aircraft[];
   equipmentKits: EquipmentKit[];
   onSave: (input: WorkPackTemplateInput) => void | Promise<void>;
   onCancel: () => void;
 }
+
+type TemplateFormInput = Omit<WorkPackTemplateInput, 'aircraftAssignments'> & {
+  assetIds: string[];
+  aircraftAssignments: Array<WorkPackAircraftAssignment & { carryingAssetId?: string }>;
+};
 
 const CREW: Array<{ role: CrewRole; label: string }> = [
   { role: 'pilot', label: 'Pilots' }, { role: 'driver', label: 'Drivers' },
@@ -21,17 +27,19 @@ const CREW: Array<{ role: CrewRole; label: string }> = [
 ];
 const id = (prefix: string) => `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 
-function emptyTemplate(): WorkPackTemplateInput {
+function emptyTemplate(): TemplateFormInput {
   return {
-    name: '', description: '', status: 'active', truckId: '', aircraftAssignments: [],
+    name: '', description: '', status: 'active', truckId: '', assetIds: [], aircraftAssignments: [],
     crewRequirements: CREW.map(({ role }) => ({ id: id('crew'), role, quantity: 0 })), checklist: [], notes: '',
   };
 }
 
-export default function WorkPackTemplateForm({ template, trucks, aircraft, equipmentKits, onSave, onCancel }: WorkPackTemplateFormProps) {
-  const [form, setForm] = React.useState<WorkPackTemplateInput>(() => template
+export default function WorkPackTemplateForm({ template, trucks, assets, aircraft, equipmentKits, onSave, onCancel }: WorkPackTemplateFormProps) {
+  const availableAssets = assets || trucks.map((truck) => ({ ...truck, assetType: 'truck' as const }));
+  const [form, setForm] = React.useState<TemplateFormInput>(() => template
     ? (({ id: _id, createdAt: _createdAt, updatedAt: _updatedAt, ...input }) => ({
         ...input,
+        assetIds: (input as WorkPackTemplateInput & { assetIds?: string[] }).assetIds || (input.truckId ? [input.truckId] : []),
         aircraftAssignments: input.aircraftAssignments.map((item) => ({ ...item })),
         crewRequirements: input.crewRequirements.map((item) => ({ ...item })),
         checklist: [...input.checklist],
@@ -52,7 +60,7 @@ export default function WorkPackTemplateForm({ template, trucks, aircraft, equip
     }));
   };
 
-  const updateSlot = (index: number, updates: Partial<WorkPackTemplateInput['aircraftAssignments'][number]>) => {
+  const updateSlot = (index: number, updates: Partial<TemplateFormInput['aircraftAssignments'][number]>) => {
     setForm((current) => ({
       ...current,
       aircraftAssignments: current.aircraftAssignments.map((slot, slotIndex) => slotIndex === index ? { ...slot, ...updates } : slot),
@@ -68,11 +76,11 @@ export default function WorkPackTemplateForm({ template, trucks, aircraft, equip
 
   const save = () => {
     if (!form.name.trim()) return setError('Enter a template name.');
-    if (!form.truckId) return setError('Select the truck for this setup.');
     if (!form.aircraftAssignments.length) return setError('Add at least one aircraft.');
     if (form.aircraftAssignments.some((slot) => !slot.kitId)) return setError('Select a compatible kit for every aircraft.');
     setError('');
-    onSave({ ...form, name: form.name.trim() });
+    const firstTruck = availableAssets.find((asset) => asset.assetType === 'truck' && form.assetIds.includes(asset.id));
+    onSave({ ...form, truckId: firstTruck?.id || '', name: form.name.trim() });
   };
 
   return (
@@ -80,11 +88,17 @@ export default function WorkPackTemplateForm({ template, trucks, aircraft, equip
       {error && <Alert severity="error">{error}</Alert>}
       <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: '2fr 1fr' }, gap: 2 }}>
         <TextField required label="Template name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
-        <TextField select label="Truck" value={form.truckId} onChange={(e) => setForm({ ...form, truckId: e.target.value })}>
-          {trucks.filter((truck) => truck.status !== 'retired').map((truck) => (
-            <MenuItem key={truck.id} value={truck.id}>{truck.name} · {truck.registration}</MenuItem>
-          ))}
-        </TextField>
+        <Box>
+          <Typography variant="subtitle2">Deployment assets</Typography>
+          <Stack>
+            {availableAssets.filter((asset) => asset.status !== 'retired').map((asset) => (
+              <FormControlLabel key={asset.id} control={<Checkbox checked={form.assetIds.includes(asset.id)} onChange={(event) => setForm((current) => ({
+                ...current,
+                assetIds: event.target.checked ? [...current.assetIds, asset.id] : current.assetIds.filter((id) => id !== asset.id),
+              }))} />} label={`${asset.name} · ${asset.registration} (${asset.assetType})`} />
+            ))}
+          </Stack>
+        </Box>
         <TextField label="When to use this setup" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} multiline minRows={2} sx={{ gridColumn: { md: '1 / -1' } }} />
       </Box>
 
@@ -113,6 +127,10 @@ export default function WorkPackTemplateForm({ template, trucks, aircraft, equip
                   </TextField>
                   <TextField select label={`Equipment kit for slot ${index + 1}`} value={slot.kitId} onChange={(e) => updateSlot(index, { kitId: e.target.value })}>
                     {compatibleKits.map((kit) => <MenuItem key={kit.id} value={kit.id}>{kit.name}</MenuItem>)}
+                  </TextField>
+                  <TextField select label={`Carrying asset for slot ${index + 1}`} value={slot.carryingAssetId || ''} onChange={(e) => updateSlot(index, { carryingAssetId: e.target.value || undefined })}>
+                    <MenuItem value="">Not assigned</MenuItem>
+                    {availableAssets.filter((asset) => form.assetIds.includes(asset.id)).map((asset) => <MenuItem key={asset.id} value={asset.id}>{asset.name} · {asset.registration}</MenuItem>)}
                   </TextField>
                   <TextField label="Role in setup" placeholder="Lead, backup…" value={slot.label} onChange={(e) => updateSlot(index, { label: e.target.value })} />
                 </Box>
