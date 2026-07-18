@@ -40,7 +40,8 @@ function Probe() {
       description: 'Reusable setup',
       status: 'active',
       truckId,
-      aircraftAssignments: [],
+      assetIds: [truckId, 'trailer-1'],
+      aircraftAssignments: [{ id: 'slot-1', aircraftId: 'aircraft-1', kitId: 'kit-1', label: 'Lead', carryingAssetId: 'trailer-1' }],
       crewRequirements: [],
       checklist: [],
       notes: '',
@@ -86,6 +87,10 @@ describe('WorkPackContext', () => {
       const stored = JSON.parse(localStorage.getItem(PERSISTENCE_KEYS.workPacks) || '{}');
       expect(stored.trucks).toHaveLength(1);
       expect(stored.templates).toHaveLength(1);
+      expect(stored.templates[0]).toEqual(expect.objectContaining({
+        assetIds: expect.arrayContaining([stored.trucks[0].id, 'trailer-1']),
+        aircraftAssignments: [expect.objectContaining({ carryingAssetId: 'trailer-1' })],
+      }));
     });
   });
 

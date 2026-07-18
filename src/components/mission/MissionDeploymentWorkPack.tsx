@@ -79,7 +79,8 @@ export default function MissionDeploymentWorkPack({ assets, templates, aircraft,
             <Button variant="outlined" disabled={!templateId} onClick={() => {
               const template = templates.find((item) => item.id === templateId);
               if (!template) return;
-              const templateAssets = assets.filter((asset) => asset.id === template.truckId);
+              const templateAssetIds = template.assetIds || (template.truckId ? [template.truckId] : []);
+              const templateAssets = assets.filter((asset) => templateAssetIds.includes(asset.id));
               const next = applyWorkPackTemplate(template, templateAssets);
               setDraft(next);
               onChange(next);

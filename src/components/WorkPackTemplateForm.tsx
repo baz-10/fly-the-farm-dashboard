@@ -2,7 +2,7 @@ import React from 'react';
 import { Alert, Box, Button, Checkbox, FormControlLabel, IconButton, MenuItem, Stack, TextField, Typography } from '@mui/material';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import { Aircraft, EquipmentKit } from '../types/aircraft';
-import { CrewRole, DeploymentAsset, TruckProfile, WorkPackAircraftAssignment, WorkPackTemplate, WorkPackTemplateInput } from '../types/workPack';
+import { CrewRole, DeploymentAsset, TruckProfile, WorkPackTemplate, WorkPackTemplateInput } from '../types/workPack';
 import { getCompatibleAvailableKits } from '../utils/aircraftKitCompatibility';
 
 interface WorkPackTemplateFormProps {
@@ -15,9 +15,8 @@ interface WorkPackTemplateFormProps {
   onCancel: () => void;
 }
 
-type TemplateFormInput = Omit<WorkPackTemplateInput, 'aircraftAssignments'> & {
+type TemplateFormInput = Omit<WorkPackTemplateInput, 'assetIds'> & {
   assetIds: string[];
-  aircraftAssignments: Array<WorkPackAircraftAssignment & { carryingAssetId?: string }>;
 };
 
 const CREW: Array<{ role: CrewRole; label: string }> = [
@@ -39,7 +38,7 @@ export default function WorkPackTemplateForm({ template, trucks, assets, aircraf
   const [form, setForm] = React.useState<TemplateFormInput>(() => template
     ? (({ id: _id, createdAt: _createdAt, updatedAt: _updatedAt, ...input }) => ({
         ...input,
-        assetIds: (input as WorkPackTemplateInput & { assetIds?: string[] }).assetIds || (input.truckId ? [input.truckId] : []),
+        assetIds: input.assetIds || (input.truckId ? [input.truckId] : []),
         aircraftAssignments: input.aircraftAssignments.map((item) => ({ ...item })),
         crewRequirements: input.crewRequirements.map((item) => ({ ...item })),
         checklist: [...input.checklist],
@@ -95,6 +94,11 @@ export default function WorkPackTemplateForm({ template, trucks, assets, aircraf
               <FormControlLabel key={asset.id} control={<Checkbox checked={form.assetIds.includes(asset.id)} onChange={(event) => setForm((current) => ({
                 ...current,
                 assetIds: event.target.checked ? [...current.assetIds, asset.id] : current.assetIds.filter((id) => id !== asset.id),
+                aircraftAssignments: event.target.checked
+                  ? current.aircraftAssignments
+                  : current.aircraftAssignments.map((assignment) => assignment.carryingAssetId === asset.id
+                    ? { ...assignment, carryingAssetId: undefined }
+                    : assignment),
               }))} />} label={`${asset.name} · ${asset.registration} (${asset.assetType})`} />
             ))}
           </Stack>

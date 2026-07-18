@@ -18,6 +18,7 @@ const kits = [
 ] as EquipmentKit[];
 const template = {
   id: 'template-1', name: 'Two-aircraft spray', description: 'Standard deployment', status: 'active', truckId: truck.id,
+  assetIds: [truck.id, trailer.id],
   aircraftAssignments: [{ id: 'slot-1', aircraftId: 't50-1', kitId: 't50-kit', label: 'Lead' }],
   crewRequirements: [{ id: 'crew-1', role: 'pilot', quantity: 2, notes: 'Two licensed pilots' }],
   checklist: ['Confirm chemical manifest'], notes: 'Template notes', createdAt: '2026-01-01', updatedAt: '2026-01-01',
@@ -60,7 +61,7 @@ test('applies a saved template and shows its crew and checklist summary', async 
   await user.click(screen.getByRole('button', { name: 'Apply template' }));
   expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({
     sourceTemplateId: template.id,
-    assets: [expect.objectContaining({ id: truck.id })],
+    assets: [expect.objectContaining({ id: truck.id }), expect.objectContaining({ id: trailer.id })],
   }));
   expect(screen.getByText(/2 × pilot/i)).toBeInTheDocument();
   expect(screen.getByText(/Confirm chemical manifest/)).toBeInTheDocument();

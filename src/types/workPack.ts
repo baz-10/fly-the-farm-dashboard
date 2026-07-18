@@ -55,11 +55,10 @@ export interface WorkPackAircraftAssignment {
   aircraftId: string;
   kitId: string;
   label: string;
-}
-
-export interface MissionWorkPackAircraftAssignment extends WorkPackAircraftAssignment {
   carryingAssetId?: string;
 }
+
+export type MissionWorkPackAircraftAssignment = WorkPackAircraftAssignment;
 
 export interface TowVehicleDetails {
   registration?: string;
@@ -79,6 +78,8 @@ export interface WorkPackTemplate {
   name: string;
   description: string;
   status: 'active' | 'archived';
+  /** Selected deployment assets. Falls back to truckId for legacy templates. */
+  assetIds?: string[];
   truckId: string;
   aircraftAssignments: WorkPackAircraftAssignment[];
   crewRequirements: CrewRequirement[];
@@ -94,6 +95,7 @@ export interface WorkPackSnapshot {
   jobId?: string;
   name: string;
   description: string;
+  assetIds?: string[];
   truckId: string;
   aircraftAssignments: WorkPackAircraftAssignment[];
   crewRequirements: CrewRequirement[];

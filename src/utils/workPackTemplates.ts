@@ -25,6 +25,7 @@ export function instantiateWorkPackTemplate(
     jobId,
     name: template.name,
     description: template.description,
+    assetIds: template.assetIds ? [...template.assetIds] : undefined,
     truckId: template.truckId,
     aircraftAssignments: template.aircraftAssignments.map((assignment) => ({
       ...assignment,

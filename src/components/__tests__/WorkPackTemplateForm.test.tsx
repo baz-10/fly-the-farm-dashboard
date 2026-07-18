@@ -64,3 +64,30 @@ test('selects multiple independent assets and assigns an aircraft and kit to a t
     aircraftAssignments: [expect.objectContaining({ aircraftId: 't100-001', kitId: 't100-base', carryingAssetId: 'trailer-1' })],
   }));
 });
+
+test('clears an aircraft carrying assignment when its asset is deselected', () => {
+  const onSave = jest.fn();
+  render(
+    <WorkPackTemplateForm
+      assets={assets}
+      trucks={trucks}
+      aircraft={aircraft}
+      equipmentKits={kits}
+      onSave={onSave}
+      onCancel={jest.fn()}
+    />,
+  );
+
+  fireEvent.change(screen.getByLabelText(/Template name/), { target: { value: 'Trailer deployment' } });
+  fireEvent.click(screen.getByRole('checkbox', { name: /Chemical Trailer/ }));
+  fireEvent.click(screen.getByRole('button', { name: 'Add aircraft' }));
+  fireEvent.mouseDown(screen.getByLabelText('Carrying asset for slot 1'));
+  fireEvent.click(screen.getByRole('option', { name: /Chemical Trailer/ }));
+  fireEvent.click(screen.getByRole('checkbox', { name: /Chemical Trailer/ }));
+  fireEvent.click(screen.getByRole('button', { name: 'Save template' }));
+
+  expect(onSave).toHaveBeenCalledWith(expect.objectContaining({
+    assetIds: [],
+    aircraftAssignments: [expect.not.objectContaining({ carryingAssetId: 'trailer-1' })],
+  }));
+});

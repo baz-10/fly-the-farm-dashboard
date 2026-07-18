@@ -76,20 +76,20 @@ export default function FleetWorkPacks() {
                 <Paper variant="outlined" sx={{ p: 5, textAlign: 'center', bgcolor: '#fafcfa' }}><LocalShippingIcon sx={{ fontSize: 44, color: '#7d9a82' }} /><Typography variant="h6">Add the first deployment asset</Typography><Typography color="text.secondary">Capture a truck or trailer profile before building a reusable work pack.</Typography></Paper>
               ) : (
                 <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', lg: 'repeat(2, minmax(0, 1fr))' }, gap: 2 }}>
-                  {activeAssets.map((truck) => (
-                    <Paper key={truck.id} variant="outlined" sx={{ p: 2.5, borderLeft: `6px solid ${truck.status === 'available' ? '#2f8d46' : '#c68818'}` }}>
+                  {activeAssets.map((asset) => (
+                    <Paper key={asset.id} variant="outlined" sx={{ p: 2.5, borderLeft: `6px solid ${asset.status === 'available' ? '#2f8d46' : '#c68818'}` }}>
                       <Stack direction="row" justifyContent="space-between" alignItems="flex-start">
-                        <Box><Typography variant="h5" fontWeight={900}>{truck.name}</Typography><Typography color="text.secondary">{truck.registration} · {truck.year} {truck.manufacturer} {truck.model}</Typography></Box>
-                        <Stack direction="row" spacing={0.5}><Chip size="small" label={truck.assetType} variant="outlined" /><Chip size="small" label={truck.status} color={truck.status === 'available' ? 'success' : 'warning'} /><IconButton aria-label={`Edit ${truck.name}`} onClick={() => { setEditingAsset(truck); setAssetDialog(true); }}><EditIcon /></IconButton></Stack>
+                        <Box><Typography variant="h5" fontWeight={900}>{asset.name}</Typography><Typography color="text.secondary">{asset.registration} · {asset.year} {asset.manufacturer} {asset.model}</Typography></Box>
+                        <Stack direction="row" spacing={0.5}><Chip size="small" label={asset.assetType} variant="outlined" /><Chip size="small" label={asset.status} color={asset.status === 'available' ? 'success' : 'warning'} /><IconButton aria-label={`Edit ${asset.name}`} onClick={() => { setEditingAsset(asset); setAssetDialog(true); }}><EditIcon /></IconButton></Stack>
                       </Stack>
                       <Divider sx={{ my: 2 }} />
                       <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 1.5 }}>
-                        <Box><Typography variant="caption" color="text.secondary">PAYLOAD</Typography><Typography fontWeight={800}>{truck.payloadCapacityKg || 0} kg</Typography></Box>
-                        <Box><Typography variant="caption" color="text.secondary">OWNERSHIP</Typography><Typography fontWeight={800}>{truck.ownershipType}</Typography></Box>
-                        <Box><Typography variant="caption" color="text.secondary">VIN</Typography><Typography fontWeight={800} noWrap>{truck.vin || '—'}</Typography></Box>
+                        <Box><Typography variant="caption" color="text.secondary">PAYLOAD</Typography><Typography fontWeight={800}>{asset.payloadCapacityKg || 0} kg</Typography></Box>
+                        <Box><Typography variant="caption" color="text.secondary">OWNERSHIP</Typography><Typography fontWeight={800}>{asset.ownershipType}</Typography></Box>
+                        <Box><Typography variant="caption" color="text.secondary">VIN</Typography><Typography fontWeight={800} noWrap>{asset.vin || '—'}</Typography></Box>
                       </Box>
-                      {truck.operationalNotes && <Typography variant="body2" sx={{ mt: 2, p: 1.5, bgcolor: '#f3f7f3' }}>{truck.operationalNotes}</Typography>}
-                      {showFinancials && <Stack direction="row" spacing={3} mt={2}><Typography variant="body2"><b>{money(truck.costs.costPerDay)}</b> / day</Typography><Typography variant="body2"><b>{money(truck.costs.costPerKm)}</b> / km</Typography><Typography variant="body2"><b>{money(truck.costs.costPerHour)}</b> / hour</Typography></Stack>}
+                      {asset.operationalNotes && <Typography variant="body2" sx={{ mt: 2, p: 1.5, bgcolor: '#f3f7f3' }}>{asset.operationalNotes}</Typography>}
+                      {showFinancials && <Stack direction="row" spacing={3} mt={2}><Typography variant="body2"><b>{money(asset.costs.costPerDay)}</b> / day</Typography><Typography variant="body2"><b>{money(asset.costs.costPerKm)}</b> / km</Typography><Typography variant="body2"><b>{money(asset.costs.costPerHour)}</b> / hour</Typography></Stack>}
                     </Paper>
                   ))}
                 </Box>
@@ -106,7 +106,7 @@ export default function FleetWorkPacks() {
               ) : (
                 <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', lg: 'repeat(2, minmax(0, 1fr))' }, gap: 2 }}>
                   {activeTemplates.map((template) => {
-                    const templateAssetIds = (template as WorkPackTemplate & { assetIds?: string[] }).assetIds || (template.truckId ? [template.truckId] : []);
+                    const templateAssetIds = template.assetIds || (template.truckId ? [template.truckId] : []);
                     const templateAssets = assets.filter((item) => templateAssetIds.includes(item.id));
                     const crew = template.crewRequirements.reduce((total, item) => total + item.quantity, 0);
                     return <Paper key={template.id} variant="outlined" sx={{ p: 2.5 }}>
