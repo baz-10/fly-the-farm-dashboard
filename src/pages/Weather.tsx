@@ -15,7 +15,10 @@ export default function Weather() {
   const weather = useOperationalWeather(user?.id || 'anonymous');
   const [query, setQuery] = React.useState('');
   const current = selectCurrentHourlyPoint(weather.forecast?.hourly || [], new Date(), weather.forecast?.timezone);
-  const inversion = current && weather.forecast?.sunrise && weather.forecast?.sunset ? assessInversionPotential({ time: current.time, sunrise: weather.forecast.sunrise, sunset: weather.forecast.sunset, windSpeedKmh: current.windSpeedKmh, cloudCoverPercent: current.cloudCoverPercent, humidityPercent: current.humidity, temperatureTrendC: 0 }) : null;
+  const currentSolarDay = current ? weather.forecast?.daily.find((day) => day.date === current.time.slice(0, 10)) : undefined;
+  const currentSunrise = currentSolarDay?.sunrise || weather.forecast?.sunrise;
+  const currentSunset = currentSolarDay?.sunset || weather.forecast?.sunset;
+  const inversion = current && currentSunrise && currentSunset ? assessInversionPotential({ time: current.time, sunrise: currentSunrise, sunset: currentSunset, windSpeedKmh: current.windSpeedKmh, cloudCoverPercent: current.cloudCoverPercent, humidityPercent: current.humidity, temperatureTrendC: 0 }) : null;
   const submit = (event: React.FormEvent) => { event.preventDefault(); if (query.trim()) void weather.searchLocation(query.trim()); };
 
   return <Box sx={{ maxWidth: 1500, mx: 'auto', p: { xs: 2, md: 3.5 } }}>

@@ -8,7 +8,10 @@ export default function OperationalWeatherCard({ userId, onOpenWeather }: { user
   const weather = useOperationalWeather(userId);
   const [query, setQuery] = React.useState('');
   const current = selectCurrentHourlyPoint(weather.forecast?.hourly || [], new Date(), weather.forecast?.timezone);
-  const inversion = current && weather.forecast?.sunrise && weather.forecast?.sunset ? assessInversionPotential({ time: current.time, sunrise: weather.forecast.sunrise, sunset: weather.forecast.sunset, windSpeedKmh: current.windSpeedKmh, cloudCoverPercent: current.cloudCoverPercent, humidityPercent: current.humidity, temperatureTrendC: 0 }) : null;
+  const currentSolarDay = current ? weather.forecast?.daily.find((day) => day.date === current.time.slice(0, 10)) : undefined;
+  const currentSunrise = currentSolarDay?.sunrise || weather.forecast?.sunrise;
+  const currentSunset = currentSolarDay?.sunset || weather.forecast?.sunset;
+  const inversion = current && currentSunrise && currentSunset ? assessInversionPotential({ time: current.time, sunrise: currentSunrise, sunset: currentSunset, windSpeedKmh: current.windSpeedKmh, cloudCoverPercent: current.cloudCoverPercent, humidityPercent: current.humidity, temperatureTrendC: 0 }) : null;
   if (weather.status === 'loading') return <Stack alignItems="center" py={4}><CircularProgress size={24} /></Stack>;
   return <Stack spacing={1.1}>
     {weather.error && <Alert severity={weather.status === 'stale' ? 'warning' : 'info'}>{weather.error}</Alert>}
