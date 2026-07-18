@@ -19,7 +19,7 @@ export function useOperationalWeather(userId: string) {
     if (cached) { setLocation(nextLocation); setForecast(cached); setStatus('fresh'); return; }
     setStatus('loading'); setError('');
     try {
-      const result = await fetchWeatherForDate(nextLocation.latitude, nextLocation.longitude, format(new Date(), 'yyyy-MM-dd'));
+      const result = await fetchWeatherForDate(nextLocation.latitude, nextLocation.longitude, format(new Date(), 'yyyy-MM-dd'), true);
       const nextForecast: CachedOperationalForecast = { location: nextLocation, fetchedAt: new Date().toISOString(), ...result };
       const nextRecent = [nextLocation, ...recent.filter((item) => item.name !== nextLocation.name)].slice(0, 5);
       setLocation(nextLocation); setRecent(nextRecent); setForecast(nextForecast); setStatus('fresh');

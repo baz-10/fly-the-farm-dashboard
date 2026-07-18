@@ -53,6 +53,7 @@ export async function fetchWeatherForDate(
   latitude: number,
   longitude: number,
   date: string, // YYYY-MM-DD
+  includeAdjacentDates = false,
 ): Promise<WeatherFetchResult> {
   const today = new Date().toISOString().split('T')[0];
   const isHistorical = date < today;
@@ -99,7 +100,8 @@ export async function fetchWeatherForDate(
   for (let i = 0; i < hourly.time.length; i++) {
     const timeStr: string = hourly.time[i];
     // Only include readings for the requested date
-    if (!timeStr.startsWith(date)) continue;
+    const dayDistance = Math.abs((Date.parse(`${timeStr.slice(0, 10)}T12:00:00Z`) - Date.parse(`${date}T12:00:00Z`)) / 86400000);
+    if (includeAdjacentDates ? dayDistance > 1 : !timeStr.startsWith(date)) continue;
 
     const temp = hourly.temperature_2m[i] ?? 0;
     const dewpoint = hourly.dew_point_2m[i] ?? 0;
