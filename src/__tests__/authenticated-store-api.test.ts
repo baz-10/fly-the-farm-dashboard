@@ -44,11 +44,11 @@ function createResponse(): MockResponse {
   };
 }
 
-function request(method: string, token?: string, body?: any) {
+function request(method: string, token?: string, body?: any, collection = 'ftf_missions') {
   return {
     method,
     body,
-    query: { collection: 'ftf_missions' },
+    query: { collection },
     headers: {
       cookie: token ? `ftf_access_token=${token}` : '',
       host: 'localhost:3001',
@@ -230,6 +230,97 @@ describe('authenticated persistent store API', () => {
       expect.stringContaining('ftf_access_token=new-access-token'),
       expect.stringContaining('ftf_refresh_token=new-refresh-token'),
     ]));
+  });
+
+  test('redacts deployment financials from contractor mission and work-pack reads', async () => {
+    const financialPayload = {
+      assets: [{ id: 'truck-1', name: 'Truck', costs: { costPerDay: 450 } }],
+      estimatedDeploymentCost: 1250,
+      costingComplete: true,
+    };
+    global.fetch = jest.fn(async (url: string, options: RequestInit = {}) => {
+      if (url.endsWith('/auth/v1/user')) return response(200, { id: 'user-a', email: 'user-a@example.com' });
+      if (url.includes('/rest/v1/ftf_profiles')) return response(200, [{ user_id: 'user-a', tenant_id: 'tenant-a', role: 'contractor', name: 'User A', tier: 'free' }]);
+      if (url.includes('/rest/v1/ftf_store')) {
+        if (url.includes('collection=eq.ftf_missions')) {
+          return response(200, [{ payload: { id: 'mission-a', deploymentWorkPack: financialPayload } }]);
+        }
+        return response(200, [{ payload: { assets: financialPayload.assets, templates: [], snapshots: [] } }]);
+      }
+      return response(500, { message: `unexpected request ${url} ${(options.method || 'GET')}` });
+    }) as any;
+
+    const missionResponse = createResponse();
+    await storeHandler(request('GET', 'token-a'), missionResponse);
+    expect(missionResponse.body.records[0].deploymentWorkPack).toEqual({
+      assets: [{ id: 'truck-1', name: 'Truck' }],
+      costingComplete: true,
+    });
+
+    const workPackResponse = createResponse();
+    const req = request('GET', 'token-a', undefined, 'ftf_work_packs') as any;
+    req.query.recordId = '__value__';
+    await storeHandler(req, workPackResponse);
+    expect(workPackResponse.body.payload.assets).toEqual([{ id: 'truck-1', name: 'Truck' }]);
+  });
+
+  test('retains deployment financials in administrator mission and work-pack reads', async () => {
+    const financialPayload = {
+      assets: [{ id: 'truck-1', costs: { costPerDay: 450 } }],
+      estimatedDeploymentCost: 1250,
+    };
+    global.fetch = jest.fn(async (url: string) => {
+      if (url.endsWith('/auth/v1/user')) return response(200, { id: 'admin-a', email: 'admin@example.com' });
+      if (url.includes('/rest/v1/ftf_profiles')) return response(200, [{ user_id: 'admin-a', tenant_id: 'tenant-a', role: 'admin', name: 'Admin', tier: 'paid' }]);
+      if (url.includes('/rest/v1/ftf_store')) {
+        if (url.includes('collection=eq.ftf_missions')) return response(200, [{ payload: { id: 'mission-a', deploymentWorkPack: financialPayload } }]);
+        return response(200, [{ payload: { assets: financialPayload.assets } }]);
+      }
+      return response(500, { message: 'unexpected request' });
+    }) as any;
+
+    const missionResponse = createResponse();
+    await storeHandler(request('GET', 'token-a'), missionResponse);
+    expect(missionResponse.body.records[0].deploymentWorkPack).toEqual(financialPayload);
+
+    const workPackResponse = createResponse();
+    const req = request('GET', 'token-a', undefined, 'ftf_work_packs') as any;
+    req.query.recordId = '__value__';
+    await storeHandler(req, workPackResponse);
+    expect(workPackResponse.body.payload.assets[0].costs.costPerDay).toBe(450);
+  });
+
+  test('preserves stored administrator costing when a contractor saves an operational mission edit', async () => {
+    let postedRows: any[] = [];
+    global.fetch = jest.fn(async (url: string, options: RequestInit = {}) => {
+      if (url.endsWith('/auth/v1/user')) return response(200, { id: 'user-a', email: 'user-a@example.com' });
+      if (url.includes('/rest/v1/ftf_profiles')) return response(200, [{ user_id: 'user-a', tenant_id: 'tenant-a', role: 'contractor', name: 'User A', tier: 'free' }]);
+      if (url.includes('/rest/v1/ftf_store') && (!options.method || options.method === 'GET')) {
+        return response(200, [{ payload: {
+          id: 'mission-a',
+          deploymentWorkPack: { assets: [{ id: 'truck-1', costs: { costPerDay: 450 } }], estimatedDeploymentCost: 1250 },
+        } }]);
+      }
+      if (url.includes('/rest/v1/ftf_store') && options.method === 'POST') {
+        postedRows = JSON.parse(String(options.body));
+        return response(204, null);
+      }
+      return response(500, { message: 'unexpected request' });
+    }) as any;
+
+    const res = createResponse();
+    await storeHandler(request('PUT', 'token-a', {
+      collection: 'ftf_missions',
+      records: [{
+        id: 'mission-a',
+        deploymentWorkPack: { assets: [{ id: 'truck-1', name: 'Updated truck' }], notes: 'Operational edit' },
+      }],
+    }), res);
+
+    expect(postedRows[0].payload.deploymentWorkPack).toEqual(expect.objectContaining({
+      estimatedDeploymentCost: 1250,
+      assets: [expect.objectContaining({ id: 'truck-1', name: 'Updated truck', costs: { costPerDay: 450 } })],
+    }));
   });
 });
 

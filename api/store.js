@@ -9,7 +9,73 @@ const ALLOWED_COLLECTIONS = new Set([
   'ftf_missions',
   'ftf_mission_templates',
   'ftf_pmav_checks',
+  'ftf_work_packs',
 ]);
+
+function redactAssetCosts(asset) {
+  if (!asset || typeof asset !== 'object') return asset;
+  const { costs: _costs, ...safeAsset } = asset;
+  return safeAsset;
+}
+
+function redactDeploymentWorkPack(workPack) {
+  if (!workPack || typeof workPack !== 'object') return workPack;
+  const { estimatedDeploymentCost: _estimatedDeploymentCost, ...safeWorkPack } = workPack;
+  return {
+    ...safeWorkPack,
+    assets: Array.isArray(workPack.assets) ? workPack.assets.map(redactAssetCosts) : workPack.assets,
+  };
+}
+
+function contractorSafePayload(collection, payload) {
+  if (!payload || typeof payload !== 'object') return payload;
+  if (collection === 'ftf_missions') {
+    return { ...payload, deploymentWorkPack: redactDeploymentWorkPack(payload.deploymentWorkPack) };
+  }
+  if (collection === 'ftf_work_packs') {
+    return {
+      ...payload,
+      assets: Array.isArray(payload.assets) ? payload.assets.map(redactAssetCosts) : payload.assets,
+      trucks: Array.isArray(payload.trucks) ? payload.trucks.map(redactAssetCosts) : payload.trucks,
+    };
+  }
+  return payload;
+}
+
+function preserveAssetCosts(incomingAssets, storedAssets) {
+  if (!Array.isArray(incomingAssets)) return incomingAssets;
+  const storedById = new Map((Array.isArray(storedAssets) ? storedAssets : []).map((asset) => [asset?.id, asset]));
+  return incomingAssets.map((asset) => {
+    const safeAsset = redactAssetCosts(asset);
+    const storedCosts = storedById.get(asset?.id)?.costs;
+    return storedCosts === undefined ? safeAsset : { ...safeAsset, costs: storedCosts };
+  });
+}
+
+function contractorWritePayload(collection, incoming, stored) {
+  const safe = contractorSafePayload(collection, incoming);
+  if (collection === 'ftf_missions' && safe?.deploymentWorkPack) {
+    const storedWorkPack = stored?.deploymentWorkPack;
+    return {
+      ...safe,
+      deploymentWorkPack: {
+        ...safe.deploymentWorkPack,
+        assets: preserveAssetCosts(safe.deploymentWorkPack.assets, storedWorkPack?.assets),
+        ...(storedWorkPack?.estimatedDeploymentCost === undefined
+          ? {}
+          : { estimatedDeploymentCost: storedWorkPack.estimatedDeploymentCost }),
+      },
+    };
+  }
+  if (collection === 'ftf_work_packs') {
+    return {
+      ...safe,
+      assets: preserveAssetCosts(safe.assets, stored?.assets),
+      trucks: preserveAssetCosts(safe.trucks, stored?.trucks),
+    };
+  }
+  return safe;
+}
 
 function getJsonBody(req) {
   if (req.body && typeof req.body === 'object') return req.body;
@@ -145,21 +211,35 @@ module.exports = async function handler(req, res) {
       const collection = validateCollection(req.query.collection);
       const recordId = req.query.recordId ? validateRecordId(req.query.recordId) : '';
       if (recordId) {
-        return res.status(200).json({ payload: await getRecord(tenantId, collection, recordId) });
+        const payload = await getRecord(tenantId, collection, recordId);
+        return res.status(200).json({ payload: user.role === 'contractor' ? contractorSafePayload(collection, payload) : payload });
       }
-      return res.status(200).json({ records: await listCollection(tenantId, collection) });
+      const records = await listCollection(tenantId, collection);
+      return res.status(200).json({ records: user.role === 'contractor'
+        ? records.map((payload) => contractorSafePayload(collection, payload))
+        : records });
     }
 
     if (req.method === 'PUT') {
       const body = getJsonBody(req);
       const collection = validateCollection(body.collection || req.query.collection);
       if (Array.isArray(body.records)) {
-        await upsertCollection(tenantId, collection, body.records);
+        let records = body.records;
+        if (user.role === 'contractor') {
+          const storedRecords = await listCollection(tenantId, collection);
+          const storedById = new Map(storedRecords.map((record) => [record?.id, record]));
+          records = records.map((record) => contractorWritePayload(collection, record, storedById.get(record?.id)));
+        }
+        await upsertCollection(tenantId, collection, records);
         return res.status(200).json({ ok: true, count: body.records.length });
       }
 
       const recordId = validateRecordId(body.recordId || SINGLETON_RECORD_ID);
-      await upsertRecords([buildRecord(tenantId, collection, recordId, body.payload)]);
+      const storedPayload = user.role === 'contractor' ? await getRecord(tenantId, collection, recordId) : null;
+      const payload = user.role === 'contractor'
+        ? contractorWritePayload(collection, body.payload, storedPayload)
+        : body.payload;
+      await upsertRecords([buildRecord(tenantId, collection, recordId, payload)]);
       return res.status(200).json({ ok: true, count: 1 });
     }
 

@@ -78,6 +78,9 @@ export function getMissionWorkflowState(input: MissionWorkflowInput): MissionWor
       };
     }
 
+    // Mission authorization is governed only by the established safety and
+    // compliance checks above. Optional deployment packs and their costing
+    // completeness must never block authorization.
     return {
       action: 'authorize-mission',
       actionLabel: 'Authorize Mission',
