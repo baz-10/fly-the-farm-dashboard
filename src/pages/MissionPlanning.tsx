@@ -49,8 +49,10 @@ import WarningAmberIcon from '@mui/icons-material/WarningAmber';
 import FieldBoundaryEditor from '../components/FieldBoundaryEditor';
 import MissionJsaDialog from '../components/MissionJsaDialog';
 import MissionEquipmentSelector from '../components/mission/MissionEquipmentSelector';
+import MissionDeploymentWorkPack from '../components/mission/MissionDeploymentWorkPack';
 import { useAircraft } from '../contexts/AircraftContext';
 import { useMission } from '../contexts/MissionContext';
+import { useWorkPacks } from '../contexts/WorkPackContext';
 import { getLatestVegetationCheckForLotPlan, getSavedVegetationChecks, loadSavedVegetationChecks } from '../services/pmavCheckStore';
 import {
   getVegetationCategorySummary,
@@ -64,6 +66,7 @@ import { selectWeatherWindow, validateWeatherRequest } from '../utils/missionWea
 import { buildEmptyMissionSafetyAssessment, evaluateMissionSafety } from '../utils/missionSafety';
 import { fetchWeatherForDate, geocodeLocality } from '../services/weatherService';
 import { getMissionWorkflowState, MISSION_WORKFLOW_STEPS } from '../utils/missionWorkflow';
+import { buildMissionWorkPack, syncPrimaryAircraftConfiguration } from '../utils/missionWorkPack';
 import { LatLng, BoundaryFileRef } from '../types/fieldManagement';
 import { SavedVegetationCheck } from '../types/pmav';
 import { MissionMapFeature } from '../types/missionMap';
@@ -80,6 +83,7 @@ import {
   MissionStatus,
   MissionType,
 } from '../types/mission';
+import { MissionWorkPackDraft } from '../types/workPack';
 
 type MissionPayload = Omit<
   MissionRecord,
@@ -382,6 +386,7 @@ export default function MissionPlanning() {
     getCompatibleKits,
     validateConfiguration,
   } = useAircraft();
+  const { assets: deploymentAssets, templates: workPackTemplates } = useWorkPacks();
   const dataLoading = missionDataLoading || aircraftDataLoading;
   const dataError = missionDataError || aircraftDataError;
 
@@ -400,6 +405,7 @@ export default function MissionPlanning() {
   const [selectedMissionId, setSelectedMissionId] = React.useState('');
   const [selectedAircraft, setSelectedAircraft] = React.useState(DEMO_AIRCRAFT.id);
   const [selectedKit, setSelectedKit] = React.useState('');
+  const [missionWorkPackDraft, setMissionWorkPackDraft] = React.useState<MissionWorkPackDraft | undefined>();
   const [boundaryCoords, setBoundaryCoords] = React.useState<LatLng[]>([]);
   const [boundaryPolygons, setBoundaryPolygons] = React.useState<LatLng[][]>([]);
   const [missionArea, setMissionArea] = React.useState(0);
@@ -739,6 +745,16 @@ export default function MissionPlanning() {
 
   const buildMissionPayload = (targetMissionId?: string): MissionPayload => {
     const missionId = targetMissionId || `mission_${Date.now()}`;
+    const deploymentWorkPack = missionWorkPackDraft
+      ? buildMissionWorkPack(missionWorkPackDraft)
+      : undefined;
+    const aircraftConfiguration = syncPrimaryAircraftConfiguration(deploymentWorkPack, {
+      aircraftId: selectedAircraft,
+      kitId: selectedKit,
+      configurationId: selectedConfiguration,
+      estimatedFlightTime: estimatedDuration,
+      maxPayloadWeight: selectedAircraftData.maxPayloadWeight,
+    });
 
     return {
       missionNumber: 'MSN-DRAFT',
@@ -765,13 +781,8 @@ export default function MissionPlanning() {
         maxPrecipitationChance: rainChance,
         allowedCloudCover: 80,
       },
-      aircraftConfiguration: {
-        aircraftId: selectedAircraft,
-        kitId: selectedKit,
-        configurationId: selectedConfiguration,
-        estimatedFlightTime: estimatedDuration,
-        maxPayloadWeight: selectedAircraftData.maxPayloadWeight,
-      },
+      aircraftConfiguration,
+      deploymentWorkPack,
       jsaRecord: { ...jsaRecord, missionId, updatedAt: new Date().toISOString() },
       boundaryFiles: boundaryReady ? [buildBoundaryRecord(missionId)] : [],
       financialEstimate: {
@@ -1006,6 +1017,7 @@ export default function MissionPlanning() {
     setPriority('medium');
     setSelectedAircraft(nextAircraft);
     setSelectedKit(nextKit);
+    setMissionWorkPackDraft(undefined);
     setBoundaryCoords([]);
     setBoundaryPolygons([]);
     setMissionArea(0);
@@ -1100,6 +1112,19 @@ export default function MissionPlanning() {
       || configurations.find((config) => config.id === mission.aircraftConfiguration.configurationId)?.kitId
       || '',
     );
+    setMissionWorkPackDraft(mission.deploymentWorkPack
+      ? {
+          sourceTemplateId: mission.deploymentWorkPack.sourceTemplateId,
+          assets: mission.deploymentWorkPack.assets,
+          towVehicle: mission.deploymentWorkPack.towVehicle,
+          aircraftAssignments: mission.deploymentWorkPack.aircraftAssignments,
+          crewRequirements: mission.deploymentWorkPack.crewRequirements,
+          checklist: mission.deploymentWorkPack.checklist,
+          notes: mission.deploymentWorkPack.notes,
+          estimatedDeploymentCost: mission.deploymentWorkPack.estimatedDeploymentCost,
+          costingComplete: mission.deploymentWorkPack.costingComplete,
+        }
+      : undefined);
     const loadedBoundaryCoords = planning?.boundaryCoords?.length ? planning.boundaryCoords : [];
     setBoundaryCoords(loadedBoundaryCoords);
     setBoundaryPolygons(
@@ -2230,6 +2255,15 @@ export default function MissionPlanning() {
                 <DetailRow label="Payload Limit" value={`${selectedAircraftData.maxPayloadWeight} kg`} />
               </Stack>
             </Panel>
+
+            <MissionDeploymentWorkPack
+              assets={deploymentAssets}
+              templates={workPackTemplates}
+              aircraft={aircraft}
+              equipmentKits={equipmentKits}
+              value={missionWorkPackDraft}
+              onChange={setMissionWorkPackDraft}
+            />
 
             <Panel title="Chemical Mix Summary" icon={<ScienceIcon />}>
               <Stack spacing={1.25}>
