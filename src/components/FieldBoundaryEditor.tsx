@@ -28,7 +28,8 @@ import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { LatLng, BoundaryFileRef } from '../types/fieldManagement';
 import { MissionBoundaryMetadata, MissionMapFeature, MissionMapFeatureType } from '../types/missionMap';
-import { upsertMapFeature } from '../utils/missionMapAnnotations';
+import { MissionBoundaryPolygon } from '../types/missionBoundary';
+import { moveMapFeatureVertex as moveStoredFeatureVertex, upsertMapFeature } from '../utils/missionMapAnnotations';
 import { MAP_FEATURE_COLORS, MAP_FEATURE_LABELS } from './MissionMapLegend';
 import MissionMapFeatureRegister from './MissionMapFeatureRegister';
 import {
@@ -37,7 +38,7 @@ import {
   parseShapefileBoundary,
 } from '../utils/boundaryImport';
 import { appendDraftVertex, canFinishDrawing, DrawingMode, finishDrawing } from '../utils/missionMapDrawing';
-import { normaliseBoundaryPolygons } from '../utils/missionBoundaryEditing';
+import { moveBoundaryVertex, normaliseBoundaryPolygons } from '../utils/missionBoundaryEditing';
 
 const TILE_LAYERS = {
   street: {
@@ -215,6 +216,20 @@ export default function FieldBoundaryEditor({
     () => polygons?.length ? polygons : coords.length ? [coords] : [],
     [coords, polygons],
   );
+  const boundaryModels = React.useMemo<MissionBoundaryPolygon[]>(() => normaliseBoundaryPolygons(boundaryPolygons).map((boundary, index) => ({
+    ...boundary,
+    id: boundaryMetadata[index]?.id || boundary.id,
+    sourceFileId: boundaryMetadata[index]?.sourceFileId,
+    name: boundaryMetadata[index]?.name || boundary.name,
+    notes: boundaryMetadata[index]?.notes || boundary.notes,
+  })), [boundaryMetadata, boundaryPolygons]);
+  const applyBoundaryModels = (next: MissionBoundaryPolygon[]) => {
+    const nextPolygons = next.map((boundary) => boundary.coordinates);
+    onPolygonsChange?.(nextPolygons);
+    onCoordsChange(nextPolygons[0] || []);
+    onBoundaryMetadataChange?.(next.map(({ id, sourceFileId, name, notes }) => ({ id, sourceFileId, name, notes })));
+    if (next.length === 0) onBoundaryFile?.(null);
+  };
   const allBoundaryCoords = React.useMemo(() => boundaryPolygons.flat(), [boundaryPolygons]);
   const area = React.useMemo(
     () => boundaryPolygons.reduce(
@@ -255,13 +270,7 @@ export default function FieldBoundaryEditor({
 
   const moveFeatureVertex = (featureId: string, vertexIndex: number, lng: number, lat: number) => {
     if (!onFeaturesChange) return;
-    onFeaturesChange(features.map((feature) => {
-      if (feature.id !== featureId) return feature;
-      const nextCoordinate: [number, number] = [lng, lat];
-      if (feature.geometry.type === 'Point') return { ...feature, geometry: { ...feature.geometry, coordinates: nextCoordinate } };
-      if (feature.geometry.type === 'LineString') return { ...feature, geometry: { ...feature.geometry, coordinates: feature.geometry.coordinates.map((coordinate, index) => index === vertexIndex ? nextCoordinate : coordinate) } };
-      return { ...feature, geometry: { ...feature.geometry, coordinates: [feature.geometry.coordinates[0].map((coordinate, index) => index === vertexIndex ? nextCoordinate : coordinate)] } };
-    }));
+    onFeaturesChange(features.map((feature) => feature.id === featureId ? moveStoredFeatureVertex(feature, vertexIndex, [lng, lat]) : feature));
   };
 
   const handleUndo = () => {
@@ -580,10 +589,10 @@ export default function FieldBoundaryEditor({
           )}
 
           {/* Boundary polygon */}
-          {boundaryPolygons.map((polygonCoords, polygonIndex) => polygonCoords.length >= 3 && (
+          {boundaryModels.map((boundary) => boundary.coordinates.length >= 3 && (
             <Polygon
-              key={`boundary-polygon-${polygonIndex}`}
-              positions={polygonCoords}
+              key={`boundary-polygon-${boundary.id}`}
+              positions={boundary.coordinates}
               pathOptions={{
                 color: '#ffffff',
                 fillColor: theme.palette.primary.main,
@@ -628,18 +637,16 @@ export default function FieldBoundaryEditor({
           })}
 
           {/* Boundary points — draggable in edit mode */}
-          {boundaryPolygons.flatMap((polygon, polygonIndex) => polygon.map((c, vertexIndex) => (
+          {boundaryModels.flatMap((boundary) => boundary.coordinates.map((c, vertexIndex) => (
             <Marker
-              key={`${polygonIndex}-${vertexIndex}`}
+              key={`${boundary.id}-${vertexIndex}`}
               position={c}
               icon={boundaryPointIcon}
               draggable={!readOnly}
               eventHandlers={{
                 dragend: (e) => {
                   const { lat, lng } = e.target.getLatLng();
-                  const updatedPolygons = boundaryPolygons.map((value, index) => index === polygonIndex ? value.map((point, pointIndex) => pointIndex === vertexIndex ? [lat, lng] as LatLng : point) : value);
-                  onCoordsChange(updatedPolygons[0] || []);
-                  onPolygonsChange?.(updatedPolygons);
+                  applyBoundaryModels(moveBoundaryVertex(boundaryModels, boundary.id, vertexIndex, [lat, lng]));
                 },
               }}
             />
@@ -650,8 +657,8 @@ export default function FieldBoundaryEditor({
           <FocusBounds coords={focusTarget.coords} token={focusTarget.token} />
         </MapContainer>
       </Box>
-      {!readOnly && onFeaturesChange && <MissionMapFeatureRegister polygons={boundaryPolygons} boundaryMetadata={boundaryMetadata} onBoundaryMetadataChange={onBoundaryMetadataChange} features={features} onFeaturesChange={onFeaturesChange} onPolygonsChange={(next) => { onPolygonsChange?.(next); onCoordsChange(next[0] || []); if (next.length === 0) onBoundaryFile?.(null); }} onZoom={(kind, target) => {
-        const selected = kind === 'boundary' ? boundaryPolygons[Number(target)] || [] : (() => { const feature = features.find((item) => item.id === target); if (!feature) return []; if (feature.geometry.type === 'Point') { const [lng, lat] = feature.geometry.coordinates; return [[lat, lng] as LatLng]; } const source = feature.geometry.type === 'Polygon' ? feature.geometry.coordinates[0] : feature.geometry.coordinates; return source.map(([lng, lat]) => [lat, lng] as LatLng); })();
+      {!readOnly && onFeaturesChange && <MissionMapFeatureRegister boundaries={boundaryModels} onBoundariesChange={applyBoundaryModels} features={features} onFeaturesChange={onFeaturesChange} onZoom={(kind, target) => {
+        const selected = kind === 'boundary' ? boundaryModels.find((boundary) => boundary.id === target)?.coordinates || [] : (() => { const feature = features.find((item) => item.id === target); if (!feature) return []; if (feature.geometry.type === 'Point') { const [lng, lat] = feature.geometry.coordinates; return [[lat, lng] as LatLng]; } const source = feature.geometry.type === 'Polygon' ? feature.geometry.coordinates[0] : feature.geometry.coordinates; return source.map(([lng, lat]) => [lat, lng] as LatLng); })();
         setFocusTarget({ coords: selected, token: Date.now() });
       }} />}
     </Box>

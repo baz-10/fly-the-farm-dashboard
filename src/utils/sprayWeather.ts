@@ -40,10 +40,14 @@ export function classifyDeltaT(deltaT: number): DeltaTBand {
   return 'unsuitable';
 }
 
-export function selectCurrentHourlyPoint<T extends { time: string }>(points: T[], now = new Date()): T | undefined {
+export function selectCurrentHourlyPoint<T extends { time: string }>(points: T[], now = new Date(), timezone?: string): T | undefined {
   if (points.length === 0) return undefined;
-  const nowMs = now.getTime();
-  return points.reduce((nearest, point) => Math.abs(new Date(point.time).getTime() - nowMs) < Math.abs(new Date(nearest.time).getTime() - nowMs) ? point : nearest);
+  const localNow = timezone ? new Intl.DateTimeFormat('en-CA', {
+    timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+  }).formatToParts(now).reduce<Record<string, string>>((parts, part) => ({ ...parts, [part.type]: part.value }), {}) : null;
+  const target = localNow ? Date.UTC(Number(localNow.year), Number(localNow.month) - 1, Number(localNow.day), Number(localNow.hour), Number(localNow.minute)) : now.getTime();
+  const comparable = (value: string) => timezone ? Date.parse(`${value}Z`) : new Date(value).getTime();
+  return points.reduce((nearest, point) => Math.abs(comparable(point.time) - target) < Math.abs(comparable(nearest.time) - target) ? point : nearest);
 }
 
 function clockMinutes(value: string): number {

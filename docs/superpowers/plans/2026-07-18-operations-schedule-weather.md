@@ -144,4 +144,3 @@
 - [ ] **Step 3: Run** `git diff --check` and require no whitespace errors.
 - [ ] **Step 4: Browser-test** Operations card alignment and scrolling, Schedule Day/Week/Month, Weather search/device fallback, and narrow layout.
 - [ ] **Step 5: Commit any verified corrections** with a focused message; otherwise record no additional commit.
-

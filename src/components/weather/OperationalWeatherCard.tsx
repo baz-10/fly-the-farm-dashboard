@@ -7,7 +7,7 @@ import { assessInversionPotential, classifyDeltaT, selectCurrentHourlyPoint } fr
 export default function OperationalWeatherCard({ userId, onOpenWeather }: { userId: string; onOpenWeather: () => void }) {
   const weather = useOperationalWeather(userId);
   const [query, setQuery] = React.useState('');
-  const current = selectCurrentHourlyPoint(weather.forecast?.hourly || []);
+  const current = selectCurrentHourlyPoint(weather.forecast?.hourly || [], new Date(), weather.forecast?.timezone);
   const inversion = current && weather.forecast?.sunrise && weather.forecast?.sunset ? assessInversionPotential({ time: current.time, sunrise: weather.forecast.sunrise, sunset: weather.forecast.sunset, windSpeedKmh: current.windSpeedKmh, cloudCoverPercent: current.cloudCoverPercent, humidityPercent: current.humidity, temperatureTrendC: 0 }) : null;
   if (weather.status === 'loading') return <Stack alignItems="center" py={4}><CircularProgress size={24} /></Stack>;
   return <Stack spacing={1.1}>

@@ -1,5 +1,5 @@
 import { MissionMapFeature } from '../../types/missionMap';
-import { normaliseMapFeatures, removeMapFeature, upsertMapFeature } from '../missionMapAnnotations';
+import { moveMapFeatureVertex, normaliseMapFeatures, removeMapFeature, upsertMapFeature } from '../missionMapAnnotations';
 
 const point = (id: string, type: MissionMapFeature['type']): MissionMapFeature => ({
   id,
@@ -40,5 +40,12 @@ describe('mission map annotations', () => {
   test('drops malformed stored geometry before it reaches the map', () => {
     const malformed = { ...point('bad', 'obstacle'), geometry: { type: 'LineString', coordinates: [[153.1, -27.4]] } } as MissionMapFeature;
     expect(normaliseMapFeatures([malformed])).toEqual([]);
+  });
+
+  test('keeps a polygon ring closed when either endpoint is dragged', () => {
+    const building: MissionMapFeature = { id: 'shed', type: 'building', label: 'Shed', geometry: { type: 'Polygon', coordinates: [[[153.1, -27.4], [153.2, -27.4], [153.2, -27.5], [153.1, -27.4]]] } };
+    const moved = moveMapFeatureVertex(building, 0, [154, -28]);
+    expect(moved.geometry.type === 'Polygon' && moved.geometry.coordinates[0][0]).toEqual([154, -28]);
+    expect(moved.geometry.type === 'Polygon' && moved.geometry.coordinates[0][moved.geometry.coordinates[0].length - 1]).toEqual([154, -28]);
   });
 });

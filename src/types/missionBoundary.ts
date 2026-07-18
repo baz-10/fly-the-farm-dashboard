@@ -7,4 +7,3 @@ export interface MissionBoundaryPolygon {
   notes: string;
   sourceFileId?: string;
 }
-
