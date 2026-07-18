@@ -59,6 +59,20 @@ function Probe() {
   );
 }
 
+function LegacyTruckMutationProbe() {
+  const { assets, updateTruck, archiveTruck } = useWorkPacks();
+  const trailer = assets.find((asset) => asset.id === 'trailer-1');
+
+  return (
+    <div>
+      <button onClick={() => updateTruck('trailer-1', { name: 'Changed through truck API' })}>update trailer as truck</button>
+      <button onClick={() => archiveTruck('trailer-1')}>archive trailer as truck</button>
+      <span data-testid="trailer-name">{trailer?.name}</span>
+      <span data-testid="trailer-status">{trailer?.status}</span>
+    </div>
+  );
+}
+
 describe('WorkPackContext', () => {
   beforeEach(() => localStorage.clear());
 
@@ -99,5 +113,35 @@ describe('WorkPackContext', () => {
         expect.objectContaining({ id: 'truck-1', name: 'Legacy truck' }),
       ]);
     });
+  });
+
+  test('does not update a trailer through the legacy truck API', async () => {
+    const now = new Date().toISOString();
+    localStorage.setItem(PERSISTENCE_KEYS.workPacks, JSON.stringify({
+      assets: [{ ...truck, id: 'trailer-1', assetType: 'trailer', name: 'Spray trailer', createdAt: now, updatedAt: now }],
+      templates: [],
+      snapshots: [],
+    }));
+
+    render(<WorkPackProvider><LegacyTruckMutationProbe /></WorkPackProvider>);
+
+    expect(await screen.findByTestId('trailer-name')).toHaveTextContent('Spray trailer');
+    fireEvent.click(screen.getByText('update trailer as truck'));
+    await waitFor(() => expect(screen.getByTestId('trailer-name')).toHaveTextContent('Spray trailer'));
+  });
+
+  test('does not retire a trailer through the legacy truck API', async () => {
+    const now = new Date().toISOString();
+    localStorage.setItem(PERSISTENCE_KEYS.workPacks, JSON.stringify({
+      assets: [{ ...truck, id: 'trailer-1', assetType: 'trailer', name: 'Spray trailer', createdAt: now, updatedAt: now }],
+      templates: [],
+      snapshots: [],
+    }));
+
+    render(<WorkPackProvider><LegacyTruckMutationProbe /></WorkPackProvider>);
+
+    expect(await screen.findByTestId('trailer-status')).toHaveTextContent('available');
+    fireEvent.click(screen.getByText('archive trailer as truck'));
+    await waitFor(() => expect(screen.getByTestId('trailer-status')).toHaveTextContent('available'));
   });
 });

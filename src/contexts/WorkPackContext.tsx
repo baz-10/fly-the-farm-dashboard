@@ -119,8 +119,12 @@ export function WorkPackProvider({ children }: { children: React.ReactNode }) {
   }, [createAsset]);
 
   const updateTruck = useCallback(async (id: string, updates: Partial<TruckProfileInput>) => {
-    return updateAsset(id, updates);
-  }, [updateAsset]);
+    setStore((current) => withAssets(current, current.assets.map((asset) => (
+      asset.id === id && asset.assetType === 'truck'
+        ? { ...asset, ...updates, updatedAt: new Date().toISOString() }
+        : asset
+    ))));
+  }, []);
 
   const archiveTruck = useCallback((id: string) => updateTruck(id, { status: 'retired' }), [updateTruck]);
 
