@@ -2,12 +2,12 @@ import React from 'react';
 import { Alert, Button, CircularProgress, Stack, TextField, Typography } from '@mui/material';
 import MyLocationIcon from '@mui/icons-material/MyLocation';
 import { useOperationalWeather } from '../../hooks/useOperationalWeather';
-import { assessInversionPotential, classifyDeltaT } from '../../utils/sprayWeather';
+import { assessInversionPotential, classifyDeltaT, selectCurrentHourlyPoint } from '../../utils/sprayWeather';
 
 export default function OperationalWeatherCard({ userId, onOpenWeather }: { userId: string; onOpenWeather: () => void }) {
   const weather = useOperationalWeather(userId);
   const [query, setQuery] = React.useState('');
-  const current = weather.forecast?.hourly[0];
+  const current = selectCurrentHourlyPoint(weather.forecast?.hourly || []);
   const inversion = current && weather.forecast?.sunrise && weather.forecast?.sunset ? assessInversionPotential({ time: current.time, sunrise: weather.forecast.sunrise, sunset: weather.forecast.sunset, windSpeedKmh: current.windSpeedKmh, cloudCoverPercent: current.cloudCoverPercent, humidityPercent: current.humidity, temperatureTrendC: 0 }) : null;
   if (weather.status === 'loading') return <Stack alignItems="center" py={4}><CircularProgress size={24} /></Stack>;
   return <Stack spacing={1.1}>

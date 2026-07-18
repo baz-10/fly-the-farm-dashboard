@@ -36,4 +36,9 @@ describe('mission map annotations', () => {
       { ...line, name: 'Powerline', notes: '' },
     ]);
   });
+
+  test('drops malformed stored geometry before it reaches the map', () => {
+    const malformed = { ...point('bad', 'obstacle'), geometry: { type: 'LineString', coordinates: [[153.1, -27.4]] } } as MissionMapFeature;
+    expect(normaliseMapFeatures([malformed])).toEqual([]);
+  });
 });

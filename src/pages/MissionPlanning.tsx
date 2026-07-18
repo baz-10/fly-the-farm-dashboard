@@ -72,6 +72,8 @@ import { reopenApprovedJSA, reopenJSAForWorkPackChange } from '../utils/workPack
 import { LatLng, BoundaryFileRef } from '../types/fieldManagement';
 import { SavedVegetationCheck } from '../types/pmav';
 import { MissionBoundaryMetadata, MissionMapFeature } from '../types/missionMap';
+import { normaliseMapFeatures } from '../utils/missionMapAnnotations';
+import { normaliseBoundaryPolygons } from '../utils/missionBoundaryEditing';
 import {
   BoundaryFile,
   FlightExecution,
@@ -703,7 +705,7 @@ export default function MissionPlanning() {
     boundaryCoords,
     boundaryPolygons: effectiveBoundaryPolygons,
     boundaryMetadata,
-    mapFeatures,
+    mapFeatures: normaliseMapFeatures(mapFeatures),
     vegetationClearance: {
       lotPlan: cleanMissionLotPlan,
       checkId: currentVegetationCheck?.id,
@@ -1126,15 +1128,20 @@ export default function MissionPlanning() {
       : undefined);
     const loadedBoundaryCoords = planning?.boundaryCoords?.length ? planning.boundaryCoords : [];
     setBoundaryCoords(loadedBoundaryCoords);
-    setBoundaryPolygons(
-      planning?.boundaryPolygons?.length
-        ? planning.boundaryPolygons
-        : loadedBoundaryCoords.length ? [loadedBoundaryCoords] : [],
-    );
-    setBoundaryMetadata(planning?.boundaryMetadata || []);
+    const loadedBoundaryPolygons = planning?.boundaryPolygons?.length
+      ? planning.boundaryPolygons
+      : loadedBoundaryCoords.length ? [loadedBoundaryCoords] : [];
+    const loadedBoundaryModels = normaliseBoundaryPolygons(loadedBoundaryPolygons);
+    setBoundaryPolygons(loadedBoundaryPolygons);
+    setBoundaryMetadata(loadedBoundaryModels.map((model, index) => ({
+      id: planning?.boundaryMetadata?.[index]?.id || model.id,
+      sourceFileId: planning?.boundaryMetadata?.[index]?.sourceFileId,
+      name: planning?.boundaryMetadata?.[index]?.name || model.name,
+      notes: planning?.boundaryMetadata?.[index]?.notes || model.notes,
+    })));
     setMissionArea(missionAreaHa);
     setBoundaryFile(null);
-    setMapFeatures(planning?.mapFeatures || []);
+    setMapFeatures(normaliseMapFeatures(planning?.mapFeatures));
     setJsaRecord(mission.jsaRecord);
     setScheduledDate(formatDateTimeInput(new Date(mission.scheduledDate)));
     setEstimatedDuration(mission.estimatedDuration);

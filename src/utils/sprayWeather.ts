@@ -40,11 +40,22 @@ export function classifyDeltaT(deltaT: number): DeltaTBand {
   return 'unsuitable';
 }
 
+export function selectCurrentHourlyPoint<T extends { time: string }>(points: T[], now = new Date()): T | undefined {
+  if (points.length === 0) return undefined;
+  const nowMs = now.getTime();
+  return points.reduce((nearest, point) => Math.abs(new Date(point.time).getTime() - nowMs) < Math.abs(new Date(nearest.time).getTime() - nowMs) ? point : nearest);
+}
+
+function clockMinutes(value: string): number {
+  const match = value.match(/T(\d{2}):(\d{2})/);
+  return match ? Number(match[1]) * 60 + Number(match[2]) : new Date(value).getHours() * 60 + new Date(value).getMinutes();
+}
+
 export function assessInversionPotential(input: InversionInput): InversionAssessment {
-  const time = new Date(input.time).getTime();
-  const sunrise = new Date(input.sunrise).getTime();
-  const sunset = new Date(input.sunset).getTime();
-  const nearNight = time >= sunset - 2 * 3600000 || time <= sunrise + 2 * 3600000;
+  const time = clockMinutes(input.time);
+  const sunrise = clockMinutes(input.sunrise);
+  const sunset = clockMinutes(input.sunset);
+  const nearNight = time >= sunset - 120 || time <= sunrise + 120;
   const reasons: string[] = [];
   let score = 0;
 
@@ -55,7 +66,7 @@ export function assessInversionPotential(input: InversionInput): InversionAssess
   if ((input.humidityPercent ?? 0) >= 90) { score += 1; reasons.push('High humidity may indicate mist, dew, or fog'); }
   if ((input.temperatureTrendC ?? 0) < -0.5) { score += 1; reasons.push('Near-surface temperature is falling'); }
 
-  if (score >= 6) return { rating: 'high', reasons, message: 'Do not spray—verify conditions on site for a hazardous surface temperature inversion.' };
+  if (score >= 6 && nearNight) return { rating: 'high', reasons, message: 'Do not spray—verify conditions on site for a hazardous surface temperature inversion.' };
   if (score >= 3) return { rating: 'moderate', reasons, message: 'Conditions may support an inversion—verify on site before spraying.' };
   return { rating: 'low', reasons, message: 'Low forecast potential—an on-site check is still required.' };
 }

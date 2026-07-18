@@ -1,6 +1,6 @@
 import React from 'react';
 import { format } from 'date-fns';
-import { fetchWeatherForDate, geocodeLocality } from '../services/weatherService';
+import { fetchWeatherForDate, geocodeLocality, reverseGeocodeLocation } from '../services/weatherService';
 import { cacheForecast, getCachedForecast, readWeatherPreferences, saveWeatherPreferences } from '../services/weatherPreferenceStore';
 import { CachedOperationalForecast, WeatherLocation } from '../types/weather';
 
@@ -33,10 +33,15 @@ export function useOperationalWeather(userId: string) {
 
   const searchLocation = React.useCallback(async (query: string) => {
     setStatus('loading'); setError('');
-    const found = await geocodeLocality(query.trim());
-    if (!found) { setStatus('location-not-found'); setError(`Could not find "${query.trim()}".`); return; }
-    await load(found, true);
-  }, [load]);
+    try {
+      const found = await geocodeLocality(query.trim());
+      if (!found) { setStatus('location-not-found'); setError(`Could not find "${query.trim()}".`); return; }
+      await load(found, true);
+    } catch (cause) {
+      setStatus(forecast ? 'stale' : 'unavailable');
+      setError(cause instanceof Error ? cause.message : 'Location search is unavailable.');
+    }
+  }, [forecast, load]);
 
   const refresh = React.useCallback(async () => { if (location) await load(location, true); }, [load, location]);
 
@@ -44,7 +49,11 @@ export function useOperationalWeather(userId: string) {
     if (!navigator.geolocation) { setStatus('unavailable'); setError('Device location is unavailable.'); return; }
     setStatus('loading');
     await new Promise<void>((resolve) => navigator.geolocation.getCurrentPosition(
-      async ({ coords }) => { await load({ name: 'Current location', latitude: coords.latitude, longitude: coords.longitude }, true); resolve(); },
+      async ({ coords }) => {
+        const name = await reverseGeocodeLocation(coords.latitude, coords.longitude);
+        await load({ name, latitude: coords.latitude, longitude: coords.longitude }, true);
+        resolve();
+      },
       () => { setStatus('permission-denied'); setError('Location permission was denied. Search for a location instead.'); resolve(); },
       { enableHighAccuracy: false, timeout: 10000 },
     ));

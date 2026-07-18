@@ -28,4 +28,12 @@ describe('useOperationalWeather', () => {
     await waitFor(() => expect(result.current.status).toBe('stale'));
     expect(result.current.forecast).not.toBeNull();
   });
+
+  test('exits loading when location search rejects', async () => {
+    mockedWeather.geocodeLocality.mockRejectedValue(new Error('network down'));
+    const { result } = renderHook(() => useOperationalWeather('user-1'));
+    await act(() => result.current.searchLocation('Dalby'));
+    expect(result.current.status).toBe('unavailable');
+    expect(result.current.error).toMatch(/network down/i);
+  });
 });

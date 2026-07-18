@@ -164,3 +164,22 @@ export async function geocodeLocality(name: string): Promise<{ latitude: number;
   const r = data.results[0];
   return { latitude: r.latitude, longitude: r.longitude, name: r.name };
 }
+
+/** Resolve device coordinates to a useful locality label without requiring an API key. */
+export async function reverseGeocodeLocation(latitude: number, longitude: number): Promise<string> {
+  const fallback = `${latitude.toFixed(4)}, ${longitude.toFixed(4)}`;
+  try {
+    const res = await fetch(
+      `https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${latitude}&longitude=${longitude}&localityLanguage=en`,
+    );
+    if (!res.ok) return fallback;
+    const data = await res.json();
+    const locality = data.locality || data.city || data.principalSubdivision;
+    const region = data.principalSubdivision && data.principalSubdivision !== locality
+      ? data.principalSubdivision
+      : '';
+    return [locality, region, data.countryName].filter(Boolean).join(', ') || fallback;
+  } catch {
+    return fallback;
+  }
+}

@@ -1,4 +1,4 @@
-import { fetchWeatherForDate } from '../weatherService';
+import { fetchWeatherForDate, reverseGeocodeLocation } from '../weatherService';
 
 describe('weather service', () => {
   afterEach(() => jest.restoreAllMocks());
@@ -23,5 +23,10 @@ describe('weather service', () => {
     expect(result.hourly[0]).toMatchObject({ deltaT: 7.7, precipitationProbability: 20, cloudCoverPercent: 15, isDay: true });
     expect(result.sunrise).toBe('2026-07-20T06:30');
     expect(result.daily[0]).toMatchObject({ date: '2026-07-20', maxTempC: 31, rainChancePercent: 25, maxGustKmh: 28 });
+  });
+
+  test('resolves device coordinates to a readable place name', async () => {
+    jest.spyOn(global, 'fetch').mockResolvedValue({ ok: true, json: async () => ({ locality: 'Dalby', principalSubdivision: 'Queensland', countryName: 'Australia' }) } as Response);
+    await expect(reverseGeocodeLocation(-27.18, 151.26)).resolves.toBe('Dalby, Queensland, Australia');
   });
 });

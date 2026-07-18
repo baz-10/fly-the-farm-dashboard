@@ -6,7 +6,7 @@ export type MissionMapFeatureType =
   | 'secondary-landing-zone'
   | 'signage';
 
-export interface MissionBoundaryMetadata { name: string; notes: string; }
+export interface MissionBoundaryMetadata { id?: string; name: string; notes: string; sourceFileId?: string; }
 
 export interface MissionMapPointGeometry {
   type: 'Point';

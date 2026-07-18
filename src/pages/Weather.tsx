@@ -8,13 +8,13 @@ import SearchIcon from '@mui/icons-material/Search';
 import { format } from 'date-fns';
 import { useAuth } from '../contexts/AuthContext';
 import { useOperationalWeather } from '../hooks/useOperationalWeather';
-import { assessInversionPotential, classifyDeltaT } from '../utils/sprayWeather';
+import { assessInversionPotential, classifyDeltaT, selectCurrentHourlyPoint } from '../utils/sprayWeather';
 
 export default function Weather() {
   const { user } = useAuth();
   const weather = useOperationalWeather(user?.id || 'anonymous');
   const [query, setQuery] = React.useState('');
-  const current = weather.forecast?.hourly[0];
+  const current = selectCurrentHourlyPoint(weather.forecast?.hourly || []);
   const inversion = current && weather.forecast?.sunrise && weather.forecast?.sunset ? assessInversionPotential({ time: current.time, sunrise: weather.forecast.sunrise, sunset: weather.forecast.sunset, windSpeedKmh: current.windSpeedKmh, cloudCoverPercent: current.cloudCoverPercent, humidityPercent: current.humidity, temperatureTrendC: 0 }) : null;
   const submit = (event: React.FormEvent) => { event.preventDefault(); if (query.trim()) void weather.searchLocation(query.trim()); };
 

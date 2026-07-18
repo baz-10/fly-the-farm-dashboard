@@ -37,6 +37,7 @@ import {
   parseShapefileBoundary,
 } from '../utils/boundaryImport';
 import { appendDraftVertex, canFinishDrawing, DrawingMode, finishDrawing } from '../utils/missionMapDrawing';
+import { normaliseBoundaryPolygons } from '../utils/missionBoundaryEditing';
 
 const TILE_LAYERS = {
   street: {
@@ -252,6 +253,17 @@ export default function FieldBoundaryEditor({
     setDraftFeatureVertices([]);
   };
 
+  const moveFeatureVertex = (featureId: string, vertexIndex: number, lng: number, lat: number) => {
+    if (!onFeaturesChange) return;
+    onFeaturesChange(features.map((feature) => {
+      if (feature.id !== featureId) return feature;
+      const nextCoordinate: [number, number] = [lng, lat];
+      if (feature.geometry.type === 'Point') return { ...feature, geometry: { ...feature.geometry, coordinates: nextCoordinate } };
+      if (feature.geometry.type === 'LineString') return { ...feature, geometry: { ...feature.geometry, coordinates: feature.geometry.coordinates.map((coordinate, index) => index === vertexIndex ? nextCoordinate : coordinate) } };
+      return { ...feature, geometry: { ...feature.geometry, coordinates: [feature.geometry.coordinates[0].map((coordinate, index) => index === vertexIndex ? nextCoordinate : coordinate)] } };
+    }));
+  };
+
   const handleUndo = () => {
     if (coords.length > 0) {
       const updated = coords.slice(0, -1);
@@ -282,7 +294,9 @@ export default function FieldBoundaryEditor({
 
       onCoordsChange(result.coords);
       onPolygonsChange?.(result.polygons);
-      onBoundaryMetadataChange?.(result.polygons.map((_, index) => ({ name: `Boundary ${index + 1}`, notes: '' })));
+      const sourceFileId = `import-${Date.now()}`;
+      const importedBoundaries = normaliseBoundaryPolygons(result.polygons);
+      onBoundaryMetadataChange?.(importedBoundaries.map((boundary, index) => ({ id: boundary.id, sourceFileId, name: `Boundary ${index + 1}`, notes: '' })));
       const importedCoords = result.polygons.flat();
       onBoundaryFile?.({
         fileName: files.length === 1 ? primaryFile.name : files.map((file) => file.name).join(', '),
@@ -598,7 +612,19 @@ export default function FieldBoundaryEditor({
             if (feature.geometry.type !== 'Point') return null;
             const [lng, lat] = feature.geometry.coordinates;
             const icon = L.divIcon({ className: '', html: `<div style="width:18px;height:18px;background:${MAP_FEATURE_COLORS[feature.type]};border:3px solid white;border-radius:50%;box-shadow:0 1px 5px rgba(0,0,0,.45)"></div>`, iconSize: [18, 18], iconAnchor: [9, 9] });
-            return <Marker key={feature.id} position={[lat, lng]} icon={icon} />;
+            return <Marker key={feature.id} position={[lat, lng]} icon={icon} draggable={!readOnly} eventHandlers={{ dragend: (event) => { const next = event.target.getLatLng(); moveFeatureVertex(feature.id, 0, next.lng, next.lat); } }} />;
+          })}
+
+          {!readOnly && features.filter((feature) => feature.geometry.type !== 'Point').flatMap((feature) => {
+            if (feature.geometry.type === 'Point') return [];
+            const coordinates: Array<[number, number]> = feature.geometry.type === 'Polygon' ? feature.geometry.coordinates[0] : feature.geometry.coordinates;
+            return coordinates.map(([lng, lat], vertexIndex) => <Marker
+              key={`${feature.id}-vertex-${vertexIndex}`}
+              position={[lat, lng]}
+              icon={boundaryPointIcon}
+              draggable
+              eventHandlers={{ dragend: (event) => { const next = event.target.getLatLng(); moveFeatureVertex(feature.id, vertexIndex, next.lng, next.lat); } }}
+            />);
           })}
 
           {/* Boundary points — draggable in edit mode */}
