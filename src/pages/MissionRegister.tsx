@@ -1,156 +1,103 @@
 import React from 'react';
 import { alpha } from '@mui/material/styles';
-import {
-  Alert,
-  Box,
-  Button,
-  Chip,
-  CircularProgress,
-  InputAdornment,
-  MenuItem,
-  Paper,
-  Stack,
-  TextField,
-  Typography,
-} from '@mui/material';
+import { Alert, Box, Button, Chip, CircularProgress, Collapse, InputAdornment, Paper, Stack, TextField, Typography } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
+import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import FlightTakeoffIcon from '@mui/icons-material/FlightTakeoff';
 import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 import SearchIcon from '@mui/icons-material/Search';
 import { useNavigate } from 'react-router-dom';
 import { useMission } from '../contexts/MissionContext';
-import { MissionRecord, MissionStatus } from '../types/mission';
+import { MissionRecord } from '../types/mission';
+import { getMissionNextAction, groupMissionsForRegister, MissionRegisterSectionDefinition } from '../utils/missionRegister';
 
-const STATUS_LABEL: Record<MissionStatus, string> = {
-  Planning: 'Planning',
-  Approved: 'Authorised',
-  Flying: 'In progress',
-  Completed: 'Completed',
-  Locked: 'Completed',
-};
+interface MissionSectionProps extends MissionRegisterSectionDefinition {
+  missions: MissionRecord[];
+  collapsed?: boolean;
+  onToggle?: () => void;
+  onOpenMission: (missionId: string) => void;
+}
 
-const STATUS_COLOR: Record<MissionStatus, 'default' | 'info' | 'success' | 'warning'> = {
-  Planning: 'warning',
-  Approved: 'info',
-  Flying: 'success',
-  Completed: 'default',
-  Locked: 'default',
-};
+function MissionCard({ mission, color, onOpen }: { mission: MissionRecord; color: string; onOpen: () => void }) {
+  const aircraftLabel = mission.aircraftConfiguration?.aircraftId || 'Aircraft not assigned';
+  return (
+    <Paper variant="outlined" sx={{ p: { xs: 1.5, md: 2 }, borderRadius: 2, borderLeft: `5px solid ${color}`, transition: 'box-shadow 150ms ease, transform 150ms ease', '&:hover': { boxShadow: `0 8px 24px ${alpha(color, 0.12)}`, transform: 'translateY(-1px)' } }}>
+      <Stack direction={{ xs: 'column', md: 'row' }} alignItems={{ md: 'center' }} spacing={2}>
+        <Box sx={{ flex: 1, minWidth: 0 }}>
+          <Stack direction="row" spacing={1} alignItems="center" useFlexGap flexWrap="wrap" sx={{ mb: 0.6 }}>
+            <Typography sx={{ fontWeight: 900 }} noWrap>{mission.missionName}</Typography>
+            <Chip size="small" label={mission.missionNumber} sx={{ fontWeight: 800, height: 22 }} />
+          </Stack>
+          <Typography variant="body2" color="text.secondary">
+            {mission.location?.name || 'Location not set'} · {new Date(mission.scheduledDate).toLocaleDateString('en-AU')} · {aircraftLabel}
+          </Typography>
+          <Typography sx={{ mt: 0.75, color, fontSize: '0.76rem', fontWeight: 800 }}>{getMissionNextAction(mission)}</Typography>
+        </Box>
+        <Button variant="outlined" endIcon={<OpenInNewIcon />} aria-label={`Open ${mission.missionName}`} onClick={onOpen}>Open</Button>
+      </Stack>
+    </Paper>
+  );
+}
 
-type RegisterFilter = 'all' | 'Planning' | 'Authorised' | 'Completed';
+function MissionSection({ label, description, color, missions, collapsed = false, onToggle, onOpenMission }: MissionSectionProps) {
+  const countLabel = `${missions.length} mission${missions.length === 1 ? '' : 's'}`;
+  const header = (
+    <Stack direction="row" alignItems="center" justifyContent="space-between" spacing={2} sx={{ width: '100%', textAlign: 'left' }}>
+      <Box>
+        <Stack direction="row" spacing={1} alignItems="center">
+          <Box sx={{ width: 10, height: 10, borderRadius: '50%', bgcolor: color, boxShadow: `0 0 0 4px ${alpha(color, 0.12)}` }} />
+          <Typography component="h2" sx={{ fontSize: '1.05rem', fontWeight: 900 }}>{label}</Typography>
+          <Chip size="small" label={countLabel} sx={{ height: 22, color, bgcolor: alpha(color, 0.09), fontWeight: 800 }} />
+        </Stack>
+        <Typography sx={{ ml: 2.25, mt: 0.35, fontSize: '0.76rem', color: 'text.secondary' }}>{description}</Typography>
+      </Box>
+      {onToggle && <ExpandMoreIcon sx={{ color, transform: collapsed ? 'rotate(-90deg)' : 'rotate(0)', transition: 'transform 150ms ease' }} />}
+    </Stack>
+  );
 
-function matchesFilter(mission: MissionRecord, filter: RegisterFilter) {
-  if (filter === 'all') return true;
-  if (filter === 'Authorised') return mission.status === 'Approved' || mission.status === 'Flying';
-  if (filter === 'Completed') return mission.status === 'Completed' || mission.status === 'Locked';
-  return mission.status === 'Planning';
+  return (
+    <Paper component="section" variant="outlined" sx={{ p: { xs: 1.5, md: 2 }, borderRadius: 2.5, borderTop: `4px solid ${color}`, bgcolor: alpha(color, 0.018) }}>
+      {onToggle ? (
+        <Button fullWidth color="inherit" aria-label={`${label}, ${countLabel}, ${collapsed ? 'collapsed' : 'expanded'}`} onClick={onToggle} sx={{ p: 0, textTransform: 'none' }}>{header}</Button>
+      ) : header}
+      <Collapse in={!collapsed} timeout="auto" unmountOnExit>
+        <Stack spacing={1.1} sx={{ mt: 1.75 }}>
+          {missions.length === 0 ? (
+            <Box sx={{ py: 2, px: 1.5, borderRadius: 1.5, bgcolor: 'background.paper', border: '1px dashed', borderColor: 'divider' }}>
+              <Typography sx={{ fontSize: '0.78rem', color: 'text.secondary' }}>No missions in this stage.</Typography>
+            </Box>
+          ) : missions.map((mission) => <MissionCard key={mission.id} mission={mission} color={color} onOpen={() => onOpenMission(mission.id)} />)}
+        </Stack>
+      </Collapse>
+    </Paper>
+  );
 }
 
 export default function MissionRegister() {
   const navigate = useNavigate();
   const { missions, isLoading, error } = useMission();
   const [search, setSearch] = React.useState('');
-  const [status, setStatus] = React.useState<RegisterFilter>('all');
-
-  const visibleMissions = React.useMemo(() => {
-    const query = search.trim().toLowerCase();
-    return [...missions]
-      .filter((mission) => matchesFilter(mission, status))
-      .filter((mission) => !query || [
-        mission.missionName,
-        mission.missionNumber,
-        mission.location?.name,
-        mission.location?.address,
-      ].some((value) => value?.toLowerCase().includes(query)))
-      .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
-  }, [missions, search, status]);
+  const [completedCollapsed, setCompletedCollapsed] = React.useState(true);
+  const sections = React.useMemo(() => groupMissionsForRegister(missions, search), [missions, search]);
 
   return (
     <Box sx={{ maxWidth: 1440, mx: 'auto', px: { xs: 2, md: 3.5 }, py: { xs: 2.5, md: 4 } }}>
       <Stack direction={{ xs: 'column', sm: 'row' }} justifyContent="space-between" gap={2} sx={{ mb: 3 }}>
         <Box>
-          <Stack direction="row" spacing={1.25} alignItems="center">
-            <FlightTakeoffIcon color="primary" />
-            <Typography variant="h4" sx={{ fontWeight: 900, letterSpacing: '-0.035em' }}>Missions</Typography>
-          </Stack>
-          <Typography color="text.secondary" sx={{ mt: 0.5 }}>
-            Plan, authorise and review every mission from one register.
-          </Typography>
+          <Stack direction="row" spacing={1.25} alignItems="center"><FlightTakeoffIcon color="primary" /><Typography variant="h4" sx={{ fontWeight: 900, letterSpacing: '-0.035em' }}>Missions</Typography></Stack>
+          <Typography color="text.secondary" sx={{ mt: 0.5 }}>See what is flying, ready, being planned and completed.</Typography>
         </Box>
-        <Button variant="contained" startIcon={<AddIcon />} onClick={() => navigate('/missions/new')} sx={{ alignSelf: { xs: 'stretch', sm: 'center' } }}>
-          New Mission
-        </Button>
+        <Button variant="contained" startIcon={<AddIcon />} onClick={() => navigate('/missions/new')} sx={{ alignSelf: { xs: 'stretch', sm: 'center' } }}>New Mission</Button>
       </Stack>
 
       <Paper variant="outlined" sx={{ p: { xs: 1.5, md: 2 }, mb: 2, borderRadius: 2 }}>
-        <Stack direction={{ xs: 'column', md: 'row' }} spacing={1.5}>
-          <TextField
-            fullWidth
-            size="small"
-            label="Search missions"
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            InputProps={{ startAdornment: <InputAdornment position="start"><SearchIcon fontSize="small" /></InputAdornment> }}
-          />
-          <TextField
-            select
-            size="small"
-            label="Status"
-            value={status}
-            onChange={(event) => setStatus(event.target.value as RegisterFilter)}
-            sx={{ minWidth: { md: 210 } }}
-          >
-            <MenuItem value="all">All missions</MenuItem>
-            <MenuItem value="Planning">Planning</MenuItem>
-            <MenuItem value="Authorised">Authorised</MenuItem>
-            <MenuItem value="Completed">Completed</MenuItem>
-          </TextField>
-        </Stack>
+        <TextField fullWidth size="small" label="Search missions" value={search} onChange={(event) => setSearch(event.target.value)} InputProps={{ startAdornment: <InputAdornment position="start"><SearchIcon fontSize="small" /></InputAdornment> }} />
       </Paper>
 
       {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
-      {isLoading ? (
-        <Stack alignItems="center" sx={{ py: 8 }}><CircularProgress size={32} /></Stack>
-      ) : visibleMissions.length === 0 ? (
-        <Paper variant="outlined" sx={{ p: 6, textAlign: 'center', borderRadius: 2 }}>
-          <Typography sx={{ fontWeight: 800 }}>No missions match this view</Typography>
-          <Typography color="text.secondary" sx={{ mt: 0.5, mb: 2 }}>Start a new mission or change the filters.</Typography>
-          <Button variant="contained" onClick={() => navigate('/missions/new')}>New Mission</Button>
-        </Paper>
-      ) : (
-        <Stack spacing={1.25}>
-          {visibleMissions.map((mission) => (
-            <Paper
-              key={mission.id}
-              variant="outlined"
-              sx={(theme) => ({
-                p: { xs: 1.5, md: 2 },
-                borderRadius: 2,
-                transition: 'border-color 150ms ease, box-shadow 150ms ease',
-                '&:hover': { borderColor: theme.palette.primary.main, boxShadow: `0 8px 24px ${alpha(theme.palette.primary.main, 0.08)}` },
-              })}
-            >
-              <Stack direction={{ xs: 'column', md: 'row' }} alignItems={{ md: 'center' }} spacing={2}>
-                <Box sx={{ flex: 1, minWidth: 0 }}>
-                  <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 0.5 }}>
-                    <Typography sx={{ fontWeight: 900 }} noWrap>{mission.missionName}</Typography>
-                    <Chip size="small" color={STATUS_COLOR[mission.status]} label={STATUS_LABEL[mission.status]} />
-                  </Stack>
-                  <Typography variant="body2" color="text.secondary">
-                    {mission.missionNumber} · {mission.location?.name || 'Location not set'} · {new Date(mission.scheduledDate).toLocaleDateString('en-AU')}
-                  </Typography>
-                </Box>
-                <Button
-                  variant="outlined"
-                  endIcon={<OpenInNewIcon />}
-                  aria-label={`Open ${mission.missionName}`}
-                  onClick={() => navigate(`/missions/${encodeURIComponent(mission.id)}`)}
-                >
-                  Open
-                </Button>
-              </Stack>
-            </Paper>
-          ))}
+      {isLoading ? <Stack alignItems="center" sx={{ py: 8 }}><CircularProgress size={32} /></Stack> : (
+        <Stack spacing={2}>
+          {sections.map(({ key, ...section }) => <MissionSection key={key} {...section} collapsed={key === 'completed' ? completedCollapsed : false} onToggle={key === 'completed' ? () => setCompletedCollapsed((current) => !current) : undefined} onOpenMission={(missionId) => navigate(`/missions/${encodeURIComponent(missionId)}`)} />)}
         </Stack>
       )}
     </Box>
