@@ -1,6 +1,8 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { PERSISTENCE_KEYS, readSharedValue, writeSharedValue } from '../services/persistence';
 import {
+  DeploymentAsset,
+  DeploymentAssetInput,
   TruckProfile,
   TruckProfileInput,
   WorkPackSnapshot,
@@ -10,6 +12,7 @@ import {
 import { instantiateWorkPackTemplate } from '../utils/workPackTemplates';
 
 interface WorkPackStore {
+  assets: DeploymentAsset[];
   trucks: TruckProfile[];
   templates: WorkPackTemplate[];
   snapshots: WorkPackSnapshot[];
@@ -17,6 +20,9 @@ interface WorkPackStore {
 
 interface WorkPackContextValue extends WorkPackStore {
   isLoading: boolean;
+  createAsset: (input: DeploymentAssetInput) => Promise<string>;
+  updateAsset: (id: string, updates: Partial<DeploymentAssetInput>) => Promise<void>;
+  archiveAsset: (id: string) => Promise<void>;
   createTruck: (input: TruckProfileInput) => Promise<string>;
   updateTruck: (id: string, updates: Partial<TruckProfileInput>) => Promise<void>;
   archiveTruck: (id: string) => Promise<void>;
@@ -27,8 +33,27 @@ interface WorkPackContextValue extends WorkPackStore {
   instantiateTemplate: (id: string, jobId?: string) => WorkPackSnapshot | undefined;
 }
 
-const EMPTY_STORE: WorkPackStore = { trucks: [], templates: [], snapshots: [] };
+type PersistedWorkPackStore = Partial<WorkPackStore>;
+
+const EMPTY_STORE: WorkPackStore = { assets: [], trucks: [], templates: [], snapshots: [] };
 const WorkPackContext = createContext<WorkPackContextValue | undefined>(undefined);
+
+export function normaliseDeploymentAssets(store: PersistedWorkPackStore): DeploymentAsset[] {
+  if (Array.isArray(store.assets)) return store.assets;
+  return Array.isArray(store.trucks)
+    ? store.trucks.map((truck) => ({ ...truck, assetType: 'truck' }))
+    : [];
+}
+
+function deriveTrucks(assets: DeploymentAsset[]): TruckProfile[] {
+  return assets
+    .filter((asset) => asset.assetType === 'truck')
+    .map(({ assetType: _assetType, ...truck }) => truck);
+}
+
+function withAssets(store: WorkPackStore, assets: DeploymentAsset[]): WorkPackStore {
+  return { ...store, assets, trucks: deriveTrucks(assets) };
+}
 
 function createId(prefix: string): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -44,11 +69,13 @@ export function WorkPackProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     let cancelled = false;
-    readSharedValue<WorkPackStore>(PERSISTENCE_KEYS.workPacks, EMPTY_STORE)
+    readSharedValue<PersistedWorkPackStore>(PERSISTENCE_KEYS.workPacks, EMPTY_STORE)
       .then((saved) => {
         if (!cancelled) {
+          const assets = normaliseDeploymentAssets(saved);
           setStore({
-            trucks: Array.isArray(saved.trucks) ? saved.trucks : [],
+            assets,
+            trucks: deriveTrucks(assets),
             templates: Array.isArray(saved.templates) ? saved.templates : [],
             snapshots: Array.isArray(saved.snapshots) ? saved.snapshots : [],
           });
@@ -69,24 +96,31 @@ export function WorkPackProvider({ children }: { children: React.ReactNode }) {
     return () => window.clearTimeout(timeout);
   }, [store]);
 
-  const createTruck = useCallback(async (input: TruckProfileInput) => {
+  const createAsset = useCallback(async (input: DeploymentAssetInput) => {
     const now = new Date().toISOString();
-    const id = createId('truck');
-    setStore((current) => ({
-      ...current,
-      trucks: [...current.trucks, { ...input, id, createdAt: now, updatedAt: now }],
-    }));
+    const id = createId(input.assetType);
+    setStore((current) => withAssets(current, [
+      ...current.assets,
+      { ...input, id, createdAt: now, updatedAt: now },
+    ]));
     return id;
   }, []);
 
-  const updateTruck = useCallback(async (id: string, updates: Partial<TruckProfileInput>) => {
-    setStore((current) => ({
-      ...current,
-      trucks: current.trucks.map((truck) => truck.id === id
-        ? { ...truck, ...updates, updatedAt: new Date().toISOString() }
-        : truck),
-    }));
+  const updateAsset = useCallback(async (id: string, updates: Partial<DeploymentAssetInput>) => {
+    setStore((current) => withAssets(current, current.assets.map((asset) => asset.id === id
+      ? { ...asset, ...updates, updatedAt: new Date().toISOString() }
+      : asset)));
   }, []);
+
+  const archiveAsset = useCallback((id: string) => updateAsset(id, { status: 'retired' }), [updateAsset]);
+
+  const createTruck = useCallback(async (input: TruckProfileInput) => {
+    return createAsset({ ...input, assetType: 'truck' });
+  }, [createAsset]);
+
+  const updateTruck = useCallback(async (id: string, updates: Partial<TruckProfileInput>) => {
+    return updateAsset(id, updates);
+  }, [updateAsset]);
 
   const archiveTruck = useCallback((id: string) => updateTruck(id, { status: 'retired' }), [updateTruck]);
 
@@ -135,6 +169,9 @@ export function WorkPackProvider({ children }: { children: React.ReactNode }) {
   const value = useMemo<WorkPackContextValue>(() => ({
     ...store,
     isLoading,
+    createAsset,
+    updateAsset,
+    archiveAsset,
     createTruck,
     updateTruck,
     archiveTruck,
@@ -143,7 +180,7 @@ export function WorkPackProvider({ children }: { children: React.ReactNode }) {
     archiveTemplate,
     duplicateTemplate,
     instantiateTemplate,
-  }), [store, isLoading, createTruck, updateTruck, archiveTruck, createTemplate, updateTemplate, archiveTemplate, duplicateTemplate, instantiateTemplate]);
+  }), [store, isLoading, createAsset, updateAsset, archiveAsset, createTruck, updateTruck, archiveTruck, createTemplate, updateTemplate, archiveTemplate, duplicateTemplate, instantiateTemplate]);
 
   return (
     <WorkPackContext.Provider value={value}>

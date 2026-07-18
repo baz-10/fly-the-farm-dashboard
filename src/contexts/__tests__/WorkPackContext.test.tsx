@@ -32,7 +32,7 @@ const truck: TruckProfileInput = {
 };
 
 function Probe() {
-  const { trucks, templates, createTruck, createTemplate, instantiateTemplate } = useWorkPacks();
+  const { assets, trucks, templates, createAsset, createTruck, createTemplate, instantiateTemplate } = useWorkPacks();
   const create = async () => {
     const truckId = await createTruck(truck);
     const template: WorkPackTemplateInput = {
@@ -51,6 +51,8 @@ function Probe() {
   return (
     <div>
       <button onClick={create}>create</button>
+      <button onClick={() => createAsset({ ...truck, assetType: 'trailer', name: 'Spray trailer' })}>create trailer</button>
+      {assets.map((asset) => <span key={asset.id}>{asset.assetType}:{asset.name}</span>)}
       <span data-testid="trucks">{trucks.length}</span>
       <span data-testid="templates">{templates.length}</span>
     </div>
@@ -70,6 +72,32 @@ describe('WorkPackContext', () => {
       const stored = JSON.parse(localStorage.getItem(PERSISTENCE_KEYS.workPacks) || '{}');
       expect(stored.trucks).toHaveLength(1);
       expect(stored.templates).toHaveLength(1);
+    });
+  });
+
+  test('normalises legacy trucks and persists independent trailers', async () => {
+    const now = new Date().toISOString();
+    localStorage.setItem(PERSISTENCE_KEYS.workPacks, JSON.stringify({
+      trucks: [{ ...truck, id: 'truck-1', name: 'Legacy truck', createdAt: now, updatedAt: now }],
+      templates: [],
+      snapshots: [],
+    }));
+
+    render(<WorkPackProvider><Probe /></WorkPackProvider>);
+
+    expect(await screen.findByText('truck:Legacy truck')).toBeInTheDocument();
+    fireEvent.click(screen.getByText('create trailer'));
+    expect(await screen.findByText('trailer:Spray trailer')).toBeInTheDocument();
+
+    await waitFor(() => {
+      const stored = JSON.parse(localStorage.getItem(PERSISTENCE_KEYS.workPacks) || '{}');
+      expect(stored.assets).toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: 'truck-1', assetType: 'truck', name: 'Legacy truck' }),
+        expect.objectContaining({ assetType: 'trailer', name: 'Spray trailer' }),
+      ]));
+      expect(stored.trucks).toEqual([
+        expect.objectContaining({ id: 'truck-1', name: 'Legacy truck' }),
+      ]);
     });
   });
 });

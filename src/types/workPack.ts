@@ -41,6 +41,15 @@ export interface TruckProfile {
   updatedAt: string;
 }
 
+export type DeploymentAssetType = 'truck' | 'trailer';
+
+export interface DeploymentAsset extends Omit<TruckProfile, 'id' | 'createdAt' | 'updatedAt'> {
+  id: string;
+  assetType: DeploymentAssetType;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface WorkPackAircraftAssignment {
   id: string;
   aircraftId: string;
@@ -85,4 +94,5 @@ export interface WorkPackSnapshot {
 }
 
 export type TruckProfileInput = Omit<TruckProfile, 'id' | 'createdAt' | 'updatedAt'>;
+export type DeploymentAssetInput = Omit<DeploymentAsset, 'id' | 'createdAt' | 'updatedAt'>;
 export type WorkPackTemplateInput = Omit<WorkPackTemplate, 'id' | 'createdAt' | 'updatedAt'>;
