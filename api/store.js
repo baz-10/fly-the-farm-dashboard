@@ -8,6 +8,7 @@ const ALLOWED_COLLECTIONS = new Set([
   'ftf_aircraft_data',
   'ftf_missions',
   'ftf_mission_templates',
+  'ftf_maintenance',
   'ftf_pmav_checks',
   'ftf_work_packs',
 ]);
@@ -27,6 +28,19 @@ function redactDeploymentWorkPack(workPack) {
   };
 }
 
+function redactMaintenanceCosts(payload) {
+  if (!payload || typeof payload !== 'object') return payload;
+  return {
+    ...payload,
+    records: Array.isArray(payload.records)
+      ? payload.records.map((record) => {
+        const { cost: _cost, ...safeRecord } = record || {};
+        return safeRecord;
+      })
+      : payload.records,
+  };
+}
+
 function contractorSafePayload(collection, payload) {
   if (!payload || typeof payload !== 'object') return payload;
   if (collection === 'ftf_missions') {
@@ -39,6 +53,7 @@ function contractorSafePayload(collection, payload) {
       trucks: Array.isArray(payload.trucks) ? payload.trucks.map(redactAssetCosts) : payload.trucks,
     };
   }
+  if (collection === 'ftf_maintenance') return redactMaintenanceCosts(payload);
   return payload;
 }
 
@@ -49,6 +64,16 @@ function preserveAssetCosts(incomingAssets, storedAssets) {
     const safeAsset = redactAssetCosts(asset);
     const storedCosts = storedById.get(asset?.id)?.costs;
     return storedCosts === undefined ? safeAsset : { ...safeAsset, costs: storedCosts };
+  });
+}
+
+function preserveMaintenanceCosts(incomingRecords, storedRecords) {
+  if (!Array.isArray(incomingRecords)) return incomingRecords;
+  const storedById = new Map((Array.isArray(storedRecords) ? storedRecords : []).map((record) => [record?.id, record]));
+  return incomingRecords.map((record) => {
+    const { cost: _cost, ...safeRecord } = record || {};
+    const storedCost = storedById.get(record?.id)?.cost;
+    return storedCost === undefined ? safeRecord : { ...safeRecord, cost: storedCost };
   });
 }
 
@@ -72,6 +97,12 @@ function contractorWritePayload(collection, incoming, stored) {
       ...safe,
       assets: preserveAssetCosts(safe.assets, stored?.assets),
       trucks: preserveAssetCosts(safe.trucks, stored?.trucks),
+    };
+  }
+  if (collection === 'ftf_maintenance') {
+    return {
+      ...safe,
+      records: preserveMaintenanceCosts(safe.records, stored?.records),
     };
   }
   return safe;

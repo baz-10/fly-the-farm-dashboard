@@ -140,6 +140,30 @@ describe('authenticated persistent store API', () => {
     expect(requestedUrls.some((url) => url.includes('tenant_id=eq.tenant-b'))).toBe(true);
   });
 
+  test('allows tenant-scoped maintenance storage', async () => {
+    const requestedUrls: string[] = [];
+    global.fetch = jest.fn(async (url: string) => {
+      requestedUrls.push(url);
+      if (url.endsWith('/auth/v1/user')) {
+        return response(200, { id: 'user-a', email: 'user-a@example.com', user_metadata: {} });
+      }
+      if (url.includes('/rest/v1/ftf_profiles')) {
+        return response(200, [{
+          user_id: 'user-a', tenant_id: 'tenant-a', role: 'admin', name: 'User A', tier: 'free',
+        }]);
+      }
+      if (url.includes('/rest/v1/ftf_store')) return response(200, []);
+      return response(500, { message: 'unexpected request' });
+    }) as any;
+    const res = createResponse();
+
+    await storeHandler(request('GET', 'token-a', undefined, 'ftf_maintenance'), res);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toEqual({ records: [] });
+    expect(requestedUrls.some((url) => url.includes('collection=eq.ftf_maintenance'))).toBe(true);
+  });
+
   test('does not expose workflow storage to client accounts', async () => {
     const requestedUrls: string[] = [];
     global.fetch = jest.fn(async (url: string) => {
@@ -264,6 +288,23 @@ describe('authenticated persistent store API', () => {
     expect(workPackResponse.body.payload.assets).toEqual([{ id: 'truck-1', name: 'Truck' }]);
   });
 
+  test('redacts maintenance costs from contractor reads', async () => {
+    global.fetch = jest.fn(async (url: string) => {
+      if (url.endsWith('/auth/v1/user')) return response(200, { id: 'user-a', email: 'user-a@example.com' });
+      if (url.includes('/rest/v1/ftf_profiles')) return response(200, [{ user_id: 'user-a', tenant_id: 'tenant-a', role: 'contractor', name: 'User A', tier: 'free' }]);
+      if (url.includes('/rest/v1/ftf_store')) return response(200, [{ payload: {
+        assets: [], schedules: [], auditEvents: [], records: [{ id: 'record-1', title: 'Service', cost: 850 }],
+      } }]);
+      return response(500, { message: 'unexpected request' });
+    }) as any;
+    const res = createResponse();
+
+    await storeHandler(request('GET', 'token-a', undefined, 'ftf_maintenance'), res);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body.records[0].records[0]).toEqual({ id: 'record-1', title: 'Service' });
+  });
+
   test('retains deployment financials in administrator mission and work-pack reads', async () => {
     const financialPayload = {
       assets: [{ id: 'truck-1', costs: { costPerDay: 450 } }],
@@ -321,6 +362,30 @@ describe('authenticated persistent store API', () => {
       estimatedDeploymentCost: 1250,
       assets: [expect.objectContaining({ id: 'truck-1', name: 'Updated truck', costs: { costPerDay: 450 } })],
     }));
+  });
+
+  test('preserves stored maintenance costs when a contractor saves an operational update', async () => {
+    let postedRows: any[] = [];
+    global.fetch = jest.fn(async (url: string, options: RequestInit = {}) => {
+      if (url.endsWith('/auth/v1/user')) return response(200, { id: 'user-a', email: 'user-a@example.com' });
+      if (url.includes('/rest/v1/ftf_profiles')) return response(200, [{ user_id: 'user-a', tenant_id: 'tenant-a', role: 'contractor', name: 'User A', tier: 'free' }]);
+      if (url.includes('/rest/v1/ftf_store') && (!options.method || options.method === 'GET')) {
+        return response(200, [{ payload: { records: [{ id: 'record-1', title: 'Service', cost: 850 }] } }]);
+      }
+      if (url.includes('/rest/v1/ftf_store') && options.method === 'POST') {
+        postedRows = JSON.parse(String(options.body));
+        return response(204, null);
+      }
+      return response(500, { message: 'unexpected request' });
+    }) as any;
+    const res = createResponse();
+
+    await storeHandler(request('PUT', 'token-a', {
+      collection: 'ftf_maintenance', recordId: '__value__',
+      payload: { records: [{ id: 'record-1', title: 'Updated service' }] },
+    }, 'ftf_maintenance'), res);
+
+    expect(postedRows[0].payload.records[0]).toEqual({ id: 'record-1', title: 'Updated service', cost: 850 });
   });
 });
 
