@@ -14,8 +14,15 @@ jest.mock('../hooks/useOperationalWeather', () => ({ useOperationalWeather: () =
 }) }));
 
 describe('Weather page', () => {
+  beforeEach(() => {
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date('2026-07-18T02:00:00Z'));
+  });
+
+  afterEach(() => jest.useRealTimers());
+
   test('shows spray indicators and forecast detail and supports location actions', async () => {
-    const user = userEvent.setup(); render(<Weather />);
+    const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime }); render(<Weather />);
     expect(screen.getByRole('heading', { name: 'Weather' })).toBeInTheDocument();
     expect(screen.getByText(/Delta T 7.7/)).toBeInTheDocument();
     expect(screen.getByText(/forecast inversion potential/i)).toBeInTheDocument();
