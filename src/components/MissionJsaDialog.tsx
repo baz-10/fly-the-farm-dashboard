@@ -2,7 +2,7 @@ import React from 'react';
 import { Alert, Box, Button, Dialog, DialogActions, DialogContent, DialogTitle, FormControl, FormControlLabel, Grid, InputLabel, MenuItem, Radio, RadioGroup, Select, Stack, TextField, Typography } from '@mui/material';
 import VerifiedUserIcon from '@mui/icons-material/VerifiedUser';
 import { JSARecord, MissionSafetyAssessment } from '../types/mission';
-import { buildEmptyMissionSafetyAssessment, calculateRiskScore, evaluateMissionSafety, isUnsafeAnswer, MISSION_CHECKS, syncRiskControls } from '../utils/missionSafety';
+import { buildEmptyMissionSafetyAssessment, calculateRiskScore, evaluateMissionSafety, getRiskControlContext, isUnsafeAnswer, MISSION_CHECKS, syncRiskControls } from '../utils/missionSafety';
 
 const LIKELIHOODS = ['rare', 'unlikely', 'possible', 'likely', 'almost-certain'] as const;
 const CONSEQUENCES = ['insignificant', 'minor', 'moderate', 'major', 'catastrophic'] as const;
@@ -65,11 +65,16 @@ export default function MissionJsaDialog({ open, missionName, value, onClose, on
           {assessment.riskControls.length > 0 && <Typography variant="h6">Risk Control Forms</Typography>}
           {assessment.riskControls.map((control) => {
             const check = MISSION_CHECKS.find((item) => item.id === control.questionId)!;
+            const trigger = getRiskControlContext(assessment, control.questionId);
             const initialScore = calculateRiskScore(control.likelihood, control.consequence);
             const residualScore = calculateRiskScore(control.residualLikelihood, control.residualConsequence);
             const update = (changes: Partial<typeof control>) => setAssessment({ ...assessment, riskControls: assessment.riskControls.map((item) => item.questionId === control.questionId ? { ...item, ...changes } : item) });
             return <Box key={control.questionId} sx={{ p: 2, bgcolor: 'warning.50', border: '1px solid', borderColor: 'warning.light', borderRadius: 2 }}>
               <Typography sx={{ fontWeight: 800, mb: 1 }}>{check.question}</Typography>
+              <Box sx={{ mb: 1.5, p: 1.25, borderRadius: 1.5, bgcolor: 'background.paper', border: '1px solid', borderColor: 'divider' }}>
+                <Typography variant="caption" sx={{ fontWeight: 900, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Triggered by this JSA answer</Typography>
+                <Typography variant="body2" sx={{ mt: 0.5 }}><strong>{trigger.answerLabel}</strong> — {trigger.notes || 'No notes supplied'}</Typography>
+              </Box>
               <Grid container spacing={1.25}>
                 {(['likelihood', 'consequence'] as const).map((field) => <Grid key={field} size={{ xs: 6, md: 3 }}><FormControl fullWidth size="small"><InputLabel>{field}</InputLabel><Select label={field} value={control[field] || ''} onChange={(e) => update({ [field]: Number(e.target.value) })}>{[1,2,3,4,5].map((n) => <MenuItem key={n} value={n}>{n}</MenuItem>)}</Select></FormControl></Grid>)}
                 <Grid size={{ xs: 12, md: 3 }}><TextField fullWidth size="small" label="Initial score" value={initialScore ?? 'Not assessed'} slotProps={{ input: { readOnly: true } }} /></Grid>

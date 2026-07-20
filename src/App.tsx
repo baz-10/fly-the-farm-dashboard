@@ -38,6 +38,8 @@ import ComplianceSafety from './pages/ComplianceSafety';
 import ComplianceDocumentation from './pages/ComplianceDocumentation';
 import MissionPlanning from './pages/MissionPlanning';
 import MissionRegister from './pages/MissionRegister';
+import Schedule from './pages/Schedule';
+import Weather from './pages/Weather';
 import MissionRouteRedirect from './components/MissionRouteRedirect';
 import AskFTF from './pages/AskFTF';
 import UserLicenseSettings from './pages/UserLicenseSettings';
@@ -45,7 +47,9 @@ import { UserLicenseProvider } from './contexts/UserLicenseContext';
 import { AircraftProvider } from './contexts/AircraftContext';
 import { MissionProvider } from './contexts/MissionContext';
 import { WorkPackProvider } from './contexts/WorkPackContext';
+import { MaintenanceProvider } from './contexts/MaintenanceContext';
 import FleetWorkPacks from './pages/FleetWorkPacks';
+import MaintenanceCommand from './pages/MaintenanceCommand';
 import { useAuth } from './contexts/AuthContext';
 
 function WorkflowProviders({ children }: { children: React.ReactNode }) {
@@ -56,7 +60,9 @@ function WorkflowProviders({ children }: { children: React.ReactNode }) {
     <UserLicenseProvider>
       <AircraftProvider>
         <WorkPackProvider>
-          <MissionProvider>{children}</MissionProvider>
+          <MaintenanceProvider>
+            <MissionProvider>{children}</MissionProvider>
+          </MaintenanceProvider>
         </WorkPackProvider>
       </AircraftProvider>
     </UserLicenseProvider>
@@ -112,8 +118,11 @@ function App() {
           <Route path="/ask-ftf" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><AskFTF /></ProtectedRoute>} />
           <Route path="/aircraft" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><AircraftManagement /></ProtectedRoute>} />
           <Route path="/fleet-work-packs" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><FleetWorkPacks /></ProtectedRoute>} />
+          <Route path="/maintenance" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><MaintenanceCommand /></ProtectedRoute>} />
           <Route path="/jsa" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><JSAManagement /></ProtectedRoute>} />
           <Route path="/missions" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><MissionRegister /></ProtectedRoute>} />
+          <Route path="/schedule" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><Schedule /></ProtectedRoute>} />
+          <Route path="/weather" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><Weather /></ProtectedRoute>} />
           <Route path="/missions/new" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><MissionPlanning /></ProtectedRoute>} />
           <Route path="/missions/:missionId" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><MissionPlanning /></ProtectedRoute>} />
           <Route path="/mission-planning" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><MissionRouteRedirect /></ProtectedRoute>} />

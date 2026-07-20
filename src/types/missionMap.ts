@@ -6,6 +6,8 @@ export type MissionMapFeatureType =
   | 'secondary-landing-zone'
   | 'signage';
 
+export interface MissionBoundaryMetadata { id?: string; name: string; notes: string; sourceFileId?: string; }
+
 export interface MissionMapPointGeometry {
   type: 'Point';
   coordinates: [number, number];
@@ -16,10 +18,16 @@ export interface MissionMapPolygonGeometry {
   coordinates: Array<Array<[number, number]>>;
 }
 
+export interface MissionMapLineGeometry {
+  type: 'LineString';
+  coordinates: Array<[number, number]>;
+}
+
 export interface MissionMapFeature {
   id: string;
   type: MissionMapFeatureType;
   label: string;
+  name?: string;
   notes?: string;
-  geometry: MissionMapPointGeometry | MissionMapPolygonGeometry;
+  geometry: MissionMapPointGeometry | MissionMapLineGeometry | MissionMapPolygonGeometry;
 }

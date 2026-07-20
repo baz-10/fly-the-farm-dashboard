@@ -71,7 +71,9 @@ import { buildMissionWorkPack, syncPrimaryAircraftConfiguration } from '../utils
 import { reopenApprovedJSA, reopenJSAForWorkPackChange } from '../utils/workPackJsa';
 import { LatLng, BoundaryFileRef } from '../types/fieldManagement';
 import { SavedVegetationCheck } from '../types/pmav';
-import { MissionMapFeature } from '../types/missionMap';
+import { MissionBoundaryMetadata, MissionMapFeature } from '../types/missionMap';
+import { normaliseMapFeatures } from '../utils/missionMapAnnotations';
+import { normaliseBoundaryPolygons } from '../utils/missionBoundaryEditing';
 import {
   BoundaryFile,
   FlightExecution,
@@ -86,6 +88,8 @@ import {
   MissionType,
 } from '../types/mission';
 import { MissionWorkPackDraft } from '../types/workPack';
+import { useMaintenance } from '../contexts/MaintenanceContext';
+import { getMissionMaintenanceBlockers } from '../utils/maintenanceServiceability';
 
 type MissionPayload = Omit<
   MissionRecord,
@@ -379,6 +383,7 @@ export default function MissionPlanning() {
     loadError: workPackLoadError,
     saveError: workPackSaveError,
   } = useWorkPacks();
+  const maintenance = useMaintenance();
   const dataLoading = missionDataLoading || aircraftDataLoading;
   const dataError = missionDataError || aircraftDataError;
 
@@ -400,6 +405,7 @@ export default function MissionPlanning() {
   const [missionWorkPackDraft, setMissionWorkPackDraft] = React.useState<MissionWorkPackDraft | undefined>();
   const [boundaryCoords, setBoundaryCoords] = React.useState<LatLng[]>([]);
   const [boundaryPolygons, setBoundaryPolygons] = React.useState<LatLng[][]>([]);
+  const [boundaryMetadata, setBoundaryMetadata] = React.useState<MissionBoundaryMetadata[]>([]);
   const [missionArea, setMissionArea] = React.useState(0);
   const [boundaryFile, setBoundaryFile] = React.useState<BoundaryFileRef | null>(null);
   const [mapFeatures, setMapFeatures] = React.useState<MissionMapFeature[]>([]);
@@ -584,6 +590,17 @@ export default function MissionPlanning() {
     && selectedEquipmentKit.operationalData.status === 'available'
     && validateConfiguration(actualAircraft.id, selectedEquipmentKit.id),
   );
+  const maintenanceBlockers = getMissionMaintenanceBlockers({
+    aircraftIds: Array.from(new Set([
+      selectedAircraft,
+      selectedKit,
+      ...(missionWorkPackDraft?.aircraftAssignments || []).flatMap((assignment) => [assignment.aircraftId, assignment.kitId]),
+    ].filter(Boolean))),
+    supportAssets: (missionWorkPackDraft?.assets || []).map((asset) => ({
+      id: asset.id,
+      missionCritical: Boolean(maintenance.assets.find((item) => item.sourceId === asset.id)?.missionCritical),
+    })),
+  }, maintenance);
   const missionMaxAltitude = Math.min(
     selectedAircraftData.maxAltitude,
     actualConfiguration?.operationalLimits.maxAltitude ?? 120,
@@ -600,6 +617,7 @@ export default function MissionPlanning() {
     { ready: boundaryReady, message: 'Draw or upload a valid mission boundary.' },
     { ready: aircraftPlanningReady, message: 'Select an operational aircraft with current inspection, major-service and insurance dates.' },
     { ready: configurationPlanningReady, message: 'Select an available, compatible equipment configuration within weight-and-balance limits.' },
+    { ready: maintenanceBlockers.length === 0, message: maintenanceBlockers[0] ? `${maintenanceBlockers[0].assetName}: ${maintenanceBlockers[0].reasons.join(', ')}` : 'Assigned assets must be serviceable.' },
     { ready: applicationRate > 0, message: 'Enter an application rate.' },
     { ready: estimatedDuration > 0, message: 'Enter an estimated duration.' },
     { ready: jsaRecord.status === 'approved' && Boolean(jsaRecord.missionChecks) && evaluateMissionSafety(jsaRecord.missionChecks!).state === 'ready', message: 'Complete the mission checks and reduce every residual risk score below 6.' },
@@ -701,7 +719,8 @@ export default function MissionPlanning() {
     missionNotes,
     boundaryCoords,
     boundaryPolygons: effectiveBoundaryPolygons,
-    mapFeatures,
+    boundaryMetadata,
+    mapFeatures: normaliseMapFeatures(mapFeatures),
     vegetationClearance: {
       lotPlan: cleanMissionLotPlan,
       checkId: currentVegetationCheck?.id,
@@ -1012,6 +1031,7 @@ export default function MissionPlanning() {
     setMissionWorkPackDraft(undefined);
     setBoundaryCoords([]);
     setBoundaryPolygons([]);
+    setBoundaryMetadata([]);
     setMissionArea(0);
     setBoundaryFile(null);
     setMapFeatures([]);
@@ -1123,14 +1143,20 @@ export default function MissionPlanning() {
       : undefined);
     const loadedBoundaryCoords = planning?.boundaryCoords?.length ? planning.boundaryCoords : [];
     setBoundaryCoords(loadedBoundaryCoords);
-    setBoundaryPolygons(
-      planning?.boundaryPolygons?.length
-        ? planning.boundaryPolygons
-        : loadedBoundaryCoords.length ? [loadedBoundaryCoords] : [],
-    );
+    const loadedBoundaryPolygons = planning?.boundaryPolygons?.length
+      ? planning.boundaryPolygons
+      : loadedBoundaryCoords.length ? [loadedBoundaryCoords] : [];
+    const loadedBoundaryModels = normaliseBoundaryPolygons(loadedBoundaryPolygons);
+    setBoundaryPolygons(loadedBoundaryPolygons);
+    setBoundaryMetadata(loadedBoundaryModels.map((model, index) => ({
+      id: planning?.boundaryMetadata?.[index]?.id || model.id,
+      sourceFileId: planning?.boundaryMetadata?.[index]?.sourceFileId,
+      name: planning?.boundaryMetadata?.[index]?.name || model.name,
+      notes: planning?.boundaryMetadata?.[index]?.notes || model.notes,
+    })));
     setMissionArea(missionAreaHa);
     setBoundaryFile(null);
-    setMapFeatures(planning?.mapFeatures || []);
+    setMapFeatures(normaliseMapFeatures(planning?.mapFeatures));
     setJsaRecord(mission.jsaRecord);
     setScheduledDate(formatDateTimeInput(new Date(mission.scheduledDate)));
     setEstimatedDuration(mission.estimatedDuration);
@@ -1931,6 +1957,8 @@ export default function MissionPlanning() {
               <FieldBoundaryEditor
                 coords={boundaryCoords}
                 polygons={boundaryPolygons}
+                boundaryMetadata={boundaryMetadata}
+                onBoundaryMetadataChange={(metadata) => { setBoundaryMetadata(metadata); setJsaRecord(reopenApprovedJSA); }}
                 onCoordsChange={(coords) => {
                   setBoundaryCoords(coords);
                   setJsaRecord(reopenApprovedJSA);

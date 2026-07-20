@@ -36,6 +36,16 @@ export function syncRiskControls(assessment: MissionSafetyAssessment): MissionRi
   return assessment.answers.filter((answer) => isUnsafeAnswer(answer.questionId, answer.answer)).map((answer) => existing.get(answer.questionId) || ({ questionId: answer.questionId, likelihood: null, consequence: null, mitigation: '', residualLikelihood: null, residualConsequence: null }));
 }
 
+export function getRiskControlContext(assessment: MissionSafetyAssessment, questionId: string): { question: string; answerLabel: 'Yes' | 'No' | 'Not answered'; notes: string } {
+  const check = MISSION_CHECKS.find((candidate) => candidate.id === questionId);
+  const answer = assessment.answers.find((candidate) => candidate.questionId === questionId);
+  return {
+    question: check?.question || questionId,
+    answerLabel: answer?.answer === true ? 'Yes' : answer?.answer === false ? 'No' : 'Not answered',
+    notes: answer?.notes || '',
+  };
+}
+
 export function evaluateMissionSafety(assessment: MissionSafetyAssessment): { state: MissionSafetyState; blockers: string[] } {
   const blockers: string[] = [];
   if (MISSION_CHECKS.some((check) => assessment.answers.find((answer) => answer.questionId === check.id)?.answer == null)) return { state: 'incomplete', blockers: ['Answer every mission check.'] };

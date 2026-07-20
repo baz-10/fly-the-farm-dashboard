@@ -48,6 +48,8 @@ import AircraftForm from '../components/AircraftForm';
 import EquipmentKitForm from '../components/EquipmentKitForm';
 import ErrorBoundary from '../components/ErrorBoundary';
 import { getAircraftMaintenanceAlerts } from '../utils/aircraftMaintenance';
+import { useMaintenance } from '../contexts/MaintenanceContext';
+import MaintenanceAssetPanel from '../components/maintenance/MaintenanceAssetPanel';
 
 interface TabPanelProps {
   children?: React.ReactNode;
@@ -330,6 +332,7 @@ const EquipmentKitCard = React.memo(({
 ));
 
 export default function AircraftManagement() {
+  const maintenance = useMaintenance();
   const {
     aircraft,
     equipmentKits,
@@ -554,6 +557,14 @@ export default function AircraftManagement() {
             iconPosition="start"
             sx={{ textTransform: 'none', fontWeight: 600 }}
           />
+          <Tab
+            label="RPAS Maintenance"
+            id="aircraft-tab-2"
+            aria-controls="aircraft-tabpanel-2"
+            icon={<SettingsIcon />}
+            iconPosition="start"
+            sx={{ textTransform: 'none', fontWeight: 600 }}
+          />
         </Tabs>
 
         <TabPanel value={tabValue} index={0}>
@@ -698,6 +709,18 @@ export default function AircraftManagement() {
                 ))
               )}
             </Grid>
+          </Box>
+        </TabPanel>
+        <TabPanel value={tabValue} index={2}>
+          <Box sx={{ px: 3 }}>
+            <Typography variant="h5" fontWeight={850}>RPAS maintenance & technical logs</Typography>
+            <Typography color="text.secondary" sx={{ mb: 3 }}>Record aircraft and spray-kit inspections, defects, repairs, firmware and authorised return to service.</Typography>
+            <Box sx={{ display: 'grid', gap: 2.5 }}>
+              {[...aircraft, ...equipmentKits].map((source) => {
+                const profile = maintenance.assets.find((item) => item.sourceId === source.id);
+                return profile ? <MaintenanceAssetPanel key={source.id} assetId={profile.id} /> : null;
+              })}
+            </Box>
           </Box>
         </TabPanel>
       </Paper>

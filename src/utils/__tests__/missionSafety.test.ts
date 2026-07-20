@@ -1,4 +1,4 @@
-import { buildEmptyMissionSafetyAssessment, evaluateMissionSafety, isUnsafeAnswer, MISSION_CHECKS } from '../missionSafety';
+import { buildEmptyMissionSafetyAssessment, evaluateMissionSafety, getRiskControlContext, isUnsafeAnswer, MISSION_CHECKS } from '../missionSafety';
 
 describe('mission safety rules', () => {
   test('contains the 13 approved checks with risk-aware unsafe answers', () => {
@@ -31,5 +31,24 @@ describe('mission safety rules', () => {
     expect(evaluateMissionSafety(assessment).state).toBe('cannot-proceed');
     assessment.riskControls[0].residualLikelihood = 1;
     expect(evaluateMissionSafety(assessment).state).toBe('ready');
+  });
+
+  test('prefills a risk control with its exact triggering answer and JSA notes', () => {
+    const assessment = buildEmptyMissionSafetyAssessment();
+    const people = assessment.answers.find((answer) => answer.questionId === 'people')!;
+    people.answer = true;
+    people.notes = 'Workers use the access track beside the landing zone.';
+    expect(getRiskControlContext(assessment, 'people')).toEqual({
+      question: MISSION_CHECKS.find((check) => check.id === 'people')!.question,
+      answerLabel: 'Yes',
+      notes: 'Workers use the access track beside the landing zone.',
+    });
+  });
+
+  test('preserves unsafe No semantics for positive-capability questions', () => {
+    const assessment = buildEmptyMissionSafetyAssessment();
+    const maps = assessment.answers.find((answer) => answer.questionId === 'maps')!;
+    maps.answer = false;
+    expect(getRiskControlContext(assessment, 'maps').answerLabel).toBe('No');
   });
 });
