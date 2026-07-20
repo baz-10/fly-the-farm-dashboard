@@ -8,6 +8,7 @@ export const PERSISTENCE_KEYS = {
   kits: 'ftf_kits',
   missionTemplates: 'ftf_mission_templates',
   missions: 'ftf_missions',
+  maintenance: 'ftf_maintenance',
   outcomes: 'ftf_outcomes',
   pmavChecks: 'ftf_pmav_checks',
   properties: 'ftf_properties',

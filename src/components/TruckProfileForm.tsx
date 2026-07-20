@@ -75,7 +75,9 @@ export default function TruckProfileForm({ truck, asset, showFinancials, onSave,
         <Typography variant="overline" color="text.secondary">Deployment asset identity</Typography>
         <Box sx={fieldGrid}>
           <TextField select label="Asset type" value={form.assetType} onChange={(e) => setField('assetType', e.target.value as DeploymentAssetInput['assetType'])}>
-            <MenuItem value="truck">Truck</MenuItem><MenuItem value="trailer">Trailer</MenuItem>
+            <MenuItem value="truck">Truck / ute</MenuItem><MenuItem value="trailer">Trailer</MenuItem>
+            <MenuItem value="generator">Generator</MenuItem><MenuItem value="pump">Pump</MenuItem>
+            <MenuItem value="loader">Loader</MenuItem><MenuItem value="support-equipment">Other support equipment</MenuItem>
           </TextField>
           <TextField label="Registration" value={form.registration} onChange={(e) => setField('registration', e.target.value)} required />
           <TextField label="Asset name" value={form.name} onChange={(e) => setField('name', e.target.value)} required />
@@ -94,6 +96,9 @@ export default function TruckProfileForm({ truck, asset, showFinancials, onSave,
             <MenuItem value="maintenance">Maintenance</MenuItem><MenuItem value="retired">Retired</MenuItem>
           </TextField>
           <TextField label="Payload capacity (kg)" type="number" value={form.payloadCapacityKg || 0} onChange={(e) => setField('payloadCapacityKg', Number(e.target.value))} />
+          <TextField label="Odometer (km)" type="number" value={form.meter?.odometerKm || 0} onChange={(e) => setField('meter', { ...form.meter, odometerKm: Number(e.target.value) })} />
+          <TextField label="Engine hours" type="number" value={form.meter?.engineHours || 0} onChange={(e) => setField('meter', { ...form.meter, engineHours: Number(e.target.value) })} />
+          <TextField label="Operating hours" type="number" value={form.meter?.operatingHours || 0} onChange={(e) => setField('meter', { ...form.meter, operatingHours: Number(e.target.value) })} />
           <TextField label="Operational notes" value={form.operationalNotes} onChange={(e) => setField('operationalNotes', e.target.value)} multiline minRows={3} sx={{ gridColumn: { md: '1 / -1' } }} />
         </Box>
       </Box>

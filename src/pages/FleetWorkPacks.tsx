@@ -8,17 +8,21 @@ import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import EditIcon from '@mui/icons-material/Edit';
 import LocalShippingIcon from '@mui/icons-material/LocalShipping';
 import Inventory2Icon from '@mui/icons-material/Inventory2';
+import BuildCircleOutlinedIcon from '@mui/icons-material/BuildCircleOutlined';
 import TruckProfileForm from '../components/TruckProfileForm';
 import WorkPackTemplateForm from '../components/WorkPackTemplateForm';
 import { useAircraft } from '../contexts/AircraftContext';
 import { useAuth } from '../contexts/AuthContext';
 import { useWorkPacks } from '../contexts/WorkPackContext';
 import { DeploymentAsset, DeploymentAssetInput, WorkPackTemplate, WorkPackTemplateInput } from '../types/workPack';
+import { useMaintenance } from '../contexts/MaintenanceContext';
+import MaintenanceAssetPanel from '../components/maintenance/MaintenanceAssetPanel';
 
 const money = (value: number) => new Intl.NumberFormat('en-AU', { style: 'currency', currency: 'AUD', maximumFractionDigits: 2 }).format(value);
 
 export default function FleetWorkPacks() {
   const { user } = useAuth();
+  const maintenance = useMaintenance();
   const { aircraft, equipmentKits } = useAircraft();
   const {
     assets, trucks, templates, createAsset, updateAsset, createTemplate, updateTemplate, duplicateTemplate,
@@ -64,6 +68,7 @@ export default function FleetWorkPacks() {
         <Tabs value={tab} onChange={(_, value) => setTab(value)} sx={{ px: 2, borderBottom: '1px solid #e2e9e2' }}>
           <Tab icon={<LocalShippingIcon />} iconPosition="start" label={`Deployment assets (${activeAssets.length})`} />
           <Tab icon={<Inventory2Icon />} iconPosition="start" label={`Work-pack templates (${activeTemplates.length})`} />
+          <Tab icon={<BuildCircleOutlinedIcon />} iconPosition="start" label="Vehicle & equipment maintenance" />
         </Tabs>
         <Box sx={{ p: { xs: 2, md: 3 } }}>
           {tab === 0 ? (
@@ -95,7 +100,7 @@ export default function FleetWorkPacks() {
                 </Box>
               )}
             </>
-          ) : (
+          ) : tab === 1 ? (
             <>
               <Stack direction="row" justifyContent="space-between" alignItems="center" mb={2.5}>
                 <Box><Typography variant="h5" fontWeight={850}>Reusable setups</Typography><Typography variant="body2" color="text.secondary">Start from the same proven deployment pack, then customise it for each job.</Typography></Box>
@@ -119,6 +124,15 @@ export default function FleetWorkPacks() {
                 </Box>
               )}
             </>
+          ) : (
+            <Stack spacing={2.5}>
+              <Box><Typography variant="h5" fontWeight={850}>Vehicle & equipment maintenance</Typography><Typography variant="body2" color="text.secondary">Internal servicing records for trucks, trailers, generators, pumps, loaders and support equipment.</Typography></Box>
+              {activeAssets.map((asset) => {
+                const profile = maintenance.assets.find((item) => item.sourceId === asset.id);
+                return profile ? <MaintenanceAssetPanel key={asset.id} assetId={profile.id} /> : null;
+              })}
+              {activeAssets.length === 0 && <Paper variant="outlined" sx={{p:4,textAlign:'center'}}><Typography>No fleet assets have been added yet.</Typography></Paper>}
+            </Stack>
           )}
         </Box>
       </Paper>

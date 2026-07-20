@@ -88,6 +88,8 @@ import {
   MissionType,
 } from '../types/mission';
 import { MissionWorkPackDraft } from '../types/workPack';
+import { useMaintenance } from '../contexts/MaintenanceContext';
+import { getMissionMaintenanceBlockers } from '../utils/maintenanceServiceability';
 
 type MissionPayload = Omit<
   MissionRecord,
@@ -381,6 +383,7 @@ export default function MissionPlanning() {
     loadError: workPackLoadError,
     saveError: workPackSaveError,
   } = useWorkPacks();
+  const maintenance = useMaintenance();
   const dataLoading = missionDataLoading || aircraftDataLoading;
   const dataError = missionDataError || aircraftDataError;
 
@@ -587,6 +590,17 @@ export default function MissionPlanning() {
     && selectedEquipmentKit.operationalData.status === 'available'
     && validateConfiguration(actualAircraft.id, selectedEquipmentKit.id),
   );
+  const maintenanceBlockers = getMissionMaintenanceBlockers({
+    aircraftIds: Array.from(new Set([
+      selectedAircraft,
+      selectedKit,
+      ...(missionWorkPackDraft?.aircraftAssignments || []).flatMap((assignment) => [assignment.aircraftId, assignment.kitId]),
+    ].filter(Boolean))),
+    supportAssets: (missionWorkPackDraft?.assets || []).map((asset) => ({
+      id: asset.id,
+      missionCritical: Boolean(maintenance.assets.find((item) => item.sourceId === asset.id)?.missionCritical),
+    })),
+  }, maintenance);
   const missionMaxAltitude = Math.min(
     selectedAircraftData.maxAltitude,
     actualConfiguration?.operationalLimits.maxAltitude ?? 120,
@@ -603,6 +617,7 @@ export default function MissionPlanning() {
     { ready: boundaryReady, message: 'Draw or upload a valid mission boundary.' },
     { ready: aircraftPlanningReady, message: 'Select an operational aircraft with current inspection, major-service and insurance dates.' },
     { ready: configurationPlanningReady, message: 'Select an available, compatible equipment configuration within weight-and-balance limits.' },
+    { ready: maintenanceBlockers.length === 0, message: maintenanceBlockers[0] ? `${maintenanceBlockers[0].assetName}: ${maintenanceBlockers[0].reasons.join(', ')}` : 'Assigned assets must be serviceable.' },
     { ready: applicationRate > 0, message: 'Enter an application rate.' },
     { ready: estimatedDuration > 0, message: 'Enter an estimated duration.' },
     { ready: jsaRecord.status === 'approved' && Boolean(jsaRecord.missionChecks) && evaluateMissionSafety(jsaRecord.missionChecks!).state === 'ready', message: 'Complete the mission checks and reduce every residual risk score below 6.' },

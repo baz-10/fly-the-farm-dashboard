@@ -40,6 +40,7 @@ import SmartToyIcon from '@mui/icons-material/SmartToy';
 import LocalShippingIcon from '@mui/icons-material/LocalShipping';
 import CalendarMonthIcon from '@mui/icons-material/CalendarMonth';
 import CloudQueueIcon from '@mui/icons-material/CloudQueue';
+import BuildCircleOutlinedIcon from '@mui/icons-material/BuildCircleOutlined';
 import { useAuth } from '../contexts/AuthContext';
 
 const ROLE_LABELS: Record<string, string> = {
@@ -55,6 +56,7 @@ const NAV_ITEMS = [
   { label: 'Jobs', shortLabel: 'Jobs', path: '/jobs', icon: <AssignmentIcon />, roles: ['admin', 'contractor', 'client'] },
   { label: 'Aircraft', shortLabel: 'Aircraft', path: '/aircraft', icon: <AirplanemodeActiveIcon />, roles: ['admin', 'contractor'] },
   { label: 'Fleet & Packs', shortLabel: 'Fleet', path: '/fleet-work-packs', icon: <LocalShippingIcon />, roles: ['admin', 'contractor'] },
+  { label: 'Maintenance', shortLabel: 'Maint.', path: '/maintenance', icon: <BuildCircleOutlinedIcon />, roles: ['admin', 'contractor'] },
   { label: 'Missions', shortLabel: 'Missions', path: '/missions', icon: <FlightTakeoffIcon />, roles: ['admin', 'contractor'] },
   { label: 'Schedule', shortLabel: 'Schedule', path: '/schedule', icon: <CalendarMonthIcon />, roles: ['admin', 'contractor'] },
   { label: 'Weather', shortLabel: 'Weather', path: '/weather', icon: <CloudQueueIcon />, roles: ['admin', 'contractor'] },

@@ -41,11 +41,18 @@ export interface TruckProfile {
   updatedAt: string;
 }
 
-export type DeploymentAssetType = 'truck' | 'trailer';
+export type DeploymentAssetType = 'truck' | 'trailer' | 'generator' | 'pump' | 'loader' | 'support-equipment';
+
+export interface DeploymentAssetMeter {
+  odometerKm?: number;
+  engineHours?: number;
+  operatingHours?: number;
+}
 
 export interface DeploymentAsset extends Omit<TruckProfile, 'id' | 'createdAt' | 'updatedAt'> {
   id: string;
   assetType: DeploymentAssetType;
+  meter?: DeploymentAssetMeter;
   createdAt: string;
   updatedAt: string;
 }

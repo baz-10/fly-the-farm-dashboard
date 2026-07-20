@@ -34,7 +34,7 @@ function emptyTemplate(): TemplateFormInput {
 }
 
 export default function WorkPackTemplateForm({ template, trucks, assets, aircraft, equipmentKits, onSave, onCancel }: WorkPackTemplateFormProps) {
-  const availableAssets = assets || trucks.map((truck) => ({ ...truck, assetType: 'truck' as const }));
+  const availableAssets: DeploymentAsset[] = assets ?? trucks.map((truck) => ({ ...truck, assetType: 'truck' as const }));
   const [form, setForm] = React.useState<TemplateFormInput>(() => template
     ? (({ id: _id, createdAt: _createdAt, updatedAt: _updatedAt, ...input }) => ({
         ...input,
