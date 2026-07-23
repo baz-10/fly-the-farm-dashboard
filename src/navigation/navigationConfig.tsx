@@ -91,7 +91,7 @@ export function getVisibleNavigationGroups(role?: UserRole): NavigationGroup[] {
 }
 
 export function isRouteActive(pathname: string, path: string): boolean {
-  return path === '/' ? pathname === '/' : pathname.startsWith(path);
+  return path === '/' ? pathname === '/' : pathname === path || pathname.startsWith(`${path}/`);
 }
 
 export function getActiveGroupId(pathname: string, groups: NavigationGroup[]): NavigationGroupId | undefined {
