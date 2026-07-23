@@ -15,7 +15,7 @@
 - The active route's group always opens.
 - Expansion state is remembered per user and persistence failure cannot block navigation.
 - Role filtering happens before group rendering; empty groups are hidden.
-- Compact desktop navigation retains tooltips and active-route visibility.
+- Compact desktop navigation uses collapsible icon headings, retains tooltips, and keeps the active route's group open.
 - Touch, keyboard and screen-reader behavior must be tested.
 
 ---
@@ -180,7 +180,7 @@ git commit -m "feat: remember navigation groups per user"
 
 **Interfaces:**
 - Consumes: `{ expanded: boolean; pathname: string; role?: UserRole; userId: string; onNavigate(path: string): void }`.
-- Produces: accessible grouped navigation for drawer and compact rail.
+- Produces: accessible collapsible grouped navigation for drawer and compact rail.
 
 - [ ] **Step 1: Write interaction and accessibility tests**
 
@@ -200,6 +200,13 @@ test('calls onNavigate from a keyboard-operable item', async () => {
   await userEvent.click(screen.getByRole('link', { name: 'Missions' }));
   expect(onNavigate).toHaveBeenCalledWith('/missions');
 });
+
+test('compact groups hide child tiles until expanded', async () => {
+  render(<GroupedNavigation expanded={false} pathname="/" role="admin" userId="u1" onNavigate={jest.fn()} />);
+  expect(screen.queryByRole('link', { name: /maintenance/i })).not.toBeInTheDocument();
+  await userEvent.click(screen.getByRole('button', { name: /operational resources/i }));
+  expect(screen.getByRole('link', { name: /maintenance/i })).toBeVisible();
+});
 ```
 
 - [ ] **Step 2: Run the test and verify failure**
@@ -210,7 +217,7 @@ Expected: FAIL because the component does not exist.
 
 - [ ] **Step 3: Implement group state and rendering**
 
-Use a `Set<NavigationGroupId>` initialised from stored preferences plus `daily` plus the active group. Render expanded headings as `ListItemButton` elements with `aria-expanded` and `aria-controls`; render their child list inside MUI `Collapse unmountOnExit`. On route change, add the active group without closing others. In compact mode, render group dividers and every authorised item with a tooltip so routes never become hidden behind accordions.
+Use a `Set<NavigationGroupId>` initialised from stored preferences plus `daily` plus the active group. Render headings as `ListItemButton` elements with `aria-expanded` and `aria-controls`; render their child list inside MUI `Collapse unmountOnExit`. On route change, add the active group without closing others. In compact mode, show icon-only group headings with accessible labels and tooltips; collapsed groups remove their child tiles, while Daily operations and the active group remain open.
 
 - [ ] **Step 4: Run component tests**
 
@@ -279,4 +286,3 @@ Expected: all tests PASS and production build completes.
 git add src/components/Layout.tsx src/components/__tests__/Layout.navigation.test.tsx
 git commit -m "feat: enable grouped dashboard navigation"
 ```
-

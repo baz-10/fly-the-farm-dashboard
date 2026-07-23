@@ -67,7 +67,7 @@ Role filtering is applied before rendering. A group with no authorised child ite
 - A remembered preference never hides the active route.
 - Group headings provide an icon, label, expanded state and accessible button semantics.
 - Expanded mobile navigation uses full-width touch targets.
-- The compact desktop rail remains available. It presents group separation and accessible tooltips without rendering long group labels.
+- The compact desktop rail remains available, but it uses the same collapsible groups as the expanded drawer. Group headings use icons and accessible tooltips instead of long labels; collapsed groups remove their child tiles from the rail.
 
 ### 3.3 Failure and fallback
 
