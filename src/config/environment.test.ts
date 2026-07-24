@@ -8,20 +8,19 @@ import {
 } from './environment';
 
 describe('readClientEnvironment', () => {
-  it('prefers VITE values and supports legacy persistence names during migration', () => {
+  it('reads only the exact browser environment keys supported by CRA', () => {
     expect(readClientEnvironment({
-      VITE_PERSISTENCE_MODE: 'remote',
-      REACT_APP_PERSISTENCE_MODE: 'local',
-      MODE: 'development',
-      BASE_URL: '/',
-    })).toEqual({ persistenceMode: 'remote', isDevelopment: true, publicBaseUrl: '/' });
+      REACT_APP_PERSISTENCE_MODE: 'remote',
+      NODE_ENV: 'development',
+      PUBLIC_URL: '/dashboard',
+    })).toEqual({ persistenceMode: 'remote', isDevelopment: true, publicBaseUrl: '/dashboard' });
   });
 
   it('never exposes unrecognised server secrets', () => {
     expect(JSON.stringify(readClientEnvironment({
       SUPABASE_SERVICE_ROLE_KEY: 'secret',
-      MODE: 'production',
-      BASE_URL: '/',
+      NODE_ENV: 'production',
+      PUBLIC_URL: '/',
     }))).not.toContain('secret');
   });
 });

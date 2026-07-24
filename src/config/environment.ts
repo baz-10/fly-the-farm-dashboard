@@ -5,15 +5,18 @@ export interface ClientEnvironment {
 }
 
 export function readClientEnvironment(source: Record<string, unknown>): ClientEnvironment {
-  const mode = source.VITE_PERSISTENCE_MODE ?? source.REACT_APP_PERSISTENCE_MODE;
   return {
-    persistenceMode: mode === 'remote' ? 'remote' : 'local',
-    isDevelopment: source.MODE === 'development',
-    publicBaseUrl: typeof source.BASE_URL === 'string' ? source.BASE_URL : '/',
+    persistenceMode: source.REACT_APP_PERSISTENCE_MODE === 'remote' ? 'remote' : 'local',
+    isDevelopment: source.NODE_ENV === 'development',
+    publicBaseUrl: typeof source.PUBLIC_URL === 'string' ? source.PUBLIC_URL : '/',
   };
 }
 
-export const clientEnvironment = readClientEnvironment(import.meta.env);
+export const clientEnvironment = readClientEnvironment({
+  REACT_APP_PERSISTENCE_MODE: process.env.REACT_APP_PERSISTENCE_MODE,
+  NODE_ENV: process.env.NODE_ENV,
+  PUBLIC_URL: process.env.PUBLIC_URL,
+});
 
 export function getPersistenceModeFromEnvironment(): ClientEnvironment['persistenceMode'] {
   return clientEnvironment.persistenceMode;

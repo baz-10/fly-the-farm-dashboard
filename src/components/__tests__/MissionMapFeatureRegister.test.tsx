@@ -1,12 +1,13 @@
 import React from 'react';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { MissionMapFeature } from '../../types/missionMap';
 import MissionMapFeatureRegister from '../MissionMapFeatureRegister';
 
 describe('MissionMapFeatureRegister', () => {
   test('edits feature names and notes and deletes only the selected feature', async () => {
     const user = userEvent.setup(); const onFeaturesChange = jest.fn();
-    const features = [{ id: 'gate', type: 'point-of-interest' as const, label: 'Gate', name: 'Gate', notes: '', geometry: { type: 'Point' as const, coordinates: [153.1, -27.4] as [number, number] } }];
+    const features: MissionMapFeature[] = [{ id: 'gate', type: 'point-of-interest', label: 'Gate', name: 'Gate', notes: '', geometry: { type: 'Point', coordinates: [153.1, -27.4] } }];
     function Harness() { const [items, setItems] = React.useState(features); return <MissionMapFeatureRegister boundaries={[]} features={items} onFeaturesChange={(next) => { onFeaturesChange(next); setItems(next); }} onBoundariesChange={jest.fn()} />; }
     render(<Harness />);
     await user.clear(screen.getByLabelText('Name Gate')); await user.type(screen.getByLabelText('Name Gate'), 'Main gate');

@@ -6,7 +6,7 @@
 
 **Architecture:** Keep the existing React SPA and Vercel functions. Vite owns development and production frontend builds, a focused Vite plugin mounts existing API handlers locally, Vitest runs the complete existing test inventory, and Playwright validates the built preview across critical workflows.
 
-**Tech Stack:** Node `>=20.19`, React 19, Vite 7.x, `@vitejs/plugin-react`, TypeScript 5.x, Vitest 4.x, jsdom, Testing Library, React Router 7.x, Playwright Chromium, Vercel functions.
+**Tech Stack:** Node `>=20.19`, React 19, Vite 7.x, `@vitejs/plugin-react`, TypeScript 4.9 during CRA coexistence and 5.x after Task 6, Vitest 4.x, jsdom, Testing Library, React Router 7.x, Playwright Chromium, Vercel functions.
 
 ## Global Constraints
 
@@ -15,6 +15,7 @@
 - Support current Chrome, Edge, Safari and Firefox on desktop, iPadOS and Android.
 - Internet Explorer and obsolete ES5-only browsers are unsupported.
 - TypeScript target is ES2022 with strict checking.
+- TypeScript stays pinned to 4.9 through Tasks 2–5; Task 6 upgrades to 5.x only after removing `react-scripts`.
 - Client environment variables are allowlisted; server secrets never enter the browser bundle.
 - The accepted baseline is 56 suites, 224 tests, zero failures and a successful production build.
 - No test file or test case may be silently skipped or excluded.
@@ -128,6 +129,7 @@ git commit -m "fix: make grouped navigation release ready"
 - Create: `src/vite-env.d.ts`
 - Create: `src/config/environment.ts`
 - Create: `src/config/environment.test.ts`
+- Create: `src/config/environment.build.test.ts`
 - Modify: `package.json`
 - Modify: `package-lock.json`
 - Modify: `tsconfig.json`
@@ -139,6 +141,9 @@ git commit -m "fix: make grouped navigation release ready"
 - Modify: `src/components/ErrorBoundary.tsx`
 - Modify: `src/components/JSAErrorBoundary.tsx`
 - Modify: `src/components/MissionErrorBoundary.tsx`
+- Modify: `src/components/__tests__/MissionMapFeatureRegister.test.tsx`
+- Modify: `src/utils/__tests__/missionWeather.test.ts`
+- Modify: `src/utils/__tests__/missionWorkflow.test.ts`
 
 **Interfaces:**
 - Produces: `getPersistenceModeFromEnvironment()`, `isDevelopmentEnvironment()`, and `getPublicAssetUrl(path)`.
@@ -149,10 +154,11 @@ git commit -m "fix: make grouped navigation release ready"
 Run:
 
 ```bash
-npm install --save-dev vite@^7 @vitejs/plugin-react@latest typescript@^5 vitest@^4 jsdom@latest @vitest/coverage-v8@^4
+npm install --save-dev vite@^7 @vitejs/plugin-react@^5.2.0 vitest@^4 jsdom@latest @vitest/coverage-v8@^4 @types/node@^20.19.0
+npm install --save-dev --save-exact typescript@4.9.5
 ```
 
-Expected: package lock resolves on Node 20.20.2 without peer-dependency errors.
+Expected: package lock resolves on Node 20.20.2 and `npm ls react-scripts typescript --all` exits zero. TypeScript remains on the CRA-compatible 4.9 baseline.
 
 - [ ] **Step 2: Write the failing environment adapter test**
 
@@ -161,30 +167,36 @@ import { describe, expect, it } from 'vitest';
 import { readClientEnvironment } from './environment';
 
 describe('readClientEnvironment', () => {
-  it('prefers VITE values and supports legacy persistence names during migration', () => {
+  it('reads only the exact browser environment keys supported by CRA', () => {
     expect(readClientEnvironment({
-      VITE_PERSISTENCE_MODE: 'remote',
-      REACT_APP_PERSISTENCE_MODE: 'local',
-      MODE: 'development',
-      BASE_URL: '/',
-    })).toEqual({ persistenceMode: 'remote', isDevelopment: true, publicBaseUrl: '/' });
+      REACT_APP_PERSISTENCE_MODE: 'remote',
+      NODE_ENV: 'development',
+      PUBLIC_URL: '/dashboard',
+    })).toEqual({ persistenceMode: 'remote', isDevelopment: true, publicBaseUrl: '/dashboard' });
   });
 
   it('never exposes unrecognised server secrets', () => {
     expect(JSON.stringify(readClientEnvironment({
       SUPABASE_SERVICE_ROLE_KEY: 'secret',
-      MODE: 'production',
-      BASE_URL: '/',
+      NODE_ENV: 'production',
+      PUBLIC_URL: '/',
     }))).not.toContain('secret');
   });
 });
 ```
 
+Add a Node-environment Vitest regression that runs a Vite production transform against a fixture containing synthetic `REACT_APP_SUPABASE_SERVICE_ROLE_KEY` and `VITE_SUPABASE_SERVICE_ROLE_KEY` values, then scans emitted HTML, CSS and JavaScript and proves neither value appears.
+
 - [ ] **Step 3: Run Vitest and verify RED**
 
-Run: `npx vitest run src/config/environment.test.ts`
+Run:
 
-Expected: FAIL because `src/config/environment.ts` does not exist.
+```bash
+npx vitest run src/config/environment.test.ts
+npx vitest run src/config/environment.build.test.ts
+```
+
+Expected: the adapter test initially fails because `src/config/environment.ts` does not exist. With the old namespace-exposing Vite config present, the build regression fails and prints the synthetic CRA/Vite service-role values found in emitted JavaScript.
 
 - [ ] **Step 4: Implement Vite entry/config and adapter**
 
@@ -198,18 +210,23 @@ export interface ClientEnvironment {
 }
 
 export function readClientEnvironment(source: Record<string, unknown>): ClientEnvironment {
-  const mode = source.VITE_PERSISTENCE_MODE ?? source.REACT_APP_PERSISTENCE_MODE;
   return {
-    persistenceMode: mode === 'remote' ? 'remote' : 'local',
-    isDevelopment: source.MODE === 'development',
-    publicBaseUrl: typeof source.BASE_URL === 'string' ? source.BASE_URL : '/',
+    persistenceMode: source.REACT_APP_PERSISTENCE_MODE === 'remote' ? 'remote' : 'local',
+    isDevelopment: source.NODE_ENV === 'development',
+    publicBaseUrl: typeof source.PUBLIC_URL === 'string' ? source.PUBLIC_URL : '/',
   };
 }
 
-export const clientEnvironment = readClientEnvironment(import.meta.env);
+export const clientEnvironment = readClientEnvironment({
+  REACT_APP_PERSISTENCE_MODE: process.env.REACT_APP_PERSISTENCE_MODE,
+  NODE_ENV: process.env.NODE_ENV,
+  PUBLIC_URL: process.env.PUBLIC_URL,
+});
 ```
 
-Set `target: 'ES2022'`, `types: ['vite/client', 'vitest/globals']`, root `index.html`, Vite React plugin, output `dist`, and replace browser-side `process.env`/`PUBLIC_URL` reads with the adapter.
+Set `target: 'ES2022'`, root `index.html`, Vite React plugin and output `dist`. Keep TypeScript 4.9's `moduleResolution: 'node'` and do not exclude legacy test directories from `tsc`.
+
+Do not use bare `import.meta.env` or Vite/CRA namespace exposure. Configure Vite with an inert automatic environment prefix and exact `define` replacements for only `process.env.REACT_APP_PERSISTENCE_MODE`, `process.env.NODE_ENV` and `process.env.PUBLIC_URL`. Prefer `VITE_PERSISTENCE_MODE`/`VITE_PUBLIC_URL` over their legacy names while resolving those definitions. Replace all other browser-side environment reads with the adapter.
 
 - [ ] **Step 5: Verify adapter and production build**
 
@@ -217,16 +234,21 @@ Run:
 
 ```bash
 npx vitest run src/config/environment.test.ts
+npx vitest run src/config/environment.build.test.ts
+CI=true npm test -- --watchAll=false --runInBand src/services/__tests__/persistence.test.ts
 npx tsc --noEmit
-npx vite build
+npm ls react-scripts typescript --all
+npm run build
+REACT_APP_SUPABASE_SERVICE_ROLE_KEY=cra-secret-scan VITE_SUPABASE_SERVICE_ROLE_KEY=vite-secret-scan npx vite build
+! rg 'cra-secret-scan|vite-secret-scan' dist
 ```
 
-Expected: adapter tests PASS, typecheck PASS, and `dist/index.html` exists.
+Expected: adapter and synthetic secret tests PASS, the complete TypeScript inventory passes under 4.9, dependency-tree validation passes, both CRA and Vite builds succeed, `dist/index.html` exists, and a scan finds neither synthetic secret in Vite browser output.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add index.html vite.config.ts src/vite-env.d.ts src/config package.json package-lock.json tsconfig.json .gitignore src/services src/utils/pdfTextExtract.ts src/components/ErrorBoundary.tsx src/components/JSAErrorBoundary.tsx src/components/MissionErrorBoundary.tsx
+git add index.html vite.config.ts src/vite-env.d.ts src/config package.json package-lock.json tsconfig.json .gitignore src/services src/utils src/components docs/superpowers/plans/2026-07-24-vite-vitest-toolchain.md docs/superpowers/specs/2026-07-24-vite-vitest-toolchain-design.md
 git commit -m "build: establish Vite application foundation"
 ```
 
@@ -428,6 +450,7 @@ git commit -m "test: migrate React suites to Vitest"
 - Modify: `src/__tests__/geocode-api.test.ts`
 - Modify: `package.json`
 - Modify: `package-lock.json`
+- Modify: `tsconfig.json`
 - Delete: `src/setupProxy.js`
 - Delete: `src/react-app-env.d.ts`
 - Delete: `public/index.html`
@@ -457,9 +480,15 @@ Expected: FAIL because CRA files/dependency still exist.
 
 Use Node-compatible Vitest module loading. Keep `process.env` isolation for server handlers, reset modules with `vi.resetModules()`, and import CommonJS handlers through supported interop without changing production API exports.
 
-- [ ] **Step 4: Remove CRA and update scripts**
+- [ ] **Step 4: Remove CRA, upgrade TypeScript and update scripts**
 
-Remove `react-scripts`, `@types/jest`, CRA-only config and files. Set the exact scripts from the design, including `test`, `test:watch`, `test:coverage`, `dev`, `start`, `build` and `preview`.
+Remove `react-scripts`, `@types/jest`, CRA-only config and files. Upgrade TypeScript only now:
+
+```bash
+npm install --save-dev typescript@^5
+```
+
+Adopt the Vite-compatible TypeScript 5 module resolution, then set the exact scripts from the design, including `test`, `test:watch`, `test:coverage`, `dev`, `start`, `build` and `preview`.
 
 - [ ] **Step 5: Run the full Vitest inventory**
 

@@ -40,7 +40,7 @@ The existing React component, context, routing and Vercel function architecture 
 - `@vitejs/plugin-react`: Vite 7-compatible stable release, locked through `package-lock.json`.
 - Vitest: 4.x, locked through `package-lock.json`.
 - React Router and React Router DOM: 7.x, using public exports.
-- TypeScript: upgrade from 4.9 to a Vite 7-compatible stable 5.x release.
+- TypeScript: retain 4.9 while `react-scripts` remains in Tasks 2–5, then upgrade to a Vite 7-compatible stable 5.x release in Task 6 when CRA is removed.
 - Test DOM: `jsdom`.
 - Browser smoke tests: Playwright Chromium.
 
@@ -69,9 +69,9 @@ Create:
 - `src/vite-env.d.ts` for typed Vite environment variables;
 - `src/config/environment.ts` as the single application-facing environment adapter.
 
-Application code reads configuration through the adapter. During migration, it accepts the currently used `REACT_APP_*` names and their new `VITE_*` equivalents. Browser-exposed values must be explicitly allowlisted; server secrets remain available only to Vercel functions and local server middleware.
+Application code reads configuration through the adapter. While CRA and Vite coexist, that adapter is the only browser module allowed to read `process.env.REACT_APP_PERSISTENCE_MODE`, `process.env.NODE_ENV` and `process.env.PUBLIC_URL`. Vite maps the new `VITE_PERSISTENCE_MODE`/`VITE_PUBLIC_URL` names and their legacy equivalents onto those three exact compile-time expressions.
 
-Direct `process.env.REACT_APP_*` use is removed from browser code only after a regression test covers the adapter.
+Vite does not expose the `VITE_*` or `REACT_APP_*` namespaces to browser code. A production-transform regression injects synthetic service-role values under both prefixes and proves neither value appears in emitted HTML, CSS or JavaScript. Server secrets remain available only to Vercel functions and local server middleware.
 
 ### 4.3 Build scripts
 
@@ -90,7 +90,7 @@ The package scripts become:
 }
 ```
 
-`react-scripts`, CRA-specific Jest types and CRA-only configuration are removed after parity is proven.
+`react-scripts`, CRA-specific Jest types and CRA-only configuration are removed after parity is proven. The same Task 6 change upgrades TypeScript from 4.9 to 5.x and updates TypeScript's module resolution for the CRA-free Vite baseline.
 
 ## 5. Local API compatibility
 
