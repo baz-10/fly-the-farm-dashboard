@@ -1,17 +1,57 @@
 const { authenticateRequest } = require('../server/session');
 const { createHttpError, supabaseRequest } = require('../server/supabase');
+const { createHash, randomUUID } = require('node:crypto');
 
 const TABLE_NAME = 'ftf_store';
 const SINGLETON_RECORD_ID = '__value__';
 const MAX_RECORDS_PER_WRITE = 500;
-const ALLOWED_COLLECTIONS = new Set([
-  'ftf_aircraft_data',
-  'ftf_missions',
-  'ftf_mission_templates',
-  'ftf_maintenance',
-  'ftf_pmav_checks',
-  'ftf_work_packs',
+const COLLECTION_POLICIES = {
+  ftf_aircraft_data: { read: ['admin', 'contractor'], write: ['admin', 'contractor'] },
+  ftf_missions: { read: ['admin', 'contractor'], write: ['admin', 'contractor'] },
+  ftf_mission_templates: { read: ['admin', 'contractor'], write: ['admin', 'contractor'] },
+  ftf_maintenance: { read: ['admin', 'contractor'], write: ['admin', 'contractor'] },
+  ftf_pmav_checks: { read: ['admin', 'contractor'], write: ['admin', 'contractor'] },
+  ftf_work_packs: { read: ['admin', 'contractor'], write: ['admin', 'contractor'] },
+  ftf_safety_plan_templates: { read: ['admin', 'contractor'], write: ['admin'] },
+  ftf_safety_plans: { read: ['admin', 'contractor'], write: ['admin', 'contractor'] },
+  ftf_safety_plan_audit: { read: ['admin', 'contractor'], write: ['admin', 'contractor'] },
+};
+const ALLOWED_COLLECTIONS = new Set(Object.keys(COLLECTION_POLICIES));
+const SAFETY_PLAN_COLLECTION = 'ftf_safety_plans';
+const SAFETY_PLAN_AUDIT_COLLECTION = 'ftf_safety_plan_audit';
+const SAFETY_PLAN_TEMPLATE_COLLECTION = 'ftf_safety_plan_templates';
+const SAFETY_PLAN_FIELD_TYPES = new Set([
+  'text',
+  'textarea',
+  'date',
+  'date_range',
+  'boolean',
+  'select',
+  'multi_select',
+  'person_list',
+  'asset_list',
+  'attachment_list',
 ]);
+const SAFETY_PLAN_ACTIONS = new Set([
+  'created',
+  'source_refreshed',
+  'field_changed',
+  'attachment_changed',
+  'submitted',
+  'returned_to_draft',
+  'approved',
+  'acknowledged',
+  'revised',
+  'superseded',
+  'shared',
+  'pdf_generated',
+  'client_copy_exported',
+  'draft_deleted',
+  'draft_restored',
+  'not_required_selected',
+]);
+const SAFETY_PLAN_ACKNOWLEDGEMENT_STATEMENT =
+  'I have read and understood this Safety Plan and my assigned responsibilities.';
 
 function redactAssetCosts(asset) {
   if (!asset || typeof asset !== 'object') return asset;
@@ -139,12 +179,1185 @@ function validateCollection(value) {
   return collection;
 }
 
+function assertCollectionPermission(user, collection, action) {
+  const roles = COLLECTION_POLICIES[collection]?.[action] || [];
+  if (!roles.includes(user.role)) {
+    const message = collection.startsWith('ftf_safety_plan_')
+      ? 'This account cannot access the requested storage collection.'
+      : 'This account cannot access mission workflow storage.';
+    throw createHttpError(403, message);
+  }
+}
+
+function isSafetyPlanAuthority(user) {
+  return user.role === 'admin'
+    || (user.role === 'contractor' && user.safetyPlanAuthority === true);
+}
+
+function currentSafetyPlanVersion(plan) {
+  if (!plan?.currentVersionId || !Array.isArray(plan.versions)) return null;
+  return plan.versions.find((version) => version?.id === plan.currentVersionId) || null;
+}
+
+function contractorCanAccessSafetyPlan(user, plan) {
+  if (!plan || user.role !== 'contractor') return false;
+  if (isSafetyPlanAuthority(user)) return true;
+  if (plan.notRequiredActor?.userId === user.id) return true;
+  const version = currentSafetyPlanVersion(plan);
+  return Boolean(
+    version
+    && (
+      version.createdBy?.userId === user.id
+      || (Array.isArray(version.sourceSnapshot?.crew)
+        && version.sourceSnapshot.crew.some((person) => person?.id === user.id))
+    )
+  );
+}
+
+function canReadSafetyPlan(user, plan) {
+  return user.role === 'admin'
+    || contractorCanAccessSafetyPlan(user, plan);
+}
+
+function isObject(value) {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function canonicalise(value) {
+  if (Array.isArray(value)) return value.map(canonicalise);
+  if (!isObject(value)) return value;
+  return Object.fromEntries(
+    Object.keys(value).sort().map((key) => [key, canonicalise(value[key])])
+  );
+}
+
+function canonicalSafetyPlanVersion(version) {
+  return JSON.stringify(canonicalise({
+    id: version.id,
+    planId: version.planId,
+    version: version.version,
+    templateSnapshot: version.templateSnapshot,
+    sections: version.sections,
+    sourceSnapshot: version.sourceSnapshot,
+    attachments: version.attachments,
+    createdAt: version.createdAt,
+    createdBy: version.createdBy,
+  }));
+}
+
+function safetyPlanDigest(version) {
+  return createHash('sha256').update(canonicalSafetyPlanVersion(version)).digest('hex');
+}
+
+function safetyPlanRetentionUntil(approvedAt) {
+  const retention = new Date(approvedAt);
+  retention.setUTCFullYear(retention.getUTCFullYear() + 7);
+  return retention.toISOString();
+}
+
+function valuesEqual(left, right) {
+  return JSON.stringify(canonicalise(left)) === JSON.stringify(canonicalise(right));
+}
+
+function assertUniqueIds(records, label) {
+  const ids = records.map((record) => record?.id);
+  if (new Set(ids).size !== ids.length) {
+    throw createHttpError(400, `${label} ids must be unique.`);
+  }
+}
+
+function requiredString(value, label, maxLength = 5000) {
+  if (typeof value !== 'string') {
+    throw createHttpError(400, `${label} is invalid.`);
+  }
+  const result = value.trim();
+  if (!result || result.length > maxLength) {
+    throw createHttpError(400, `${label} is invalid.`);
+  }
+  return result;
+}
+
+function requiredBoolean(value, label) {
+  if (typeof value !== 'boolean') {
+    throw createHttpError(400, `${label} is invalid.`);
+  }
+  return value;
+}
+
+function normaliseCompanyTemplateContent(payload) {
+  if (!isObject(payload) || payload.isPlatformStandard !== false) {
+    throw createHttpError(400, 'Company Safety Plan master content is invalid.');
+  }
+  const sections = payload.sections;
+  if (!Array.isArray(sections) || sections.length === 0 || sections.length > 100) {
+    throw createHttpError(400, 'Company Safety Plan master sections are invalid.');
+  }
+  assertUniqueIds(sections, 'Safety Plan section');
+  const normalisedSections = sections.map((section) => {
+    if (!isObject(section) || !Array.isArray(section.fields) || section.fields.length === 0) {
+      throw createHttpError(400, 'Each Safety Plan section requires fields.');
+    }
+    assertUniqueIds(section.fields, `Safety Plan field in ${section.id || 'section'}`);
+    return {
+      id: requiredString(section.id, 'Safety Plan section id', 150),
+      title: requiredString(section.title, 'Safety Plan section title', 500),
+      helpText: requiredString(section.helpText, 'Safety Plan section guidance'),
+      required: requiredBoolean(section.required, 'Safety Plan section required flag'),
+      companyEditable: requiredBoolean(
+        section.companyEditable,
+        'Safety Plan section company-editable flag'
+      ),
+      fields: section.fields.map((field) => {
+        if (!isObject(field) || !SAFETY_PLAN_FIELD_TYPES.has(field.type)) {
+          throw createHttpError(400, 'Safety Plan field type is invalid.');
+        }
+        return {
+          id: requiredString(field.id, 'Safety Plan field id', 150),
+          label: requiredString(field.label, 'Safety Plan field label', 500),
+          helpText: requiredString(field.helpText, 'Safety Plan field help text'),
+          type: field.type,
+          required: requiredBoolean(field.required, 'Safety Plan field required flag'),
+          companyEditable: requiredBoolean(
+            field.companyEditable,
+            'Safety Plan field company-editable flag'
+          ),
+        };
+      }),
+    };
+  });
+  const sectionIds = new Set(normalisedSections.map((section) => section.id));
+  const sectionStandardVersions = isObject(payload.sectionStandardVersions)
+    ? Object.fromEntries(Object.entries(payload.sectionStandardVersions).map(([sectionId, version]) => {
+      if (!sectionIds.has(sectionId)) {
+        throw createHttpError(400, 'Safety Plan section provenance references an unknown section.');
+      }
+      return [sectionId, requiredString(version, 'Safety Plan section standard version', 100)];
+    }))
+    : undefined;
+  return {
+    name: requiredString(payload.name, 'Safety Plan template name', 500),
+    jurisdiction: requiredString(payload.jurisdiction, 'Safety Plan jurisdiction', 50),
+    notice: requiredString(payload.notice, 'Safety Plan notice'),
+    standardVersion: requiredString(payload.standardVersion, 'Safety Plan standard version', 100),
+    ...(sectionStandardVersions ? { sectionStandardVersions } : {}),
+    isPlatformStandard: false,
+    sections: normalisedSections,
+  };
+}
+
+function immutableVersionContent(version) {
+  if (!isObject(version)) return version;
+  const {
+    status: _status,
+    revision: _revision,
+    updatedAt: _updatedAt,
+    ...content
+  } = version;
+  return content;
+}
+
+function submittedVersionContent(version) {
+  if (!isObject(version)) return version;
+  const {
+    status: _status,
+    revision: _revision,
+    updatedAt: _updatedAt,
+    approvedBy: _approvedBy,
+    approvedAt: _approvedAt,
+    contentDigest: _contentDigest,
+    retentionUntil: _retentionUntil,
+    acknowledgements: _acknowledgements,
+    ...content
+  } = version;
+  return content;
+}
+
+function versionWithoutAcknowledgements(version) {
+  if (!isObject(version)) return version;
+  const {
+    acknowledgements: _acknowledgements,
+    revision: _revision,
+    updatedAt: _updatedAt,
+    ...content
+  } = version;
+  return content;
+}
+
+function isAcknowledgementAppend(storedVersion, incomingVersion) {
+  if (
+    !isObject(incomingVersion)
+    || storedVersion.status !== incomingVersion.status
+    || !['submitted', 'approved'].includes(storedVersion.status)
+    || !valuesEqual(
+      versionWithoutAcknowledgements(storedVersion),
+      versionWithoutAcknowledgements(incomingVersion)
+    )
+  ) return false;
+  const storedAcknowledgements = storedVersion.acknowledgements || [];
+  const incomingAcknowledgements = incomingVersion.acknowledgements || [];
+  return incomingAcknowledgements.length === storedAcknowledgements.length + 1
+    && storedAcknowledgements.every(
+      (acknowledgement, index) => valuesEqual(acknowledgement, incomingAcknowledgements[index])
+    );
+}
+
+function safetyPlanActor(user) {
+  return {
+    userId: user.id,
+    name: user.name,
+    role: user.role,
+    operationalAuthority: isSafetyPlanAuthority(user),
+  };
+}
+
+function normaliseSafetyPlanProvenance(actor, stored, incoming, now) {
+  if (!isObject(incoming)) return incoming;
+  if (incoming.deletedAt !== undefined || incoming.deletedBy !== undefined) {
+    throw createHttpError(403, 'Safety Plan deletion metadata is server-managed.');
+  }
+
+  let normalised = {
+    ...incoming,
+    createdAt: stored?.createdAt || now,
+    updatedAt: now,
+  };
+  if (stored && Array.isArray(incoming.versions)) {
+    const storedById = new Map((stored.versions || []).map((version) => [version?.id, version]));
+    let addedAcknowledgementCount = 0;
+    normalised = {
+      ...normalised,
+      versions: incoming.versions.map((incomingVersion) => {
+        let version = incomingVersion;
+        const prior = storedById.get(version?.id);
+        const priorAcknowledgements = new Map(
+          (prior?.acknowledgements || []).map((acknowledgement) => [
+            acknowledgement?.id,
+            acknowledgement,
+          ])
+        );
+        const addedAcknowledgements = (version?.acknowledgements || []).filter(
+          (acknowledgement) => !priorAcknowledgements.has(acknowledgement?.id)
+        );
+        if (addedAcknowledgements.length > 0) {
+          addedAcknowledgementCount += addedAcknowledgements.length;
+          if (
+            incoming.status !== stored.status
+            || version.status !== prior?.status
+          ) {
+            throw createHttpError(
+              409,
+              'Record acknowledgement and workflow status changes as separate operations.'
+            );
+          }
+          if (
+            version.id !== incoming.currentVersionId
+            || !['submitted', 'approved'].includes(prior?.status)
+            || addedAcknowledgements.length !== 1
+          ) {
+            throw createHttpError(403, 'Safety Plan acknowledgement transition is invalid.');
+          }
+          const assigned = (prior.sourceSnapshot?.crew || []).find(
+            (person) => person?.id === actor.id
+          );
+          if (!assigned) {
+            throw createHttpError(
+              403,
+              'Only assigned PICs and crew can acknowledge this Safety Plan.'
+            );
+          }
+          if ((prior.acknowledgements || []).some(
+            (acknowledgement) => acknowledgement?.actor?.userId === actor.id
+              && !acknowledgement?.withdrawnAt
+              && !acknowledgement?.replacementAcknowledgementId
+          )) {
+            throw createHttpError(
+              409,
+              'This crew member has already acknowledged this version.'
+            );
+          }
+          version = {
+            ...version,
+            acknowledgements: [
+              ...(prior.acknowledgements || []),
+              {
+                id: addedAcknowledgements[0].id,
+                versionId: prior.id,
+                actor: safetyPlanActor(actor),
+                assignedRole: assigned.role,
+                statement: SAFETY_PLAN_ACKNOWLEDGEMENT_STATEMENT,
+                acknowledgedAt: now,
+              },
+            ],
+          };
+        }
+        if (prior?.status !== 'submitted') return version;
+        if (version.status === 'approved') {
+          if (!isSafetyPlanAuthority(actor)) {
+            throw createHttpError(403, 'Only a Safety Plan authority may approve this plan.');
+          }
+          const contentDigest = safetyPlanDigest(prior);
+          if (version.contentDigest !== contentDigest) {
+            throw createHttpError(409, 'Safety Plan approval digest does not match its submitted content.');
+          }
+          return {
+            ...version,
+            approvedBy: safetyPlanActor(actor),
+            approvedAt: now,
+            contentDigest,
+            retentionUntil: safetyPlanRetentionUntil(now),
+          };
+        }
+        if (version.status === 'draft') {
+          const {
+            approvedBy: _approvedBy,
+            approvedAt: _approvedAt,
+            contentDigest: _contentDigest,
+            retentionUntil: _retentionUntil,
+            ...draftVersion
+          } = version;
+          return draftVersion;
+        }
+        return version;
+      }),
+    };
+    if (addedAcknowledgementCount > 1) {
+      throw createHttpError(
+        403,
+        'Only one Safety Plan acknowledgement may be recorded per operation.'
+      );
+    }
+  }
+  if (incoming.status === 'not_required') {
+    return {
+      ...normalised,
+      notRequiredActor: safetyPlanActor(actor),
+      notRequiredSelectedAt: now,
+    };
+  }
+  const {
+    notRequiredActor: _notRequiredActor,
+    notRequiredSelectedAt: _notRequiredSelectedAt,
+    notRequiredReason: _notRequiredReason,
+    ...withoutNotRequired
+  } = normalised;
+  return withoutNotRequired;
+}
+
+function assertIncomingPlanShape(actor, incoming, recordId) {
+  if (!isObject(incoming) || incoming.id !== recordId) {
+    throw createHttpError(400, 'Safety Plan id must match its record id.');
+  }
+  if (incoming.tenantId !== actor.tenantId) {
+    throw createHttpError(403, 'Safety Plan tenant ownership cannot be changed.');
+  }
+  if (!Array.isArray(incoming.versions)) {
+    throw createHttpError(400, 'Safety Plan versions must be an array.');
+  }
+  if (!Number.isSafeInteger(incoming.revision) || incoming.revision < 1) {
+    throw createHttpError(400, 'Safety Plan record revision is invalid.');
+  }
+  assertUniqueIds(incoming.versions, 'Safety Plan version');
+  if (incoming.status === 'not_required') {
+    if (incoming.currentVersionId != null || incoming.versions.length !== 0) {
+      throw createHttpError(400, 'A not-required Safety Plan cannot retain versions.');
+    }
+    if (
+      incoming.notRequiredReason !== undefined
+      && (typeof incoming.notRequiredReason !== 'string' || !incoming.notRequiredReason.trim())
+    ) {
+      throw createHttpError(400, 'Safety Plan not-required reason must be meaningful when supplied.');
+    }
+    return;
+  }
+  if (
+    incoming.notRequiredReason !== undefined
+    || incoming.notRequiredActor !== undefined
+    || incoming.notRequiredSelectedAt !== undefined
+  ) {
+    throw createHttpError(400, 'Not-required provenance is invalid for an active Safety Plan.');
+  }
+  const current = incoming.versions.find((version) => version?.id === incoming.currentVersionId);
+  if (!current || current.status !== incoming.status) {
+    throw createHttpError(400, 'Safety Plan status must match its current version.');
+  }
+  for (const version of incoming.versions) {
+    if (!isObject(version) || !version.id || version.planId !== incoming.id) {
+      throw createHttpError(400, 'Safety Plan version identity is invalid.');
+    }
+    if (!Number.isSafeInteger(version.revision) || version.revision < 1) {
+      throw createHttpError(400, 'Safety Plan revision is invalid.');
+    }
+  }
+}
+
+function assertVersionTransition(actor, storedVersion, incomingVersion) {
+  if (!incomingVersion) {
+    throw createHttpError(
+      409,
+      'Safety Plan versions cannot be removed by an update. Use recoverable draft deletion.'
+    );
+  }
+  if (incomingVersion.planId !== storedVersion.planId) {
+    throw createHttpError(403, 'Safety Plan version ownership cannot be changed.');
+  }
+  if (valuesEqual(storedVersion, incomingVersion)) return;
+  const acknowledgementAppend = isAcknowledgementAppend(storedVersion, incomingVersion);
+
+  if (storedVersion.status === 'superseded') {
+    throw createHttpError(403, 'Superseded Safety Plan versions are immutable.');
+  }
+  if (storedVersion.status === 'approved') {
+    if (acknowledgementAppend) {
+      if (incomingVersion.revision !== storedVersion.revision + 1) {
+        throw createHttpError(409, 'Safety Plan revision is stale.');
+      }
+      return;
+    }
+    const isSuperseding = incomingVersion.status === 'superseded'
+      && isSafetyPlanAuthority(actor)
+      && valuesEqual(
+        immutableVersionContent(storedVersion),
+        immutableVersionContent(incomingVersion)
+      );
+    if (!isSuperseding) {
+      throw createHttpError(403, 'Approved Safety Plan snapshots are immutable.');
+    }
+  } else {
+    const isSubmitted = storedVersion.status === 'submitted';
+    const allowedStatuses = isSubmitted
+      ? ['draft', 'submitted', 'approved']
+      : ['draft', 'submitted'];
+    if (!allowedStatuses.includes(incomingVersion.status)) {
+      throw createHttpError(403, 'Safety Plan workflow transition is not permitted.');
+    }
+    if (isSubmitted) {
+      if (acknowledgementAppend) {
+        if (incomingVersion.revision !== storedVersion.revision + 1) {
+          throw createHttpError(409, 'Safety Plan revision is stale.');
+        }
+        return;
+      }
+      if (incomingVersion.status === 'submitted') {
+        throw createHttpError(403, 'Submitted Safety Plan versions are immutable.');
+      }
+      if (!isSafetyPlanAuthority(actor)) {
+        throw createHttpError(403, 'Only a Safety Plan authority may transition a submitted plan.');
+      }
+      if (!valuesEqual(
+        submittedVersionContent(storedVersion),
+        submittedVersionContent(incomingVersion)
+      )) {
+        throw createHttpError(403, 'Submitted Safety Plan content is immutable.');
+      }
+    }
+  }
+
+  if (incomingVersion.revision !== storedVersion.revision + 1) {
+    throw createHttpError(409, 'Safety Plan revision is stale.');
+  }
+}
+
+function assertSubmittedCurrentBoundary(stored, incoming) {
+  const storedCurrent = (stored.versions || []).find(
+    (version) => version?.id === stored.currentVersionId
+  );
+  if (storedCurrent?.status !== 'submitted') return;
+
+  if (incoming.currentVersionId !== stored.currentVersionId) {
+    throw createHttpError(409, 'A submitted Safety Plan must retain its current version identity.');
+  }
+
+  const storedIds = (stored.versions || []).map((version) => version?.id).sort();
+  const incomingIds = (incoming.versions || []).map((version) => version?.id).sort();
+  if (!valuesEqual(storedIds, incomingIds)) {
+    throw createHttpError(409, 'A submitted Safety Plan must retain its exact version set.');
+  }
+
+  const incomingById = new Map(incoming.versions.map((version) => [version?.id, version]));
+  for (const storedVersion of stored.versions || []) {
+    if (storedVersion.id === stored.currentVersionId) continue;
+    const incomingVersion = incomingById.get(storedVersion.id);
+    const revisionApprovalSupersession =
+      incoming.status === 'approved'
+      && storedVersion.status === 'approved'
+      && incomingVersion?.status === 'superseded'
+      && valuesEqual(
+        immutableVersionContent(storedVersion),
+        immutableVersionContent(incomingVersion)
+      );
+    if (!valuesEqual(storedVersion, incomingVersion) && !revisionApprovalSupersession) {
+      throw createHttpError(403, 'Only the current submitted version may transition.');
+    }
+  }
+
+  const incomingCurrent = incomingById.get(stored.currentVersionId);
+  if (!['submitted', 'draft', 'approved'].includes(incomingCurrent?.status)) {
+    throw createHttpError(403, 'Submitted Safety Plan transition is not permitted.');
+  }
+}
+
+function safetyPlanFieldIsEmpty(value) {
+  return value == null
+    || (typeof value === 'string' && value.trim() === '')
+    || (Array.isArray(value) && value.length === 0);
+}
+
+function assertSafetyPlanSubmissionReady(plan) {
+  const version = currentSafetyPlanVersion(plan);
+  const incomplete = (version?.sections || []).filter((section) => {
+    if (!section?.required) return false;
+    if (!Array.isArray(section.fields) || section.fields.length === 0) return true;
+    return section.fields
+      .filter((field) => field?.required)
+      .some((field) => safetyPlanFieldIsEmpty(field.value));
+  });
+  if (incomplete.length > 0) {
+    throw createHttpError(
+      409,
+      'Complete all required Safety Plan sections before submission.'
+    );
+  }
+}
+
+function safetyPlanConflict(currentRevision, message = 'Safety Plan changed in another session. Refresh and try again.') {
+  const error = createHttpError(409, message);
+  error.code = 'SAFETY_PLAN_CONFLICT';
+  if (Number.isSafeInteger(currentRevision)) error.currentRevision = currentRevision;
+  return error;
+}
+
+function assertSafetyPlanTransition({ actor, stored, incoming, recordId }) {
+  assertIncomingPlanShape(actor, incoming, recordId);
+
+  if (!stored) {
+    if (incoming.revision !== 1) {
+      throw createHttpError(409, 'A new Safety Plan must start at revision 1.');
+    }
+    if (!['draft', 'not_required'].includes(incoming.status)) {
+      throw createHttpError(403, 'A new Safety Plan must start as a draft.');
+    }
+    if (incoming.versions.some((version) => version.status !== 'draft' || version.revision !== 1)) {
+      throw createHttpError(403, 'A new Safety Plan may contain only initial draft versions.');
+    }
+    return;
+  }
+  if (stored.deletedAt) {
+    throw createHttpError(409, 'Restore this deleted Safety Plan before changing it.');
+  }
+  if (stored.tenantId !== actor.tenantId || incoming.tenantId !== stored.tenantId) {
+    throw createHttpError(403, 'Safety Plan tenant ownership cannot be changed.');
+  }
+  if (incoming.id !== stored.id || incoming.jobId !== stored.jobId) {
+    throw createHttpError(403, 'Safety Plan identity cannot be changed.');
+  }
+  if (incoming.createdAt !== stored.createdAt) {
+    throw createHttpError(403, 'Safety Plan creation provenance cannot be changed.');
+  }
+  if (!Number.isSafeInteger(stored.revision) || incoming.revision !== stored.revision + 1) {
+    throw safetyPlanConflict(stored.revision, 'Safety Plan record revision is stale.');
+  }
+  if (stored.status === 'draft' && incoming.status === 'submitted') {
+    assertSafetyPlanSubmissionReady(incoming);
+  }
+  assertSubmittedCurrentBoundary(stored, incoming);
+
+  const incomingById = new Map(incoming.versions.map((version) => [version?.id, version]));
+  for (const storedVersion of stored.versions || []) {
+    assertVersionTransition(actor, storedVersion, incomingById.get(storedVersion?.id));
+  }
+
+  const storedIds = new Set((stored.versions || []).map((version) => version?.id));
+  for (const incomingVersion of incoming.versions) {
+    if (storedIds.has(incomingVersion.id)) continue;
+    const convertingOptionalChoice =
+      stored.status === 'not_required'
+      && stored.versions.length === 0
+      && incoming.status === 'draft'
+      && incoming.currentVersionId === incomingVersion.id;
+    if (!convertingOptionalChoice && !isSafetyPlanAuthority(actor)) {
+      throw createHttpError(
+        403,
+        'Only a Safety Plan authority may create a controlled revision.'
+      );
+    }
+    if (incomingVersion.status !== 'draft' || incomingVersion.revision !== 1) {
+      throw createHttpError(403, 'New Safety Plan versions must start as drafts.');
+    }
+  }
+}
+
+function attachmentReceiptId(planId, versionId, attachmentId) {
+  return `${planId}:${versionId}:${attachmentId}`;
+}
+
+async function assertServerControlledAttachmentTransition(actor, stored, incoming) {
+  const incomingVersions = Array.isArray(incoming?.versions) ? incoming.versions : [];
+  if (!stored) {
+    if (incomingVersions.some((version) => (version?.attachments || []).length > 0)) {
+      throw createHttpError(403, 'Safety Plan attachment manifests are server-managed.');
+    }
+    return;
+  }
+
+  const storedVersions = new Map(
+    (stored.versions || []).map((version) => [version?.id, version])
+  );
+  for (const incomingVersion of incomingVersions) {
+    const prior = storedVersions.get(incomingVersion?.id);
+    const priorById = new Map(
+      (prior?.attachments || []).map((attachment) => [attachment?.id, attachment])
+    );
+    const incomingById = new Map(
+      (incomingVersion?.attachments || []).map((attachment) => [attachment?.id, attachment])
+    );
+
+    for (const priorAttachment of prior?.attachments || []) {
+      const next = incomingById.get(priorAttachment?.id);
+      if (!next || !valuesEqual(next, priorAttachment)) {
+        throw createHttpError(
+          403,
+          'Safety Plan attachments must be deleted through the attachment gateway.'
+        );
+      }
+    }
+
+    for (const attachment of incomingVersion?.attachments || []) {
+      if (priorById.has(attachment?.id)) continue;
+      if (
+        incomingVersion.id !== incoming.currentVersionId
+        || incomingVersion.status !== 'draft'
+        || attachment?.tenantId !== actor.tenantId
+        || attachment?.versionId !== incomingVersion.id
+      ) {
+        throw createHttpError(403, 'Safety Plan attachment provenance is invalid.');
+      }
+      const receipt = await getRecord(
+        actor.tenantId,
+        'ftf_safety_attachment_receipts',
+        attachmentReceiptId(incoming.id, incomingVersion.id, attachment.id)
+      );
+      if (
+        !receipt
+        || receipt.status !== 'stored'
+        || receipt.planId !== incoming.id
+        || receipt.versionId !== incomingVersion.id
+        || !valuesEqual(receipt.attachment, attachment)
+      ) {
+        throw createHttpError(403, 'Safety Plan attachment receipt is invalid.');
+      }
+    }
+  }
+}
+
+function assertSafetyAuditAction(actor, plan, event) {
+  if (!SAFETY_PLAN_ACTIONS.has(event.action)) {
+    throw createHttpError(400, 'Safety audit action is invalid.');
+  }
+  if (['draft_deleted', 'draft_restored'].includes(event.action)) {
+    throw createHttpError(403, 'This Safety audit action is server-managed.');
+  }
+
+  if (event.action === 'not_required_selected') {
+    if (event.versionId != null || plan.status !== 'not_required') {
+      throw createHttpError(409, 'Safety audit action does not match the linked plan state.');
+    }
+    return;
+  }
+
+  if (!event.versionId) {
+    throw createHttpError(400, 'Safety audit action requires a linked version.');
+  }
+  const version = (plan.versions || []).find((candidate) => candidate?.id === event.versionId);
+  if (!version) {
+    throw createHttpError(409, 'Safety audit version does not exist on the linked plan.');
+  }
+
+  const authorityActions = new Set(['returned_to_draft', 'approved', 'superseded']);
+  if (authorityActions.has(event.action) && !isSafetyPlanAuthority(actor)) {
+    throw createHttpError(403, 'Only a Safety Plan authority may record this action.');
+  }
+  const allowedStatuses = {
+    created: ['draft'],
+    source_refreshed: ['draft'],
+    field_changed: ['draft'],
+    attachment_changed: ['draft'],
+    submitted: ['submitted'],
+    returned_to_draft: ['draft'],
+    approved: ['approved'],
+    acknowledged: ['submitted', 'approved'],
+    revised: ['draft'],
+    superseded: ['superseded'],
+    shared: ['approved'],
+    pdf_generated: ['approved'],
+    client_copy_exported: ['approved'],
+  }[event.action];
+  if (!allowedStatuses?.includes(version.status)) {
+    throw createHttpError(409, 'Safety audit action does not match the linked version state.');
+  }
+}
+
+const STANDALONE_SAFETY_AUDIT_ACTIONS = new Set([
+  'acknowledged',
+  'shared',
+  'pdf_generated',
+  'client_copy_exported',
+]);
+
+function deriveSafetyPlanMutationAudit(stored, incoming, sourceRefreshMetadata) {
+  if (!stored) {
+    return incoming.status === 'not_required'
+      ? { action: 'not_required_selected' }
+      : { action: 'created', versionId: incoming.currentVersionId };
+  }
+
+  if (!stored.deletedAt && incoming.deletedAt) {
+    return { action: 'draft_deleted', versionId: incoming.currentVersionId };
+  }
+  if (stored.deletedAt && !incoming.deletedAt) {
+    return { action: 'draft_restored', versionId: incoming.currentVersionId };
+  }
+  if (incoming.status === 'not_required' && stored.status !== 'not_required') {
+    return { action: 'not_required_selected' };
+  }
+  if (stored.status === 'not_required' && incoming.status === 'draft') {
+    return { action: 'created', versionId: incoming.currentVersionId };
+  }
+
+  const storedVersions = new Map(
+    (stored.versions || []).map((version) => [version?.id, version])
+  );
+  const addedVersion = (incoming.versions || []).find(
+    (version) => !storedVersions.has(version?.id)
+  );
+  if (addedVersion) {
+    return { action: 'revised', versionId: addedVersion.id };
+  }
+
+  const storedCurrent = currentSafetyPlanVersion(stored);
+  const incomingCurrent = currentSafetyPlanVersion(incoming);
+  if (
+    storedCurrent
+    && incomingCurrent
+    && (incomingCurrent.acknowledgements || []).length
+      === (storedCurrent.acknowledgements || []).length + 1
+  ) {
+    return { action: 'acknowledged', versionId: incoming.currentVersionId };
+  }
+
+  if (stored.status !== incoming.status) {
+    if (incoming.status === 'submitted') {
+      return { action: 'submitted', versionId: incoming.currentVersionId };
+    }
+    if (incoming.status === 'approved') {
+      return { action: 'approved', versionId: incoming.currentVersionId };
+    }
+    if (incoming.status === 'superseded') {
+      return { action: 'superseded', versionId: incoming.currentVersionId };
+    }
+    if (incoming.status === 'draft' && stored.status === 'submitted') {
+      return { action: 'returned_to_draft', versionId: incoming.currentVersionId };
+    }
+  }
+
+  const supersededVersion = (incoming.versions || []).find((version) => {
+    const previous = storedVersions.get(version?.id);
+    return previous && previous.status !== 'superseded' && version.status === 'superseded';
+  });
+  if (supersededVersion) {
+    return { action: 'superseded', versionId: supersededVersion.id };
+  }
+
+  if (sourceRefreshMetadata) {
+    return {
+      action: 'source_refreshed',
+      versionId: incoming.currentVersionId,
+      before: sourceRefreshMetadata.before,
+      after: sourceRefreshMetadata.after,
+    };
+  }
+
+  if (
+    !valuesEqual(storedCurrent?.attachments || [], incomingCurrent?.attachments || [])
+  ) {
+    return {
+      action: 'attachment_changed',
+      versionId: incoming.currentVersionId,
+      before: { attachments: storedCurrent?.attachments || [] },
+      after: { attachments: incomingCurrent?.attachments || [] },
+    };
+  }
+
+  return {
+    action: 'field_changed',
+    versionId: incoming.currentVersionId,
+  };
+}
+
+const SOURCE_REFRESH_CONTEXT_CATEGORIES = new Set([
+  'company',
+  'job',
+  'missions',
+  'client',
+  'property',
+  'field',
+  'crew',
+  'assets',
+  'chemicals',
+  'emergencyContacts',
+  'siteMap',
+]);
+const SOURCE_REFRESH_ACTIONS = new Set([
+  'accept_source_value',
+  'keep_company_value',
+  'remove',
+]);
+const SOURCE_REFRESH_BACKED_FIELDS = new Set([
+  'plan_reference',
+  'plan_scope',
+  'job_details',
+  'client_property_location',
+  'operating_dates',
+  'assigned_crew',
+  'operational_assets',
+  'chemicals_payloads',
+  'site_access_controls',
+  'hazards_and_risk_scores',
+  'mitigations_and_controls',
+  'emergency_response',
+]);
+
+function sourceRefreshFieldValues(version) {
+  const values = new Map();
+  for (const section of version?.sections || []) {
+    for (const field of section?.fields || []) {
+      if (SOURCE_REFRESH_BACKED_FIELDS.has(field?.id)) {
+        values.set(field.id, field.value);
+      }
+    }
+  }
+  return values;
+}
+
+function storedHazardCompanyControl(version, hazard) {
+  for (const section of version?.sections || []) {
+    const field = (section?.fields || []).find(({ id }) => id === hazard?.id);
+    if (typeof field?.value === 'string') return field.value;
+  }
+  return hazard?.companyValue;
+}
+
+function hazardSectionControl(version, hazardId) {
+  for (const section of version?.sections || []) {
+    const field = (section?.fields || []).find(({ id }) => id === hazardId);
+    if (field) return { found: true, value: field.value };
+  }
+  return { found: false, value: undefined };
+}
+
+function assertHazardSnapshotControls(storedVersion, incomingVersion) {
+  const incomingHazards = new Map(
+    (incomingVersion?.sourceSnapshot?.hazards || []).map((hazard) => [hazard?.id, hazard])
+  );
+  for (const incomingHazard of incomingHazards.values()) {
+    const live = hazardSectionControl(incomingVersion, incomingHazard.id);
+    if (!live.found || !valuesEqual(live.value, incomingHazard.companyValue)) {
+      throw createHttpError(
+        409,
+        'Safety Plan retained hazard control does not match its live section field.'
+      );
+    }
+  }
+  for (const storedHazard of storedVersion?.sourceSnapshot?.hazards || []) {
+    if (
+      !incomingHazards.has(storedHazard?.id)
+      && hazardSectionControl(incomingVersion, storedHazard?.id).found
+    ) {
+      throw createHttpError(
+        409,
+        'Safety Plan removed hazard control must not remain in the live section fields.'
+      );
+    }
+  }
+}
+
+function requiredSourceRefreshDecisions(storedVersion, incomingVersion) {
+  const expected = new Map();
+  const storedSnapshot = storedVersion?.sourceSnapshot || {};
+  const incomingSnapshot = incomingVersion?.sourceSnapshot || {};
+  const incomingHazards = new Map(
+    (incomingSnapshot.hazards || []).map((hazard) => [hazard?.id, hazard])
+  );
+  for (const storedHazard of storedSnapshot.hazards || []) {
+    const incomingHazard = incomingHazards.get(storedHazard?.id);
+    if (
+      !incomingHazard
+      || storedHazard.sourceUpdatedAt !== incomingHazard.sourceUpdatedAt
+      || storedHazard.value !== incomingHazard.value
+    ) {
+      expected.set(
+        storedHazard.id,
+        !incomingHazard
+          ? 'remove'
+          : incomingHazard.companyValue === storedHazardCompanyControl(storedVersion, storedHazard)
+            ? 'keep_company_value'
+            : 'accept_source_value'
+      );
+    }
+  }
+  for (const category of SOURCE_REFRESH_CONTEXT_CATEGORIES) {
+    if (
+      storedSnapshot[category] !== undefined
+      && !valuesEqual(storedSnapshot[category], incomingSnapshot[category])
+    ) {
+      expected.set(
+        `context:${category}`,
+        incomingSnapshot[category] === undefined ? 'remove' : 'accept_source_value'
+      );
+    }
+  }
+  const storedFields = sourceRefreshFieldValues(storedVersion);
+  const incomingFields = sourceRefreshFieldValues(incomingVersion);
+  for (const fieldId of SOURCE_REFRESH_BACKED_FIELDS) {
+    const current = storedFields.get(fieldId);
+    const latest = incomingFields.get(fieldId);
+    const currentEmpty = current == null
+      || current === ''
+      || (Array.isArray(current) && current.length === 0);
+    const latestEmpty = latest == null
+      || latest === ''
+      || (Array.isArray(latest) && latest.length === 0);
+    if (!(currentEmpty && latestEmpty) && !valuesEqual(current, latest)) {
+      expected.set(
+        `field:${fieldId}`,
+        latestEmpty ? 'remove' : 'accept_source_value'
+      );
+    }
+  }
+  return expected;
+}
+
+function canonicalSourceRefreshMetadata(storedVersion, incomingVersion, intent) {
+  const storedSnapshot = storedVersion?.sourceSnapshot;
+  const incomingSnapshot = incomingVersion?.sourceSnapshot;
+  const beforeCount = Array.isArray(storedSnapshot?.hazards)
+    ? storedSnapshot.hazards.length
+    : 0;
+  const afterCount = Array.isArray(incomingSnapshot?.hazards)
+    ? incomingSnapshot.hazards.length
+    : 0;
+  const decisions = intent.after.decisions;
+  if (
+    intent.before.capturedAt !== storedSnapshot?.capturedAt
+    || intent.before.sourceItemCount !== beforeCount
+    || intent.after.capturedAt !== incomingSnapshot?.capturedAt
+    || intent.after.sourceItemCount !== afterCount
+    || !Array.isArray(decisions)
+  ) {
+    throw createHttpError(409, 'Safety Plan source refresh metadata does not match the source snapshots.');
+  }
+  assertHazardSnapshotControls(storedVersion, incomingVersion);
+  const requiredDecisions = requiredSourceRefreshDecisions(storedVersion, incomingVersion);
+  const seen = new Set();
+  const canonicalDecisions = decisions.map((decision) => {
+    if (
+      !isObject(decision)
+      || typeof decision.itemId !== 'string'
+      || !decision.itemId.trim()
+      || !SOURCE_REFRESH_ACTIONS.has(decision.action)
+      || seen.has(decision.itemId)
+    ) {
+      throw createHttpError(409, 'Safety Plan source refresh metadata contains an invalid decision.');
+    }
+    seen.add(decision.itemId);
+    return {
+      itemId: decision.itemId,
+      action: decision.action,
+    };
+  }).sort((left, right) => left.itemId.localeCompare(right.itemId));
+  const submittedIds = canonicalDecisions.map(({ itemId }) => itemId).sort();
+  const expectedIds = Array.from(requiredDecisions.keys()).sort();
+  if (!valuesEqual(submittedIds, expectedIds)) {
+    throw createHttpError(
+      409,
+      'Safety Plan source refresh decisions must exactly match changed or removed source items.'
+    );
+  }
+  for (const decision of canonicalDecisions) {
+    if (decision.action !== requiredDecisions.get(decision.itemId)) {
+      throw createHttpError(
+        409,
+        'Safety Plan source refresh decision action does not match the resolved source outcome.'
+      );
+    }
+  }
+  return {
+    before: {
+      capturedAt: storedSnapshot.capturedAt,
+      sourceItemCount: beforeCount,
+    },
+    after: {
+      capturedAt: incomingSnapshot.capturedAt,
+      sourceItemCount: afterCount,
+      decisions: canonicalDecisions,
+    },
+  };
+}
+
+function consumeSourceRefreshIntent(stored, incoming) {
+  if (!stored || !Array.isArray(incoming?.versions)) {
+    return { payload: incoming, metadata: null };
+  }
+  const incomingCurrent = incoming.versions.find(
+    (version) => version?.id === incoming.currentVersionId
+  );
+  const versionsWithIntent = incoming.versions.filter(
+    (version) => version?.sourceRefreshIntent !== undefined
+  );
+  const intent = incomingCurrent?.sourceRefreshIntent;
+  if (intent === undefined) {
+    if (versionsWithIntent.length > 0) {
+      throw createHttpError(400, 'Safety Plan source refresh intent must target the current version.');
+    }
+    return { payload: incoming, metadata: null };
+  }
+  if (
+    versionsWithIntent.length !== 1
+    || !isObject(intent)
+    || intent.kind !== 'source_refresh'
+    || !isObject(intent.before)
+    || !isObject(intent.after)
+    || intent.actor !== undefined
+    || intent.occurredAt !== undefined
+  ) {
+    throw createHttpError(400, 'Safety Plan source refresh intent is invalid.');
+  }
+  const storedCurrent = (stored.versions || []).find(
+    (version) => version?.id === stored.currentVersionId
+  );
+  if (
+    incoming.status !== 'draft'
+    || incoming.currentVersionId !== stored.currentVersionId
+    || storedCurrent?.status !== 'draft'
+    || intent.before.capturedAt !== storedCurrent.sourceSnapshot?.capturedAt
+    || intent.after.capturedAt !== incomingCurrent.sourceSnapshot?.capturedAt
+    || intent.before.capturedAt === intent.after.capturedAt
+  ) {
+    throw createHttpError(409, 'Safety Plan source refresh intent does not match the source transition.');
+  }
+  const metadata = canonicalSourceRefreshMetadata(storedCurrent, incomingCurrent, intent);
+  return {
+    metadata,
+    payload: {
+      ...incoming,
+      versions: incoming.versions.map((version) => {
+        if (version?.sourceRefreshIntent === undefined) return version;
+        const {
+          sourceRefreshIntent: _sourceRefreshIntent,
+          ...canonicalVersion
+        } = version;
+        return canonicalVersion;
+      }),
+    },
+  };
+}
+
+function normaliseSafetyAuditEventForPlan(
+  actor,
+  plan,
+  event,
+  recordId,
+  now,
+  derivedMutation
+) {
+  if (!isObject(event) || event.id !== recordId) {
+    throw createHttpError(400, 'Safety audit event id must match its record id.');
+  }
+  if (typeof event.planId !== 'string' || !event.planId.trim()) {
+    throw createHttpError(400, 'Safety audit event requires a linked plan.');
+  }
+  if (event.planId !== plan.id) {
+    throw createHttpError(409, 'Safety audit event linked plan does not match the saved plan.');
+  }
+  if (plan.deletedAt) {
+    throw createHttpError(409, 'Deleted Safety Plans accept only server-managed audit events.');
+  }
+  if (!derivedMutation) {
+    if (!STANDALONE_SAFETY_AUDIT_ACTIONS.has(event.action)) {
+      throw createHttpError(
+        403,
+        'Safety Plan mutation audit actions require the matching atomic plan transition.'
+      );
+    }
+    assertSafetyAuditAction(actor, plan, event);
+  if (event.action === 'client_copy_exported') {
+      if (actor.role !== 'admin') {
+        throw createHttpError(403, 'Only company administrators can export a client copy.');
+      }
+      if (
+        typeof event.clientId !== 'string'
+        || !event.clientId.trim()
+        || event.clientId.trim().length > 160
+      ) {
+        throw createHttpError(400, 'Client-copy export requires a valid client.');
+      }
+      const current = currentSafetyPlanVersion(plan);
+      if (
+        !current
+        || current.id !== event.versionId
+        || current.status !== 'approved'
+        || current.sourceSnapshot?.client?.id !== event.clientId.trim()
+      ) {
+        throw createHttpError(
+          409,
+          'Client-copy target must match the approved current Safety Plan snapshot.'
+        );
+      }
+    }
+  }
+  const action = derivedMutation?.action || event.action;
+  const versionId = derivedMutation
+    ? derivedMutation.versionId
+    : event.versionId;
+  return {
+    id: event.id,
+    ...(derivedMutation || event.operationId === event.id
+      ? { operationId: event.id }
+      : {}),
+    tenantId: actor.tenantId,
+    planId: plan.id,
+    ...(versionId ? { versionId } : {}),
+    actor: safetyPlanActor(actor),
+    action,
+    occurredAt: now,
+    ...(action === 'client_copy_exported' ? { clientId: event.clientId.trim() } : {}),
+    ...(derivedMutation?.before ? { before: derivedMutation.before } : {}),
+    ...(derivedMutation?.after ? { after: derivedMutation.after } : {}),
+  };
+}
+
+async function normaliseSafetyAuditEvent(actor, event, recordId, now) {
+  if (!isObject(event) || typeof event.planId !== 'string' || !event.planId.trim()) {
+    throw createHttpError(400, 'Safety audit event requires a linked plan.');
+  }
+  const plan = await getRecord(actor.tenantId, SAFETY_PLAN_COLLECTION, event.planId);
+  if (!plan) throw createHttpError(409, 'Safety audit event linked plan was not found.');
+  return normaliseSafetyAuditEventForPlan(actor, plan, event, recordId, now);
+}
+
 function validateRecordId(value) {
   const recordId = String(value || '').trim();
   if (!recordId || recordId.length > 160) {
     throw createHttpError(400, 'Invalid record id.');
   }
   return recordId;
+}
+
+function validateExpectedRevision(value) {
+  const revision = typeof value === 'number' ? value : Number(value);
+  if (!Number.isSafeInteger(revision) || revision < 1) {
+    throw createHttpError(400, 'A valid expected Safety Plan revision is required.');
+  }
+  return revision;
 }
 
 function assertSameOrigin(req) {
@@ -181,18 +1394,25 @@ function buildRecord(tenantId, collection, recordId, payload) {
 
 async function listCollection(tenantId, collection) {
   const rows = await supabaseRequest(
-    `rest/v1/${TABLE_NAME}?${tenantFilter(tenantId, collection)}&select=record_id,payload,updated_at&order=updated_at.desc`,
+    `rest/v1/${TABLE_NAME}?${tenantFilter(tenantId, collection)}&select=tenant_id,record_id,payload,updated_at&order=updated_at.desc`,
     { publicMessage: 'Persistent storage request failed.' }
   );
-  return Array.isArray(rows) ? rows.map((row) => row.payload) : [];
+  return Array.isArray(rows)
+    ? rows
+      .filter((row) => row.tenant_id === tenantId)
+      .map((row) => row.payload)
+    : [];
 }
 
 async function getRecord(tenantId, collection, recordId) {
   const rows = await supabaseRequest(
-    `rest/v1/${TABLE_NAME}?${tenantFilter(tenantId, collection)}&record_id=eq.${encodeURIComponent(recordId)}&select=payload&limit=1`,
+    `rest/v1/${TABLE_NAME}?${tenantFilter(tenantId, collection)}&record_id=eq.${encodeURIComponent(recordId)}&select=tenant_id,payload&limit=1`,
     { publicMessage: 'Persistent storage request failed.' }
   );
-  return Array.isArray(rows) && rows[0] ? rows[0].payload : null;
+  const row = Array.isArray(rows)
+    ? rows.find((candidate) => candidate.tenant_id === tenantId)
+    : null;
+  return row ? row.payload : null;
 }
 
 async function deleteCollection(tenantId, collection) {
@@ -224,6 +1444,97 @@ async function upsertRecords(rows) {
   });
 }
 
+async function appendRecords(rows) {
+  if (rows.length === 0) return;
+  await supabaseRequest(`rest/v1/${TABLE_NAME}`, {
+    method: 'POST',
+    headers: { Prefer: 'return=minimal' },
+    body: JSON.stringify(rows),
+    publicMessage: 'Safety audit append failed.',
+  });
+}
+
+async function insertSafetyPlanRecords(rows) {
+  if (rows.length === 0) return;
+  await supabaseRequest(`rest/v1/${TABLE_NAME}`, {
+    method: 'POST',
+    headers: { Prefer: 'return=minimal' },
+    body: JSON.stringify(rows),
+    publicMessage: 'Safety Plan creation conflicted with an existing record.',
+  });
+}
+
+async function insertSafetyPlanWithAudit(
+  tenantId,
+  recordId,
+  payload,
+  auditEvent
+) {
+  const rows = await supabaseRequest('rest/v1/rpc/ftf_insert_safety_plan_with_audit', {
+    method: 'POST',
+    body: JSON.stringify({
+      p_tenant_id: tenantId,
+      p_plan_record_id: recordId,
+      p_plan_payload: payload,
+      p_audit_record_id: auditEvent.id,
+      p_audit_payload: auditEvent,
+    }),
+    publicMessage: 'Safety Plan creation conflicted with an existing record.',
+  });
+  const outcome = Array.isArray(rows) ? rows[0] : rows;
+  if (outcome?.succeeded !== true) {
+    const current = await getRecord(tenantId, SAFETY_PLAN_COLLECTION, recordId);
+    throw safetyPlanConflict(current?.revision);
+  }
+  return outcome.new_payload || payload;
+}
+
+async function compareAndSwapSafetyPlan(
+  tenantId,
+  recordId,
+  expectedRevision,
+  payload,
+  auditEvent
+) {
+  const rows = await supabaseRequest('rest/v1/rpc/ftf_compare_and_swap_store_payload', {
+    method: 'POST',
+    body: JSON.stringify({
+      p_tenant_id: tenantId,
+      p_collection: SAFETY_PLAN_COLLECTION,
+      p_record_id: recordId,
+      p_expected_revision: expectedRevision,
+      p_payload: payload,
+      ...(auditEvent
+        ? {
+          p_audit_record_id: auditEvent.id,
+          p_audit_payload: auditEvent,
+        }
+        : {}),
+    }),
+    publicMessage: 'Safety Plan concurrency check failed.',
+  });
+  const outcome = Array.isArray(rows) ? rows[0] : rows;
+  if (outcome?.succeeded !== true) {
+    const current = await getRecord(tenantId, SAFETY_PLAN_COLLECTION, recordId);
+    throw safetyPlanConflict(current?.revision);
+  }
+  return outcome.new_payload || payload;
+}
+
+function buildServerAuditEvent(actor, plan, action, occurredAt) {
+  const operationId = randomUUID();
+  return {
+    id: operationId,
+    operationId,
+    tenantId: actor.tenantId,
+    planId: plan.id,
+    versionId: plan.currentVersionId,
+    actor: safetyPlanActor(actor),
+    action,
+    occurredAt,
+  };
+}
+
 async function upsertCollection(tenantId, collection, records) {
   if (!Array.isArray(records)) throw createHttpError(400, 'Records must be an array.');
   if (records.length > MAX_RECORDS_PER_WRITE) {
@@ -250,17 +1561,28 @@ module.exports = async function handler(req, res) {
   try {
     assertSameOrigin(req);
     const user = await authenticateRequest(req, res);
-    if (!['admin', 'contractor'].includes(user.role)) {
-      throw createHttpError(403, 'This account cannot access mission workflow storage.');
-    }
     const tenantId = user.tenantId;
 
     if (req.method === 'GET') {
       const collection = validateCollection(req.query.collection);
+      assertCollectionPermission(user, collection, 'read');
       const recordId = req.query.recordId ? validateRecordId(req.query.recordId) : '';
+      const includeDeleted = String(req.query.includeDeleted || '') === 'true';
+      if (collection === SAFETY_PLAN_COLLECTION && includeDeleted && user.role !== 'admin') {
+        throw createHttpError(403, 'Only administrators may recover deleted Safety Plans.');
+      }
       if (req.localE2eFixture) {
         const fixtureRecords = req.localE2eFixture.collections?.[collection];
-        const records = Array.isArray(fixtureRecords) ? fixtureRecords : [];
+        let records = Array.isArray(fixtureRecords) ? fixtureRecords : [];
+        if (collection === SAFETY_PLAN_COLLECTION && !(user.role === 'admin' && includeDeleted)) {
+          records = records.filter((plan) => !plan?.deletedAt);
+        }
+        if (collection === SAFETY_PLAN_COLLECTION) {
+          records = records.filter((plan) => canReadSafetyPlan(user, plan));
+        }
+        if (collection === SAFETY_PLAN_TEMPLATE_COLLECTION && user.role === 'contractor') {
+          records = records.filter((template) => template?.recordType !== 'draft');
+        }
         if (recordId) {
           const payload = records.find((record) => record?.id === recordId) || null;
           return res.status(200).json({
@@ -277,12 +1599,38 @@ module.exports = async function handler(req, res) {
       }
       if (recordId) {
         const payload = await getRecord(tenantId, collection, recordId);
-        return res.status(200).json({ payload: user.role === 'contractor' ? contractorSafePayload(collection, payload) : payload });
+        const visiblePayload = collection === SAFETY_PLAN_COLLECTION
+          && (
+            (payload?.deletedAt && !(user.role === 'admin' && includeDeleted))
+            || (payload && !canReadSafetyPlan(user, payload))
+          )
+          ? null
+          : collection === SAFETY_PLAN_TEMPLATE_COLLECTION
+            && user.role === 'contractor'
+            && payload?.recordType === 'draft'
+            ? null
+            : payload;
+        return res.status(200).json({
+          payload: user.role === 'contractor'
+            ? contractorSafePayload(collection, visiblePayload)
+            : visiblePayload,
+        });
       }
-      const records = await listCollection(tenantId, collection);
-      return res.status(200).json({ records: user.role === 'contractor'
-        ? records.map((payload) => contractorSafePayload(collection, payload))
-        : records });
+      let records = await listCollection(tenantId, collection);
+      if (collection === SAFETY_PLAN_COLLECTION && !(user.role === 'admin' && includeDeleted)) {
+        records = records.filter((plan) => !plan?.deletedAt);
+      }
+      if (collection === SAFETY_PLAN_COLLECTION) {
+        records = records.filter((plan) => canReadSafetyPlan(user, plan));
+      }
+      if (collection === SAFETY_PLAN_TEMPLATE_COLLECTION && user.role === 'contractor') {
+        records = records.filter((template) => template?.recordType !== 'draft');
+      }
+      return res.status(200).json({
+        records: user.role === 'contractor'
+          ? records.map((payload) => contractorSafePayload(collection, payload))
+          : records,
+      });
     }
 
     if (req.localE2eFixture) {
@@ -292,29 +1640,287 @@ module.exports = async function handler(req, res) {
     if (req.method === 'PUT') {
       const body = getJsonBody(req);
       const collection = validateCollection(body.collection || req.query.collection);
+      assertCollectionPermission(user, collection, 'write');
+      const now = new Date().toISOString();
+
+      if (
+        collection === SAFETY_PLAN_TEMPLATE_COLLECTION
+        && body.action === 'init_company_template_draft'
+      ) {
+        const content = normaliseCompanyTemplateContent(body.payload);
+        const draft = await supabaseRequest(
+          'rest/v1/rpc/ftf_init_safety_plan_template_draft',
+          {
+            method: 'POST',
+            body: JSON.stringify({
+              p_tenant_id: tenantId,
+              p_actor_user_id: user.id,
+              p_actor_name: user.name,
+              p_standard_content: content,
+            }),
+            publicMessage: 'Company Safety Plan template draft could not be initialised.',
+          }
+        );
+        return res.status(200).json({ ok: true, count: 1, payload: draft });
+      }
+
+      if (
+        collection === SAFETY_PLAN_TEMPLATE_COLLECTION
+        && body.action === 'update_company_template_draft'
+      ) {
+        const content = normaliseCompanyTemplateContent(body.payload);
+        const expectedRevision = validateExpectedRevision(body.expectedRevision);
+        const draft = await supabaseRequest(
+          'rest/v1/rpc/ftf_update_safety_plan_template_draft',
+          {
+            method: 'POST',
+            body: JSON.stringify({
+              p_tenant_id: tenantId,
+              p_actor_user_id: user.id,
+              p_actor_name: user.name,
+              p_expected_revision: expectedRevision,
+              p_template_content: content,
+            }),
+            publicMessage: 'Company Safety Plan template draft could not be saved.',
+          }
+        );
+        if (!draft) throw safetyPlanConflict(expectedRevision);
+        return res.status(200).json({ ok: true, count: 1, payload: draft });
+      }
+
+      if (
+        collection === SAFETY_PLAN_TEMPLATE_COLLECTION
+        && body.action === 'publish_company_master'
+      ) {
+        const content = normaliseCompanyTemplateContent(body.payload);
+        const auditRecordId = randomUUID();
+        const published = await supabaseRequest(
+          'rest/v1/rpc/ftf_publish_safety_plan_master',
+          {
+            method: 'POST',
+            body: JSON.stringify({
+              p_tenant_id: tenantId,
+              p_actor_user_id: user.id,
+              p_actor_name: user.name,
+              p_template_content: content,
+              p_audit_record_id: auditRecordId,
+            }),
+            publicMessage: 'Company Safety Plan master could not be published.',
+          }
+        );
+        return res.status(200).json({ ok: true, count: 1, payload: published });
+      }
+
+      if (collection === SAFETY_PLAN_COLLECTION && body.action === 'restore') {
+        if (user.role !== 'admin') {
+          throw createHttpError(403, 'Only administrators may restore deleted Safety Plans.');
+        }
+        const recordId = validateRecordId(body.recordId);
+        const stored = await getRecord(tenantId, collection, recordId);
+        const expectedRevision = validateExpectedRevision(body.expectedRevision);
+        if (stored && stored.revision !== expectedRevision) {
+          throw safetyPlanConflict(stored.revision);
+        }
+        if (!stored?.deletedAt || stored.status !== 'draft') {
+          throw createHttpError(409, 'Only a deleted draft Safety Plan can be restored.');
+        }
+        if ((stored.versions || []).some((version) =>
+          ['approved', 'superseded'].includes(version?.status)
+        )) {
+          throw createHttpError(403, 'Approved and superseded Safety Plan versions cannot be restored from deletion.');
+        }
+        const {
+          deletedAt: _deletedAt,
+          deletedBy: _deletedBy,
+          ...activePlan
+        } = stored;
+        const restored = {
+          ...activePlan,
+          revision: stored.revision + 1,
+          updatedAt: now,
+        };
+        const auditEvent = buildServerAuditEvent(user, restored, 'draft_restored', now);
+        const saved = await compareAndSwapSafetyPlan(
+          tenantId,
+          recordId,
+          expectedRevision,
+          restored,
+          auditEvent
+        );
+        return res.status(200).json({ ok: true, count: 1, payload: saved });
+      }
+
       if (Array.isArray(body.records)) {
+        if (body.records.length > MAX_RECORDS_PER_WRITE) {
+          throw createHttpError(413, `Store at most ${MAX_RECORDS_PER_WRITE} records in one request.`);
+        }
+        if (collection === SAFETY_PLAN_COLLECTION) {
+          throw createHttpError(
+            400,
+            'Safety Plans must use a singleton record write with audit linkage.'
+          );
+        }
+        if (collection === SAFETY_PLAN_TEMPLATE_COLLECTION) {
+          throw createHttpError(
+            400,
+            'Company Safety Plan masters must be published one immutable version at a time.'
+          );
+        }
         let records = body.records;
-        if (user.role === 'contractor') {
+        if (collection === SAFETY_PLAN_AUDIT_COLLECTION) {
+          assertUniqueIds(records, 'Safety audit event');
+          records = await Promise.all(records.map(async (record, index) => {
+            const recordId = validateRecordId(record?.id || `record_${index}`);
+            const event = await normaliseSafetyAuditEvent(user, record, recordId, now);
+            if (await getRecord(tenantId, collection, recordId)) {
+              throw createHttpError(409, 'Safety audit events are append-only.');
+            }
+            return event;
+          }));
+        } else if (user.role === 'contractor') {
           const storedRecords = await listCollection(tenantId, collection);
           const storedById = new Map(storedRecords.map((record) => [record?.id, record]));
           records = records.map((record) => contractorWritePayload(collection, record, storedById.get(record?.id)));
         }
-        await upsertCollection(tenantId, collection, records);
+        if (collection === SAFETY_PLAN_AUDIT_COLLECTION) {
+          const rows = records.map((record, index) => buildRecord(
+            tenantId,
+            collection,
+            validateRecordId(record?.id || `record_${index}`),
+            record
+          ));
+          await appendRecords(rows);
+        } else {
+          await upsertCollection(tenantId, collection, records);
+        }
         return res.status(200).json({ ok: true, count: body.records.length });
       }
 
       const recordId = validateRecordId(body.recordId || SINGLETON_RECORD_ID);
-      const storedPayload = user.role === 'contractor' ? await getRecord(tenantId, collection, recordId) : null;
-      const payload = user.role === 'contractor'
+      if (collection === SAFETY_PLAN_TEMPLATE_COLLECTION) {
+        throw createHttpError(
+          400,
+          'Company Safety Plan masters must use controlled publication.'
+        );
+      }
+      const needsStoredPayload = user.role === 'contractor'
+        || collection === SAFETY_PLAN_COLLECTION
+        || collection === SAFETY_PLAN_AUDIT_COLLECTION
+        || collection === SAFETY_PLAN_TEMPLATE_COLLECTION;
+      const storedPayload = needsStoredPayload ? await getRecord(tenantId, collection, recordId) : null;
+      let payload = body.payload;
+      let safetyAuditEvent = null;
+      if (collection === SAFETY_PLAN_COLLECTION) {
+        payload = normaliseSafetyPlanProvenance(user, storedPayload, body.payload, now);
+        await assertServerControlledAttachmentTransition(user, storedPayload, payload);
+        const sourceRefresh = consumeSourceRefreshIntent(storedPayload, payload);
+        payload = sourceRefresh.payload;
+        assertSafetyPlanTransition({
+          actor: user,
+          stored: storedPayload,
+          incoming: payload,
+          recordId,
+        });
+        if (body.audit === undefined) {
+          throw createHttpError(400, 'Safety Plan writes require audit action and linkage metadata.');
+        }
+        const auditRecordId = validateRecordId(body.audit?.id);
+        safetyAuditEvent = normaliseSafetyAuditEventForPlan(
+          user,
+          payload,
+          body.audit,
+          auditRecordId,
+          now,
+          deriveSafetyPlanMutationAudit(storedPayload, payload, sourceRefresh.metadata)
+        );
+      }
+      if (collection === SAFETY_PLAN_AUDIT_COLLECTION) {
+        payload = await normaliseSafetyAuditEvent(user, body.payload, recordId, now);
+        if (storedPayload) throw createHttpError(409, 'Safety audit events are append-only.');
+      }
+      payload = user.role === 'contractor'
+        && ![SAFETY_PLAN_COLLECTION, SAFETY_PLAN_AUDIT_COLLECTION].includes(collection)
         ? contractorWritePayload(collection, body.payload, storedPayload)
-        : body.payload;
-      await upsertRecords([buildRecord(tenantId, collection, recordId, payload)]);
+        : payload;
+      const row = buildRecord(tenantId, collection, recordId, payload);
+      if (collection === SAFETY_PLAN_AUDIT_COLLECTION) {
+        await appendRecords([row]);
+      } else if (collection === SAFETY_PLAN_COLLECTION) {
+        let saved;
+        if (storedPayload) {
+          saved = await compareAndSwapSafetyPlan(
+            tenantId,
+            recordId,
+            storedPayload.revision,
+            payload,
+            safetyAuditEvent
+          );
+        } else if (safetyAuditEvent) {
+          saved = await insertSafetyPlanWithAudit(
+            tenantId,
+            recordId,
+            payload,
+            safetyAuditEvent
+          );
+        } else {
+          try {
+            await insertSafetyPlanRecords([row]);
+            saved = payload;
+          } catch (insertError) {
+            if (insertError?.statusCode !== 409) throw insertError;
+            const current = await getRecord(tenantId, SAFETY_PLAN_COLLECTION, recordId);
+            throw safetyPlanConflict(current?.revision);
+          }
+        }
+        return res.status(200).json({ ok: true, count: 1, payload: saved });
+      } else {
+        await upsertRecords([row]);
+      }
       return res.status(200).json({ ok: true, count: 1 });
     }
 
     if (req.method === 'DELETE') {
       const collection = validateCollection(req.query.collection);
+      assertCollectionPermission(user, collection, 'write');
       const recordId = req.query.recordId ? validateRecordId(req.query.recordId) : '';
+      if (collection === SAFETY_PLAN_AUDIT_COLLECTION) {
+        throw createHttpError(403, 'Safety audit events are append-only and cannot be deleted.');
+      }
+      if (collection === SAFETY_PLAN_COLLECTION) {
+        if (!recordId) {
+          throw createHttpError(403, 'Safety Plans cannot be deleted as a collection.');
+        }
+        if (user.role !== 'admin') {
+          throw createHttpError(403, 'Only administrators may delete draft Safety Plans.');
+        }
+        const stored = await getRecord(tenantId, collection, recordId);
+        const expectedRevision = validateExpectedRevision(req.query.expectedRevision);
+        if (stored && stored.revision !== expectedRevision) {
+          throw safetyPlanConflict(stored.revision);
+        }
+        if (!stored || stored.deletedAt || stored.status !== 'draft' || (stored.versions || []).some((version) =>
+          ['approved', 'superseded'].includes(version?.status)
+        )) {
+          throw createHttpError(403, 'Approved and superseded Safety Plan versions cannot be deleted.');
+        }
+        const occurredAt = new Date().toISOString();
+        const deleted = {
+          ...stored,
+          revision: stored.revision + 1,
+          deletedAt: occurredAt,
+          deletedBy: safetyPlanActor(user),
+          updatedAt: occurredAt,
+        };
+        const auditEvent = buildServerAuditEvent(user, deleted, 'draft_deleted', occurredAt);
+        const saved = await compareAndSwapSafetyPlan(
+          tenantId,
+          recordId,
+          expectedRevision,
+          deleted,
+          auditEvent
+        );
+        return res.status(200).json({ ok: true, payload: saved });
+      }
       if (recordId) {
         await deleteRecord(tenantId, collection, recordId);
       } else {
@@ -328,6 +1934,12 @@ module.exports = async function handler(req, res) {
   } catch (error) {
     const status = error.statusCode || 500;
     console.error('Persistent store error:', error);
-    return res.status(status).json({ error: error.publicMessage || 'Persistent storage request failed.' });
+    return res.status(status).json({
+      error: error.publicMessage || 'Persistent storage request failed.',
+      ...(error.code ? { code: error.code } : {}),
+      ...(Number.isSafeInteger(error.currentRevision)
+        ? { currentRevision: error.currentRevision }
+        : {}),
+    });
   }
 };

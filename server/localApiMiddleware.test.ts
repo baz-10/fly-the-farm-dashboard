@@ -169,6 +169,7 @@ describe('local Vercel API middleware', () => {
     expect(routes).toEqual([
       '/api/auth',
       '/api/store',
+      '/api/safety-attachments',
       '/api/geocode',
       '/api/pmav',
       '/api/identify-weed',
@@ -271,6 +272,7 @@ describe('local Vercel API middleware', () => {
     expect(layers.map(({ path }) => path)).toEqual([
       '/api/auth',
       '/api/store',
+      '/api/safety-attachments',
       '/api/geocode',
       '/api/pmav',
       '/api/identify-weed',
@@ -358,7 +360,7 @@ describe('local Vercel API middleware', () => {
     vi.stubGlobal('fetch', upstreamFetch);
 
     const { response } = await invokePlugin(
-      '/api/store?collection=ftf_work_packs',
+      '/api/store?collection=ftf_aircraft_data',
       'configurePreviewServer',
       {
         host: '127.0.0.1:4173',
@@ -369,5 +371,142 @@ describe('local Vercel API middleware', () => {
     expect(response.statusCode).toBe(200);
     expect(JSON.parse(response.body)).toEqual({ records: [] });
     expect(upstreamFetch).not.toHaveBeenCalled();
+  });
+
+  it('keeps loopback browser fixture writes in process memory and resets them deterministically', async () => {
+    process.env = {
+      ...originalEnvironment,
+      FTF_E2E_AUTH_FIXTURE: 'local-playwright-only',
+      SUPABASE_URL: 'https://real-looking.supabase.co',
+      SUPABASE_ANON_KEY: 'real-looking-anon-key',
+      SUPABASE_SERVICE_ROLE_KEY: 'real-looking-service-key',
+    };
+    const upstreamFetch = vi.fn();
+    vi.stubGlobal('fetch', upstreamFetch);
+    const headers = {
+      host: '127.0.0.1:4173',
+      'x-ftf-e2e-auth': 'admin',
+    };
+
+    const write = await invoke(
+      '/api/store',
+      createRequest({
+        method: 'PUT',
+        url: '/api/store',
+        headers: { ...headers, 'content-type': 'application/json' },
+        body: JSON.stringify({
+          collection: 'ftf_safety_plans',
+          recordId: 'e2e-written-plan',
+          payload: {
+            id: 'e2e-written-plan',
+            tenantId: 'e2e-tenant',
+            jobId: 'e2e-job',
+            status: 'draft',
+            revision: 1,
+            versions: [],
+          },
+        }),
+      })
+    );
+    expect(write.response.statusCode).toBe(200);
+
+    const read = await invoke(
+      '/api/store',
+      createRequest({
+        url: '/api/store?collection=ftf_safety_plans&recordId=e2e-written-plan',
+        headers,
+      })
+    );
+    expect(JSON.parse(read.response.body).payload).toMatchObject({
+      id: 'e2e-written-plan',
+      tenantId: 'e2e-tenant',
+    });
+
+    const reset = await invoke(
+      '/api/store',
+      createRequest({
+        method: 'DELETE',
+        url: '/api/store?fixtureReset=1',
+        headers,
+      })
+    );
+    expect(reset.response.statusCode).toBe(204);
+
+    const afterReset = await invoke(
+      '/api/store',
+      createRequest({
+        url: '/api/store?collection=ftf_safety_plans&recordId=e2e-written-plan',
+        headers,
+      })
+    );
+    expect(JSON.parse(afterReset.response.body)).toEqual({ payload: null });
+    expect(upstreamFetch).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { name: 'non-loopback hosts', host: 'preview.example.test', vercel: undefined },
+    { name: 'Vercel', host: '127.0.0.1:4173', vercel: '1' },
+  ])('never enables fixture writes for $name', async ({ host, vercel }) => {
+    process.env = {
+      ...originalEnvironment,
+      FTF_E2E_AUTH_FIXTURE: 'local-playwright-only',
+      ...(vercel ? { VERCEL: vercel } : {}),
+    };
+
+    const { response } = await invoke(
+      '/api/store',
+      createRequest({
+        method: 'PUT',
+        url: '/api/store',
+        headers: {
+          host,
+          'x-ftf-e2e-auth': 'contractor',
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          collection: 'ftf_safety_plans',
+          recordId: 'must-not-write',
+          payload: { id: 'must-not-write' },
+        }),
+      })
+    );
+
+    expect(response.statusCode).toBe(401);
+  });
+
+  it('keeps fixture reset and company-template writes administrator-only', async () => {
+    process.env = {
+      ...originalEnvironment,
+      FTF_E2E_AUTH_FIXTURE: 'local-playwright-only',
+    };
+    const contractorHeaders = {
+      host: '127.0.0.1:4173',
+      'x-ftf-e2e-auth': 'contractor',
+    };
+
+    const reset = await invoke(
+      '/api/store',
+      createRequest({
+        method: 'DELETE',
+        url: '/api/store?fixtureReset=1',
+        headers: contractorHeaders,
+      })
+    );
+    expect(reset.response.statusCode).toBe(403);
+
+    const templateWrite = await invoke(
+      '/api/store',
+      createRequest({
+        method: 'PUT',
+        url: '/api/store',
+        headers: { ...contractorHeaders, 'content-type': 'application/json' },
+        body: JSON.stringify({
+          collection: 'ftf_safety_plan_templates',
+          recordId: 'forbidden-template',
+          payload: { id: 'forbidden-template', tenantId: 'e2e-tenant' },
+        }),
+      })
+    );
+    expect(templateWrite.response.statusCode).toBe(403);
   });
 });

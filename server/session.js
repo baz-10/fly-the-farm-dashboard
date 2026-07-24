@@ -46,10 +46,18 @@ function clearSessionCookies(req, res) {
 
 async function loadProfile(userId) {
   const rows = await supabaseRequest(
-    `rest/v1/ftf_profiles?user_id=eq.${encodeURIComponent(userId)}&select=user_id,tenant_id,role,name,invite_code,contractor_id,client_record_id,tier&limit=1`,
+    `rest/v1/ftf_profiles?user_id=eq.${encodeURIComponent(userId)}&select=user_id,tenant_id,role,name,invite_code,contractor_id,client_record_id,tier,safety_plan_authority&limit=1`,
     { publicMessage: 'User profile could not be loaded.' }
   );
   return Array.isArray(rows) && rows[0] ? rows[0] : null;
+}
+
+async function loadTenantProfiles(tenantId) {
+  const rows = await supabaseRequest(
+    `rest/v1/ftf_profiles?tenant_id=eq.${encodeURIComponent(tenantId)}&select=user_id,tenant_id,role,name,safety_plan_authority&order=name.asc`,
+    { publicMessage: 'Company users could not be loaded.' }
+  );
+  return Array.isArray(rows) ? rows : [];
 }
 
 function toPublicUser(authUser, profile) {
@@ -63,6 +71,7 @@ function toPublicUser(authUser, profile) {
     clientRecordId: profile.client_record_id || undefined,
     inviteCode: profile.invite_code || undefined,
     tier: profile.tier || 'free',
+    safetyPlanAuthority: profile.safety_plan_authority === true,
   };
 }
 
@@ -124,6 +133,7 @@ module.exports = {
   authenticateRequest,
   clearSessionCookies,
   loadProfile,
+  loadTenantProfiles,
   setSessionCookies,
   toPublicUser,
 };

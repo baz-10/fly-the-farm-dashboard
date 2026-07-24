@@ -36,6 +36,9 @@ import ComplianceEnvironmental from './pages/ComplianceEnvironmental';
 import ComplianceVegetation from './pages/ComplianceVegetation';
 import ComplianceSafety from './pages/ComplianceSafety';
 import ComplianceDocumentation from './pages/ComplianceDocumentation';
+import SafetyPlanRegister from './pages/SafetyPlanRegister';
+import SafetyPlanTemplateEditor from './pages/SafetyPlanTemplateEditor';
+import SafetyPlanEditor from './pages/SafetyPlanEditor';
 import MissionPlanning from './pages/MissionPlanning';
 import MissionRegister from './pages/MissionRegister';
 import Schedule from './pages/Schedule';
@@ -48,6 +51,7 @@ import { AircraftProvider } from './contexts/AircraftContext';
 import { MissionProvider } from './contexts/MissionContext';
 import { WorkPackProvider } from './contexts/WorkPackContext';
 import { MaintenanceProvider } from './contexts/MaintenanceContext';
+import { SafetyPlanProvider } from './contexts/SafetyPlanContext';
 import FleetWorkPacks from './pages/FleetWorkPacks';
 import MaintenanceCommand from './pages/MaintenanceCommand';
 import { useAuth } from './contexts/AuthContext';
@@ -57,15 +61,17 @@ function WorkflowProviders({ children }: { children: React.ReactNode }) {
   if (user?.role !== 'admin' && user?.role !== 'contractor') return <>{children}</>;
 
   return (
-    <UserLicenseProvider>
-      <AircraftProvider>
-        <WorkPackProvider>
-          <MaintenanceProvider>
-            <MissionProvider>{children}</MissionProvider>
-          </MaintenanceProvider>
-        </WorkPackProvider>
-      </AircraftProvider>
-    </UserLicenseProvider>
+    <SafetyPlanProvider>
+      <UserLicenseProvider>
+        <AircraftProvider>
+          <WorkPackProvider>
+            <MaintenanceProvider>
+              <MissionProvider>{children}</MissionProvider>
+            </MaintenanceProvider>
+          </WorkPackProvider>
+        </AircraftProvider>
+      </UserLicenseProvider>
+    </SafetyPlanProvider>
   );
 }
 
@@ -135,6 +141,9 @@ function App() {
           <Route path="/compliance/vegetation" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><ComplianceVegetation /></ProtectedRoute>} />
           <Route path="/compliance/safety" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><ComplianceSafety /></ProtectedRoute>} />
           <Route path="/compliance/documentation" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><ComplianceDocumentation /></ProtectedRoute>} />
+          <Route path="/compliance/safety-plans" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><SafetyPlanRegister /></ProtectedRoute>} />
+          <Route path="/compliance/safety-plans/:planId" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><SafetyPlanEditor /></ProtectedRoute>} />
+          <Route path="/compliance/safety-plans/template" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><SafetyPlanTemplateEditor /></ProtectedRoute>} />
           <Route path="/license-settings" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><UserLicenseSettings /></ProtectedRoute>} />
           <Route path="/admin" element={<ProtectedRoute allowedRoles={['admin']}><Admin /></ProtectedRoute>} />
         </Route>

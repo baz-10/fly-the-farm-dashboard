@@ -91,6 +91,11 @@ export interface MissionPlanningState {
 // Core Mission Record
 export interface MissionRecord {
   id: string;
+  /**
+   * Explicit parent Job association. Historical missions may not have one;
+   * consumers must not infer a Job relationship from names or client fields.
+   */
+  jobId?: string;
   missionNumber: string; // Human-readable identifier (e.g., "MSN-2026-0001")
   status: MissionStatus;
 

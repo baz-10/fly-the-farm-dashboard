@@ -88,6 +88,33 @@ function countDeclaredTests(source: string): number {
 }
 
 describe('test inventory', () => {
+  it('keeps Safety Plan production guidance remote and service-role-only', async () => {
+    const deployment = await readFile('docs/production-deployment.md', 'utf8');
+    const playwright = await readFile('playwright.config.ts', 'utf8');
+
+    expect(deployment).toContain('VITE_PERSISTENCE_MODE=remote');
+    expect(deployment).toContain('Do **not** add `anon` or `authenticated` Supabase Storage policies');
+    expect(deployment).toContain('Apply the base Supabase migration');
+    expect(playwright).toContain("VITE_PERSISTENCE_MODE: 'remote'");
+  });
+
+  it('tracks the exact Safety Plan release-gate supplements outside src', async () => {
+    const releaseGateSupplements: Record<string, number> = {
+      'e2e/safety-plan-workflow.spec.ts': 6,
+      'server/localApiMiddleware.test.ts': 11,
+    };
+    const actual = Object.fromEntries(
+      await Promise.all(
+        Object.keys(releaseGateSupplements).map(async (file) => [
+          file,
+          countDeclaredTests(await readFile(file, 'utf8')),
+        ])
+      )
+    );
+
+    expect(actual).toEqual(releaseGateSupplements);
+  });
+
   it('preserves the exact accepted baseline and explicit migration supplements', async () => {
     const inventory = await collectTestInventory('src');
     const manifest = JSON.parse(
@@ -102,9 +129,34 @@ describe('test inventory', () => {
         count + (approvedDeltas[file] ?? 0),
       ])
     );
+    const explicitPostBaselineSupplements: Record<string, number> = {
+      ...supplements,
+      'src/App.safetyPlanProvider.test.tsx': 1,
+      'src/__tests__/authenticated-safety-plan-api.test.ts': 86,
+      'src/components/safety-plan/JobSafetyPlanCard.test.tsx': 6,
+      'src/__tests__/safety-plan-authority-api.test.ts': 2,
+      'src/components/safety-plan/SafetyPlanAuthorityManager.test.tsx': 2,
+      'src/components/safety-plan/SafetyPlanApprovalPanel.test.tsx': 6,
+      'src/components/safety-plan/SafetyPlanAttachments.test.tsx': 5,
+      'src/contexts/__tests__/SafetyPlanContext.test.tsx': 30,
+      'src/pages/JobDetail.test.tsx': 4,
+      'src/pages/SafetyPlanRegister.test.tsx': 3,
+      'src/pages/SafetyPlanEditor.test.tsx': 13,
+      'src/pages/SafetyPlanTemplateEditor.test.tsx': 2,
+      'src/services/__tests__/persistence.safetyPlan.test.ts': 9,
+      'src/services/__tests__/safetyPlanRepository.test.ts': 15,
+      'src/services/__tests__/safetyPlanTemplateRepository.test.ts': 3,
+      'src/services/__tests__/safetyPlanPrefill.test.ts': 4,
+      'src/services/__tests__/safetyPlanApproval.test.ts': 11,
+      'src/services/__tests__/safetyPlanAttachments.test.ts': 3,
+      'src/utils/__tests__/safetyPlanPermissions.test.ts': 5,
+      'src/utils/__tests__/safetyPlanRules.test.ts': 10,
+      'src/utils/__tests__/safetyPlanSourceSync.test.ts': 11,
+      'src/utils/__tests__/safetyPlanPdf.test.ts': 7,
+    };
     const supplementaryCounts = Object.fromEntries(
       await Promise.all(
-        Object.keys(supplements).map(async (file) => [
+        Object.keys(explicitPostBaselineSupplements).map(async (file) => [
           file,
           countDeclaredTests(await readFile(file, 'utf8')),
         ])
@@ -118,9 +170,9 @@ describe('test inventory', () => {
       .toBe(219);
     expect(inventory.testsByFile).toEqual(expectedCurrentBaseline);
     expect(inventory.files).toEqual(Object.keys(baseline).sort());
-    expect(inventory.supplementaryFiles).toEqual(Object.keys(supplements).sort());
-    expect(supplementaryCounts).toEqual(supplements);
-    expect(inventory.files.length + inventory.supplementaryFiles.length).toBe(59);
+    expect(inventory.supplementaryFiles).toEqual(Object.keys(explicitPostBaselineSupplements).sort());
+    expect(supplementaryCounts).toEqual(explicitPostBaselineSupplements);
+    expect(inventory.files.length + inventory.supplementaryFiles.length).toBe(81);
   });
 
   it('contains no Jest runtime API in migrated React tests', async () => {

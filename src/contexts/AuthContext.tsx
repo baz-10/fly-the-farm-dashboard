@@ -13,6 +13,7 @@ export interface User {
   clientRecordId?: string;
   inviteCode?: string;
   tier: 'free' | 'pro';
+  safetyPlanAuthority: boolean;
 }
 
 interface StoredUser {
@@ -25,6 +26,7 @@ interface StoredUser {
   contractorId?: string;
   clientRecordId?: string;
   inviteCode?: string;
+  safetyPlanAuthority: boolean;
 }
 
 interface RegistrationResult {
@@ -84,6 +86,7 @@ function cacheUser(user: User | null, cacheLocalAccount: boolean): void {
     contractorId: user.contractorId,
     clientRecordId: user.clientRecordId,
     inviteCode: user.inviteCode,
+    safetyPlanAuthority: user.safetyPlanAuthority,
   };
   saveStoredUsers(users);
 }
@@ -112,6 +115,7 @@ function ensureLocalAdminExists(): void {
     password: 'ftfadmin',
     role: 'admin',
     tenantId: id,
+    safetyPlanAuthority: false,
   };
   saveStoredUsers(users);
 }
@@ -154,7 +158,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (remoteMode) return null;
     try {
       const session = localStorage.getItem(SESSION_KEY);
-      return session ? JSON.parse(session) : null;
+      const storedSession = session ? JSON.parse(session) : null;
+      return storedSession
+        ? { ...storedSession, safetyPlanAuthority: storedSession.safetyPlanAuthority === true }
+        : null;
     } catch {
       return null;
     }
@@ -223,6 +230,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       clientRecordId: stored.clientRecordId,
       inviteCode: stored.inviteCode,
       tier: 'free',
+      safetyPlanAuthority: stored.safetyPlanAuthority === true,
     };
     setUser(authenticatedUser);
     cacheUser(authenticatedUser, true);
@@ -275,6 +283,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       tenantId: contractorId || id,
       contractorId,
       inviteCode,
+      safetyPlanAuthority: false,
     };
     users[normalizedEmail] = stored;
     saveStoredUsers(users);
@@ -312,6 +321,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       clientRecordId,
       inviteCode,
       tier: 'free',
+      safetyPlanAuthority: false,
     };
     setUser(registeredUser);
     cacheUser(registeredUser, true);
