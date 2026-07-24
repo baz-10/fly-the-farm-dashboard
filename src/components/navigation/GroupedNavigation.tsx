@@ -106,7 +106,7 @@ export function GroupedNavigation({
         const itemsId = `${instanceId}-navigation-group-${group.id}`;
         const heading = (
           <ListItemButton
-            aria-controls={itemsId}
+            aria-controls={isOpen ? itemsId : undefined}
             aria-expanded={isOpen}
             aria-label={group.label}
             onClick={() => toggleGroup(group.id)}
@@ -115,8 +115,11 @@ export function GroupedNavigation({
               px: expanded ? 1.25 : 0.5,
               borderRadius: '8px',
               justifyContent: expanded ? 'flex-start' : 'center',
-              color: 'inherit',
-              opacity: 0.82,
+              color: 'rgba(255, 255, 255, 0.92)',
+              '&:hover': {
+                backgroundColor: 'rgba(255, 255, 255, 0.12)',
+                color: '#fff',
+              },
             }}
           >
             <ListItemIcon
@@ -169,10 +172,21 @@ export function GroupedNavigation({
                         ml: expanded ? 1 : 0,
                         px: expanded ? 1.25 : 0.5,
                         borderRadius: '8px',
-                        color: 'inherit',
+                        color: 'rgba(255, 255, 255, 0.92)',
                         justifyContent: expanded ? 'flex-start' : 'center',
                         flexDirection: expanded ? 'row' : 'column',
                         gap: expanded ? 0 : 0.3,
+                        '&:hover': {
+                          backgroundColor: 'rgba(255, 255, 255, 0.12)',
+                          color: '#fff',
+                        },
+                        '&.Mui-selected': {
+                          backgroundColor: 'rgba(255, 255, 255, 0.2)',
+                          color: '#fff',
+                          '&:hover': {
+                            backgroundColor: 'rgba(255, 255, 255, 0.28)',
+                          },
+                        },
                       }}
                     >
                       <ListItemIcon

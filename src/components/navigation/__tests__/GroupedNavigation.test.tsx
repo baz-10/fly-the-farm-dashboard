@@ -60,6 +60,29 @@ describe('GroupedNavigation', () => {
     expect(screen.getByRole('link', { name: /maintenance/i })).toBeVisible();
   });
 
+  test('compact navigation uses readable light foreground and selected styling', () => {
+    render(
+      <GroupedNavigation
+        expanded={false}
+        pathname="/"
+        role="admin"
+        userId="u1"
+        onNavigate={jest.fn()}
+      />,
+    );
+
+    const daily = screen.getByRole('button', { name: /daily operations/i });
+    expect(daily).toHaveStyle({ color: 'rgba(255, 255, 255, 0.92)' });
+    expect(screen.getByRole('link', { name: 'Operations' })).toHaveAttribute('aria-current', 'page');
+  });
+
+  test('collapsed headings do not reference an unmounted region', () => {
+    render(<GroupedNavigation expanded pathname="/" role="admin" userId="u1" onNavigate={jest.fn()} />);
+
+    const heading = screen.getByRole('button', { name: /operational resources/i });
+    expect(heading).not.toHaveAttribute('aria-controls');
+  });
+
   test('persists toggles and keeps the active group open after a route change', async () => {
     const user = userEvent.setup();
     const { rerender } = render(

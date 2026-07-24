@@ -10,7 +10,9 @@ function isNavigationGroupId(value: unknown): value is NavigationGroupId {
 export function readNavigationExpansion(userId: string): NavigationGroupId[] {
   try {
     const value = JSON.parse(localStorage.getItem(`${prefix}:${userId}`) || '[]');
-    return Array.isArray(value) ? value.filter(isNavigationGroupId) : [];
+    return Array.isArray(value)
+      ? Array.from(new Set(value.filter(isNavigationGroupId)))
+      : [];
   } catch {
     return [];
   }

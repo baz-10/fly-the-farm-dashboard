@@ -15,4 +15,10 @@ describe('navigation preference store', () => {
 
     expect(readNavigationExpansion('user-a')).toEqual([]);
   });
+
+  test('deduplicates valid groups while reading preferences', () => {
+    localStorage.setItem('ftf_navigation_groups:u1', JSON.stringify(['daily', 'daily', 'safety']));
+
+    expect(readNavigationExpansion('u1')).toEqual(['daily', 'safety']);
+  });
 });

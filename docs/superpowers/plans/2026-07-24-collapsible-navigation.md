@@ -6,7 +6,7 @@
 
 **Architecture:** Define navigation data separately from rendering, use a small local preference service keyed by authenticated user ID, and render grouped navigation through a focused accordion component. `Layout` remains responsible for desktop/mobile shells and routing.
 
-**Tech Stack:** React 19, TypeScript 4.9, Material UI 7, React Router 7, Jest, React Testing Library.
+**Tech Stack:** React 19, TypeScript 4.9, Material UI 7, React Router 6 (restored to React Router 7 in the Vite/Vitest migration), Jest, React Testing Library.
 
 ## Global Constraints
 

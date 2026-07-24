@@ -1,149 +1,98 @@
-# Task 4 report — Layout integration and release verification
+# Task 4 report
 
 ## Status
 
-Implemented and committed grouped collapsible navigation in both the compact desktop rail and expanded mobile drawer. No Release 2 behavior was added.
+DONE
 
-## RED
+## Implementation
 
-Command:
+- Generalised `TruckProfileForm` into a deployment-asset form while preserving the legacy `truck` prop. New profiles default to truck, may switch to trailer, use asset-neutral identity copy, retain financial visibility control, and submit `DeploymentAssetInput`.
+- Updated the fleet register to consume Task 1's `assets`, `createAsset`, and `updateAsset` APIs. The UI now shows deployment assets, separate ready-truck and ready-trailer counts, asset-type chips, and trailer-aware edit/create dialogs.
+- Generalised reusable templates to select zero or more independent assets. Submission includes `assetIds` and derives legacy `truckId` from the first selected truck (or an empty string when no truck is selected).
+- Added an optional carrying-asset selector to every aircraft/kit assignment. Existing templates derive `assetIds` from legacy `truckId` when needed.
+- Removed the UI guard that required a truck before creating a template.
 
-```sh
-npm test -- --watchAll=false src/components/__tests__/Layout.navigation.test.tsx
-```
+## TDD evidence
 
-Result: failed as expected against the old flat `Layout`. The test could not find an accessible list named `Primary navigation`, proving the group headings were absent.
+RED command:
 
-Before that intended RED result, the test harness exposed React Router 7 incompatibilities with Jest 27: package resolution failed and the jsdom environment lacked `TextEncoder`/`TextDecoder`. The test uses a virtual `react-router-dom` mock backed by React Router's CommonJS build and installs the Node `util` encoders so the regression exercises the real memory router.
+`npm test -- --watchAll=false src/components/__tests__/TruckProfileForm.test.tsx src/components/__tests__/WorkPackTemplateForm.test.tsx`
 
-## GREEN
+Observed: 2 suites failed for the intended missing behavior: no `Asset type` field and no multi-asset checkboxes.
 
-Command:
+GREEN command:
 
-```sh
-npm test -- --watchAll=false src/components/__tests__/Layout.navigation.test.tsx
-```
+`npm test -- --watchAll=false src/components/__tests__/TruckProfileForm.test.tsx src/components/__tests__/WorkPackTemplateForm.test.tsx src/contexts/__tests__/WorkPackContext.test.tsx`
 
-Result: passed — 1 suite, 1 test. The regression verifies two grouped-navigation instances are rendered, the mobile drawer exposes all five headings with Daily operations expanded, and Weather navigates to `/weather`.
+Observed: 3 suites passed, 10 tests passed, 0 failed.
 
-Release-focused command:
+Build command:
 
-```sh
-npm test -- --watchAll=false src/navigation src/services/__tests__/navigationPreferenceStore.test.ts src/components/navigation src/components/__tests__/Layout.navigation.test.tsx
-```
+`npm run build`
 
-Result: passed — 4 suites, 17 tests.
+Observed: exit 0 and production bundle generated. The build emitted existing repository-wide lint warnings in unrelated files and a stale Browserslist database notice; no Task 4 compile errors were reported.
 
-## Full suite
-
-Command:
-
-```sh
-CI=true npm test -- --watchAll=false --runInBand
-```
-
-Result: passed — 56 suites, 222 tests, 0 failures.
-
-## Build
-
-Command:
-
-```sh
-npm run build
-```
-
-Result: completed successfully. The build emitted existing repository-wide ESLint warnings, a stale Browserslist data notice, and the existing bundle-size advisory; no Task 4 compile errors were reported.
+`git diff --check` also completed without errors.
 
 ## Self-review
 
-- Removed `NAV_ITEMS`, `isRouteActive`, and `navList` from `Layout`.
-- Passed pathname, role, user ID, and `navigateAndClose` to `GroupedNavigation` in both navigation surfaces.
-- Preserved search, account, logout, drawer, logo, and main-content behavior.
-- Confirmed the staged diff contained only `Layout.tsx` and its new regression test.
-- `git diff --cached --check` passed before commit.
-
-## Commit
-
-`851ea6e` — `feat: enable grouped dashboard navigation`
+- Confirmed existing truck callers remain supported through `truck`/`trucks` compatibility props and Task 1's legacy truck APIs remain untouched.
+- Confirmed trailer submission preserves uppercase registration normalization and operational validation.
+- Confirmed financial fields remain entirely behind `showFinancials`.
+- Confirmed legacy templates initialise selection from `truckId`, and new templates derive `truckId` only from a selected truck rather than a trailer.
+- Confirmed only the five Task 4 files are included in the implementation commit.
 
 ## Concerns
 
-- The successful build retains pre-existing lint/Browserslist/bundle-size warnings outside Task 4.
-- The test includes a local Jest 27 compatibility shim for the installed React Router 7 package; production code is unaffected.
+- `assetIds` and template-level `carryingAssetId` are represented locally by the Task 4 form because the task's allowed file list does not include `src/types/workPack.ts`. Runtime persistence retains these fields through object spreads, but a later type/interface task should promote them into the shared template types so downstream consumers do not require narrowing/casts.
+- Build warnings are pre-existing and outside this task's file scope.
 
-## Review fixes
+## Review Fix
 
-All review findings are addressed in `08d7a1c` (`fix: isolate responsive navigation state`).
+### TDD evidence
 
-### RED evidence
+RED command:
 
-Public-router harness check:
+`npm test -- --watchAll=false src/components/__tests__/WorkPackTemplateForm.test.tsx`
 
-```sh
-npm test -- --watchAll=false src/components/__tests__/Layout.navigation.test.tsx
-```
+Observed: 1 suite failed, with 1 failing regression test and 2 passing tests. The submitted aircraft assignment retained `carryingAssetId: "trailer-1"` after the trailer was deselected; MUI also reported the stale selection as out of range.
 
-After removing the virtual/internal router mock, the suite initially failed to load because CRA's Jest 27 resolver could not resolve the installed conditional-export-only `react-router-dom@7.7.0`. The project now uses the public CommonJS-compatible `react-router-dom@6.30.1`; no router module is mocked by the Layout regression and no internal `node_modules` path is referenced.
+GREEN command:
 
-Responsive-state regression:
+`npm test -- --watchAll=false src/components/__tests__/TruckProfileForm.test.tsx src/components/__tests__/WorkPackTemplateForm.test.tsx src/contexts/__tests__/WorkPackContext.test.tsx src/utils/__tests__/missionWorkPack.test.ts src/components/mission/__tests__/MissionDeploymentWorkPack.test.tsx`
 
-```sh
-npm test -- --watchAll=false src/components/__tests__/Layout.navigation.test.tsx
-```
+Observed: 5 suites passed, 24 tests passed, 0 failed.
 
-Result: failed with 1 passing and 1 failing test. After `matchMedia` switched desktop to mobile, the inactive compact `Primary navigation` remained mounted, proving the two responsive surfaces could retain divergent state.
+Build command:
 
-Drawer-breakpoint regression:
+`npm run build`
 
-```sh
-npm test -- --watchAll=false src/components/__tests__/Layout.navigation.test.tsx
-```
+Observed: exit 0; the production bundle compiled. Existing repository-wide lint warnings and the stale Browserslist database notice remain, with no review-fix compile errors.
 
-Result: failed with 2 passing and 1 failing test. After an open drawer crossed mobile → desktop → mobile, the navigation remounted open because stale `drawerOpen` state survived the desktop interval.
+`git diff --check` completed without errors.
 
-### GREEN evidence
+### Implementation
 
-Layout regression:
+- Deselecting a deployment asset now clears every template aircraft assignment carried by that asset.
+- `assetIds` and `carryingAssetId` now live in the shared work-pack contract used by template input, context persistence, snapshots, fleet/template consumers, and mission template application. Legacy templates still fall back to `truckId`.
+- Fleet deployment-asset iteration now consistently uses asset-neutral variable names.
 
-```sh
-npm test -- --watchAll=false src/components/__tests__/Layout.navigation.test.tsx
-```
+### Commit
 
-Result: passed — 1 suite, 3 tests, 0 warnings. Coverage now proves compact heading/tooltips, exactly one active responsive navigation, persisted expansion state across breakpoint remounts, a closed drawer after returning to mobile, all five mobile headings, Daily operations expanded, Weather routing, and drawer close after navigation.
+`fix: address task 4 review findings`
 
-Release-focused verification:
+### Files
 
-```sh
-npm test -- --watchAll=false src/navigation src/services/__tests__/navigationPreferenceStore.test.ts src/components/navigation src/components/__tests__/Layout.navigation.test.tsx
-```
+- `.superpowers/sdd/task-4-report.md`
+- `src/components/WorkPackTemplateForm.tsx`
+- `src/components/__tests__/WorkPackTemplateForm.test.tsx`
+- `src/components/mission/MissionDeploymentWorkPack.tsx`
+- `src/components/mission/__tests__/MissionDeploymentWorkPack.test.tsx`
+- `src/contexts/__tests__/WorkPackContext.test.tsx`
+- `src/pages/FleetWorkPacks.tsx`
+- `src/types/workPack.ts`
+- `src/utils/workPackTemplates.ts`
 
-Result: passed — 4 suites, 19 tests.
+### Concerns
 
-### Full suite
-
-```sh
-CI=true npm test -- --watchAll=false --runInBand
-```
-
-Result: passed — 56 suites, 224 tests, 0 failures. The existing `security-fixes` tests continue to emit their intentional console diagnostics.
-
-### Build
-
-```sh
-npm run build
-```
-
-Result: exit 0. The production bundle compiled with the repository's existing ESLint warnings, stale Browserslist notice, and bundle-size advisory; no review-fix compile warning was introduced.
-
-### Implementation and self-review
-
-- `Layout` conditionally mounts the compact rail only for `isDesktop` and the drawer only for `!isDesktop`.
-- Desktop activation clears stale drawer-open state before a later mobile remount.
-- Each breakpoint remount creates one `GroupedNavigation` instance, which reloads the latest per-user saved expansion preference.
-- The regression imports the public `react-router-dom` API directly; the prior virtual/internal mock and encoder shim are removed.
-- `react-router-dom` and `react-router` are aligned at `6.30.1`, whose public CommonJS entry is supported by the existing CRA/Jest 27 toolchain. All application router imports use APIs supported by this version.
-- `git diff --cached --check` passed, and the implementation commit contains only `package.json`, `package-lock.json`, `Layout.tsx`, and `Layout.navigation.test.tsx`.
-
-### Superseded concern
-
-The earlier report's local Jest 27/internal React Router shim concern is resolved by the public dependency alignment. The pre-existing build warnings and npm audit inventory remain outside this review-fix scope.
+- The build continues to emit pre-existing warnings outside the Task 4 review-fix files.
