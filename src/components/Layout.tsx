@@ -67,7 +67,11 @@ export default function Layout() {
   };
 
   return (
-    <Box className="ftf-grain" sx={{ minHeight: '100vh', display: 'flex', bgcolor: '#f3f7f3' }}>
+    <Box
+      className="ftf-grain"
+      data-testid="application-shell"
+      sx={{ minHeight: '100vh', display: 'flex', bgcolor: '#f3f7f3' }}
+    >
       {isDesktop && (
         <Box
           component="aside"

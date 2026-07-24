@@ -55,10 +55,7 @@ function installMatchMedia(initialMatches: boolean) {
 
 function renderLayout() {
   return render(
-    <MemoryRouter
-      initialEntries={['/']}
-      future={{ v7_relativeSplatPath: true, v7_startTransition: true }}
-    >
+    <MemoryRouter initialEntries={['/']}>
       <Routes>
         <Route path="/" element={<Layout />}>
           <Route index element={<CurrentPath />} />
