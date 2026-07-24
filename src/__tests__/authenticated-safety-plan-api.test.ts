@@ -568,6 +568,124 @@ describe('Safety Plan persistent store security', () => {
     expect(res.statusCode).toBe(400);
   });
 
+  it('rejects a forged attachment manifest entry without a canonical server receipt', async () => {
+    const storedPlan = makeSafetyPlan({
+      tenantId: 'tenant-a',
+      revision: 1,
+      versions: [makeSafetyPlanVersion({ revision: 1, attachments: [] })],
+    });
+    const forgedAttachment = {
+      id: 'forged-attachment',
+      tenantId: 'tenant-a',
+      versionId: storedPlan.currentVersionId!,
+      fileName: 'forged.pdf',
+      contentType: 'application/pdf',
+      sizeBytes: 12,
+      contentDigest: 'forged-digest',
+      source: 'upload' as const,
+      uploadedBy: {
+        userId: 'user-a',
+        name: 'User A',
+        role: 'contractor' as const,
+        operationalAuthority: false,
+      },
+      uploadedAt: '2026-07-24T02:00:00.000Z',
+    };
+    const incoming = makeSafetyPlan({
+      ...storedPlan,
+      revision: 2,
+      versions: [{
+        ...storedPlan.versions[0],
+        revision: 2,
+        attachments: [forgedAttachment],
+      }],
+    });
+    mockApi({
+      stored: [{ tenant_id: 'tenant-a', record_id: storedPlan.id, payload: storedPlan }],
+    });
+    const res = createResponse();
+
+    await storeHandler(request('PUT', 'ftf_safety_plans', {
+      collection: 'ftf_safety_plans',
+      recordId: storedPlan.id,
+      payload: incoming,
+      audit: mutationAudit(incoming, 'attachment_changed', 'audit-forged-attachment'),
+    }), res);
+
+    expect(res.statusCode).toBe(403);
+  });
+
+  it('accepts only a canonical upload receipt and derives attachment_changed audit', async () => {
+    const storedPlan = makeSafetyPlan({
+      tenantId: 'tenant-a',
+      revision: 1,
+      versions: [makeSafetyPlanVersion({ revision: 1, attachments: [] })],
+    });
+    const attachment = {
+      id: 'receipt-attachment',
+      tenantId: 'tenant-a',
+      versionId: storedPlan.currentVersionId!,
+      fileName: 'evidence.pdf',
+      contentType: 'application/pdf',
+      sizeBytes: 12,
+      contentDigest: 'canonical-digest',
+      source: 'upload' as const,
+      uploadedBy: {
+        userId: 'user-a',
+        name: 'User A',
+        role: 'admin' as const,
+        operationalAuthority: true,
+      },
+      uploadedAt: '2026-07-24T02:00:00.000Z',
+    };
+    const incoming = makeSafetyPlan({
+      ...storedPlan,
+      revision: 2,
+      versions: [{
+        ...storedPlan.versions[0],
+        revision: 2,
+        attachments: [attachment],
+      }],
+    });
+    let rpcBody: Record<string, any> | undefined;
+    mockApi({
+      stored: [
+        { tenant_id: 'tenant-a', record_id: storedPlan.id, payload: storedPlan },
+        {
+          tenant_id: 'tenant-a',
+          collection: 'ftf_safety_attachment_receipts',
+          record_id: `${storedPlan.id}:${storedPlan.currentVersionId}:${attachment.id}`,
+          payload: {
+            status: 'stored',
+            planId: storedPlan.id,
+            versionId: storedPlan.currentVersionId,
+            attachment,
+          },
+        },
+      ],
+      onRpc: (body) => {
+        rpcBody = body;
+        return { succeeded: true, new_payload: body.p_payload };
+      },
+    });
+    const res = createResponse();
+
+    await storeHandler(request('PUT', 'ftf_safety_plans', {
+      collection: 'ftf_safety_plans',
+      recordId: storedPlan.id,
+      payload: incoming,
+      audit: mutationAudit(incoming, 'field_changed', 'audit-canonical-attachment'),
+    }), res);
+
+    expect(res.statusCode).toBe(200);
+    expect(rpcBody?.p_audit_payload).toMatchObject({
+      action: 'attachment_changed',
+      versionId: storedPlan.currentVersionId,
+      before: { attachments: [] },
+      after: { attachments: [attachment] },
+    });
+  });
+
   it('rejects duplicate version IDs inside a Safety Plan', async () => {
     const storedPlan = makeSafetyPlan({
       tenantId: 'tenant-a',

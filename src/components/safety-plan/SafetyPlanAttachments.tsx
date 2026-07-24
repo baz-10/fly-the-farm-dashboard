@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
 import { Alert, Box, Button, LinearProgress, Stack, TextField, Typography } from '@mui/material';
-import type { SafetyPlanAttachment } from '../../types/safetyPlan';
+import type { SafetyPlan, SafetyPlanAttachment } from '../../types/safetyPlan';
 import {
   deleteDraftSafetyPlanAttachment,
   uploadSafetyPlanAttachment,
@@ -23,7 +23,12 @@ interface Props {
   editable: boolean;
   onAttachmentsChange: (attachments: SafetyPlanAttachment[]) => void;
   upload?: (input: UploadSafetyPlanAttachmentInput) => Promise<SafetyPlanAttachment>;
-  remove?: (planId: string, versionId: string, attachmentId: string) => Promise<void>;
+  remove?: (
+    planId: string,
+    versionId: string,
+    attachmentId: string
+  ) => Promise<SafetyPlan | undefined>;
+  onServerPlanChange?: (plan: SafetyPlan) => void;
 }
 
 function makeId(): string {
@@ -41,6 +46,7 @@ export function SafetyPlanAttachments({
   onAttachmentsChange,
   upload = uploadSafetyPlanAttachment,
   remove = deleteDraftSafetyPlanAttachment,
+  onServerPlanChange,
 }: Props) {
   const [description, setDescription] = useState('');
   const [pending, setPending] = useState<PendingUpload[]>([]);
@@ -98,19 +104,23 @@ export function SafetyPlanAttachments({
   const removeAttachment = async (attachment: SafetyPlanAttachment) => {
     setActionError('');
     try {
-      await remove(planId, versionId, attachment.id);
+      const serverPlan = await remove(planId, versionId, attachment.id);
       const nextConfirmed = confirmedLocallyRef.current
         .filter((item) => item.id !== attachment.id);
       confirmedLocallyRef.current = nextConfirmed;
       setConfirmedLocally(nextConfirmed);
-      onAttachmentsChangeRef.current(
-        [
-          ...attachmentsRef.current.filter((item) => item.id !== attachment.id),
-          ...nextConfirmed.filter(
-            (local) => !attachmentsRef.current.some((item) => item.id === local.id),
-          ),
-        ],
-      );
+      if (serverPlan && onServerPlanChange) {
+        onServerPlanChange(serverPlan);
+      } else {
+        onAttachmentsChangeRef.current(
+          [
+            ...attachmentsRef.current.filter((item) => item.id !== attachment.id),
+            ...nextConfirmed.filter(
+              (local) => !attachmentsRef.current.some((item) => item.id === local.id),
+            ),
+          ],
+        );
+      }
     } catch (error) {
       setActionError(error instanceof Error ? error.message : 'Attachment could not be deleted.');
     }

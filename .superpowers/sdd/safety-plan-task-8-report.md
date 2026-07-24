@@ -45,6 +45,30 @@ PDF, JPEG and PNG evidence up to 3 MiB.
 - Added a private `ftf-safety-attachments` bucket migration with no anonymous
   or authenticated-user object policies.
 
+## Independent review hardening
+
+- Generic Safety Plan writes now reject attachment additions without an exact
+  canonical server receipt and reject all direct attachment edits/removals.
+- Upload retries never use blind object upsert. A colliding object is read and
+  accepted only when its SHA-256 digest, MIME type and canonical receipt
+  metadata match; otherwise the gateway returns 409 without overwriting bytes.
+- PDF, JPEG and PNG signatures are verified from magic bytes in addition to
+  MIME type and size.
+- Canonical receipt creation is serialized in a service-role-only database
+  function.
+- Attachment additions derive an `attachment_changed` audit event in the
+  existing atomic Safety Plan compare-and-swap transaction.
+- Draft deletion uses a service-role-only database transaction to remove the
+  manifest entry, advance plan/version revisions, mark the receipt deleted and
+  append the `attachment_changed` audit before object cleanup. Missing object
+  cleanup is idempotent; transient cleanup failures remain retryable while the
+  saved plan never points at missing bytes.
+- Authorization establishes plan visibility before checking version or
+  attachment identifiers, returning uniform not-found responses to inaccessible
+  users.
+- Evidence remains on its immutable approved historical version; controlled
+  revisions begin with an empty manifest and obtain fresh canonical receipts.
+
 ## TDD evidence
 
 The first focused run failed because the policy, endpoint, service, component
@@ -55,8 +79,8 @@ before their implementations were added.
 ## Verification
 
 - Focused policy/API/service/component/editor/local-route and inventory tests:
-  7 files, 53 tests passed.
-- Full suite: 82 files, 515 tests passed.
+  final security-focused run: 8 files, 177 tests passed.
+- Full suite: 82 files, 526 tests passed.
 - `npx tsc --noEmit`: passed.
 - `npm run build`: passed.
 - Node syntax checks for all modified/new server JavaScript: passed.

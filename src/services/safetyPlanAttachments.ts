@@ -1,4 +1,4 @@
-import type { SafetyPlanAttachment } from '../types/safetyPlan';
+import type { SafetyPlan, SafetyPlanAttachment } from '../types/safetyPlan';
 
 export const MAX_SAFETY_ATTACHMENT_BYTES = 3 * 1024 * 1024;
 const ALLOWED_TYPES = new Set(['application/pdf', 'image/jpeg', 'image/png']);
@@ -85,10 +85,14 @@ export async function deleteDraftSafetyPlanAttachment(
   planId: string,
   versionId: string,
   attachmentId: string,
-): Promise<void> {
+): Promise<SafetyPlan | undefined> {
   const response = await fetch(query({ planId, versionId, attachmentId }), {
     method: 'DELETE',
     credentials: 'same-origin',
   });
   if (!response.ok) return readError(response);
+  if (response.status === 204) return undefined;
+  const body = await response.json();
+  if (!body?.plan) throw new Error('Attachment deletion confirmation was invalid.');
+  return body.plan as SafetyPlan;
 }

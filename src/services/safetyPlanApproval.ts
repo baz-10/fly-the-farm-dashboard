@@ -201,7 +201,9 @@ export function reviseSafetyPlan(
     version: nextPlanVersion(current.version),
     status: 'draft',
     revision: 1,
-    attachments: current.attachments.map(clone),
+    // Approved evidence remains on its immutable historical version. A new
+    // controlled draft receives fresh evidence through the attachment gateway.
+    attachments: [],
     acknowledgements: [],
     createdAt: now,
     createdBy: clone(actor),

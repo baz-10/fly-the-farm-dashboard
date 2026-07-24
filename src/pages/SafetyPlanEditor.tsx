@@ -140,6 +140,7 @@ export default function SafetyPlanEditor({
     approvePlan,
     acknowledgePlan,
     revisePlan,
+    acceptServerPlan,
   } = useSafetyPlans();
   const storedPlan = plans.find((plan) => plan.id === planId);
   const [draft, setDraft] = useState<SafetyPlan | undefined>(storedPlan);
@@ -339,6 +340,10 @@ export default function SafetyPlanEditor({
           attachments={version.attachments}
           editable={draft.status === 'draft' && version.status === 'draft'}
           onAttachmentsChange={updateAttachments}
+          onServerPlanChange={(serverPlan) => {
+            setDraft(serverPlan);
+            acceptServerPlan(serverPlan);
+          }}
         />
       </Card>
     </Stack>,

@@ -777,6 +777,69 @@ function assertSafetyPlanTransition({ actor, stored, incoming, recordId }) {
   }
 }
 
+function attachmentReceiptId(planId, versionId, attachmentId) {
+  return `${planId}:${versionId}:${attachmentId}`;
+}
+
+async function assertServerControlledAttachmentTransition(actor, stored, incoming) {
+  const incomingVersions = Array.isArray(incoming?.versions) ? incoming.versions : [];
+  if (!stored) {
+    if (incomingVersions.some((version) => (version?.attachments || []).length > 0)) {
+      throw createHttpError(403, 'Safety Plan attachment manifests are server-managed.');
+    }
+    return;
+  }
+
+  const storedVersions = new Map(
+    (stored.versions || []).map((version) => [version?.id, version])
+  );
+  for (const incomingVersion of incomingVersions) {
+    const prior = storedVersions.get(incomingVersion?.id);
+    const priorById = new Map(
+      (prior?.attachments || []).map((attachment) => [attachment?.id, attachment])
+    );
+    const incomingById = new Map(
+      (incomingVersion?.attachments || []).map((attachment) => [attachment?.id, attachment])
+    );
+
+    for (const priorAttachment of prior?.attachments || []) {
+      const next = incomingById.get(priorAttachment?.id);
+      if (!next || !valuesEqual(next, priorAttachment)) {
+        throw createHttpError(
+          403,
+          'Safety Plan attachments must be deleted through the attachment gateway.'
+        );
+      }
+    }
+
+    for (const attachment of incomingVersion?.attachments || []) {
+      if (priorById.has(attachment?.id)) continue;
+      if (
+        incomingVersion.id !== incoming.currentVersionId
+        || incomingVersion.status !== 'draft'
+        || attachment?.tenantId !== actor.tenantId
+        || attachment?.versionId !== incomingVersion.id
+      ) {
+        throw createHttpError(403, 'Safety Plan attachment provenance is invalid.');
+      }
+      const receipt = await getRecord(
+        actor.tenantId,
+        'ftf_safety_attachment_receipts',
+        attachmentReceiptId(incoming.id, incomingVersion.id, attachment.id)
+      );
+      if (
+        !receipt
+        || receipt.status !== 'stored'
+        || receipt.planId !== incoming.id
+        || receipt.versionId !== incomingVersion.id
+        || !valuesEqual(receipt.attachment, attachment)
+      ) {
+        throw createHttpError(403, 'Safety Plan attachment receipt is invalid.');
+      }
+    }
+  }
+}
+
 function assertSafetyAuditAction(actor, plan, event) {
   if (!SAFETY_PLAN_ACTIONS.has(event.action)) {
     throw createHttpError(400, 'Safety audit action is invalid.');
@@ -896,6 +959,17 @@ function deriveSafetyPlanMutationAudit(stored, incoming, sourceRefreshMetadata) 
       versionId: incoming.currentVersionId,
       before: sourceRefreshMetadata.before,
       after: sourceRefreshMetadata.after,
+    };
+  }
+
+  if (
+    !valuesEqual(storedCurrent?.attachments || [], incomingCurrent?.attachments || [])
+  ) {
+    return {
+      action: 'attachment_changed',
+      versionId: incoming.currentVersionId,
+      before: { attachments: storedCurrent?.attachments || [] },
+      after: { attachments: incomingCurrent?.attachments || [] },
     };
   }
 
@@ -1699,6 +1773,7 @@ module.exports = async function handler(req, res) {
       let safetyAuditEvent = null;
       if (collection === SAFETY_PLAN_COLLECTION) {
         payload = normaliseSafetyPlanProvenance(user, storedPayload, body.payload, now);
+        await assertServerControlledAttachmentTransition(user, storedPayload, payload);
         const sourceRefresh = consumeSourceRefreshIntent(storedPayload, payload);
         payload = sourceRefresh.payload;
         assertSafetyPlanTransition({

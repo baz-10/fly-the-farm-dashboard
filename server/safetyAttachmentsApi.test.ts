@@ -41,7 +41,7 @@ function request(method: string, headers: Record<string, string> = {}, query = {
     },
     query,
     [Symbol.asyncIterator]: async function* () {
-      yield Buffer.from('pdf');
+      yield Buffer.from('%PDF-');
     },
   };
 }
@@ -55,13 +55,25 @@ function dependencies(overrides: Record<string, unknown> = {}) {
       role: 'contractor',
     }),
     loadPlan: vi.fn().mockResolvedValue(plan()),
+    loadReceipt: vi.fn().mockResolvedValue(null),
     putObject: vi.fn().mockResolvedValue(undefined),
     getObject: vi.fn().mockResolvedValue({
-      body: Buffer.from('pdf'),
+      body: Buffer.from('%PDF-'),
       contentType: 'application/pdf',
       contentLength: 3,
     }),
     deleteObject: vi.fn().mockResolvedValue(undefined),
+    createReceipt: vi.fn(async (_tenantId: string, _plan: unknown, attachment: unknown) => attachment),
+    removeAttachment: vi.fn().mockResolvedValue({
+      changed: true,
+      attachment: {
+        id: 'a1',
+        tenantId: 'tenant-a',
+        versionId: 'v1',
+        fileName: 'proof.pdf',
+      },
+      plan: plan(),
+    }),
     now: () => '2026-07-24T00:00:00.000Z',
     ...overrides,
   };
@@ -73,7 +85,7 @@ describe('/api/safety-attachments security boundary', () => {
     const handler = createSafetyAttachmentHandler(deps);
     const req = request('POST', {
       'content-type': 'application/pdf',
-      'content-length': '3',
+      'content-length': '5',
       'x-safety-plan-id': 'plan-a',
       'x-safety-plan-version-id': 'v1',
       'x-attachment-id': 'a1',
@@ -88,7 +100,103 @@ describe('/api/safety-attachments security boundary', () => {
       expect.any(Buffer),
       'application/pdf',
     );
+    expect(deps.createReceipt).toHaveBeenCalled();
     expect(JSON.stringify(res.body)).not.toContain('SUPABASE');
+  });
+
+  it.each([
+    ['application/pdf', Buffer.from('not-pdf')],
+    ['image/jpeg', Buffer.from([0xff, 0xd8, 0x00])],
+    ['image/png', Buffer.from('not-png')],
+  ])('rejects spoofed %s content using magic bytes', async (contentType, body) => {
+    const deps = dependencies();
+    const req = request('POST', {
+      'content-type': contentType,
+      'content-length': String(body.length),
+      'x-safety-plan-id': 'plan-a',
+      'x-safety-plan-version-id': 'v1',
+      'x-attachment-id': 'a1',
+      'x-file-name': 'proof.pdf',
+    });
+    req[Symbol.asyncIterator] = async function* () { yield body; };
+    const res = response();
+    await createSafetyAttachmentHandler(deps)(req, res);
+    expect(res.statusCode).toBe(415);
+    expect(deps.putObject).not.toHaveBeenCalled();
+  });
+
+  it('never overwrites an attachment id collision with different bytes', async () => {
+    const collision = Object.assign(new Error('exists'), { statusCode: 409 });
+    const deps = dependencies({
+      putObject: vi.fn().mockRejectedValue(collision),
+      getObject: vi.fn().mockResolvedValue({
+        body: Buffer.from('%PDF-different'),
+        contentType: 'application/pdf',
+      }),
+    });
+    const body = Buffer.from('%PDF-original');
+    const req = request('POST', {
+      'content-type': 'application/pdf',
+      'content-length': String(body.length),
+      'x-safety-plan-id': 'plan-a',
+      'x-safety-plan-version-id': 'v1',
+      'x-attachment-id': 'a1',
+      'x-file-name': 'proof.pdf',
+    });
+    req[Symbol.asyncIterator] = async function* () { yield body; };
+    const res = response();
+    await createSafetyAttachmentHandler(deps)(req, res);
+    expect(res.statusCode).toBe(409);
+    expect(deps.createReceipt).not.toHaveBeenCalled();
+  });
+
+  it('recovers an interrupted same-byte upload without overwriting storage', async () => {
+    const collision = Object.assign(new Error('exists'), { statusCode: 409 });
+    const body = Buffer.from('%PDF-original');
+    const deps = dependencies({
+      putObject: vi.fn().mockRejectedValue(collision),
+      getObject: vi.fn().mockResolvedValue({
+        body,
+        contentType: 'application/pdf',
+      }),
+    });
+    const req = request('POST', {
+      'content-type': 'application/pdf',
+      'content-length': String(body.length),
+      'x-safety-plan-id': 'plan-a',
+      'x-safety-plan-version-id': 'v1',
+      'x-attachment-id': 'a1',
+      'x-file-name': 'proof.pdf',
+    });
+    req[Symbol.asyncIterator] = async function* () { yield body; };
+    const res = response();
+    await createSafetyAttachmentHandler(deps)(req, res);
+    expect(res.statusCode).toBe(201);
+    expect(deps.createReceipt).toHaveBeenCalledTimes(1);
+    expect(deps.putObject).toHaveBeenCalledTimes(1);
+  });
+
+  it('never reuses an attachment id whose canonical receipt was deleted', async () => {
+    const body = Buffer.from('%PDF-original');
+    const deps = dependencies({
+      loadReceipt: vi.fn().mockResolvedValue({
+        status: 'deleted',
+        attachment: { id: 'a1' },
+      }),
+    });
+    const req = request('POST', {
+      'content-type': 'application/pdf',
+      'content-length': String(body.length),
+      'x-safety-plan-id': 'plan-a',
+      'x-safety-plan-version-id': 'v1',
+      'x-attachment-id': 'a1',
+      'x-file-name': 'proof.pdf',
+    });
+    req[Symbol.asyncIterator] = async function* () { yield body; };
+    const res = response();
+    await createSafetyAttachmentHandler(deps)(req, res);
+    expect(res.statusCode).toBe(409);
+    expect(deps.putObject).not.toHaveBeenCalled();
   });
 
   it('fails closed when storage returns a plan from another tenant', async () => {
@@ -108,7 +216,7 @@ describe('/api/safety-attachments security boundary', () => {
     await createSafetyAttachmentHandler(deps)(
       request('POST', {
         'content-type': 'application/pdf',
-        'content-length': '3',
+        'content-length': '5',
         'x-safety-plan-id': 'plan-a',
         'x-safety-plan-version-id': 'old-v',
         'x-attachment-id': 'a1',
@@ -116,7 +224,7 @@ describe('/api/safety-attachments security boundary', () => {
       }),
       res,
     );
-    expect(res.statusCode).toBe(409);
+    expect(res.statusCode).toBe(404);
     expect(deps.putObject).not.toHaveBeenCalled();
   });
 
@@ -147,6 +255,90 @@ describe('/api/safety-attachments security boundary', () => {
     );
     expect(res.statusCode).toBe(403);
     expect(deps.deleteObject).not.toHaveBeenCalled();
+  });
+
+  it('removes the manifest and audit atomically before deleting object bytes', async () => {
+    const stored = plan();
+    stored.versions[0].attachments = [{
+      id: 'a1',
+      tenantId: 'tenant-a',
+      versionId: 'v1',
+      fileName: 'proof.pdf',
+      contentType: 'application/pdf',
+    }];
+    const order: string[] = [];
+    const deps = dependencies({
+      loadPlan: vi.fn().mockResolvedValue(stored),
+      removeAttachment: vi.fn(async () => {
+        order.push('manifest');
+        return {
+          changed: true,
+          attachment: stored.versions[0].attachments[0],
+          plan: { ...stored, revision: 2 },
+        };
+      }),
+      deleteObject: vi.fn(async () => { order.push('object'); }),
+    });
+    const res = response();
+    await createSafetyAttachmentHandler(deps)(
+      request('DELETE', {}, { planId: 'plan-a', versionId: 'v1', attachmentId: 'a1' }),
+      res,
+    );
+    expect(order).toEqual(['manifest', 'object']);
+    expect(res.body).toMatchObject({ changed: true, plan: { revision: 2 } });
+  });
+
+  it('retries an object deletion idempotently after the atomic manifest removal succeeded', async () => {
+    const stored = plan();
+    const attachment = {
+      id: 'a1',
+      tenantId: 'tenant-a',
+      versionId: 'v1',
+      fileName: 'proof.pdf',
+      contentType: 'application/pdf',
+    };
+    const removeAttachment = vi.fn().mockResolvedValue({
+      changed: false,
+      attachment,
+      plan: stored,
+    });
+    const deps = dependencies({
+      removeAttachment,
+      deleteObject: vi.fn()
+        .mockRejectedValueOnce(Object.assign(new Error('offline'), {
+          statusCode: 503,
+          publicMessage: 'Attachment cleanup is pending retry.',
+        }))
+        .mockRejectedValueOnce(Object.assign(new Error('already absent'), {
+          statusCode: 404,
+        })),
+    });
+    const first = response();
+    const req = () => request(
+      'DELETE',
+      {},
+      { planId: 'plan-a', versionId: 'v1', attachmentId: 'a1' },
+    );
+    await createSafetyAttachmentHandler(deps)(req(), first);
+    expect(first.statusCode).toBe(503);
+    const second = response();
+    await createSafetyAttachmentHandler(deps)(req(), second);
+    expect(second.statusCode).toBe(200);
+    expect(removeAttachment).toHaveBeenCalledTimes(2);
+  });
+
+  it('authorizes visibility before returning uniform not-found version errors', async () => {
+    const unassigned = plan();
+    unassigned.versions[0].createdBy = { userId: 'someone-else' };
+    unassigned.versions[0].sourceSnapshot.crew = [];
+    const deps = dependencies({ loadPlan: vi.fn().mockResolvedValue(unassigned) });
+    const res = response();
+    await createSafetyAttachmentHandler(deps)(
+      request('GET', {}, { planId: 'plan-a', versionId: 'secret-version' }),
+      res,
+    );
+    expect(res.statusCode).toBe(404);
+    expect(res.body).toEqual({ error: 'Safety Plan attachment was not found.' });
   });
 
   it('filters malformed cross-tenant manifest entries when listing', async () => {
@@ -185,7 +377,7 @@ describe('/api/safety-attachments security boundary', () => {
       }),
       request('POST', {
         'content-type': 'text/html',
-        'content-length': '3',
+        'content-length': '5',
         'x-safety-plan-id': 'plan-a',
         'x-safety-plan-version-id': 'v1',
         'x-attachment-id': 'a1',
@@ -194,7 +386,7 @@ describe('/api/safety-attachments security boundary', () => {
       {
         ...request('POST', {
           'content-type': 'application/pdf',
-          'content-length': '3',
+          'content-length': '5',
           'x-safety-plan-id': 'plan-a',
           'x-safety-plan-version-id': 'v1',
           'x-attachment-id': 'a1',
@@ -220,13 +412,13 @@ describe('/api/safety-attachments security boundary', () => {
     const req = {
       ...request('POST', {
         'content-type': 'application/pdf',
-        'content-length': '3',
+        'content-length': '5',
         'x-safety-plan-id': 'plan-a',
         'x-safety-plan-version-id': 'v1',
         'x-attachment-id': 'a1',
         'x-file-name': 'proof.pdf',
       }),
-      body: Buffer.from('pdf'),
+      body: Buffer.from('%PDF-'),
       [Symbol.asyncIterator]: async function* () {
         throw new Error('the consumed request stream must not be read');
       },
@@ -241,7 +433,7 @@ describe('/api/safety-attachments security boundary', () => {
     const deps = dependencies();
     const req = request('POST', {
       'content-type': 'application/pdf',
-      'content-length': '3',
+      'content-length': '5',
       'x-safety-plan-id': 'plan-a',
       'x-safety-plan-version-id': 'v1',
       'x-attachment-id': 'a1',

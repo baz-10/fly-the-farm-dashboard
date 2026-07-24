@@ -62,6 +62,7 @@ export interface SafetyPlanContextValue {
   approvePlan(planId: string, expectedRevision: number, actor: SafetyPlanActor): Promise<void>;
   acknowledgePlan(planId: string, expectedRevision: number, actor: SafetyPlanActor): Promise<void>;
   revisePlan(planId: string, expectedRevision: number, actor: SafetyPlanActor): Promise<void>;
+  acceptServerPlan(plan: SafetyPlan): void;
 }
 
 interface SafetyPlanProviderProps {
@@ -772,6 +773,19 @@ export function SafetyPlanProvider({
     planId: string, expectedRevision: number, actor: SafetyPlanActor
   ) => runControlledTransition('revise', planId, expectedRevision, actor), [runControlledTransition]);
 
+  const acceptServerPlan = useCallback((plan: SafetyPlan) => {
+    clearPlanTimer(plan.id);
+    pendingByPlanRef.current.delete(plan.id);
+    failedByPlanRef.current.delete(plan.id);
+    retryReservationsRef.current.delete(plan.id);
+    activeSaveByPlanRef.current.get(plan.id)?.controller.abort();
+    epochByPlanRef.current.set(plan.id, (epochByPlanRef.current.get(plan.id) || 0) + 1);
+    confirmedPlansRef.current.set(plan.id, plan);
+    setPlans((current) => replacePlan(current, plan));
+    refreshPendingRetryIds();
+    setStatusForPlan(plan.id, 'saved');
+  }, [clearPlanTimer, refreshPendingRetryIds, setStatusForPlan]);
+
   const value = useMemo<SafetyPlanContextValue>(() => ({
     plans,
     saveState,
@@ -787,8 +801,10 @@ export function SafetyPlanProvider({
     approvePlan,
     acknowledgePlan,
     revisePlan,
+    acceptServerPlan,
   }), [
     acknowledgePlan,
+    acceptServerPlan,
     approvePlan,
     deleteDraft,
     error,

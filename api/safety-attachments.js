@@ -67,22 +67,57 @@ function contractorAssigned(user, version) {
 
 function assertPlanAccess(user, plan, versionId, write = false) {
   if (!plan || plan.tenantId !== user.tenantId) {
-    throw createHttpError(404, 'Safety Plan was not found.');
+    throw createHttpError(404, 'Safety Plan attachment was not found.');
   }
   if (!['admin', 'contractor'].includes(user.role)) {
     throw createHttpError(403, 'This account cannot access Safety Plan attachments.');
   }
   const version = currentVersion(plan);
-  if (!version || version.id !== versionId) {
-    throw createHttpError(409, 'Attachments must use the current Safety Plan version.');
-  }
   if (user.role === 'contractor' && !contractorAssigned(user, version)) {
-    throw createHttpError(403, 'You are not assigned to this Safety Plan.');
+    throw createHttpError(404, 'Safety Plan attachment was not found.');
+  }
+  if (!version || version.id !== versionId) {
+    throw createHttpError(404, 'Safety Plan attachment was not found.');
   }
   if (write && (plan.status !== 'draft' || version.status !== 'draft')) {
     throw createHttpError(403, 'Only draft Safety Plan attachments can be changed.');
   }
   return version;
+}
+
+function hasExpectedMagicBytes(contentType, body) {
+  if (contentType === 'application/pdf') {
+    return body.length >= 5 && body.subarray(0, 5).equals(Buffer.from('%PDF-'));
+  }
+  if (contentType === 'image/jpeg') {
+    return body.length >= 3
+      && body[0] === 0xff
+      && body[1] === 0xd8
+      && body[2] === 0xff;
+  }
+  if (contentType === 'image/png') {
+    const signature = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    return body.length >= signature.length && body.subarray(0, signature.length).equals(signature);
+  }
+  return false;
+}
+
+function attachmentIdentityMatches(left, right) {
+  return Boolean(left && right)
+    && [
+      'id',
+      'tenantId',
+      'versionId',
+      'fileName',
+      'contentType',
+      'sizeBytes',
+      'contentDigest',
+      'source',
+      'description',
+    ].every((key) => (left[key] ?? null) === (right[key] ?? null))
+    && ['userId', 'name', 'role', 'operationalAuthority'].every(
+      (key) => (left.uploadedBy?.[key] ?? null) === (right.uploadedBy?.[key] ?? null)
+    );
 }
 
 async function readRawBody(req, declaredLength) {
@@ -129,6 +164,20 @@ async function loadPlan(tenantId, planId) {
   return Array.isArray(rows) ? rows[0]?.payload || null : null;
 }
 
+async function loadReceipt(tenantId, planId, versionId, attachmentId) {
+  const recordId = `${planId}:${versionId}:${attachmentId}`;
+  const rows = await supabaseRequest(
+    `rest/v1/ftf_store?tenant_id=eq.${encodeURIComponent(tenantId)}`
+      + '&collection=eq.ftf_safety_attachment_receipts'
+      + `&record_id=eq.${encodeURIComponent(recordId)}&select=tenant_id,payload&limit=1`,
+    { publicMessage: 'Attachment receipt could not be loaded.' },
+  );
+  const row = Array.isArray(rows)
+    ? rows.find((candidate) => candidate?.tenant_id === tenantId)
+    : null;
+  return row?.payload || null;
+}
+
 async function putObject(path, body, contentType) {
   await supabaseRawRequest(
     `storage/v1/object/${BUCKET}/${encodeObjectPath(path)}`,
@@ -137,14 +186,60 @@ async function putObject(path, body, contentType) {
       headers: {
         'Content-Type': contentType,
         'Content-Length': String(body.length),
-        // A retry reuses the same cryptographically random attachment id.
-        // Upsert makes an upload idempotent when the browser lost the first response.
-        'x-upsert': 'true',
+        'x-upsert': 'false',
       },
       body,
       publicMessage: 'Attachment could not be stored.',
     },
   );
+}
+
+async function createReceipt(tenantId, plan, attachment, objectPath) {
+  const rows = await supabaseRequest('rest/v1/rpc/ftf_create_safety_attachment_receipt', {
+    method: 'POST',
+    body: JSON.stringify({
+      p_tenant_id: tenantId,
+      p_plan_id: plan.id,
+      p_version_id: plan.currentVersionId,
+      p_attachment_id: attachment.id,
+      p_attachment: attachment,
+      p_object_path: objectPath,
+    }),
+    publicMessage: 'Attachment receipt could not be recorded.',
+  });
+  const receipt = Array.isArray(rows) ? rows[0] : rows;
+  if (!receipt?.attachment || !attachmentIdentityMatches(receipt.attachment, attachment)) {
+    throw createHttpError(409, 'Attachment id is already used by different evidence.');
+  }
+  return receipt.attachment;
+}
+
+async function removeAttachment(tenantId, plan, versionId, attachmentId, actor) {
+  const occurredAt = new Date().toISOString();
+  const auditId = require('node:crypto').randomUUID();
+  const rows = await supabaseRequest('rest/v1/rpc/ftf_remove_safety_attachment', {
+    method: 'POST',
+    body: JSON.stringify({
+      p_tenant_id: tenantId,
+      p_plan_id: plan.id,
+      p_version_id: versionId,
+      p_attachment_id: attachmentId,
+      p_actor: {
+        userId: actor.id,
+        name: actor.name,
+        role: actor.role,
+        operationalAuthority: actor.role === 'admin' || actor.safetyPlanAuthority === true,
+      },
+      p_audit_id: auditId,
+      p_occurred_at: occurredAt,
+    }),
+    publicMessage: 'Attachment manifest could not be updated.',
+  });
+  const result = Array.isArray(rows) ? rows[0] : rows;
+  if (!result?.attachment || !result?.plan) {
+    throw createHttpError(404, 'Safety Plan attachment was not found.');
+  }
+  return result;
 }
 
 async function getObject(path) {
@@ -170,9 +265,12 @@ function createSafetyAttachmentHandler(overrides = {}) {
   const deps = {
     authenticate: authenticateRequest,
     loadPlan,
+    loadReceipt,
     putObject,
     getObject,
     deleteObject,
+    createReceipt,
+    removeAttachment,
     now: () => new Date().toISOString(),
     ...overrides,
   };
@@ -213,6 +311,9 @@ function createSafetyAttachmentHandler(overrides = {}) {
         const fileName = sanitiseAttachmentFileName(header(req, 'x-file-name'));
         const description = header(req, 'x-attachment-description').slice(0, 1000);
         const body = await readRawBody(req, declaredLength);
+        if (!hasExpectedMagicBytes(contentType, body)) {
+          throw createHttpError(415, 'Attachment content does not match its PDF or image type.');
+        }
         const path = buildAttachmentPath(
           user.tenantId,
           planId,
@@ -220,26 +321,63 @@ function createSafetyAttachmentHandler(overrides = {}) {
           attachmentId,
           fileName,
         );
-        await deps.putObject(path, body, contentType);
-        return res.status(201).json({
-          attachment: {
-            id: attachmentId,
-            tenantId: user.tenantId,
-            versionId,
-            fileName,
-            contentType,
-            sizeBytes: body.length,
-            contentDigest: createHash('sha256').update(body).digest('hex'),
-            source: 'upload',
-            ...(description ? { description } : {}),
-            uploadedBy: {
-              userId: user.id,
-              name: user.name,
-              role: user.role,
-              operationalAuthority: user.role === 'admin' || user.safetyPlanAuthority === true,
-            },
-            uploadedAt: deps.now(),
+        const candidate = {
+          id: attachmentId,
+          tenantId: user.tenantId,
+          versionId,
+          fileName,
+          contentType,
+          sizeBytes: body.length,
+          contentDigest: createHash('sha256').update(body).digest('hex'),
+          source: 'upload',
+          ...(description ? { description } : {}),
+          uploadedBy: {
+            userId: user.id,
+            name: user.name,
+            role: user.role,
+            operationalAuthority: user.role === 'admin' || user.safetyPlanAuthority === true,
           },
+          uploadedAt: deps.now(),
+        };
+        const existing = (currentVersion(plan)?.attachments || [])
+          .find((attachment) => attachment?.id === attachmentId);
+        if (existing) {
+          if (!attachmentIdentityMatches(existing, candidate)) {
+            throw createHttpError(409, 'Attachment id is already used by different evidence.');
+          }
+          return res.status(200).json({ attachment: existing });
+        }
+        const existingReceipt = await deps.loadReceipt(
+          user.tenantId,
+          planId,
+          versionId,
+          attachmentId,
+        );
+        if (existingReceipt) {
+          if (
+            existingReceipt.status !== 'stored'
+            || !attachmentIdentityMatches(existingReceipt.attachment, candidate)
+          ) {
+            throw createHttpError(409, 'Attachment id is already used by different evidence.');
+          }
+          return res.status(200).json({ attachment: existingReceipt.attachment });
+        }
+        try {
+          await deps.putObject(path, body, contentType);
+        } catch (error) {
+          if (error?.statusCode !== 409) throw error;
+          const storedObject = await deps.getObject(path);
+          const existingDigest = createHash('sha256').update(storedObject.body).digest('hex');
+          if (
+            existingDigest !== candidate.contentDigest
+            || storedObject.contentType !== contentType
+          ) {
+            throw createHttpError(409, 'Attachment id is already used by different evidence.');
+          }
+        }
+        const attachment = await deps.createReceipt(user.tenantId, plan, candidate, path);
+        return res.status(201).json({
+          attachment,
         });
       }
 
@@ -257,9 +395,38 @@ function createSafetyAttachmentHandler(overrides = {}) {
       }
 
       const attachmentId = exactQueryValue(req.query?.attachmentId, 'Attachment id');
+
+      if (req.method === 'DELETE') {
+        const result = await deps.removeAttachment(
+          user.tenantId,
+          plan,
+          versionId,
+          attachmentId,
+          user,
+        );
+        const attachment = result.attachment;
+        const deletePath = buildAttachmentPath(
+          user.tenantId,
+          planId,
+          versionId,
+          attachmentId,
+          attachment.fileName,
+        );
+        try {
+          await deps.deleteObject(deletePath);
+        } catch (error) {
+          if (error?.statusCode !== 404) throw error;
+        }
+        return res.status(200).json({
+          ok: true,
+          changed: result.changed === true,
+          plan: result.plan,
+        });
+      }
+
       const attachment = (version.attachments || []).find((item) => item?.id === attachmentId);
       if (!attachment || attachment.tenantId !== user.tenantId || attachment.versionId !== versionId) {
-        throw createHttpError(404, 'Attachment was not found.');
+        throw createHttpError(404, 'Safety Plan attachment was not found.');
       }
       const path = buildAttachmentPath(
         user.tenantId,
@@ -278,10 +445,6 @@ function createSafetyAttachmentHandler(overrides = {}) {
           `attachment; filename="${sanitiseAttachmentFileName(attachment.fileName).replace(/"/g, '')}"`,
         );
         return res.status(200).end(object.body);
-      }
-      if (req.method === 'DELETE') {
-        await deps.deleteObject(path);
-        return res.status(204).end();
       }
       res.setHeader('Allow', 'GET,POST,DELETE');
       throw createHttpError(405, 'Method not allowed.');

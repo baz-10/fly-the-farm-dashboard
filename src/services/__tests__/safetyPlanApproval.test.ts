@@ -105,8 +105,24 @@ describe('Safety Plan controlled lifecycle', () => {
   });
 
   it('creates a new draft instead of editing an approved version', async () => {
+    const planWithEvidence = makeSafetyPlan({
+      versions: [makeSafetyPlanVersion({
+        attachments: [{
+          id: 'historical-evidence',
+          tenantId: 'tenant-1',
+          versionId: 'safety-plan-version-1',
+          fileName: 'approved.pdf',
+          contentType: 'application/pdf',
+          sizeBytes: 12,
+          contentDigest: 'digest',
+          source: 'upload',
+          uploadedBy: admin,
+          uploadedAt: NOW,
+        }],
+      })],
+    });
     const approved = await approveSafetyPlan(
-      submitSafetyPlan(makeSafetyPlan(), pic, NOW),
+      submitSafetyPlan(planWithEvidence, pic, NOW),
       admin,
       NOW
     );
@@ -114,6 +130,7 @@ describe('Safety Plan controlled lifecycle', () => {
     expect(revised.versions).toHaveLength(2);
     expect(revised.versions[0].status).toBe('approved');
     expect(revised.versions[1]).toMatchObject({ status: 'draft', version: '1.1' });
+    expect(revised.versions[1].attachments).toEqual([]);
     expect(Object.isFrozen(revised.versions[1])).toBe(false);
   });
 
