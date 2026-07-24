@@ -59,6 +59,7 @@ export function makeSafetyPlan(
     id: 'safety-plan-1',
     jobId: 'job-1',
     tenantId: 'tenant-1',
+    revision: 1,
     status: 'draft',
     currentVersionId: currentVersion.id,
     versions: [currentVersion],

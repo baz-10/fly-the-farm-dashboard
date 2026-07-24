@@ -124,6 +124,7 @@ export interface SafetyPlanAuditEvent {
     | 'shared'
     | 'pdf_generated'
     | 'draft_deleted'
+    | 'draft_restored'
     | 'not_required_selected';
   occurredAt: string;
   before?: Record<string, unknown>;
@@ -154,12 +155,16 @@ export interface SafetyPlan {
   id: string;
   jobId: string;
   tenantId: string;
+  /** Optimistic-concurrency integer for the complete plan record. */
+  revision: number;
   status: SafetyPlanStatus;
   currentVersionId?: string;
   versions: SafetyPlanVersion[];
   notRequiredReason?: string;
   notRequiredActor?: SafetyPlanActor;
   notRequiredSelectedAt?: string;
+  deletedAt?: string;
+  deletedBy?: SafetyPlanActor;
   createdAt: string;
   updatedAt: string;
 }

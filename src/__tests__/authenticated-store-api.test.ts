@@ -129,8 +129,8 @@ describe('authenticated persistent store API', () => {
           tier: 'free',
         }]);
       }
-      if (url.includes('tenant_id=eq.tenant-a')) return response(200, [{ payload: { id: 'mission-a' } }]);
-      if (url.includes('tenant_id=eq.tenant-b')) return response(200, [{ payload: { id: 'mission-b' } }]);
+      if (url.includes('tenant_id=eq.tenant-a')) return response(200, [{ tenant_id: 'tenant-a', payload: { id: 'mission-a' } }]);
+      if (url.includes('tenant_id=eq.tenant-b')) return response(200, [{ tenant_id: 'tenant-b', payload: { id: 'mission-b' } }]);
       return response(500, { message: 'unexpected request' });
     }) as any;
 
@@ -272,7 +272,7 @@ describe('authenticated persistent store API', () => {
       if (url.includes('/rest/v1/ftf_profiles')) return response(200, [{ user_id: 'user-a', tenant_id: 'tenant-a', role: 'contractor', name: 'User A', tier: 'free' }]);
       if (url.includes('/rest/v1/ftf_store')) {
         if (url.includes('collection=eq.ftf_missions')) {
-          return response(200, [{ payload: {
+          return response(200, [{ tenant_id: 'tenant-a', payload: {
             id: 'mission-a',
             missionName: 'Operational mission',
             deploymentWorkPack: financialPayload,
@@ -280,7 +280,7 @@ describe('authenticated persistent store API', () => {
             financialActual: { totalActualCost: 888, profitMargin: 42 },
           } }]);
         }
-        return response(200, [{ payload: { assets: financialPayload.assets, templates: [], snapshots: [] } }]);
+        return response(200, [{ tenant_id: 'tenant-a', payload: { assets: financialPayload.assets, templates: [], snapshots: [] } }]);
       }
       return response(500, { message: `unexpected request ${url} ${(options.method || 'GET')}` });
     }) as any;
@@ -306,7 +306,7 @@ describe('authenticated persistent store API', () => {
     global.fetch = vi.fn(async (url: string) => {
       if (url.endsWith('/auth/v1/user')) return response(200, { id: 'user-a', email: 'user-a@example.com' });
       if (url.includes('/rest/v1/ftf_profiles')) return response(200, [{ user_id: 'user-a', tenant_id: 'tenant-a', role: 'contractor', name: 'User A', tier: 'free' }]);
-      if (url.includes('/rest/v1/ftf_store')) return response(200, [{ payload: {
+      if (url.includes('/rest/v1/ftf_store')) return response(200, [{ tenant_id: 'tenant-a', payload: {
         assets: [], schedules: [], auditEvents: [], records: [{ id: 'record-1', title: 'Service', cost: 850 }],
       } }]);
       return response(500, { message: 'unexpected request' });
@@ -328,8 +328,8 @@ describe('authenticated persistent store API', () => {
       if (url.endsWith('/auth/v1/user')) return response(200, { id: 'admin-a', email: 'admin@example.com' });
       if (url.includes('/rest/v1/ftf_profiles')) return response(200, [{ user_id: 'admin-a', tenant_id: 'tenant-a', role: 'admin', name: 'Admin', tier: 'paid' }]);
       if (url.includes('/rest/v1/ftf_store')) {
-        if (url.includes('collection=eq.ftf_missions')) return response(200, [{ payload: { id: 'mission-a', deploymentWorkPack: financialPayload } }]);
-        return response(200, [{ payload: { assets: financialPayload.assets } }]);
+        if (url.includes('collection=eq.ftf_missions')) return response(200, [{ tenant_id: 'tenant-a', payload: { id: 'mission-a', deploymentWorkPack: financialPayload } }]);
+        return response(200, [{ tenant_id: 'tenant-a', payload: { assets: financialPayload.assets } }]);
       }
       return response(500, { message: 'unexpected request' });
     }) as any;
@@ -351,7 +351,7 @@ describe('authenticated persistent store API', () => {
       if (url.endsWith('/auth/v1/user')) return response(200, { id: 'user-a', email: 'user-a@example.com' });
       if (url.includes('/rest/v1/ftf_profiles')) return response(200, [{ user_id: 'user-a', tenant_id: 'tenant-a', role: 'contractor', name: 'User A', tier: 'free' }]);
       if (url.includes('/rest/v1/ftf_store') && (!options.method || options.method === 'GET')) {
-        return response(200, [{ payload: {
+        return response(200, [{ tenant_id: 'tenant-a', payload: {
           id: 'mission-a',
           deploymentWorkPack: { assets: [{ id: 'truck-1', costs: { costPerDay: 450 } }], estimatedDeploymentCost: 1250 },
           financialEstimate: { totalEstimatedCost: 2222 },
@@ -388,7 +388,7 @@ describe('authenticated persistent store API', () => {
       if (url.endsWith('/auth/v1/user')) return response(200, { id: 'user-a', email: 'user-a@example.com' });
       if (url.includes('/rest/v1/ftf_profiles')) return response(200, [{ user_id: 'user-a', tenant_id: 'tenant-a', role: 'contractor', name: 'User A', tier: 'free' }]);
       if (url.includes('/rest/v1/ftf_store') && (!options.method || options.method === 'GET')) {
-        return response(200, [{ payload: {
+        return response(200, [{ tenant_id: 'tenant-a', payload: {
           id: 'mission-no-pack',
           missionName: 'Before edit',
           financialEstimate: { totalEstimatedCost: 3200 },
@@ -423,7 +423,7 @@ describe('authenticated persistent store API', () => {
       if (url.endsWith('/auth/v1/user')) return response(200, { id: 'user-a', email: 'user-a@example.com' });
       if (url.includes('/rest/v1/ftf_profiles')) return response(200, [{ user_id: 'user-a', tenant_id: 'tenant-a', role: 'contractor', name: 'User A', tier: 'free' }]);
       if (url.includes('/rest/v1/ftf_store') && (!options.method || options.method === 'GET')) {
-        return response(200, [{ payload: {
+        return response(200, [{ tenant_id: 'tenant-a', payload: {
           id: 'mission-singleton',
           missionName: 'Before edit',
           financialEstimate: { totalEstimatedCost: 5100 },
@@ -459,7 +459,7 @@ describe('authenticated persistent store API', () => {
       if (url.endsWith('/auth/v1/user')) return response(200, { id: 'user-a', email: 'user-a@example.com' });
       if (url.includes('/rest/v1/ftf_profiles')) return response(200, [{ user_id: 'user-a', tenant_id: 'tenant-a', role: 'contractor', name: 'User A', tier: 'free' }]);
       if (url.includes('/rest/v1/ftf_store') && (!options.method || options.method === 'GET')) {
-        return response(200, [{ payload: { records: [{ id: 'record-1', title: 'Service', cost: 850 }] } }]);
+        return response(200, [{ tenant_id: 'tenant-a', payload: { records: [{ id: 'record-1', title: 'Service', cost: 850 }] } }]);
       }
       if (url.includes('/rest/v1/ftf_store') && options.method === 'POST') {
         postedRows = JSON.parse(String(options.body));

@@ -41,12 +41,13 @@ function request(
   method: string,
   collection: string,
   body?: Record<string, unknown>,
-  recordId?: string
+  recordId?: string,
+  queryOverrides: Record<string, string> = {}
 ) {
   return {
     method,
     body,
-    query: { collection, ...(recordId ? { recordId } : {}) },
+    query: { collection, ...(recordId ? { recordId } : {}), ...queryOverrides },
     headers: {
       cookie: 'ftf_access_token=token-a',
       host: 'localhost:3001',
@@ -77,11 +78,22 @@ function mockApi({
   safetyPlanAuthority = false,
   stored = [],
   onPost,
+  onRpc,
 }: {
   role?: 'admin' | 'contractor' | 'client';
   safetyPlanAuthority?: boolean;
-  stored?: Array<{ tenant_id?: string; record_id?: string; payload: any }>;
+  stored?: Array<{
+    tenant_id?: string | null;
+    collection?: string;
+    record_id?: string;
+    payload: any;
+  }>;
   onPost?: (rows: any[], url: string, options: RequestInit) => void;
+  onRpc?: (
+    body: Record<string, unknown>,
+    url: string,
+    options: RequestInit
+  ) => { succeeded: boolean; new_payload?: any };
 } = {}) {
   global.fetch = vi.fn(async (url: string, options: RequestInit = {}) => {
     if (url.endsWith('/auth/v1/user')) {
@@ -97,6 +109,12 @@ function mockApi({
         safety_plan_authority: safetyPlanAuthority,
       }]);
     }
+    if (url.includes('/rest/v1/rpc/ftf_compare_and_swap_store_payload')) {
+      const body = JSON.parse(String(options.body));
+      const result = onRpc?.(body, url, options)
+        ?? { succeeded: true, new_payload: body.p_payload };
+      return response(200, [result]);
+    }
     if (url.includes('/rest/v1/ftf_store') && options.method === 'POST') {
       onPost?.(JSON.parse(String(options.body)), url, options);
       return response(204, null);
@@ -105,10 +123,12 @@ function mockApi({
       return response(204, null);
     }
     if (url.includes('/rest/v1/ftf_store')) {
+      const collection = /collection=eq\.([^&]+)/.exec(url)?.[1];
       const recordId = /record_id=eq\.([^&]+)/.exec(url)?.[1];
-      const rows = recordId
-        ? stored.filter((row) => row.record_id === decodeURIComponent(recordId))
-        : stored;
+      const rows = stored.filter((row) =>
+        (!collection || !row.collection || row.collection === decodeURIComponent(collection))
+        && (!recordId || row.record_id === decodeURIComponent(recordId))
+      );
       return response(200, rows);
     }
     return response(500, { message: `unexpected request ${url}` });
@@ -133,6 +153,7 @@ describe('Safety Plan persistent store security', () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     process.env = originalEnvironment;
     global.fetch = originalFetch;
     vi.restoreAllMocks();
@@ -167,20 +188,57 @@ describe('Safety Plan persistent store security', () => {
     expect(writeResponse.statusCode).toBe(403);
   });
 
-  it('never returns a Safety Plan row from another tenant', async () => {
+  it('returns only list rows with the exact authenticated tenant id', async () => {
+    const visible = makeSafetyPlan({ id: 'visible', tenantId: 'tenant-a' });
     mockApi({
-      stored: [{
-        tenant_id: 'tenant-b',
-        record_id: 'safety-plan-1',
-        payload: makeSafetyPlan({ tenantId: 'tenant-b' }),
-      }],
+      stored: [
+        {
+          tenant_id: 'tenant-a',
+          record_id: visible.id,
+          payload: visible,
+        },
+        {
+          record_id: 'missing-tenant',
+          payload: makeSafetyPlan({ id: 'missing-tenant', tenantId: 'tenant-a' }),
+        },
+        {
+          tenant_id: null,
+          record_id: 'null-tenant',
+          payload: makeSafetyPlan({ id: 'null-tenant', tenantId: 'tenant-a' }),
+        },
+        {
+          tenant_id: 'tenant-b',
+          record_id: 'other-tenant',
+          payload: makeSafetyPlan({ id: 'other-tenant', tenantId: 'tenant-b' }),
+        },
+      ],
     });
     const res = createResponse();
 
     await storeHandler(request('GET', 'ftf_safety_plans'), res);
 
     expect(res.statusCode).toBe(200);
-    expect(res.body.records).toEqual([]);
+    expect(res.body.records).toEqual([visible]);
+  });
+
+  it.each([
+    ['missing', undefined],
+    ['null', null],
+    ['cross-tenant', 'tenant-b'],
+  ])('fails closed for a singleton row with %s tenant ownership', async (recordId, tenantId) => {
+    mockApi({
+      stored: [{
+        tenant_id: tenantId,
+        record_id: recordId,
+        payload: makeSafetyPlan({ id: recordId, tenantId: tenantId || 'tenant-a' }),
+      }],
+    });
+    const res = createResponse();
+
+    await storeHandler(request('GET', 'ftf_safety_plans', undefined, recordId), res);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body.payload).toBeNull();
   });
 
   it('rejects a Safety Plan tenant change', async () => {
@@ -207,6 +265,7 @@ describe('Safety Plan persistent store security', () => {
     });
     const approved = makeSafetyPlan({
       ...storedPlan,
+      revision: 2,
       status: 'approved',
       versions: [makeSafetyPlanVersion({ status: 'approved', revision: 3 })],
     });
@@ -226,6 +285,8 @@ describe('Safety Plan persistent store security', () => {
   });
 
   it('allows a nominated contractor to approve a submitted plan', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-07-24T03:00:00.000Z'));
     const storedPlan = makeSafetyPlan({
       tenantId: 'tenant-a',
       status: 'submitted',
@@ -233,6 +294,7 @@ describe('Safety Plan persistent store security', () => {
     });
     const approved = makeSafetyPlan({
       ...storedPlan,
+      revision: 2,
       status: 'approved',
       versions: [makeSafetyPlanVersion({
         status: 'approved',
@@ -240,12 +302,15 @@ describe('Safety Plan persistent store security', () => {
         approvedAt: '2026-07-24T01:00:00.000Z',
       })],
     });
-    let postedRows: any[] = [];
+    let rpcBody: Record<string, unknown> | undefined;
     mockApi({
       role: 'contractor',
       safetyPlanAuthority: true,
       stored: [{ tenant_id: 'tenant-a', record_id: storedPlan.id, payload: storedPlan }],
-      onPost: (rows) => { postedRows = rows; },
+      onRpc: (body) => {
+        rpcBody = body;
+        return { succeeded: true, new_payload: body.p_payload };
+      },
     });
     const res = createResponse();
 
@@ -256,7 +321,16 @@ describe('Safety Plan persistent store security', () => {
     }), res);
 
     expect(res.statusCode).toBe(200);
-    expect(postedRows[0].payload.status).toBe('approved');
+    expect((rpcBody?.p_payload as SafetyPlan).status).toBe('approved');
+    expect((rpcBody?.p_payload as SafetyPlan).versions[0]).toMatchObject({
+      approvedAt: '2026-07-24T03:00:00.000Z',
+      approvedBy: {
+        userId: 'user-a',
+        name: 'User A',
+        role: 'contractor',
+        operationalAuthority: true,
+      },
+    });
   });
 
   it('rejects stale Safety Plan revisions', async () => {
@@ -290,14 +364,18 @@ describe('Safety Plan persistent store security', () => {
     });
     const updatedPlan = makeSafetyPlan({
       ...storedPlan,
+      revision: 2,
       updatedAt: '2026-07-24T02:00:00.000Z',
       versions: [makeSafetyPlanVersion({ revision: 5, updatedAt: '2026-07-24T02:00:00.000Z' })],
     });
-    let postedRows: any[] = [];
+    let rpcBody: Record<string, unknown> | undefined;
     mockApi({
       role: 'contractor',
       stored: [{ tenant_id: 'tenant-a', record_id: storedPlan.id, payload: storedPlan }],
-      onPost: (rows) => { postedRows = rows; },
+      onRpc: (body) => {
+        rpcBody = body;
+        return { succeeded: true, new_payload: body.p_payload };
+      },
     });
     const res = createResponse();
 
@@ -308,7 +386,8 @@ describe('Safety Plan persistent store security', () => {
     }), res);
 
     expect(res.statusCode).toBe(200);
-    expect(postedRows[0].payload.versions[0].revision).toBe(5);
+    expect((rpcBody?.p_payload as SafetyPlan).versions[0].revision).toBe(5);
+    expect(rpcBody?.p_expected_revision).toBe(1);
   });
 
   it('validates every Safety Plan in a list write against its stored ID', async () => {
@@ -326,6 +405,7 @@ describe('Safety Plan persistent store security', () => {
     });
     const firstIncoming = makeSafetyPlan({
       ...firstStored,
+      revision: 2,
       updatedAt: '2026-07-24T02:00:00.000Z',
       versions: [makeSafetyPlanVersion({
         id: 'version-1',
@@ -336,6 +416,7 @@ describe('Safety Plan persistent store security', () => {
     });
     const staleSecond = makeSafetyPlan({
       ...secondStored,
+      revision: 1,
       updatedAt: '2026-07-24T02:00:00.000Z',
       versions: [makeSafetyPlanVersion({
         id: 'version-2',
@@ -368,6 +449,7 @@ describe('Safety Plan persistent store security', () => {
     const nextVersion = makeSafetyPlanVersion({ revision: 2 });
     const incoming = makeSafetyPlan({
       ...storedPlan,
+      revision: 2,
       versions: [nextVersion, { ...nextVersion }],
     });
     mockApi({
@@ -395,6 +477,7 @@ describe('Safety Plan persistent store security', () => {
       });
       const incoming = makeSafetyPlan({
         ...storedPlan,
+        revision: 2,
         updatedAt: '2026-07-24T02:00:00.000Z',
         versions: [{
           ...storedVersion,
@@ -445,13 +528,441 @@ describe('Safety Plan persistent store security', () => {
     expect(res.statusCode).toBe(403);
   });
 
-  it('allows new audit IDs to be appended', async () => {
-    const event = makeAuditEvent('audit-new');
+  it('uses database compare-and-swap for every existing Safety Plan update', async () => {
+    const storedPlan = makeSafetyPlan({
+      tenantId: 'tenant-a',
+      revision: 8,
+      versions: [makeSafetyPlanVersion({ revision: 4 })],
+    });
+    const incoming = makeSafetyPlan({
+      ...storedPlan,
+      revision: 9,
+      updatedAt: '2026-07-24T02:00:00.000Z',
+      versions: [makeSafetyPlanVersion({
+        revision: 5,
+        updatedAt: '2026-07-24T02:00:00.000Z',
+      })],
+    });
+    const postUrls: string[] = [];
+    let rpcBody: Record<string, unknown> | undefined;
+    mockApi({
+      stored: [{ tenant_id: 'tenant-a', record_id: storedPlan.id, payload: storedPlan }],
+      onPost: (_rows, url) => { postUrls.push(url); },
+      onRpc: (body) => {
+        rpcBody = body;
+        return { succeeded: true, new_payload: body.p_payload };
+      },
+    });
+    const res = createResponse();
+
+    await storeHandler(request('PUT', 'ftf_safety_plans', {
+      collection: 'ftf_safety_plans',
+      recordId: storedPlan.id,
+      payload: incoming,
+    }), res);
+
+    expect(res.statusCode).toBe(200);
+    expect(rpcBody).toMatchObject({
+      p_tenant_id: 'tenant-a',
+      p_collection: 'ftf_safety_plans',
+      p_record_id: storedPlan.id,
+      p_expected_revision: 8,
+    });
+    expect(postUrls).toEqual([]);
+  });
+
+  it('allows only one of two concurrent writes with the same expected revision', async () => {
+    const storedPlan = makeSafetyPlan({
+      tenantId: 'tenant-a',
+      revision: 4,
+      versions: [makeSafetyPlanVersion({ revision: 2 })],
+    });
+    const incoming = makeSafetyPlan({
+      ...storedPlan,
+      revision: 5,
+      updatedAt: '2026-07-24T02:00:00.000Z',
+      versions: [makeSafetyPlanVersion({
+        revision: 3,
+        updatedAt: '2026-07-24T02:00:00.000Z',
+      })],
+    });
+    let calls = 0;
+    mockApi({
+      stored: [{ tenant_id: 'tenant-a', record_id: storedPlan.id, payload: storedPlan }],
+      onRpc: (body) => {
+        calls += 1;
+        return calls === 1
+          ? { succeeded: true, new_payload: body.p_payload }
+          : { succeeded: false };
+      },
+    });
+    const first = createResponse();
+    const second = createResponse();
+    const body = {
+      collection: 'ftf_safety_plans',
+      recordId: storedPlan.id,
+      payload: incoming,
+    };
+
+    await Promise.all([
+      storeHandler(request('PUT', 'ftf_safety_plans', body), first),
+      storeHandler(request('PUT', 'ftf_safety_plans', body), second),
+    ]);
+
+    expect([first.statusCode, second.statusCode].sort()).toEqual([200, 409]);
+    expect(calls).toBe(2);
+  });
+
+  it('rejects submitted-to-submitted content edits', async () => {
+    const storedVersion = makeSafetyPlanVersion({ status: 'submitted', revision: 2 });
+    const storedPlan = makeSafetyPlan({
+      tenantId: 'tenant-a',
+      revision: 2,
+      status: 'submitted',
+      versions: [storedVersion],
+    });
+    const incoming = makeSafetyPlan({
+      ...storedPlan,
+      revision: 3,
+      versions: [{
+        ...storedVersion,
+        revision: 3,
+        sections: [{ ...storedVersion.sections[0], title: 'Changed while submitted' }],
+      }],
+    });
+    mockApi({
+      stored: [{ tenant_id: 'tenant-a', record_id: storedPlan.id, payload: storedPlan }],
+    });
+    const res = createResponse();
+
+    await storeHandler(request('PUT', 'ftf_safety_plans', {
+      collection: 'ftf_safety_plans',
+      recordId: storedPlan.id,
+      payload: incoming,
+    }), res);
+
+    expect(res.statusCode).toBe(403);
+  });
+
+  it('rejects a normal contractor returning a submitted plan to draft', async () => {
+    const storedVersion = makeSafetyPlanVersion({ status: 'submitted', revision: 2 });
+    const storedPlan = makeSafetyPlan({
+      tenantId: 'tenant-a',
+      revision: 2,
+      status: 'submitted',
+      versions: [storedVersion],
+    });
+    const incoming = makeSafetyPlan({
+      ...storedPlan,
+      revision: 3,
+      status: 'draft',
+      versions: [{ ...storedVersion, status: 'draft', revision: 3 }],
+    });
+    mockApi({
+      role: 'contractor',
+      stored: [{ tenant_id: 'tenant-a', record_id: storedPlan.id, payload: storedPlan }],
+    });
+    const res = createResponse();
+
+    await storeHandler(request('PUT', 'ftf_safety_plans', {
+      collection: 'ftf_safety_plans',
+      recordId: storedPlan.id,
+      payload: incoming,
+    }), res);
+
+    expect(res.statusCode).toBe(403);
+  });
+
+  it('rejects adding a dormant draft version while a plan remains submitted', async () => {
+    const submitted = makeSafetyPlanVersion({ status: 'submitted', revision: 2 });
+    const storedPlan = makeSafetyPlan({
+      tenantId: 'tenant-a',
+      revision: 2,
+      status: 'submitted',
+      versions: [submitted],
+    });
+    const incoming = makeSafetyPlan({
+      ...storedPlan,
+      revision: 3,
+      versions: [
+        submitted,
+        makeSafetyPlanVersion({
+          id: 'dormant-draft',
+          status: 'draft',
+          revision: 1,
+        }),
+      ],
+    });
+    mockApi({
+      stored: [{ tenant_id: 'tenant-a', record_id: storedPlan.id, payload: storedPlan }],
+    });
+    const res = createResponse();
+
+    await storeHandler(request('PUT', 'ftf_safety_plans', {
+      collection: 'ftf_safety_plans',
+      recordId: storedPlan.id,
+      payload: incoming,
+    }), res);
+
+    expect(res.statusCode).toBe(403);
+  });
+
+  it('soft deletes a draft with server-derived metadata and audit', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-07-24T04:00:00.000Z'));
+    const storedPlan = makeSafetyPlan({ tenantId: 'tenant-a', revision: 3 });
+    let deletedPayload: SafetyPlan | undefined;
+    const auditRows: any[] = [];
+    mockApi({
+      stored: [{ tenant_id: 'tenant-a', record_id: storedPlan.id, payload: storedPlan }],
+      onRpc: (body) => {
+        deletedPayload = body.p_payload as SafetyPlan;
+        return { succeeded: true, new_payload: body.p_payload };
+      },
+      onPost: (rows) => { auditRows.push(...rows); },
+    });
+    const res = createResponse();
+
+    await storeHandler(request('DELETE', 'ftf_safety_plans', undefined, storedPlan.id), res);
+
+    expect(res.statusCode).toBe(200);
+    expect(deletedPayload).toMatchObject({
+      id: storedPlan.id,
+      revision: 4,
+      deletedAt: '2026-07-24T04:00:00.000Z',
+      deletedBy: {
+        userId: 'user-a',
+        name: 'User A',
+        role: 'admin',
+        operationalAuthority: true,
+      },
+    });
+    expect(auditRows[0].payload).toMatchObject({
+      tenantId: 'tenant-a',
+      planId: storedPlan.id,
+      action: 'draft_deleted',
+      occurredAt: '2026-07-24T04:00:00.000Z',
+    });
+    vi.useRealTimers();
+  });
+
+  it('hides deleted drafts unless an administrator explicitly includes them', async () => {
+    const deleted = makeSafetyPlan({
+      tenantId: 'tenant-a',
+      deletedAt: '2026-07-24T04:00:00.000Z',
+    });
+    const rows = [{ tenant_id: 'tenant-a', record_id: deleted.id, payload: deleted }];
+    mockApi({ stored: rows });
+    const defaultResponse = createResponse();
+    const includedResponse = createResponse();
+
+    await storeHandler(request('GET', 'ftf_safety_plans'), defaultResponse);
+    await storeHandler(
+      request('GET', 'ftf_safety_plans', undefined, undefined, { includeDeleted: 'true' }),
+      includedResponse
+    );
+
+    expect(defaultResponse.body.records).toEqual([]);
+    expect(includedResponse.body.records).toEqual([deleted]);
+  });
+
+  it('requires explicit administrator recovery access for a deleted singleton', async () => {
+    const deleted = makeSafetyPlan({
+      tenantId: 'tenant-a',
+      deletedAt: '2026-07-24T04:00:00.000Z',
+    });
+    mockApi({
+      stored: [{ tenant_id: 'tenant-a', record_id: deleted.id, payload: deleted }],
+    });
+    const defaultResponse = createResponse();
+    const includedResponse = createResponse();
+
+    await storeHandler(
+      request('GET', 'ftf_safety_plans', undefined, deleted.id),
+      defaultResponse
+    );
+    await storeHandler(
+      request(
+        'GET',
+        'ftf_safety_plans',
+        undefined,
+        deleted.id,
+        { includeDeleted: 'true' }
+      ),
+      includedResponse
+    );
+
+    expect(defaultResponse.body.payload).toBeNull();
+    expect(includedResponse.body.payload).toEqual(deleted);
+  });
+
+  it('never exposes deleted drafts to contractors even with includeDeleted', async () => {
+    const deleted = makeSafetyPlan({
+      tenantId: 'tenant-a',
+      deletedAt: '2026-07-24T04:00:00.000Z',
+    });
+    mockApi({
+      role: 'contractor',
+      stored: [{ tenant_id: 'tenant-a', record_id: deleted.id, payload: deleted }],
+    });
+    const res = createResponse();
+
+    await storeHandler(
+      request('GET', 'ftf_safety_plans', undefined, undefined, { includeDeleted: 'true' }),
+      res
+    );
+
+    expect(res.statusCode).toBe(403);
+  });
+
+  it('restores a deleted draft only for administrators', async () => {
+    const deleted = makeSafetyPlan({
+      tenantId: 'tenant-a',
+      revision: 5,
+      deletedAt: '2026-07-24T04:00:00.000Z',
+      deletedBy: {
+        userId: 'user-a',
+        name: 'User A',
+        role: 'admin',
+        operationalAuthority: true,
+      },
+    });
+    let restored: SafetyPlan | undefined;
+    mockApi({
+      stored: [{ tenant_id: 'tenant-a', record_id: deleted.id, payload: deleted }],
+      onRpc: (body) => {
+        restored = body.p_payload as SafetyPlan;
+        return { succeeded: true, new_payload: body.p_payload };
+      },
+    });
+    const res = createResponse();
+
+    await storeHandler(request('PUT', 'ftf_safety_plans', {
+      collection: 'ftf_safety_plans',
+      recordId: deleted.id,
+      action: 'restore',
+    }), res);
+
+    expect(res.statusCode).toBe(200);
+    expect(restored?.revision).toBe(6);
+    expect(restored).not.toHaveProperty('deletedAt');
+    expect(restored).not.toHaveProperty('deletedBy');
+  });
+
+  it('rejects contractor restore attempts', async () => {
+    const deleted = makeSafetyPlan({
+      tenantId: 'tenant-a',
+      revision: 5,
+      deletedAt: '2026-07-24T04:00:00.000Z',
+    });
+    mockApi({
+      role: 'contractor',
+      safetyPlanAuthority: true,
+      stored: [{ tenant_id: 'tenant-a', record_id: deleted.id, payload: deleted }],
+    });
+    const res = createResponse();
+
+    await storeHandler(request('PUT', 'ftf_safety_plans', {
+      collection: 'ftf_safety_plans',
+      recordId: deleted.id,
+      action: 'restore',
+    }), res);
+
+    expect(res.statusCode).toBe(403);
+  });
+
+  it('rejects not-required plans that retain nested versions', async () => {
+    const malformed = makeSafetyPlan({
+      tenantId: 'tenant-a',
+      status: 'not_required',
+      currentVersionId: undefined,
+      versions: [makeSafetyPlanVersion()],
+      notRequiredReason: 'Covered by client process',
+    });
+    mockApi();
+    const res = createResponse();
+
+    await storeHandler(request('PUT', 'ftf_safety_plans', {
+      collection: 'ftf_safety_plans',
+      recordId: malformed.id,
+      payload: malformed,
+    }), res);
+
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('derives not-required provenance and validates its plan revision', async () => {
+    const incoming = makeSafetyPlan({
+      tenantId: 'tenant-a',
+      revision: 1,
+      status: 'not_required',
+      currentVersionId: undefined,
+      versions: [],
+      notRequiredReason: 'Covered by client process',
+      notRequiredSelectedAt: '2000-01-01T00:00:00.000Z',
+      notRequiredActor: {
+        userId: 'forged-user',
+        name: 'Forged actor',
+        role: 'admin',
+        operationalAuthority: true,
+      },
+    });
+    let inserted: SafetyPlan | undefined;
+    mockApi({
+      role: 'contractor',
+      onPost: (rows) => { inserted = rows[0].payload; },
+    });
+    const res = createResponse();
+
+    await storeHandler(request('PUT', 'ftf_safety_plans', {
+      collection: 'ftf_safety_plans',
+      recordId: incoming.id,
+      payload: incoming,
+    }), res);
+
+    expect(res.statusCode).toBe(200);
+    expect(inserted?.revision).toBe(1);
+    expect(inserted?.notRequiredActor).toMatchObject({
+      userId: 'user-a',
+      name: 'User A',
+      role: 'contractor',
+      operationalAuthority: false,
+    });
+    expect(inserted?.notRequiredSelectedAt).not.toBe('2000-01-01T00:00:00.000Z');
+  });
+
+  it('derives audit provenance and ignores forged actor and time', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-07-24T05:00:00.000Z'));
+    const version = makeSafetyPlanVersion({ status: 'approved' });
+    const plan = makeSafetyPlan({
+      tenantId: 'tenant-a',
+      status: 'approved',
+      versions: [version],
+    });
+    const event = {
+      ...makeAuditEvent('audit-new'),
+      tenantId: 'tenant-b',
+      action: 'acknowledged' as const,
+      actor: {
+        userId: 'forged-user',
+        name: 'Forged actor',
+        role: 'admin' as const,
+        operationalAuthority: true,
+      },
+      occurredAt: '2000-01-01T00:00:00.000Z',
+    };
     let postedRows: any[] = [];
     let postUrl = '';
     let prefer = '';
     mockApi({
       role: 'contractor',
+      stored: [{
+        tenant_id: 'tenant-a',
+        collection: 'ftf_safety_plans',
+        record_id: plan.id,
+        payload: plan,
+      }],
       onPost: (rows, url, options) => {
         postedRows = rows;
         postUrl = url;
@@ -467,9 +978,69 @@ describe('Safety Plan persistent store security', () => {
     }), res);
 
     expect(res.statusCode).toBe(200);
-    expect(postedRows[0].payload).toEqual(event);
+    expect(postedRows[0].payload).toEqual({
+      ...event,
+      tenantId: 'tenant-a',
+      actor: {
+        userId: 'user-a',
+        name: 'User A',
+        role: 'contractor',
+        operationalAuthority: false,
+      },
+      occurredAt: '2026-07-24T05:00:00.000Z',
+    });
     expect(postUrl).not.toContain('on_conflict=');
     expect(prefer).not.toContain('resolution=merge-duplicates');
+    vi.useRealTimers();
+  });
+
+  it('rejects a forged approved audit action from a normal contractor', async () => {
+    const version = makeSafetyPlanVersion({ status: 'approved' });
+    const plan = makeSafetyPlan({
+      tenantId: 'tenant-a',
+      status: 'approved',
+      versions: [version],
+    });
+    mockApi({
+      role: 'contractor',
+      stored: [{
+        tenant_id: 'tenant-a',
+        collection: 'ftf_safety_plans',
+        record_id: plan.id,
+        payload: plan,
+      }],
+    });
+    const res = createResponse();
+
+    await storeHandler(request('PUT', 'ftf_safety_plan_audit', {
+      collection: 'ftf_safety_plan_audit',
+      recordId: 'audit-approved',
+      payload: { ...makeAuditEvent('audit-approved'), action: 'approved' },
+    }), res);
+
+    expect(res.statusCode).toBe(403);
+  });
+
+  it('rejects an approved audit action unless the linked version is approved', async () => {
+    const plan = makeSafetyPlan({ tenantId: 'tenant-a' });
+    mockApi({
+      safetyPlanAuthority: true,
+      stored: [{
+        tenant_id: 'tenant-a',
+        collection: 'ftf_safety_plans',
+        record_id: plan.id,
+        payload: plan,
+      }],
+    });
+    const res = createResponse();
+
+    await storeHandler(request('PUT', 'ftf_safety_plan_audit', {
+      collection: 'ftf_safety_plan_audit',
+      recordId: 'audit-approved',
+      payload: { ...makeAuditEvent('audit-approved'), action: 'approved' },
+    }), res);
+
+    expect(res.statusCode).toBe(409);
   });
 
   it('rejects replacement of an existing audit ID', async () => {

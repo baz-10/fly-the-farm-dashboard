@@ -46,6 +46,9 @@ describe('Safety Plan permissions', () => {
 
     expect(canEditSafetyPlan(admin, draft)).toBe(true);
     expect(canEditSafetyPlan(contractor, draft)).toBe(true);
+    expect(canEditSafetyPlan(admin, makeSafetyPlan({
+      deletedAt: '2026-07-24T04:00:00.000Z',
+    }))).toBe(false);
     expect(canEditSafetyPlan(makeUser({ role: 'client' }), draft)).toBe(false);
     expect(canEditSafetyPlan(admin, makeSafetyPlan({ status: 'submitted' }))).toBe(false);
     expect(canEditSafetyPlan(admin, makeSafetyPlan({ status: 'approved' }))).toBe(false);

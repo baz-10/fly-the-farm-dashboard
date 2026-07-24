@@ -25,6 +25,7 @@ export function canEditSafetyPlan(
     user
     && ['admin', 'contractor'].includes(user.role)
     && plan.status === 'draft'
+    && !plan.deletedAt
   );
 }
 
