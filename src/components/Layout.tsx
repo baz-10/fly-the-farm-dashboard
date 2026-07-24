@@ -40,6 +40,10 @@ export default function Layout() {
   const [accountAnchor, setAccountAnchor] = React.useState<null | HTMLElement>(null);
   const [search, setSearch] = React.useState('');
 
+  React.useEffect(() => {
+    if (isDesktop) setDrawerOpen(false);
+  }, [isDesktop]);
+
   const navigateAndClose = (path: string) => {
     setDrawerOpen(false);
     navigate(path);
@@ -64,62 +68,66 @@ export default function Layout() {
 
   return (
     <Box className="ftf-grain" sx={{ minHeight: '100vh', display: 'flex', bgcolor: '#f3f7f3' }}>
-      <Box
-        component="aside"
-        sx={{
-          width: 88,
-          display: { xs: 'none', lg: 'flex' },
-          flexDirection: 'column',
-          position: 'sticky',
-          top: 0,
-          height: '100vh',
-          overflowY: 'auto',
-          bgcolor: '#062407',
-          borderRight: '1px solid rgba(255,255,255,0.08)',
-          zIndex: 5,
-        }}
-      >
+      {isDesktop && (
         <Box
-          component="img"
-          src="/logo.png"
-          alt="Fly the Farm"
-          onClick={() => navigate('/')}
-          sx={{ width: 62, mx: 'auto', my: 1.5, cursor: 'pointer' }}
-        />
-        <GroupedNavigation
-          expanded={false}
-          pathname={location.pathname}
-          role={user?.role}
-          userId={user?.id || 'anonymous'}
-          onNavigate={navigateAndClose}
-        />
-        <Tooltip title="Sign out" placement="right">
-          <IconButton onClick={handleLogout} aria-label="Sign out" sx={{ color: alpha(theme.palette.common.white, 0.68), m: 1 }}>
-            <LogoutIcon fontSize="small" />
-          </IconButton>
-        </Tooltip>
-      </Box>
-
-      <Drawer
-        open={!isDesktop && drawerOpen}
-        onClose={() => setDrawerOpen(false)}
-        PaperProps={{ sx: { width: 280, bgcolor: '#062407', color: 'white' } }}
-      >
-        <Box sx={{ px: 2.5, py: 2 }}>
-          <Box component="img" src="/logo.png" alt="Fly the Farm" sx={{ height: 44, width: 'auto' }} />
+          component="aside"
+          sx={{
+            width: 88,
+            display: 'flex',
+            flexDirection: 'column',
+            position: 'sticky',
+            top: 0,
+            height: '100vh',
+            overflowY: 'auto',
+            bgcolor: '#062407',
+            borderRight: '1px solid rgba(255,255,255,0.08)',
+            zIndex: 5,
+          }}
+        >
+          <Box
+            component="img"
+            src="/logo.png"
+            alt="Fly the Farm"
+            onClick={() => navigate('/')}
+            sx={{ width: 62, mx: 'auto', my: 1.5, cursor: 'pointer' }}
+          />
+          <GroupedNavigation
+            expanded={false}
+            pathname={location.pathname}
+            role={user?.role}
+            userId={user?.id || 'anonymous'}
+            onNavigate={navigateAndClose}
+          />
+          <Tooltip title="Sign out" placement="right">
+            <IconButton onClick={handleLogout} aria-label="Sign out" sx={{ color: alpha(theme.palette.common.white, 0.68), m: 1 }}>
+              <LogoutIcon fontSize="small" />
+            </IconButton>
+          </Tooltip>
         </Box>
-        <Divider sx={{ borderColor: alpha(theme.palette.common.white, 0.1) }} />
-        <GroupedNavigation
-          expanded
-          pathname={location.pathname}
-          role={user?.role}
-          userId={user?.id || 'anonymous'}
-          onNavigate={navigateAndClose}
-        />
-        <Button startIcon={<LogoutIcon />} onClick={handleLogout} sx={{ justifyContent: 'flex-start', m: 1.25, color: 'rgba(255,255,255,0.72)' }}>
-          Sign out
-        </Button>
-      </Drawer>
+      )}
+
+      {!isDesktop && (
+        <Drawer
+          open={drawerOpen}
+          onClose={() => setDrawerOpen(false)}
+          PaperProps={{ sx: { width: 280, bgcolor: '#062407', color: 'white' } }}
+        >
+          <Box sx={{ px: 2.5, py: 2 }}>
+            <Box component="img" src="/logo.png" alt="Fly the Farm" sx={{ height: 44, width: 'auto' }} />
+          </Box>
+          <Divider sx={{ borderColor: alpha(theme.palette.common.white, 0.1) }} />
+          <GroupedNavigation
+            expanded
+            pathname={location.pathname}
+            role={user?.role}
+            userId={user?.id || 'anonymous'}
+            onNavigate={navigateAndClose}
+          />
+          <Button startIcon={<LogoutIcon />} onClick={handleLogout} sx={{ justifyContent: 'flex-start', m: 1.25, color: 'rgba(255,255,255,0.72)' }}>
+            Sign out
+          </Button>
+        </Drawer>
+      )}
 
       <Box sx={{ minWidth: 0, flex: 1 }}>
         <Stack
