@@ -68,6 +68,15 @@ PDF, JPEG and PNG evidence up to 3 MiB.
   users.
 - Evidence remains on its immutable approved historical version; controlled
   revisions begin with an empty manifest and obtain fresh canonical receipts.
+- Evidence deletion is disabled while the same plan is debouncing, actively
+  saving, awaiting retry or resolving a conflict. The field UI explains the
+  block and exposes draft-save retry where applicable. The context also refuses
+  to install a server deletion result if new pending work appeared during the
+  request, so unrelated edits are never silently cleared.
+- When this request created new object bytes but receipt persistence fails, the
+  gateway compensates by deleting only those request-created bytes. A
+  pre-existing same-byte object discovered during idempotent recovery is never
+  deleted by a losing request.
 
 ## TDD evidence
 
@@ -79,8 +88,8 @@ before their implementations were added.
 ## Verification
 
 - Focused policy/API/service/component/editor/local-route and inventory tests:
-  final security-focused run: 8 files, 177 tests passed.
-- Full suite: 82 files, 526 tests passed.
+  final delete/compensation regression run: 4 files, 44 tests passed.
+- Full suite: 82 files, 532 tests passed.
 - `npx tsc --noEmit`: passed.
 - `npm run build`: passed.
 - Node syntax checks for all modified/new server JavaScript: passed.

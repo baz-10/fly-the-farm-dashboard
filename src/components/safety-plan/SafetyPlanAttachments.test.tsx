@@ -132,4 +132,32 @@ describe('SafetyPlanAttachments', () => {
     resolveUpload(confirmed);
     await waitFor(() => expect(onAttachmentsChange).toHaveBeenCalledWith([newer, confirmed]));
   });
+
+  it.each([
+    ['Draft changes are still waiting to save.', false],
+    ['Draft save failed. Retry the save before deleting evidence.', true],
+  ])('blocks delete while same-plan work is unsafe: %s', async (reason, retryable) => {
+    const remove = vi.fn();
+    const retrySave = vi.fn();
+    render(
+      <SafetyPlanAttachments
+        planId="p1"
+        versionId="v1"
+        versionLabel="1"
+        attachments={[confirmed]}
+        editable
+        onAttachmentsChange={vi.fn()}
+        remove={remove}
+        deleteBlockedReason={reason}
+        onRetryDraftSave={retryable ? retrySave : undefined}
+      />,
+    );
+    expect(screen.getByText(reason)).toBeVisible();
+    expect(screen.getByRole('button', { name: /delete map.pdf/i })).toBeDisabled();
+    expect(remove).not.toHaveBeenCalled();
+    if (retryable) {
+      fireEvent.click(screen.getByRole('button', { name: /retry draft save/i }));
+      expect(retrySave).toHaveBeenCalled();
+    }
+  });
 });

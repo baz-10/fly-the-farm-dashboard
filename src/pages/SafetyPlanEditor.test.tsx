@@ -151,6 +151,46 @@ describe('SafetyPlanEditor', () => {
     expect(retrySave).toHaveBeenCalled();
   });
 
+  it.each([
+    ['saving', /wait for draft changes to finish saving/i, false],
+    ['pending_retry', /draft save failed/i, true],
+  ])('blocks evidence deletion while same-plan save state is %s', async (
+    saveState,
+    message,
+    retryable,
+  ) => {
+    const user = userEvent.setup();
+    const version = makeSafetyPlanVersion({
+      attachments: [{
+        id: 'attachment-1',
+        tenantId: 'tenant-1',
+        versionId: 'safety-plan-version-1',
+        fileName: 'evidence.pdf',
+        contentType: 'application/pdf',
+        sizeBytes: 12,
+        contentDigest: 'digest',
+        source: 'upload',
+        uploadedBy: {
+          userId: admin.id,
+          name: admin.name,
+          role: 'admin',
+          operationalAuthority: true,
+        },
+        uploadedAt: '2026-07-24T00:00:00.000Z',
+      }],
+    });
+    const plan = makeSafetyPlan({ versions: [version] });
+    const { retrySave } = renderEditor(plan, { saveState });
+    await user.click(screen.getByRole('button', { name: /review & submit/i }));
+
+    expect(screen.getByText(message)).toBeVisible();
+    expect(screen.getByRole('button', { name: /delete evidence.pdf/i })).toBeDisabled();
+    if (retryable) {
+      await user.click(screen.getByRole('button', { name: /retry draft save/i }));
+      expect(retrySave).toHaveBeenCalled();
+    }
+  });
+
   it('shows source changes and requires every conflict decision before applying them', async () => {
     const user = userEvent.setup();
     const plan = incompletePlan();

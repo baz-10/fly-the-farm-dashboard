@@ -218,6 +218,13 @@ export default function SafetyPlanEditor({
   const effectiveSaveState = saveState === 'idle' && localSaveState !== 'idle'
     ? localSaveState
     : saveState;
+  const attachmentDeleteBlockedReason = effectiveSaveState === 'saving'
+    ? 'Wait for draft changes to finish saving before deleting evidence.'
+    : effectiveSaveState === 'pending_retry'
+      ? 'Draft save failed. Retry the draft save before deleting evidence.'
+      : effectiveSaveState === 'conflict'
+        ? 'Resolve the draft conflict before deleting evidence.'
+        : undefined;
 
   if (!user || user.role === 'client') return null;
   if (!draft || !version) {
@@ -344,6 +351,10 @@ export default function SafetyPlanEditor({
             setDraft(serverPlan);
             acceptServerPlan(serverPlan);
           }}
+          deleteBlockedReason={attachmentDeleteBlockedReason}
+          onRetryDraftSave={effectiveSaveState === 'pending_retry'
+            ? () => void retrySave()
+            : undefined}
         />
       </Card>
     </Stack>,

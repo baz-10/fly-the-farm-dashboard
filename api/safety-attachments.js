@@ -362,8 +362,10 @@ function createSafetyAttachmentHandler(overrides = {}) {
           }
           return res.status(200).json({ attachment: existingReceipt.attachment });
         }
+        let requestCreatedObject = false;
         try {
           await deps.putObject(path, body, contentType);
+          requestCreatedObject = true;
         } catch (error) {
           if (error?.statusCode !== 409) throw error;
           const storedObject = await deps.getObject(path);
@@ -375,7 +377,24 @@ function createSafetyAttachmentHandler(overrides = {}) {
             throw createHttpError(409, 'Attachment id is already used by different evidence.');
           }
         }
-        const attachment = await deps.createReceipt(user.tenantId, plan, candidate, path);
+        let attachment;
+        try {
+          attachment = await deps.createReceipt(user.tenantId, plan, candidate, path);
+        } catch (error) {
+          if (requestCreatedObject) {
+            try {
+              await deps.deleteObject(path);
+            } catch (cleanupError) {
+              if (cleanupError?.statusCode !== 404) {
+                throw createHttpError(
+                  503,
+                  'Attachment upload could not be finalised and cleanup must be retried.',
+                );
+              }
+            }
+          }
+          throw error;
+        }
         return res.status(201).json({
           attachment,
         });

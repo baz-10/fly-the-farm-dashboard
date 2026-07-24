@@ -29,6 +29,8 @@ interface Props {
     attachmentId: string
   ) => Promise<SafetyPlan | undefined>;
   onServerPlanChange?: (plan: SafetyPlan) => void;
+  deleteBlockedReason?: string;
+  onRetryDraftSave?: () => void;
 }
 
 function makeId(): string {
@@ -47,6 +49,8 @@ export function SafetyPlanAttachments({
   upload = uploadSafetyPlanAttachment,
   remove = deleteDraftSafetyPlanAttachment,
   onServerPlanChange,
+  deleteBlockedReason,
+  onRetryDraftSave,
 }: Props) {
   const [description, setDescription] = useState('');
   const [pending, setPending] = useState<PendingUpload[]>([]);
@@ -102,6 +106,10 @@ export function SafetyPlanAttachments({
   };
 
   const removeAttachment = async (attachment: SafetyPlanAttachment) => {
+    if (deleteBlockedReason) {
+      setActionError(deleteBlockedReason);
+      return;
+    }
     setActionError('');
     try {
       const serverPlan = await remove(planId, versionId, attachment.id);
@@ -163,6 +171,16 @@ export function SafetyPlanAttachments({
         </Box>
       ))}
       {actionError && <Alert severity="error">{actionError}</Alert>}
+      {deleteBlockedReason && (
+        <Alert
+          severity="warning"
+          action={onRetryDraftSave
+            ? <Button onClick={onRetryDraftSave}>Retry draft save</Button>
+            : undefined}
+        >
+          {deleteBlockedReason}
+        </Alert>
+      )}
       {[...attachments, ...confirmedLocally.filter(
         (local) => !attachments.some((attachment) => attachment.id === local.id),
       )].map((attachment) => (
@@ -178,6 +196,7 @@ export function SafetyPlanAttachments({
               color="error"
               size="small"
               aria-label={`Delete ${attachment.fileName}`}
+              disabled={Boolean(deleteBlockedReason)}
               onClick={() => void removeAttachment(attachment)}
             >
               Delete

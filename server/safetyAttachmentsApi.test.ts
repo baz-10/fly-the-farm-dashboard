@@ -199,6 +199,61 @@ describe('/api/safety-attachments security boundary', () => {
     expect(deps.putObject).not.toHaveBeenCalled();
   });
 
+  it('removes a request-created object when canonical receipt creation fails', async () => {
+    const body = Buffer.from('%PDF-original');
+    const receiptError = Object.assign(new Error('database unavailable'), {
+      statusCode: 503,
+      publicMessage: 'Attachment receipt could not be recorded.',
+    });
+    const deps = dependencies({
+      createReceipt: vi.fn().mockRejectedValue(receiptError),
+    });
+    const req = request('POST', {
+      'content-type': 'application/pdf',
+      'content-length': String(body.length),
+      'x-safety-plan-id': 'plan-a',
+      'x-safety-plan-version-id': 'v1',
+      'x-attachment-id': 'a1',
+      'x-file-name': 'proof.pdf',
+    });
+    req[Symbol.asyncIterator] = async function* () { yield body; };
+    const res = response();
+    await createSafetyAttachmentHandler(deps)(req, res);
+    expect(res.statusCode).toBe(503);
+    expect(deps.deleteObject).toHaveBeenCalledWith(
+      'tenant-a/plan-a/v1/a1/proof.pdf',
+    );
+  });
+
+  it('preserves a pre-existing same-byte object when receipt creation loses a race', async () => {
+    const body = Buffer.from('%PDF-original');
+    const collision = Object.assign(new Error('exists'), { statusCode: 409 });
+    const deps = dependencies({
+      putObject: vi.fn().mockRejectedValue(collision),
+      getObject: vi.fn().mockResolvedValue({
+        body,
+        contentType: 'application/pdf',
+      }),
+      createReceipt: vi.fn().mockRejectedValue(Object.assign(new Error('race'), {
+        statusCode: 409,
+        publicMessage: 'Attachment receipt conflicted.',
+      })),
+    });
+    const req = request('POST', {
+      'content-type': 'application/pdf',
+      'content-length': String(body.length),
+      'x-safety-plan-id': 'plan-a',
+      'x-safety-plan-version-id': 'v1',
+      'x-attachment-id': 'a1',
+      'x-file-name': 'proof.pdf',
+    });
+    req[Symbol.asyncIterator] = async function* () { yield body; };
+    const res = response();
+    await createSafetyAttachmentHandler(deps)(req, res);
+    expect(res.statusCode).toBe(409);
+    expect(deps.deleteObject).not.toHaveBeenCalled();
+  });
+
   it('fails closed when storage returns a plan from another tenant', async () => {
     const deps = dependencies({ loadPlan: vi.fn().mockResolvedValue(plan('tenant-b')) });
     const res = response();

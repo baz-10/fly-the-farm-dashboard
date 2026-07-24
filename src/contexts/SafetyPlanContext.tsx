@@ -774,11 +774,20 @@ export function SafetyPlanProvider({
   ) => runControlledTransition('revise', planId, expectedRevision, actor), [runControlledTransition]);
 
   const acceptServerPlan = useCallback((plan: SafetyPlan) => {
+    if (
+      timerByPlanRef.current.has(plan.id)
+      || pendingByPlanRef.current.has(plan.id)
+      || failedByPlanRef.current.has(plan.id)
+      || activeSaveByPlanRef.current.has(plan.id)
+      || queuedCountByPlanRef.current.has(plan.id)
+      || retryReservationsRef.current.has(plan.id)
+      || conflictResolutionByPlanRef.current.has(plan.id)
+    ) {
+      throw new Error(
+        'Draft changes appeared while evidence was being deleted. Retry or resolve the draft save before refreshing the attachment list.'
+      );
+    }
     clearPlanTimer(plan.id);
-    pendingByPlanRef.current.delete(plan.id);
-    failedByPlanRef.current.delete(plan.id);
-    retryReservationsRef.current.delete(plan.id);
-    activeSaveByPlanRef.current.get(plan.id)?.controller.abort();
     epochByPlanRef.current.set(plan.id, (epochByPlanRef.current.get(plan.id) || 0) + 1);
     confirmedPlansRef.current.set(plan.id, plan);
     setPlans((current) => replacePlan(current, plan));
