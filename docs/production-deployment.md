@@ -119,6 +119,14 @@ credentials in automated tests. Verify:
 - `GET /api/store?collection=ftf_missions` returns JSON (authenticated data or
   an authentication error), never `index.html`.
 - Weed ID upload returns a clear error if `ANTHROPIC_API_KEY` is missing and identifies an image when the key is present.
+- An administrator can open the company Safety Plan master, create a job plan,
+  submit it and approve it.
+- A normal contractor cannot approve; a nominated operational authority can.
+- An assigned PIC can acknowledge the exact approved version.
+- A client and a contractor from another tenant cannot open the plan.
+- An approved Safety Plan PDF downloads with the controlled version and
+  CASA/ReOC-aligned notice.
+- The Safety Plan editor at 375 px has no horizontal overflow.
 
 Local `vite preview` uses the local API middleware so the browser gates can
 verify routing without a Vercel deployment. Vercel serves `/api/*` through
@@ -150,3 +158,45 @@ Follow the existing Supabase plan rather than rewriting pages:
 5. Add an admin migration tool that reads existing `localStorage` keys and writes them to Supabase.
 
 `src/services/persistence.ts` centralizes the localStorage keys and starts the adapter boundary for this migration.
+
+## Safety Plan production prerequisites
+
+Apply these prerequisites before deploying code that enables shared Safety
+Plans. Do not deploy the UI first: the API fails closed when its collections,
+RPCs or storage boundary are unavailable.
+
+1. Apply `docs/supabase-safety-plan-migration.sql` to the target Supabase
+   project. This adds the `safety_plan_authority` profile boolean, the
+   Safety Plan collections, tenant policies, atomic optimistic-concurrency
+   functions and server-derived audit boundary.
+2. Confirm existing administrator profiles and explicitly nominate only the
+   operational authorities authorised by each company. The default must remain
+   `false`.
+3. Create a **private** Supabase Storage bucket named
+   `ftf-safety-attachments`. Do not enable public URLs.
+4. Apply Storage policies that constrain every object to the authenticated
+   tenant/plan/version path, allow draft uploads only to permitted operators,
+   allow reads only to users who can read that plan, and prevent mutation of
+   approved-version evidence. The server service role performs validated
+   attachment mutations; the browser never receives that key.
+5. Set `VITE_PERSISTENCE_MODE=remote` for protected preview and production.
+   Configure `SUPABASE_URL`, `SUPABASE_ANON_KEY` and
+   `SUPABASE_SERVICE_ROLE_KEY` as server-only Vercel variables.
+
+`FTF_E2E_AUTH_FIXTURE=local-playwright-only` is exclusively a local Playwright
+sentinel. Never configure it in Vercel. The fixture additionally requires a
+loopback Host header and refuses activation when `VERCEL=1`; its process-memory
+repository never falls through to Supabase.
+
+Before promotion, use synthetic accounts in the protected preview to complete
+the administrator, contractor, nominated-authority, PIC and client checks
+above. Inspect Network responses for JSON API errors and confirm no request
+contains the local fixture header. Verify the private bucket cannot be listed
+or read across tenants and that an expired signed URL no longer works.
+
+If any prerequisite or preview check fails, promote the immediately preceding
+successful immutable Vercel deployment. Leave the additive database migration,
+audit rows and private attachments in place; rolling application code back is
+safer than attempting destructive data rollback. Disable new Safety Plan entry
+in the affected environment until the mismatch is corrected, then re-run the
+entire protected-preview checklist.

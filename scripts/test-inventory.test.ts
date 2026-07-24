@@ -88,6 +88,23 @@ function countDeclaredTests(source: string): number {
 }
 
 describe('test inventory', () => {
+  it('tracks the exact Safety Plan release-gate supplements outside src', async () => {
+    const releaseGateSupplements: Record<string, number> = {
+      'e2e/safety-plan-workflow.spec.ts': 8,
+      'server/localApiMiddleware.test.ts': 11,
+    };
+    const actual = Object.fromEntries(
+      await Promise.all(
+        Object.keys(releaseGateSupplements).map(async (file) => [
+          file,
+          countDeclaredTests(await readFile(file, 'utf8')),
+        ])
+      )
+    );
+
+    expect(actual).toEqual(releaseGateSupplements);
+  });
+
   it('preserves the exact accepted baseline and explicit migration supplements', async () => {
     const inventory = await collectTestInventory('src');
     const manifest = JSON.parse(

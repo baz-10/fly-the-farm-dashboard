@@ -16,43 +16,181 @@ const LOCAL_API_HANDLERS = [
   ['/api/identify-weed', identifyWeedHandler],
 ];
 
-const LOCAL_E2E_FIXTURE = {
-  user: {
+const LOCAL_E2E_USERS = {
+  contractor: {
     id: 'e2e-contractor',
     email: 'operator@example.test',
     name: 'Synthetic Operator',
     role: 'contractor',
     tenantId: 'e2e-tenant',
     tier: 'free',
+    safetyPlanAuthority: false,
   },
-  collections: {
-    ftf_missions: [{
-      id: 'e2e-mission',
-      missionName: 'Synthetic boundary mission',
-      deploymentWorkPack: {
-        assets: [{
-          id: 'e2e-truck',
-          name: 'Synthetic truck',
-          costs: {
-            cost: 'E2E_COST_SENTINEL',
-            rate: 'E2E_RATE_SENTINEL',
-            purchasePrice: 'E2E_PURCHASE_SENTINEL',
-          },
-        }],
-        estimatedDeploymentCost: 'E2E_DEPLOYMENT_SENTINEL',
-        costingComplete: true,
-      },
-      financialEstimate: {
-        totalEstimatedCost: 'E2E_COST_SENTINEL',
-        rate: 'E2E_RATE_SENTINEL',
-      },
-      financialActual: {
-        profitMargin: 'E2E_MARGIN_SENTINEL',
-        profit: 'E2E_PROFIT_SENTINEL',
-      },
-    }],
+  authority: {
+    id: 'e2e-authority',
+    email: 'authority@example.test',
+    name: 'Synthetic Authority',
+    role: 'contractor',
+    tenantId: 'e2e-tenant',
+    tier: 'pro',
+    safetyPlanAuthority: true,
+  },
+  admin: {
+    id: 'e2e-admin',
+    email: 'admin@example.test',
+    name: 'Synthetic Administrator',
+    role: 'admin',
+    tenantId: 'e2e-tenant',
+    tier: 'pro',
+    safetyPlanAuthority: false,
+  },
+  pic: {
+    id: 'e2e-pic',
+    email: 'pic@example.test',
+    name: 'Synthetic PIC',
+    role: 'contractor',
+    tenantId: 'e2e-tenant',
+    tier: 'pro',
+    safetyPlanAuthority: false,
+  },
+  client: {
+    id: 'e2e-client-user',
+    email: 'client@example.test',
+    name: 'Synthetic Client',
+    role: 'client',
+    tenantId: 'e2e-tenant',
+    tier: 'free',
+    safetyPlanAuthority: false,
+  },
+  unrelated: {
+    id: 'e2e-unrelated',
+    email: 'unrelated@example.test',
+    name: 'Unrelated Operator',
+    role: 'contractor',
+    tenantId: 'e2e-other-tenant',
+    tier: 'pro',
+    safetyPlanAuthority: false,
   },
 };
+
+const LOCAL_E2E_SEED_COLLECTIONS = {
+  ftf_missions: [{
+    id: 'e2e-mission',
+    missionName: 'Synthetic boundary mission',
+    jobId: 'e2e-job',
+    status: 'Approved',
+    deploymentWorkPack: {
+      assets: [{
+        id: 'e2e-truck',
+        name: 'Synthetic truck',
+        costs: {
+          cost: 'E2E_COST_SENTINEL',
+          rate: 'E2E_RATE_SENTINEL',
+          purchasePrice: 'E2E_PURCHASE_SENTINEL',
+        },
+      }],
+      estimatedDeploymentCost: 'E2E_DEPLOYMENT_SENTINEL',
+      costingComplete: true,
+    },
+    financialEstimate: {
+      totalEstimatedCost: 'E2E_COST_SENTINEL',
+      rate: 'E2E_RATE_SENTINEL',
+    },
+    financialActual: {
+      profitMargin: 'E2E_MARGIN_SENTINEL',
+      profit: 'E2E_PROFIT_SENTINEL',
+    },
+  }],
+  ftf_safety_plan_templates: [],
+  ftf_safety_plans: [],
+  ftf_safety_plan_audit: [],
+};
+
+let localE2eCollections;
+
+function resetLocalE2eCollections() {
+  localE2eCollections = structuredClone(LOCAL_E2E_SEED_COLLECTIONS);
+}
+
+resetLocalE2eCollections();
+
+function localE2eFixtureFor(role) {
+  return {
+    user: LOCAL_E2E_USERS[role],
+    collections: localE2eCollections,
+  };
+}
+
+/*
+ * Deliberately process-local and unreachable unless the exact test sentinel,
+ * loopback host and non-Vercel conditions all match. This repository prevents
+ * browser write tests from ever falling through to Supabase.
+ */
+function handleLocalE2eStore(req, res) {
+  const fixture = req.localE2eFixture;
+  if (!fixture) return false;
+  if (req.method === 'DELETE' && String(req.query?.fixtureReset || '') === '1') {
+    if (fixture.user.role !== 'admin') {
+      res.status(403).json({ error: 'Only fixture administrators may reset browser test data.' });
+      return true;
+    }
+    resetLocalE2eCollections();
+    res.status(204).end();
+    return true;
+  }
+  if (!['PUT', 'DELETE'].includes(req.method)) return false;
+
+  const body = req.body || {};
+  const collection = String(body.collection || req.query?.collection || '');
+  if (!Object.prototype.hasOwnProperty.call(localE2eCollections, collection)) {
+    res.status(400).json({ error: 'Invalid collection name.' });
+    return true;
+  }
+  if (
+    fixture.user.role === 'client'
+    || (collection === 'ftf_safety_plan_templates' && fixture.user.role !== 'admin')
+  ) {
+    res.status(403).json({ error: 'Fixture account cannot write the requested collection.' });
+    return true;
+  }
+  const records = localE2eCollections[collection];
+  const recordId = String(body.recordId || req.query?.recordId || '');
+
+  if (req.method === 'DELETE') {
+    localE2eCollections[collection] = recordId
+      ? records.filter((record) => record?.id !== recordId)
+      : [];
+    res.status(200).json({ ok: true, payload: null });
+    return true;
+  }
+
+  if (!recordId || !body.payload || body.payload.id !== recordId) {
+    res.status(400).json({ error: 'Fixture writes require a matching record ID and payload.' });
+    return true;
+  }
+  if (body.payload.tenantId && body.payload.tenantId !== fixture.user.tenantId) {
+    res.status(403).json({ error: 'Fixture tenant does not match the authenticated tenant.' });
+    return true;
+  }
+  const currentIndex = records.findIndex((record) => record?.id === recordId);
+  if (
+    currentIndex >= 0
+    && Number.isSafeInteger(body.payload.revision)
+    && body.payload.revision !== records[currentIndex].revision + 1
+  ) {
+    res.status(409).json({
+      error: 'Safety Plan changed in another session. Refresh and try again.',
+      code: 'SAFETY_PLAN_CONFLICT',
+      currentRevision: records[currentIndex].revision,
+    });
+    return true;
+  }
+  const canonical = structuredClone(body.payload);
+  if (currentIndex >= 0) records[currentIndex] = canonical;
+  else records.push(canonical);
+  res.status(200).json({ ok: true, count: 1, payload: canonical });
+  return true;
+}
 
 function isLoopbackHost(host) {
   return /^(?:127\.0\.0\.1|localhost)(?::\d+)?$/.test(String(host || ''))
@@ -60,17 +198,17 @@ function isLoopbackHost(host) {
 }
 
 function attachLocalE2eFixture(req) {
+  const fixtureRole = String(req.headers?.['x-ftf-e2e-auth'] || '');
   if (
     process.env.FTF_E2E_AUTH_FIXTURE === 'local-playwright-only'
     && process.env.VERCEL !== '1'
-    && req.method === 'GET'
-    && req.headers?.['x-ftf-e2e-auth'] === 'contractor'
+    && Object.prototype.hasOwnProperty.call(LOCAL_E2E_USERS, fixtureRole)
     && isLoopbackHost(req.headers?.host)
   ) {
     Object.defineProperty(req, 'localE2eFixture', {
       configurable: true,
       enumerable: false,
-      value: LOCAL_E2E_FIXTURE,
+      value: localE2eFixtureFor(fixtureRole),
     });
   }
 }
@@ -148,6 +286,7 @@ function createLocalApiMiddleware(handler) {
     }
 
     try {
+      if (handler === storeHandler && handleLocalE2eStore(req, res)) return undefined;
       return await handler(req, res);
     } catch (error) {
       return next(error);
