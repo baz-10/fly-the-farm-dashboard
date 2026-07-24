@@ -4,6 +4,16 @@ import path from 'node:path';
 
 import { collectTestInventory } from './test-inventory.mjs';
 
+async function pathExists(filePath: string): Promise<boolean> {
+  try {
+    await readFile(filePath);
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
+    throw error;
+  }
+}
+
 async function findPatterns(root: string, pattern: RegExp): Promise<string[]> {
   const offenders: string[] = [];
 
@@ -41,5 +51,27 @@ describe('test inventory', () => {
   it('contains no Jest runtime API in migrated React tests', async () => {
     const offenders = await findPatterns('src', /\bjest\.(fn|mock|spyOn|useFakeTimers|resetModules)\b|jest\.Mock/);
     expect(offenders).toEqual([]);
+  });
+
+  it('has no Create React App runtime or configuration', async () => {
+    const pkg = JSON.parse(await readFile('package.json', 'utf8'));
+
+    expect(pkg.dependencies?.['react-scripts']).toBeUndefined();
+    expect(pkg.dependencies?.['@types/jest']).toBeUndefined();
+    expect(pkg.devDependencies?.['@types/jest']).toBeUndefined();
+    expect(pkg.eslintConfig).toBeUndefined();
+    expect(pkg.scripts).toMatchObject({
+      dev: 'vite',
+      start: 'vite',
+      build: 'tsc --noEmit && vite build',
+      preview: 'vite preview',
+      test: 'vitest run',
+      'test:watch': 'vitest',
+      'test:coverage': 'vitest run --coverage',
+      'test:e2e': 'playwright test',
+    });
+    expect(await pathExists('src/setupProxy.js')).toBe(false);
+    expect(await pathExists('src/react-app-env.d.ts')).toBe(false);
+    expect(await pathExists('public/index.html')).toBe(false);
   });
 });
