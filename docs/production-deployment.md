@@ -46,7 +46,7 @@ Environment variables:
 
 ```text
 ANTHROPIC_API_KEY=<server-only key for api/identify-weed.js>
-VITE_PERSISTENCE_MODE=local
+VITE_PERSISTENCE_MODE=remote
 ```
 
 `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, and
@@ -165,21 +165,28 @@ Apply these prerequisites before deploying code that enables shared Safety
 Plans. Do not deploy the UI first: the API fails closed when its collections,
 RPCs or storage boundary are unavailable.
 
-1. Apply `docs/supabase-safety-plan-migration.sql` to the target Supabase
-   project. This adds the `safety_plan_authority` profile boolean, the
-   Safety Plan collections, tenant policies, atomic optimistic-concurrency
-   functions and server-derived audit boundary.
-2. Confirm existing administrator profiles and explicitly nominate only the
+1. Apply the base Supabase migration described in
+   `docs/plans/2026-03-23-backend-supabase-design.md` first. It creates
+   `ftf_profiles`, `ftf_store`, authentication linkage and the base
+   tenant/RLS boundary used by every shared collection.
+2. Then apply `docs/supabase-safety-plan-migration.sql`. It adds the
+   `safety_plan_authority` profile boolean and Safety Plan-specific
+   service-role RPCs for atomic optimistic concurrency, audit and company
+   template publishing. Safety Plans remain records in the base `ftf_store`
+   table; this migration does not create separate collection tables or browser
+   Storage policies.
+3. Confirm existing administrator profiles and explicitly nominate only the
    operational authorities authorised by each company. The default must remain
    `false`.
-3. Create a **private** Supabase Storage bucket named
+4. Create a **private** Supabase Storage bucket named
    `ftf-safety-attachments`. Do not enable public URLs.
-4. Apply Storage policies that constrain every object to the authenticated
-   tenant/plan/version path, allow draft uploads only to permitted operators,
-   allow reads only to users who can read that plan, and prevent mutation of
-   approved-version evidence. The server service role performs validated
-   attachment mutations; the browser never receives that key.
-5. Set `VITE_PERSISTENCE_MODE=remote` for protected preview and production.
+5. Do **not** add `anon` or `authenticated` Supabase Storage policies for this
+   bucket. All upload, download and deletion goes through the server
+   service-role attachment gateway, which validates the authenticated user,
+   tenant, plan, version, status, content type and digest before accessing the
+   private object. The browser never receives the service-role key or a
+   generally listable bucket path.
+6. Set `VITE_PERSISTENCE_MODE=remote` for protected preview and production.
    Configure `SUPABASE_URL`, `SUPABASE_ANON_KEY` and
    `SUPABASE_SERVICE_ROLE_KEY` as server-only Vercel variables.
 
@@ -192,7 +199,9 @@ Before promotion, use synthetic accounts in the protected preview to complete
 the administrator, contractor, nominated-authority, PIC and client checks
 above. Inspect Network responses for JSON API errors and confirm no request
 contains the local fixture header. Verify the private bucket cannot be listed
-or read across tenants and that an expired signed URL no longer works.
+or read with either an anonymous or authenticated browser token, cannot be read
+across tenants through the gateway, and that an expired signed URL no longer
+works.
 
 If any prerequisite or preview check fails, promote the immediately preceding
 successful immutable Vercel deployment. Leave the additive database migration,

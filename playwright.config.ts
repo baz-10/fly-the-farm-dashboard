@@ -21,6 +21,7 @@ export default defineConfig({
     command: 'npm run build && npm run preview -- --host 127.0.0.1',
     env: {
       FTF_E2E_AUTH_FIXTURE: 'local-playwright-only',
+      VITE_PERSISTENCE_MODE: 'remote',
     },
     port: 4173,
     reuseExistingServer: false,

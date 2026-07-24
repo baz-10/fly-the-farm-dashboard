@@ -79,6 +79,36 @@ const LOCAL_E2E_SEED_COLLECTIONS = {
     missionName: 'Synthetic boundary mission',
     jobId: 'e2e-job',
     status: 'Approved',
+    createdAt: '2026-07-24T00:00:00.000Z',
+    updatedAt: '2026-07-24T00:00:00.000Z',
+    jsaRecord: {
+      id: 'e2e-jsa',
+      updatedAt: '2026-07-24T00:00:00.000Z',
+      hazardIdentification: [
+        {
+          id: 'hazard-powerlines',
+          description: 'Powerlines',
+          controlMeasures: ['Maintain exclusion area'],
+        },
+        {
+          id: 'hazard-public',
+          description: 'Public access',
+          controlMeasures: ['Install signage'],
+        },
+      ],
+      missionChecks: {
+        answers: [{
+          questionId: 'weather-change',
+          answer: true,
+          notes: 'Weather may change',
+        }],
+        riskControls: [{
+          questionId: 'weather-change',
+          mitigation: 'Monitor live weather',
+        }],
+      },
+      signOffs: { pilot: { userId: 'e2e-pic' } },
+    },
     deploymentWorkPack: {
       assets: [{
         id: 'e2e-truck',
@@ -104,6 +134,69 @@ const LOCAL_E2E_SEED_COLLECTIONS = {
   ftf_safety_plan_templates: [],
   ftf_safety_plans: [],
   ftf_safety_plan_audit: [],
+  ftf_work_packs: [{
+    id: '__value__',
+    assets: [{
+      id: 'e2e-truck',
+      assetType: 'truck',
+      registration: 'E2E-001',
+      name: 'Synthetic Operations Truck',
+      manufacturer: 'Synthetic',
+      model: 'Fixture',
+      year: 2026,
+      vin: 'E2EVIN',
+      ownershipType: 'owned',
+      payloadCapacityKg: 1000,
+      operationalNotes: 'Operational data remains visible',
+      status: 'available',
+      costs: {
+        purchasePrice: 987654.34,
+        currentValue: 987654.35,
+        costPerHour: 987654.31,
+        costPerDay: 987654.32,
+        costPerKm: 987654.33,
+      },
+      createdAt: '2026-07-24T00:00:00.000Z',
+      updatedAt: '2026-07-24T00:00:00.000Z',
+    }],
+    trucks: [],
+    templates: [],
+    snapshots: [],
+  }],
+  ftf_maintenance: [{
+    id: '__value__',
+    assets: [{
+      id: 'e2e-maintenance-truck',
+      tenantId: 'e2e-tenant',
+      sourceId: 'e2e-truck',
+      scope: 'fleet',
+      assetClass: 'truck',
+      name: 'Synthetic Operations Truck',
+      status: 'serviceable',
+      readings: { kilometres: 100 },
+      createdAt: '2026-07-24T00:00:00.000Z',
+      updatedAt: '2026-07-24T00:00:00.000Z',
+    }],
+    schedules: [],
+    records: [{
+      id: 'e2e-maintenance-record',
+      tenantId: 'e2e-tenant',
+      assetId: 'e2e-maintenance-truck',
+      type: 'maintenance',
+      title: 'Synthetic service',
+      status: 'serviceable',
+      occurredAt: '2026-07-24T00:00:00.000Z',
+      createdAt: '2026-07-24T00:00:00.000Z',
+      createdBy: 'e2e-contractor',
+      createdByName: 'Synthetic Operator',
+      createdByRole: 'contractor',
+      affectsServiceability: false,
+      resultingServiceability: 'serviceable',
+      cost: 987654.36,
+      attachments: [],
+    }],
+    auditEvents: [],
+  }],
 };
 
 let localE2eCollections;
@@ -161,6 +254,45 @@ function handleLocalE2eStore(req, res) {
       ? records.filter((record) => record?.id !== recordId)
       : [];
     res.status(200).json({ ok: true, payload: null });
+    return true;
+  }
+
+  if (collection === 'ftf_safety_plan_templates' && body.action) {
+    const incoming = structuredClone(body.payload || {});
+    if (body.action === 'publish_company_master') {
+      const nextMasterVersion = Math.max(
+        0,
+        ...records.map((record) => Number(record?.masterVersion) || 0)
+      ) + 1;
+      const published = {
+        ...incoming,
+        id: `e2e-company-safety-plan-master-${nextMasterVersion}`,
+        recordType: 'published',
+        masterVersion: nextMasterVersion,
+        version: `${nextMasterVersion}.0`,
+        publishedAt: new Date().toISOString(),
+        publishedBy: { userId: fixture.user.id, name: fixture.user.name },
+      };
+      localE2eCollections[collection] = [
+        ...records.filter((record) => record?.recordType !== 'draft'),
+        published,
+      ];
+      res.status(200).json({ ok: true, count: 1, payload: published });
+      return true;
+    }
+    const draft = {
+      ...incoming,
+      id: 'safety-plan-template-draft',
+      recordType: 'draft',
+      draftRevision: body.action === 'update_company_template_draft'
+        ? (Number(incoming.draftRevision) || 0) + 1
+        : 1,
+      version: 'draft',
+    };
+    const draftIndex = records.findIndex((record) => record?.id === draft.id);
+    if (draftIndex >= 0) records[draftIndex] = draft;
+    else records.push(draft);
+    res.status(200).json({ ok: true, count: 1, payload: draft });
     return true;
   }
 

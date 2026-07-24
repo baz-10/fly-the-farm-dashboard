@@ -360,7 +360,7 @@ describe('local Vercel API middleware', () => {
     vi.stubGlobal('fetch', upstreamFetch);
 
     const { response } = await invokePlugin(
-      '/api/store?collection=ftf_work_packs',
+      '/api/store?collection=ftf_aircraft_data',
       'configurePreviewServer',
       {
         host: '127.0.0.1:4173',

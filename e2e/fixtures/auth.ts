@@ -138,7 +138,7 @@ const JOB_FIXTURES = {
   }],
 };
 
-const COMPANY_TEMPLATE = {
+export const COMPANY_TEMPLATE = {
   ...AU_REOC_SAFETY_PLAN_STANDARD,
   id: 'e2e-company-safety-plan-master',
   name: 'Synthetic company Safety Plan master',
@@ -238,6 +238,7 @@ export const test = base;
 
 export const authenticatedTest = base.extend<{ authenticatedSession: void }>({
   authenticatedSession: [async ({ page }, use) => {
+    await page.context().setExtraHTTPHeaders({ 'x-ftf-e2e-auth': 'contractor' });
     await page.addInitScript(({ contractor, safetyUsers, jobs, workPack, maintenance }) => {
       const selectedRole = window.localStorage.getItem('ftf_e2e_role') as keyof typeof safetyUsers | null;
       const sessionUser = selectedRole && safetyUsers[selectedRole]
@@ -397,6 +398,7 @@ export async function authenticateSafetyPlanRole(
   role: keyof typeof SAFETY_PLAN_USERS
 ) {
   const user = SAFETY_PLAN_USERS[role];
+  await page.context().setExtraHTTPHeaders({ 'x-ftf-e2e-auth': role });
   await page.evaluate((nextUser) => {
     const tenantId = nextUser.tenantId;
     const currentSession = JSON.parse(window.localStorage.getItem('ftf_session') || 'null');

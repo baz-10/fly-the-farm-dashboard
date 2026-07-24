@@ -68,7 +68,10 @@ or deleting audit records.
 ## Attachments and PDF
 
 Evidence uploads accept the configured PDF/image types and are stored in the
-private `ftf-safety-attachments` bucket under a tenant/plan/version path.
+private `ftf-safety-attachments` bucket under a tenant/plan/version path. The
+bucket has no anonymous or authenticated-browser policies: every operation
+passes through the server service-role gateway after application permission
+checks.
 Attachment metadata is part of the controlled version. Failed or losing
 uploads are cleaned up; approved evidence cannot be replaced.
 

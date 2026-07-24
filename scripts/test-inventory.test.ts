@@ -88,9 +88,19 @@ function countDeclaredTests(source: string): number {
 }
 
 describe('test inventory', () => {
+  it('keeps Safety Plan production guidance remote and service-role-only', async () => {
+    const deployment = await readFile('docs/production-deployment.md', 'utf8');
+    const playwright = await readFile('playwright.config.ts', 'utf8');
+
+    expect(deployment).toContain('VITE_PERSISTENCE_MODE=remote');
+    expect(deployment).toContain('Do **not** add `anon` or `authenticated` Supabase Storage policies');
+    expect(deployment).toContain('Apply the base Supabase migration');
+    expect(playwright).toContain("VITE_PERSISTENCE_MODE: 'remote'");
+  });
+
   it('tracks the exact Safety Plan release-gate supplements outside src', async () => {
     const releaseGateSupplements: Record<string, number> = {
-      'e2e/safety-plan-workflow.spec.ts': 8,
+      'e2e/safety-plan-workflow.spec.ts': 6,
       'server/localApiMiddleware.test.ts': 11,
     };
     const actual = Object.fromEntries(
