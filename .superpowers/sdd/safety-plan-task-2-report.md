@@ -306,3 +306,95 @@ Result: both exited `0`; no syntax or whitespace errors.
 - Deploy `docs/supabase-safety-plan-migration.sql` before deploying the updated
   API because existing-plan writes depend on the service-role-only CAS RPC.
 - No additional known Task 2 security concerns remain.
+
+---
+
+## Second security re-review fixes
+
+### Status and commit
+
+Complete in `2b91b84` (`fix: preserve Safety Plan version history`).
+
+### RED evidence
+
+Command:
+
+```bash
+npx vitest run src/__tests__/authenticated-safety-plan-api.test.ts
+```
+
+Observed exit `1`: 4 of 44 tests failed.
+
+- A normal singleton PUT replaced a stored draft version ID and returned 200.
+- An administrator replaced a submitted version with a new draft ID instead of
+  transitioning the stored version.
+- The same stored-version omission succeeded through a one-record list write.
+- A two-record list write returned the second record's 409 only after invoking
+  the first record's successful CAS, demonstrating a partial commit.
+
+All four failing tests also captured persistence calls. The omission cases
+reached the CAS, and the mixed list case made two CAS calls before failing.
+
+### Implemented review fixes
+
+- Every stored Safety Plan version ID must remain in every normal PUT payload,
+  regardless of draft, submitted, approved or superseded state.
+- Omission/replacement returns HTTP 409 before any CAS, insert, generic upsert
+  or audit write. Recoverable DELETE is the only deletion path.
+- Returning a submitted plan to draft preserves the submitted version ID and
+  advances its controlled revision.
+- A one-record `records` payload remains supported and uses the same validation
+  and CAS path as a singleton write.
+- Multi-record Safety Plan `records` writes return HTTP 400 before reads or
+  writes. Other collections retain their existing list-write behavior.
+- The explicit Safety Plan inventory supplement now records 39 declared tests;
+  the historical manifest remains unchanged.
+
+### GREEN evidence
+
+Focused command:
+
+```bash
+npx vitest run src/utils/__tests__/safetyPlanPermissions.test.ts src/utils/__tests__/safetyPlanRules.test.ts src/__tests__/authenticated-auth-api.test.ts src/__tests__/authenticated-store-api.test.ts src/__tests__/authenticated-safety-plan-api.test.ts
+```
+
+Result: exit `0`; 5 files passed, 81 tests passed.
+
+TypeScript command:
+
+```bash
+npx tsc --noEmit
+```
+
+Result: exit `0`; no diagnostics.
+
+Inventory command:
+
+```bash
+npx vitest run scripts/test-inventory.test.ts
+```
+
+Result: exit `0`; 1 file passed, 5 tests passed.
+
+Full Vitest command:
+
+```bash
+npm test -- --run
+```
+
+Result: exit `0`; 64 files passed, 329 tests passed.
+
+Syntax and formatting commands:
+
+```bash
+node --check api/store.js
+git diff --check
+```
+
+Result: both exited `0`; no syntax or whitespace errors.
+
+### Remaining concerns
+
+- Deploy `docs/supabase-safety-plan-migration.sql` before the updated API.
+- Safety Plan collection callers must save records individually; multi-record
+  Safety Plan writes are intentionally rejected to prevent partial commits.
