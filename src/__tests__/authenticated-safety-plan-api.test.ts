@@ -2654,6 +2654,58 @@ describe('Safety Plan persistent store security', () => {
     expect(inserted?.notRequiredSelectedAt).not.toBe('2000-01-01T00:00:00.000Z');
   });
 
+  it('lets an operator convert a not-required choice into the initial job draft', async () => {
+    const stored = makeSafetyPlan({
+      tenantId: 'tenant-a',
+      revision: 1,
+      status: 'not_required',
+      currentVersionId: undefined,
+      versions: [],
+      notRequiredReason: undefined,
+    });
+    const version = makeSafetyPlanVersion({
+      id: `${stored.id}-v1`,
+      planId: stored.id,
+      revision: 1,
+      status: 'draft',
+    });
+    const incoming = {
+      ...stored,
+      revision: 2,
+      status: 'draft' as const,
+      currentVersionId: version.id,
+      versions: [version],
+      updatedAt: '2026-07-24T04:00:00.000Z',
+    };
+    let written: SafetyPlan | undefined;
+    mockApi({
+      role: 'contractor',
+      stored: [{
+        tenant_id: 'tenant-a',
+        collection: 'ftf_safety_plans',
+        record_id: stored.id,
+        payload: stored,
+      }],
+      onRpc: (body) => {
+        written = body.p_payload as SafetyPlan;
+        return { succeeded: true, new_payload: body.p_payload };
+      },
+    });
+    const res = createResponse();
+    await storeHandler(request('PUT', 'ftf_safety_plans', {
+      collection: 'ftf_safety_plans',
+      recordId: stored.id,
+      payload: incoming,
+      audit: mutationAudit(incoming, 'field_changed', 'audit-convert'),
+    }), res);
+    expect(res.statusCode).toBe(200);
+    expect(written).toMatchObject({
+      id: stored.id,
+      status: 'draft',
+      currentVersionId: version.id,
+    });
+  });
+
   it('derives audit provenance and ignores forged actor and time', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-07-24T05:00:00.000Z'));
@@ -2724,6 +2776,10 @@ describe('Safety Plan persistent store security', () => {
       status: 'approved',
       approvedAt: '2026-07-24T05:00:00.000Z',
       contentDigest: 'digest',
+      sourceSnapshot: {
+        ...makeSafetyPlanVersion().sourceSnapshot,
+        client: { id: 'client-9', name: 'Client Nine' },
+      },
     });
     const plan = makeSafetyPlan({
       tenantId: 'tenant-a',
@@ -2774,6 +2830,49 @@ describe('Safety Plan persistent store security', () => {
       },
     });
     vi.useRealTimers();
+  });
+
+  it.each([
+    ['client-other', 'mismatched'],
+    [undefined, 'missing'],
+  ])('rejects a %s client-copy target against the approved current snapshot', async (clientId, _label) => {
+    const version = makeSafetyPlanVersion({
+      status: 'approved',
+      approvedAt: '2026-07-24T05:00:00.000Z',
+      contentDigest: 'digest',
+      sourceSnapshot: {
+        ...makeSafetyPlanVersion().sourceSnapshot,
+        client: { id: 'client-9', name: 'Client Nine' },
+      },
+    });
+    const plan = makeSafetyPlan({
+      tenantId: 'tenant-a',
+      status: 'approved',
+      currentVersionId: version.id,
+      versions: [version],
+    });
+    mockApi({
+      stored: [{
+        tenant_id: 'tenant-a',
+        collection: 'ftf_safety_plans',
+        record_id: plan.id,
+        payload: plan,
+      }],
+    });
+    const res = createResponse();
+    await storeHandler(request('PUT', 'ftf_safety_plan_audit', {
+      collection: 'ftf_safety_plan_audit',
+      recordId: `audit-${String(clientId)}`,
+      payload: {
+        id: `audit-${String(clientId)}`,
+        planId: plan.id,
+        versionId: version.id,
+        action: 'client_copy_exported',
+        ...(clientId ? { clientId } : {}),
+      },
+    }), res);
+    expect(res.statusCode).toBeGreaterThanOrEqual(400);
+    expect(res.statusCode).toBeLessThan(500);
   });
 
   it.each([

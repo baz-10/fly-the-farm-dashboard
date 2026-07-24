@@ -29,6 +29,23 @@ function templateId(tenantId: string, version: number): string {
 
 const DRAFT_RECORD_ID = 'safety-plan-template-draft';
 
+export async function loadPublishedCompanySafetyPlanTemplate(
+  actor: TemplateActor,
+): Promise<CompanySafetyPlanTemplate | undefined> {
+  const records = await readSharedCollection<CompanySafetyPlanTemplate>(
+    PERSISTENCE_KEYS.safetyPlanTemplates,
+    [],
+  );
+  const published = records
+    .filter((record) =>
+      record.tenantId === actor.tenantId
+      && record.recordType === 'published'
+      && Number.isSafeInteger(record.masterVersion)
+    )
+    .sort((left, right) => right.masterVersion - left.masterVersion)[0];
+  return published ? cloneTemplate(published) : undefined;
+}
+
 async function remoteTemplateOperation(
   action: string,
   payload: CompanySafetyPlanTemplate,

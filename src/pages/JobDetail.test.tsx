@@ -1,7 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
 import { makeSafetyPlan, makeSafetyPlanVersion } from '../test/safetyPlanFixtures';
-import { approvedVersionForExport, selectJobSafetyPlanForJob } from './JobDetail';
+import type { MissionRecord } from '../types/mission';
+import {
+  approvedVersionForExport,
+  assignedPicCrew,
+  canActorAcknowledgeVersion,
+  selectJobSafetyPlanForJob,
+} from './JobDetail';
 
 describe('JobDetail Safety Plan boundary', () => {
   it('associates a Safety Plan strictly by exact jobId', () => {
@@ -25,5 +31,44 @@ describe('JobDetail Safety Plan boundary', () => {
     });
     expect(approvedVersionForExport(plan)).toBe(approved);
     expect(() => approvedVersionForExport(makeSafetyPlan())).toThrow(/approved immutable/i);
+  });
+
+  it('snapshots the assigned PIC and mirrors acknowledgement eligibility', () => {
+    const actor = {
+      userId: 'pilot-1',
+      name: 'Pilot One',
+      role: 'contractor' as const,
+      operationalAuthority: false,
+    };
+    const mission = {
+      id: 'mission-1',
+      jobId: 'job-1',
+      jsaRecord: {
+        signOffs: { pilot: { userId: 'pilot-1', signature: '', signedAt: '' } },
+      },
+    } as unknown as MissionRecord;
+    expect(assignedPicCrew([mission], 'job-1', actor)).toEqual([
+      { id: 'pilot-1', name: 'Pilot One', role: 'PIC' },
+    ]);
+
+    const version = makeSafetyPlanVersion({
+      status: 'approved',
+      sourceSnapshot: {
+        ...makeSafetyPlanVersion().sourceSnapshot,
+        crew: [{ id: 'pilot-1', name: 'Pilot One', role: 'PIC' }],
+      },
+    });
+    expect(canActorAcknowledgeVersion(version, actor)).toBe(true);
+    expect(canActorAcknowledgeVersion({
+      ...version,
+      acknowledgements: [{
+        id: 'ack-1',
+        versionId: version.id,
+        actor,
+        assignedRole: 'PIC',
+        statement: 'Read',
+        acknowledgedAt: '2026-07-24T02:00:00.000Z',
+      }],
+    }, actor)).toBe(false);
   });
 });

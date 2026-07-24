@@ -23,6 +23,21 @@ export interface SafetyPlanPdfOptions {
 
 type InstrumentedDocument = jsPDF & { __safetyPlanText?: string[] };
 
+function stableFileId(seed: string): string {
+  const hex = seed.replace(/[^a-fA-F0-9]/g, '').toUpperCase();
+  if (hex.length >= 32) return hex.slice(0, 32);
+  let state = 2166136261;
+  let output = '';
+  for (let round = 0; round < 4; round += 1) {
+    for (let index = 0; index < seed.length; index += 1) {
+      state ^= seed.charCodeAt(index) + round;
+      state = Math.imul(state, 16777619) >>> 0;
+    }
+    output += state.toString(16).padStart(8, '0');
+  }
+  return output.toUpperCase().slice(0, 32);
+}
+
 function sanitisePdfText(value: unknown): string {
   return String(value ?? '')
     .replace(/[\u2014\u2013]/g, '-')
@@ -66,7 +81,18 @@ export async function buildSafetyPlanPdf(
 
   const doc = new jsPDF('p', 'mm', 'a4') as InstrumentedDocument;
   const captured: string[] = [];
+  const bodyPositions: number[] = [];
   Object.defineProperty(doc, '__safetyPlanText', { value: captured, enumerable: false });
+  Object.defineProperty(doc, '__safetyPlanBodyY', { value: bodyPositions, enumerable: false });
+  doc.setCreationDate(new Date(version.sourceSnapshot.capturedAt));
+  doc.setFileId(stableFileId(version.contentDigest));
+  doc.setProperties({
+    title: `Safety Plan ${version.version} - ${version.sourceSnapshot.job.name}`,
+    subject: options.clientCopy ? 'Approved Safety Plan client copy' : 'Approved Safety Plan controlled record',
+    author: company.name,
+    creator: 'Safety Plan Command',
+    keywords: `safety-plan,${version.version},${version.contentDigest}`,
+  });
   let y = 20;
 
   const addPage = () => {
@@ -88,10 +114,15 @@ export async function buildSafetyPlanPdf(
     doc.setFont('helvetica', settings.bold ? 'bold' : 'normal');
     doc.setFontSize(size);
     doc.setTextColor(...(settings.color ?? [33, 33, 33]));
-    const lines = doc.splitTextToSize(value, CONTENT_WIDTH - indent);
-    ensureSpace(lines.length * (size * 0.42) + 2);
-    doc.text(lines, MARGIN + indent, y);
-    y += lines.length * (size * 0.42) + 2;
+    const lines = doc.splitTextToSize(value, CONTENT_WIDTH - indent) as string[];
+    const lineHeight = size * 0.42;
+    for (const line of lines) {
+      ensureSpace(lineHeight + 2);
+      bodyPositions.push(y);
+      doc.text(line, MARGIN + indent, y);
+      y += lineHeight;
+    }
+    y += 2;
   };
   const heading = (raw: string) => {
     ensureSpace(12);

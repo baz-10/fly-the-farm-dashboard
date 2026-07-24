@@ -66,11 +66,19 @@ export default function JobSafetyPlanCard({
   const [error, setError] = useState<string>();
   const [working, setWorking] = useState(false);
 
-  const confirmNotRequired = async () => {
-    if (!reason.trim()) {
-      setError('Enter why a separate Safety Plan is not required.');
-      return;
+  const runCreate = async () => {
+    setWorking(true);
+    setError(undefined);
+    try {
+      await onCreate();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Safety Plan could not be created.');
+    } finally {
+      setWorking(false);
     }
+  };
+
+  const confirmNotRequired = async () => {
     setWorking(true);
     setError(undefined);
     try {
@@ -117,13 +125,18 @@ export default function JobSafetyPlanCard({
           <Stack direction="row" gap={1} flexWrap="wrap" alignContent="flex-start">
             {!plan && (
               <>
-                <Button variant="contained" onClick={() => void onCreate()}>
+                <Button variant="contained" disabled={working} onClick={() => void runCreate()}>
                   Create Safety Plan
                 </Button>
                 <Button variant="outlined" onClick={() => setDialogOpen(true)}>
                   Not required
                 </Button>
               </>
+            )}
+            {plan?.status === 'not_required' && (
+              <Button variant="contained" disabled={working} onClick={() => void runCreate()}>
+                Create Safety Plan
+              </Button>
             )}
             {plan && plan.status !== 'not_required' && (
               <Button
@@ -167,7 +180,7 @@ export default function JobSafetyPlanCard({
 
         {plan?.status === 'not_required' && (
           <Alert severity="info" sx={{ mt: 2 }}>
-            Not required: {plan.notRequiredReason}
+            Not required{plan.notRequiredReason ? `: ${plan.notRequiredReason}` : ''}
           </Alert>
         )}
       </CardContent>
@@ -181,10 +194,9 @@ export default function JobSafetyPlanCard({
           <TextField
             autoFocus
             fullWidth
-            required
             multiline
             minRows={3}
-            label="Reason"
+            label="Reason (optional)"
             value={reason}
             error={Boolean(error)}
             helperText={error}

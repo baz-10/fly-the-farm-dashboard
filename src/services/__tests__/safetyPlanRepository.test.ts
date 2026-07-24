@@ -288,6 +288,14 @@ describe('SafetyPlanRepository', () => {
     );
   });
 
+  it('allows an optional reason when marking a job not required', async () => {
+    const dependencies = makeDependencies();
+    const repository = createSafetyPlanRepository(dependencies);
+    const plan = await repository.markNotRequired('job-9', '', actor);
+    expect(plan.notRequiredReason).toBeUndefined();
+    expect(dependencies.writeRecord).toHaveBeenCalled();
+  });
+
   it('forwards expected revisions to audited draft delete and restore operations', async () => {
     const deleted = makeSafetyPlan({ revision: 4, deletedAt: '2026-07-24T03:00:00.000Z' });
     const restored = makeSafetyPlan({ revision: 5 });

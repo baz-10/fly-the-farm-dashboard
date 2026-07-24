@@ -69,10 +69,12 @@ import JobSafetyPlanCard from '../components/safety-plan/JobSafetyPlanCard';
 import { useAuth } from '../contexts/AuthContext';
 import { useMission } from '../contexts/MissionContext';
 import { useSafetyPlans } from '../contexts/SafetyPlanContext';
-import { AU_REOC_SAFETY_PLAN_STANDARD } from '../data/safetyPlanStandard';
+import { useUserLicense } from '../contexts/UserLicenseContext';
 import { buildJobSafetyPlan } from '../services/safetyPlanPrefill';
 import { safetyPlanRepository } from '../services/safetyPlanRepository';
+import { loadPublishedCompanySafetyPlanTemplate } from '../services/safetyPlanTemplateRepository';
 import type { SafetyPlan, SafetyPlanActor, SafetyPlanVersion } from '../types/safetyPlan';
+import type { MissionRecord } from '../types/mission';
 import {
   buildSafetyPlanPdf,
   safetyPlanPdfFilename,
@@ -104,6 +106,43 @@ function safetyPlanActor(user: NonNullable<ReturnType<typeof useAuth>['user']>):
   };
 }
 
+export function assignedPicCrew(
+  missions: MissionRecord[],
+  jobId: string,
+  actor: SafetyPlanActor
+) {
+  const pilotIds = new Set<string>();
+  for (const mission of missions.filter((candidate) => candidate.jobId === jobId)) {
+    const plannedPilotId = mission.jsaRecord?.signOffs?.pilot?.userId;
+    const executedPilotId = mission.flightExecution?.crew?.pilot?.userId;
+    if (plannedPilotId) pilotIds.add(plannedPilotId);
+    if (executedPilotId) pilotIds.add(executedPilotId);
+  }
+  if (pilotIds.size === 0) pilotIds.add(actor.userId);
+  return Array.from(pilotIds).sort().map((id) => ({
+    id,
+    name: id === actor.userId ? actor.name : `Assigned pilot ${id}`,
+    role: 'PIC',
+  }));
+}
+
+export function canActorAcknowledgeVersion(
+  version: SafetyPlanVersion | undefined,
+  actor: SafetyPlanActor | undefined
+): boolean {
+  return Boolean(
+    actor
+    && version
+    && ['submitted', 'approved'].includes(version.status)
+    && version.sourceSnapshot.crew?.some((person) => person.id === actor.userId)
+    && !version.acknowledgements.some(
+      (acknowledgement) =>
+        acknowledgement.actor.userId === actor.userId
+        && !acknowledgement.withdrawnAt
+    )
+  );
+}
+
 const efficacyLabels: Record<number, string> = {
   1: 'No effect',
   2: 'Poor',
@@ -119,6 +158,7 @@ export default function JobDetail() {
   const navigate = useNavigate();
   const theme = useTheme();
   const { user } = useAuth();
+  const { licenseProfile } = useUserLicense();
   const { missions } = useMission();
   const {
     plans,
@@ -164,27 +204,79 @@ export default function JobDetail() {
   const basePath = `/jobs/client/${clientId}/property/${propertyId}/field/${fieldId}`;
   const jobSafetyPlan = selectJobSafetyPlanForJob(plans, job.id);
   const actor = user && user.role !== 'client' ? safetyPlanActor(user) : undefined;
-  const latestSafetyPlan = actor
+  const companyName = licenseProfile?.generalInfo.companyName.trim();
+  const currentTemplate = jobSafetyPlan?.versions.find(
+    (version) => version.id === jobSafetyPlan.currentVersionId
+  )?.templateSnapshot;
+  const latestSafetyPlan = actor && companyName && currentTemplate
     ? buildJobSafetyPlan({
       tenantId: user?.tenantId || user?.id || '',
       job,
       missions,
-      template: AU_REOC_SAFETY_PLAN_STANDARD,
+      template: currentTemplate,
       actor,
       now: new Date().toISOString(),
-      company: { id: user?.tenantId || user?.id || '', name: user?.name || 'Operator' },
+      company: { id: user?.tenantId || user?.id || '', name: companyName },
       client,
       property,
       field,
+      crew: assignedPicCrew(missions, job.id, actor),
     })
     : undefined;
   const latestSourceSnapshot = latestSafetyPlan?.versions[0]?.sourceSnapshot;
 
   const handleCreateSafetyPlan = async () => {
-    if (!actor || !latestSafetyPlan) return;
-    await saveDraft({ plan: latestSafetyPlan, expectedRevision: 0, actor });
-    navigate(`/compliance/safety-plans/${encodeURIComponent(latestSafetyPlan.id)}`, {
-      state: { latestSourceSnapshot },
+    if (!actor) throw new Error('Sign in as an operator to create a Safety Plan.');
+    const tenantId = user?.tenantId || user?.id || '';
+    if (!tenantId) throw new Error('Company account identity is unavailable.');
+    if (!companyName) {
+      throw new Error('Add the company name in licence settings before creating a Safety Plan.');
+    }
+    const template = await loadPublishedCompanySafetyPlanTemplate({
+      tenantId,
+      userId: actor.userId,
+      name: actor.name,
+    });
+    if (!template) {
+      throw new Error('Publish the company Safety Plan master in Compliance before creating a job plan.');
+    }
+    const now = new Date().toISOString();
+    const built = buildJobSafetyPlan({
+      tenantId,
+      job,
+      missions,
+      template,
+      actor,
+      now,
+      company: { id: tenantId, name: companyName },
+      client,
+      property,
+      field,
+      crew: assignedPicCrew(missions, job.id, actor),
+    });
+    const converting = jobSafetyPlan?.status === 'not_required';
+    const createdPlan = converting
+      ? {
+        ...built,
+        id: jobSafetyPlan.id,
+        revision: jobSafetyPlan.revision,
+        createdAt: jobSafetyPlan.createdAt,
+        versions: built.versions.map((version) => ({
+          ...version,
+          id: `${jobSafetyPlan.id}-v1`,
+          planId: jobSafetyPlan.id,
+        })),
+        currentVersionId: `${jobSafetyPlan.id}-v1`,
+      }
+      : built;
+    const createdSnapshot = createdPlan.versions[0].sourceSnapshot;
+    await saveDraft({
+      plan: createdPlan,
+      expectedRevision: converting ? jobSafetyPlan.revision : 0,
+      actor,
+    });
+    navigate(`/compliance/safety-plans/${encodeURIComponent(createdPlan.id)}`, {
+      state: { latestSourceSnapshot: createdSnapshot },
     });
   };
 
@@ -198,7 +290,10 @@ export default function JobDetail() {
     const version = approvedVersionForExport(plan);
     return {
       version,
-      doc: await buildSafetyPlanPdf(plan, version, { name: user?.name || 'Operator' }, { clientCopy }),
+      doc: await buildSafetyPlanPdf(plan, version, {
+        name: companyName || version.sourceSnapshot.company?.name || 'Operator',
+        abn: licenseProfile?.generalInfo.abn || undefined,
+      }, { clientCopy }),
     };
   };
 
@@ -253,6 +348,11 @@ export default function JobDetail() {
       version.version
     ));
   };
+
+  const currentSafetyVersion = jobSafetyPlan?.versions.find(
+    (version) => version.id === jobSafetyPlan.currentVersionId
+  );
+  const actorAssignedToCurrentVersion = canActorAcknowledgeVersion(currentSafetyVersion, actor);
 
   const handleDelete = () => {
     deleteJob(job.id);
@@ -415,7 +515,7 @@ export default function JobDetail() {
             onExport={handleExportSafetyPlan}
             onPrint={handlePrintSafetyPlan}
             onExportClientCopy={handleExportClientCopy}
-            onAcknowledge={actor
+            onAcknowledge={actor && actorAssignedToCurrentVersion
               ? (plan) => acknowledgePlan(plan.id, plan.revision, actor)
               : undefined}
             onRevise={actor?.operationalAuthority

@@ -561,8 +561,11 @@ function assertIncomingPlanShape(actor, incoming, recordId) {
     if (incoming.currentVersionId != null || incoming.versions.length !== 0) {
       throw createHttpError(400, 'A not-required Safety Plan cannot retain versions.');
     }
-    if (typeof incoming.notRequiredReason !== 'string' || !incoming.notRequiredReason.trim()) {
-      throw createHttpError(400, 'A not-required Safety Plan requires a reason.');
+    if (
+      incoming.notRequiredReason !== undefined
+      && (typeof incoming.notRequiredReason !== 'string' || !incoming.notRequiredReason.trim())
+    ) {
+      throw createHttpError(400, 'Safety Plan not-required reason must be meaningful when supplied.');
     }
     return;
   }
@@ -766,7 +769,12 @@ function assertSafetyPlanTransition({ actor, stored, incoming, recordId }) {
   const storedIds = new Set((stored.versions || []).map((version) => version?.id));
   for (const incomingVersion of incoming.versions) {
     if (storedIds.has(incomingVersion.id)) continue;
-    if (!isSafetyPlanAuthority(actor)) {
+    const convertingOptionalChoice =
+      stored.status === 'not_required'
+      && stored.versions.length === 0
+      && incoming.status === 'draft'
+      && incoming.currentVersionId === incomingVersion.id;
+    if (!convertingOptionalChoice && !isSafetyPlanAuthority(actor)) {
       throw createHttpError(
         403,
         'Only a Safety Plan authority may create a controlled revision.'
@@ -910,6 +918,9 @@ function deriveSafetyPlanMutationAudit(stored, incoming, sourceRefreshMetadata) 
   }
   if (incoming.status === 'not_required' && stored.status !== 'not_required') {
     return { action: 'not_required_selected' };
+  }
+  if (stored.status === 'not_required' && incoming.status === 'draft') {
+    return { action: 'created', versionId: incoming.currentVersionId };
   }
 
   const storedVersions = new Map(
@@ -1278,7 +1289,7 @@ function normaliseSafetyAuditEventForPlan(
       );
     }
     assertSafetyAuditAction(actor, plan, event);
-    if (event.action === 'client_copy_exported') {
+  if (event.action === 'client_copy_exported') {
       if (actor.role !== 'admin') {
         throw createHttpError(403, 'Only company administrators can export a client copy.');
       }
@@ -1288,6 +1299,18 @@ function normaliseSafetyAuditEventForPlan(
         || event.clientId.trim().length > 160
       ) {
         throw createHttpError(400, 'Client-copy export requires a valid client.');
+      }
+      const current = currentSafetyPlanVersion(plan);
+      if (
+        !current
+        || current.id !== event.versionId
+        || current.status !== 'approved'
+        || current.sourceSnapshot?.client?.id !== event.clientId.trim()
+      ) {
+        throw createHttpError(
+          409,
+          'Client-copy target must match the approved current Safety Plan snapshot.'
+        );
       }
     }
   }

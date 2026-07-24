@@ -3,6 +3,7 @@ import { AU_REOC_SAFETY_PLAN_STANDARD } from '../../data/safetyPlanStandard';
 import type { CompanySafetyPlanTemplate } from '../../types/safetyPlan';
 import {
   loadCompanySafetyPlanTemplate,
+  loadPublishedCompanySafetyPlanTemplate,
   publishCompanySafetyPlanTemplate,
   saveCompanySafetyPlanTemplateDraft,
 } from '../safetyPlanTemplateRepository';
@@ -59,5 +60,19 @@ describe('Safety Plan company-master provenance', () => {
     expect(reloaded.sections[0].title).toBe('Our controlled plan identity');
     expect(published.masterVersion).toBe(1);
     expect(published.version).toBe('1.0');
+  });
+
+  it('loads only the latest tenant-published company master and never falls back to the platform standard', async () => {
+    const actor = { tenantId: 'tenant-1', userId: 'admin-1', name: 'Admin' };
+    await expect(loadPublishedCompanySafetyPlanTemplate(actor)).resolves.toBeUndefined();
+
+    const draft = await loadCompanySafetyPlanTemplate(actor);
+    const published = await publishCompanySafetyPlanTemplate(actor, {
+      ...draft,
+      sections: draft.sections.map((section, index) => index === 0
+        ? { ...section, title: 'Published company identity' }
+        : section),
+    });
+    await expect(loadPublishedCompanySafetyPlanTemplate(actor)).resolves.toEqual(published);
   });
 });

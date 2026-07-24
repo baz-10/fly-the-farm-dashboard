@@ -139,4 +139,25 @@ describe('JobSafetyPlanCard', () => {
     expect(revise).toHaveBeenCalledWith(plan);
     expect(missionChange).not.toHaveBeenCalled();
   });
+
+  it('keeps a not-required choice convertible into a Safety Plan', () => {
+    render(
+      <MemoryRouter>
+        <JobSafetyPlanCard
+          jobId="job-1"
+          jobName="Western paddock"
+          plan={makeSafetyPlan({
+            status: 'not_required',
+            currentVersionId: undefined,
+            versions: [],
+            notRequiredReason: undefined,
+          })}
+          onCreate={vi.fn()}
+          onMarkNotRequired={vi.fn()}
+        />
+      </MemoryRouter>
+    );
+    expect(screen.getByRole('button', { name: /create safety plan/i })).toBeEnabled();
+    expect(screen.getAllByText(/not required/i).length).toBeGreaterThan(0);
+  });
 });

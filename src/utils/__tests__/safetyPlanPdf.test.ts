@@ -133,4 +133,46 @@ describe('buildSafetyPlanPdf', () => {
     expect(safetyPlanPdfFilename('West / North: Job', '1.0'))
       .toBe('Safety_Plan_West_North_Job_1.0.pdf');
   });
+
+  it('produces identical bytes for the same immutable approved snapshot', async () => {
+    const version = makeSafetyPlanVersion({
+      status: 'approved',
+      approvedAt: '2026-07-24T01:00:00.000Z',
+      contentDigest: 'abcdef0123456789abcdef0123456789',
+    });
+    const plan = makeSafetyPlan({
+      status: 'approved',
+      currentVersionId: version.id,
+      versions: [version],
+    });
+    const first = await buildSafetyPlanPdf(plan, version, { name: 'Operator Co' });
+    const second = await buildSafetyPlanPdf(plan, version, { name: 'Operator Co' });
+    expect(new Uint8Array(first.output('arraybuffer')))
+      .toEqual(new Uint8Array(second.output('arraybuffer')));
+  });
+
+  it('paginates a long wrapped field without writing body text over the footer', async () => {
+    const base = makeSafetyPlanVersion();
+    const longValue = Array.from({ length: 800 }, (_, index) => `control-${index}`).join(' ');
+    const version = makeSafetyPlanVersion({
+      status: 'approved',
+      approvedAt: '2026-07-24T01:00:00.000Z',
+      contentDigest: 'abcdef0123456789abcdef0123456789',
+      sections: [{
+        ...base.sections[0],
+        fields: [{ ...base.sections[0].fields[0], value: longValue }],
+      }],
+    });
+    const plan = makeSafetyPlan({
+      status: 'approved',
+      currentVersionId: version.id,
+      versions: [version],
+    });
+    const doc = await buildSafetyPlanPdf(plan, version, { name: 'Operator Co' });
+    expect(doc.getNumberOfPages()).toBeGreaterThan(1);
+    const bodyPositions = (
+      doc as unknown as { __safetyPlanBodyY: number[] }
+    ).__safetyPlanBodyY;
+    expect(Math.max(...bodyPositions)).toBeLessThan(276);
+  });
 });

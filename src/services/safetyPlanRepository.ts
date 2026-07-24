@@ -376,7 +376,6 @@ export function createSafetyPlanRepository(
 
     async markNotRequired(jobId, reason, actor, options) {
       const trimmedReason = reason.trim();
-      if (!trimmedReason) throw new Error('A reason is required.');
       const tenantId = deps.getTenantId();
       if (!tenantId) throw new Error('An authenticated tenant is required.');
       const now = deps.now();
@@ -387,7 +386,7 @@ export function createSafetyPlanRepository(
         revision: 1,
         status: 'not_required',
         versions: [],
-        notRequiredReason: trimmedReason,
+        ...(trimmedReason ? { notRequiredReason: trimmedReason } : {}),
         createdAt: now,
         updatedAt: now,
       };

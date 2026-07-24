@@ -47,3 +47,23 @@
 - Existing Vite warnings remain: `pdfjs-dist` contains eval and the main bundle
   exceeds the default chunk-size warning. Neither warning was introduced as a
   functional failure in this task.
+
+## Independent review fixes
+
+- Client-copy exports now require the administrator-supplied client ID to
+  exactly match the client stored in the approved current version snapshot.
+  Missing, stale-version and cross-client targets are rejected by the server.
+- New Job plans now require the tenant's latest published company master; the
+  platform standard and an unpublished draft are never silently substituted.
+  Company identity comes from the tenant licence profile and missing company
+  setup produces a clear in-product error.
+- Assigned mission PIC identities are captured in the job snapshot, and the Job
+  acknowledgement action is shown only when the authenticated actor is assigned
+  and has no active acknowledgement.
+- “Not required” reasons are optional and the choice remains reversible. An
+  operator can convert it to the job's initial draft without Safety Plan
+  authority and without creating a second job association.
+- PDF metadata, creation date and file ID now derive from immutable approved
+  snapshot data. Repeated generation produces identical bytes.
+- Wrapped body text is paginated line-by-line and is constrained above the
+  footer boundary.
