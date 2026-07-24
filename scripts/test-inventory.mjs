@@ -4,10 +4,10 @@ import path from 'node:path';
 const TEST_FILE_PATTERN = /\.test\.(?:ts|tsx|js|jsx)$/;
 const DECLARED_TEST_PATTERN = /\b(?:it|test)(?:\.(?:each|skip|only|todo))?\s*\(/g;
 
-// These Vite environment checks were introduced after the accepted 56-file,
-// 224-test CRA baseline. Keep them visible separately so the migration
-// inventory remains comparable without preventing Vitest from running them.
+// These checks were introduced after the accepted 52e6ace source baseline.
+// Keep them explicit so the historical inventory remains exactly comparable.
 const POST_BASELINE_TEST_FILES = new Set([
+  'src/__tests__/route-manifest.test.tsx',
   'src/config/environment.build.test.ts',
   'src/config/environment.test.ts',
 ]);

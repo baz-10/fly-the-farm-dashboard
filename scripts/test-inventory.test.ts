@@ -1,6 +1,10 @@
+// @vitest-environment node
+
 import { describe, expect, it } from 'vitest';
-import { readFile, readdir } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { build } from 'vite';
 
 import { collectTestInventory } from './test-inventory.mjs';
 
@@ -77,19 +81,46 @@ async function findEmittedPatterns(root: string, pattern: RegExp): Promise<strin
   return offenders.sort();
 }
 
-describe('test inventory', () => {
-  it('discovers the complete source test file inventory', async () => {
-    const inventory = await collectTestInventory('src');
+function countDeclaredTests(source: string): number {
+  return Array.from(
+    source.matchAll(/\b(?:it|test)(?:\.(?:each|skip|only|todo))?\s*\(/g)
+  ).length;
+}
 
-    expect(inventory.files).toHaveLength(57);
-    expect(inventory.declaredTests).toBe(224);
-    expect(inventory.files).toContain('src/services/__tests__/persistence.test.ts');
-    expect(inventory.files).toContain('src/App.test.tsx');
-    expect(inventory.files).toContain('src/__tests__/route-manifest.test.tsx');
-    expect(inventory.supplementaryFiles).toEqual([
-      'src/config/environment.build.test.ts',
-      'src/config/environment.test.ts',
-    ]);
+describe('test inventory', () => {
+  it('preserves the exact accepted baseline and explicit migration supplements', async () => {
+    const inventory = await collectTestInventory('src');
+    const manifest = JSON.parse(
+      await readFile('scripts/test-baseline-manifest.json', 'utf8')
+    );
+    const baseline = manifest.declaredTestsByFile as Record<string, number>;
+    const approvedDeltas = manifest.approvedDeclarationDeltas as Record<string, number>;
+    const supplements = manifest.supplementaryTestsByFile as Record<string, number>;
+    const expectedCurrentBaseline = Object.fromEntries(
+      Object.entries(baseline).map(([file, count]) => [
+        file,
+        count + (approvedDeltas[file] ?? 0),
+      ])
+    );
+    const supplementaryCounts = Object.fromEntries(
+      await Promise.all(
+        Object.keys(supplements).map(async (file) => [
+          file,
+          countDeclaredTests(await readFile(file, 'utf8')),
+        ])
+      )
+    );
+
+    expect(manifest.sourceCommit).toBe('52e6ace');
+    expect(manifest.runtimeBaseline).toEqual({ suites: 56, tests: 224 });
+    expect(Object.keys(baseline)).toHaveLength(56);
+    expect(Object.values(baseline).reduce((total: number, count: number) => total + count, 0))
+      .toBe(219);
+    expect(inventory.testsByFile).toEqual(expectedCurrentBaseline);
+    expect(inventory.files).toEqual(Object.keys(baseline).sort());
+    expect(inventory.supplementaryFiles).toEqual(Object.keys(supplements).sort());
+    expect(supplementaryCounts).toEqual(supplements);
+    expect(inventory.files.length + inventory.supplementaryFiles.length).toBe(59);
   });
 
   it('contains no Jest runtime API in migrated React tests', async () => {
@@ -133,9 +164,50 @@ describe('test inventory', () => {
     ).toEqual([]);
   });
 
-  it('does not emit server secret names into the production client bundle', async () => {
-    expect(
-      await findEmittedPatterns('dist', /SUPABASE_SERVICE_ROLE_KEY|ANTHROPIC_API_KEY/)
-    ).toEqual([]);
-  });
+  it('does not emit server secret names into a clean production client bundle', async () => {
+    const outputRoot = await realpath(
+      await mkdtemp(path.join(tmpdir(), 'ftf-final-secret-audit-'))
+    );
+    const outputDirectory = path.join(outputRoot, 'dist');
+    const originalViteSecret = process.env.VITE_SUPABASE_SERVICE_ROLE_KEY;
+    const originalCraSecret = process.env.REACT_APP_ANTHROPIC_API_KEY;
+    const viteSentinel = 'final-audit-vite-service-role-secret';
+    const craSentinel = 'final-audit-cra-anthropic-secret';
+
+    process.env.VITE_SUPABASE_SERVICE_ROLE_KEY = viteSentinel;
+    process.env.REACT_APP_ANTHROPIC_API_KEY = craSentinel;
+
+    try {
+      await build({
+        configFile: path.resolve(process.cwd(), 'vite.config.ts'),
+        build: {
+          emptyOutDir: true,
+          outDir: outputDirectory,
+        },
+        logLevel: 'silent',
+      });
+
+      const secretPattern =
+        /SUPABASE_SERVICE_ROLE_KEY|ANTHROPIC_API_KEY|final-audit-(?:vite|cra)-/;
+      expect(await findEmittedPatterns(outputDirectory, secretPattern)).toEqual([]);
+
+      const injectedOutput = path.join(outputDirectory, 'audit-injected-secret.js');
+      await writeFile(injectedOutput, 'const leaked = "ANTHROPIC_API_KEY";');
+      expect(await findEmittedPatterns(outputDirectory, secretPattern)).toEqual([
+        injectedOutput,
+      ]);
+    } finally {
+      if (originalViteSecret === undefined) {
+        delete process.env.VITE_SUPABASE_SERVICE_ROLE_KEY;
+      } else {
+        process.env.VITE_SUPABASE_SERVICE_ROLE_KEY = originalViteSecret;
+      }
+      if (originalCraSecret === undefined) {
+        delete process.env.REACT_APP_ANTHROPIC_API_KEY;
+      } else {
+        process.env.REACT_APP_ANTHROPIC_API_KEY = originalCraSecret;
+      }
+      await rm(outputRoot, { recursive: true, force: true });
+    }
+  }, 30_000);
 });

@@ -87,14 +87,18 @@ To place an admin inside an existing contractor tenant, use that contractor's
 Set these for Production and Preview:
 
 ```text
-REACT_APP_PERSISTENCE_MODE=remote
+VITE_PERSISTENCE_MODE=remote
 SUPABASE_URL=https://YOUR_PROJECT.supabase.co
 SUPABASE_ANON_KEY=YOUR_ANON_OR_PUBLISHABLE_KEY
 SUPABASE_SERVICE_ROLE_KEY=YOUR_SERVICE_ROLE_OR_SECRET_KEY
 ```
 
-Only `REACT_APP_PERSISTENCE_MODE` is exposed in the browser bundle. Both
-Supabase keys remain server-side.
+Only the exact `VITE_PERSISTENCE_MODE` value is allowlisted into the browser
+bundle. Vite's automatic client environment namespace is disabled, and both
+Supabase keys remain server-side. Existing deployments that still define
+`REACT_APP_PERSISTENCE_MODE` are read only as a temporary build-time
+compatibility fallback; new and updated deployments must use
+`VITE_PERSISTENCE_MODE`.
 
 Supabase enables email confirmation by default. With confirmation enabled, a
 new user is sent to sign in after confirming their email. For a controlled beta,
@@ -102,7 +106,7 @@ confirmation can be disabled in **Authentication > Sign In / Providers > Email**
 
 ## Local Development
 
-Leave `REACT_APP_PERSISTENCE_MODE=local`. Local mode retains the seeded demo
+Leave `VITE_PERSISTENCE_MODE=local`. Local mode retains the seeded demo
 admin account and browser storage, so normal local development does not need a
 Supabase project.
 

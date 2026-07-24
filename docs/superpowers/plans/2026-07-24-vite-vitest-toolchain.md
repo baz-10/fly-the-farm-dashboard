@@ -167,19 +167,19 @@ import { describe, expect, it } from 'vitest';
 import { readClientEnvironment } from './environment';
 
 describe('readClientEnvironment', () => {
-  it('reads only the exact browser environment keys supported by CRA', () => {
+  it('reads only the exact browser environment keys supported by Vite', () => {
     expect(readClientEnvironment({
-      REACT_APP_PERSISTENCE_MODE: 'remote',
-      NODE_ENV: 'development',
-      PUBLIC_URL: '/dashboard',
+      VITE_PERSISTENCE_MODE: 'remote',
+      MODE: 'development',
+      BASE_URL: '/dashboard',
     })).toEqual({ persistenceMode: 'remote', isDevelopment: true, publicBaseUrl: '/dashboard' });
   });
 
   it('never exposes unrecognised server secrets', () => {
     expect(JSON.stringify(readClientEnvironment({
       SUPABASE_SERVICE_ROLE_KEY: 'secret',
-      NODE_ENV: 'production',
-      PUBLIC_URL: '/',
+      MODE: 'production',
+      BASE_URL: '/',
     }))).not.toContain('secret');
   });
 });
@@ -211,24 +211,32 @@ export interface ClientEnvironment {
 
 export function readClientEnvironment(source: Record<string, unknown>): ClientEnvironment {
   return {
-    persistenceMode: source.REACT_APP_PERSISTENCE_MODE === 'remote' ? 'remote' : 'local',
-    isDevelopment: source.NODE_ENV === 'development',
-    publicBaseUrl: typeof source.PUBLIC_URL === 'string' ? source.PUBLIC_URL : '/',
+    persistenceMode: source.VITE_PERSISTENCE_MODE === 'remote' ? 'remote' : 'local',
+    isDevelopment: source.MODE === 'development',
+    publicBaseUrl: typeof source.BASE_URL === 'string' ? source.BASE_URL : '/',
   };
 }
 
 export const clientEnvironment = readClientEnvironment({
-  REACT_APP_PERSISTENCE_MODE: process.env.REACT_APP_PERSISTENCE_MODE,
-  NODE_ENV: process.env.NODE_ENV,
-  PUBLIC_URL: process.env.PUBLIC_URL,
+  VITE_PERSISTENCE_MODE: import.meta.env.VITE_PERSISTENCE_MODE,
+  MODE: import.meta.env.MODE,
+  BASE_URL: import.meta.env.BASE_URL,
 });
 ```
 
 Set `target: 'ES2022'`, root `index.html`, Vite React plugin and output `dist`. Keep TypeScript 4.9's `moduleResolution: 'node'` and do not exclude legacy test directories from `tsc`.
 
-Do not use bare `import.meta.env` or Vite/CRA namespace exposure. Configure Vite with an inert automatic environment prefix and exact `define` replacements for only `process.env.REACT_APP_PERSISTENCE_MODE`, `process.env.NODE_ENV` and `process.env.PUBLIC_URL`. Prefer `VITE_PERSISTENCE_MODE`/`VITE_PUBLIC_URL` over their legacy names while resolving those definitions. Replace all other browser-side environment reads with the adapter.
+Do not use whole-object `import.meta.env` or Vite/CRA namespace exposure.
+Configure Vite with an inert automatic environment prefix and an exact `define`
+replacement for only `import.meta.env.VITE_PERSISTENCE_MODE`. Use Vite's exact
+built-in `MODE` and `BASE_URL` keys for the remaining client settings. The
+build may read `REACT_APP_PERSISTENCE_MODE` only as a temporary compatibility
+fallback for an existing deployment; application source must use the adapter.
 
-Normalise the selected public base URL to exactly one leading and trailing slash, preserving `/` for root deployments. A build regression must verify public HTML assets, generated JavaScript/CSS paths and the compiled `PUBLIC_URL` for a `/dashboard` deployment.
+Normalise the selected public base URL to exactly one leading and trailing
+slash, preserving `/` for root deployments. A build regression must verify
+public HTML assets, generated JavaScript/CSS paths and `import.meta.env.BASE_URL`
+for a `/dashboard` deployment.
 
 - [ ] **Step 5: Verify adapter and production build**
 
