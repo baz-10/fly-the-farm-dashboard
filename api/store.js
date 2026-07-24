@@ -759,6 +759,40 @@ function storedHazardCompanyControl(version, hazard) {
   return hazard?.companyValue;
 }
 
+function hazardSectionControl(version, hazardId) {
+  for (const section of version?.sections || []) {
+    const field = (section?.fields || []).find(({ id }) => id === hazardId);
+    if (field) return { found: true, value: field.value };
+  }
+  return { found: false, value: undefined };
+}
+
+function assertHazardSnapshotControls(storedVersion, incomingVersion) {
+  const incomingHazards = new Map(
+    (incomingVersion?.sourceSnapshot?.hazards || []).map((hazard) => [hazard?.id, hazard])
+  );
+  for (const incomingHazard of incomingHazards.values()) {
+    const live = hazardSectionControl(incomingVersion, incomingHazard.id);
+    if (!live.found || !valuesEqual(live.value, incomingHazard.companyValue)) {
+      throw createHttpError(
+        409,
+        'Safety Plan retained hazard control does not match its live section field.'
+      );
+    }
+  }
+  for (const storedHazard of storedVersion?.sourceSnapshot?.hazards || []) {
+    if (
+      !incomingHazards.has(storedHazard?.id)
+      && hazardSectionControl(incomingVersion, storedHazard?.id).found
+    ) {
+      throw createHttpError(
+        409,
+        'Safety Plan removed hazard control must not remain in the live section fields.'
+      );
+    }
+  }
+}
+
 function requiredSourceRefreshDecisions(storedVersion, incomingVersion) {
   const expected = new Map();
   const storedSnapshot = storedVersion?.sourceSnapshot || {};
@@ -834,6 +868,7 @@ function canonicalSourceRefreshMetadata(storedVersion, incomingVersion, intent) 
   ) {
     throw createHttpError(409, 'Safety Plan source refresh metadata does not match the source snapshots.');
   }
+  assertHazardSnapshotControls(storedVersion, incomingVersion);
   const requiredDecisions = requiredSourceRefreshDecisions(storedVersion, incomingVersion);
   const seen = new Set();
   const canonicalDecisions = decisions.map((decision) => {

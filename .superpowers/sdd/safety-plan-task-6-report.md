@@ -52,7 +52,7 @@ handling.
   `npx vitest run src/pages/SafetyPlanEditor.test.tsx src/services/__tests__/safetyPlanRepository.test.ts src/utils/__tests__/safetyPlanSourceSync.test.ts src/__tests__/authenticated-safety-plan-api.test.ts scripts/test-inventory.test.ts`
   — 5 files, 112 tests passed.
 - TypeScript: `npx tsc --noEmit` — passed.
-- Full suite: `npm test` — 76 files, 460 tests passed.
+- Full suite: `npm test` — 76 files, 462 tests passed.
 - Production build: `npm run build` — passed.
 - Patch hygiene: `git diff --check` — passed.
 
@@ -113,4 +113,12 @@ false source-change prompt.
 - The client canonicalises action labels to the same outcome rules before
   sending the one-shot intent. Authenticated regressions reject forged
   keep/remove labels and forged hazard keep while retaining valid hazard keep.
-  Final full suite: 76 files, 460 tests.
+- Retained hazards now have one canonical live control: the matching hazard-ID
+  section field must exist and exactly equal the incoming source snapshot's
+  `companyValue` before action derivation.
+- Removed hazards must also remove their matching live section field. The
+  authenticated server rejects snapshot/section disagreement and orphaned
+  controls before audit creation or CAS.
+- Final hazard consistency regressions, API/inventory/source-sync checks,
+  TypeScript, syntax, diff, full suite and production build pass. Final full
+  suite: 76 files, 462 tests.

@@ -1,6 +1,6 @@
 import { vi } from 'vitest';
 import { makeSafetyPlan, makeSafetyPlanVersion } from '../test/safetyPlanFixtures';
-import type { SafetyPlan, SafetyPlanAuditEvent } from '../types/safetyPlan';
+import type { SafetyPlan, SafetyPlanAuditEvent, SafetyPlanVersion } from '../types/safetyPlan';
 import { AU_REOC_SAFETY_PLAN_STANDARD } from '../data/safetyPlanStandard';
 
 let storeHandler: any;
@@ -84,6 +84,33 @@ function mutationAudit(
     planId: plan.id,
     ...(plan.currentVersionId ? { versionId: plan.currentVersionId } : {}),
     action,
+  };
+}
+
+function withHazardControl(
+  version: SafetyPlanVersion,
+  hazardId: string,
+  value: string
+): SafetyPlanVersion {
+  return {
+    ...version,
+    sections: version.sections.map((section) => section.id === 'consolidated_jsa_hazards_controls'
+      ? {
+        ...section,
+        fields: [
+          ...section.fields.filter((field) => field.id !== hazardId),
+          {
+            id: hazardId,
+            label: 'Imported hazard control',
+            helpText: 'Company control',
+            type: 'textarea',
+            required: false,
+            companyEditable: true,
+            value,
+          },
+        ],
+      }
+      : section),
   };
 }
 
@@ -1248,13 +1275,13 @@ describe('Safety Plan persistent store security', () => {
       value: 'Old source risk',
       companyValue: 'Keep the gate controller',
     };
-    const storedVersion = makeSafetyPlanVersion({
+    const storedVersion = withHazardControl(makeSafetyPlanVersion({
       revision: 2,
       sourceSnapshot: {
         ...makeSafetyPlanVersion().sourceSnapshot,
         hazards: [storedHazard],
       },
-    });
+    }), storedHazard.id, storedHazard.companyValue);
     const storedPlan = makeSafetyPlan({
       tenantId: 'tenant-a',
       revision: 2,
@@ -1324,13 +1351,13 @@ describe('Safety Plan persistent store security', () => {
       value: 'Old source risk',
       companyValue: 'Keep the gate controller',
     };
-    const storedVersion = makeSafetyPlanVersion({
+    const storedVersion = withHazardControl(makeSafetyPlanVersion({
       revision: 2,
       sourceSnapshot: {
         ...makeSafetyPlanVersion().sourceSnapshot,
         hazards: [storedHazard],
       },
-    });
+    }), storedHazard.id, storedHazard.companyValue);
     const storedPlan = makeSafetyPlan({
       tenantId: 'tenant-a',
       revision: 2,
@@ -1339,6 +1366,11 @@ describe('Safety Plan persistent store security', () => {
     const incomingVersion = {
       ...storedVersion,
       revision: 3,
+      sections: withHazardControl(
+        storedVersion,
+        storedHazard.id,
+        'Use the new exclusion control'
+      ).sections,
       sourceSnapshot: {
         ...storedVersion.sourceSnapshot,
         capturedAt: '2026-07-25T00:00:00.000Z',
@@ -1384,6 +1416,149 @@ describe('Safety Plan persistent store security', () => {
 
     expect(res.statusCode).toBe(409);
     expect(res.body.error).toMatch(/decision action/i);
+    expect(rpcCalls).toBe(0);
+  });
+
+  it('rejects a retained hazard when its source snapshot and live section control differ', async () => {
+    const storedHazard = {
+      id: 'jsa:mission-1:hazard-1',
+      sourceType: 'jsa' as const,
+      sourceId: 'mission-1',
+      sourceItemId: 'hazard-1',
+      sourceUpdatedAt: '2026-07-24T00:00:00.000Z',
+      label: 'Public access',
+      value: 'Old source risk',
+      companyValue: 'Keep the gate controller',
+    };
+    const storedVersion = withHazardControl(makeSafetyPlanVersion({
+      revision: 2,
+      sourceSnapshot: {
+        ...makeSafetyPlanVersion().sourceSnapshot,
+        hazards: [storedHazard],
+      },
+    }), storedHazard.id, storedHazard.companyValue);
+    const storedPlan = makeSafetyPlan({
+      tenantId: 'tenant-a',
+      revision: 2,
+      versions: [storedVersion],
+    });
+    const incomingVersion = {
+      ...storedVersion,
+      revision: 3,
+      sourceSnapshot: {
+        ...storedVersion.sourceSnapshot,
+        capturedAt: '2026-07-25T00:00:00.000Z',
+        hazards: [{
+          ...storedHazard,
+          sourceUpdatedAt: '2026-07-25T00:00:00.000Z',
+          value: 'Updated source risk',
+          companyValue: 'Use the new exclusion control',
+        }],
+      },
+      sourceRefreshIntent: {
+        kind: 'source_refresh' as const,
+        before: {
+          capturedAt: storedVersion.sourceSnapshot.capturedAt,
+          sourceItemCount: 1,
+        },
+        after: {
+          capturedAt: '2026-07-25T00:00:00.000Z',
+          sourceItemCount: 1,
+          decisions: [{
+            itemId: storedHazard.id,
+            action: 'accept_source_value',
+          }],
+        },
+      },
+    };
+    let rpcCalls = 0;
+    mockApi({
+      stored: [{ tenant_id: 'tenant-a', record_id: storedPlan.id, payload: storedPlan }],
+      onRpc: () => {
+        rpcCalls += 1;
+        return { succeeded: true };
+      },
+    });
+    const res = createResponse();
+
+    await storeHandler(request('PUT', 'ftf_safety_plans', {
+      collection: 'ftf_safety_plans',
+      recordId: storedPlan.id,
+      payload: { ...storedPlan, revision: 3, versions: [incomingVersion] },
+      audit: mutationAudit(storedPlan, 'field_changed', 'audit-hazard-control-mismatch'),
+    }), res);
+
+    expect(res.statusCode).toBe(409);
+    expect(res.body.error).toMatch(/hazard control/i);
+    expect(rpcCalls).toBe(0);
+  });
+
+  it('rejects a removed hazard when its live section control is retained', async () => {
+    const storedHazard = {
+      id: 'jsa:mission-1:hazard-1',
+      sourceType: 'jsa' as const,
+      sourceId: 'mission-1',
+      sourceItemId: 'hazard-1',
+      sourceUpdatedAt: '2026-07-24T00:00:00.000Z',
+      label: 'Public access',
+      value: 'Old source risk',
+      companyValue: 'Keep the gate controller',
+    };
+    const storedVersion = withHazardControl(makeSafetyPlanVersion({
+      revision: 2,
+      sourceSnapshot: {
+        ...makeSafetyPlanVersion().sourceSnapshot,
+        hazards: [storedHazard],
+      },
+    }), storedHazard.id, storedHazard.companyValue);
+    const storedPlan = makeSafetyPlan({
+      tenantId: 'tenant-a',
+      revision: 2,
+      versions: [storedVersion],
+    });
+    const incomingVersion = {
+      ...storedVersion,
+      revision: 3,
+      sourceSnapshot: {
+        ...storedVersion.sourceSnapshot,
+        capturedAt: '2026-07-25T00:00:00.000Z',
+        hazards: [],
+      },
+      sourceRefreshIntent: {
+        kind: 'source_refresh' as const,
+        before: {
+          capturedAt: storedVersion.sourceSnapshot.capturedAt,
+          sourceItemCount: 1,
+        },
+        after: {
+          capturedAt: '2026-07-25T00:00:00.000Z',
+          sourceItemCount: 0,
+          decisions: [{
+            itemId: storedHazard.id,
+            action: 'remove',
+          }],
+        },
+      },
+    };
+    let rpcCalls = 0;
+    mockApi({
+      stored: [{ tenant_id: 'tenant-a', record_id: storedPlan.id, payload: storedPlan }],
+      onRpc: () => {
+        rpcCalls += 1;
+        return { succeeded: true };
+      },
+    });
+    const res = createResponse();
+
+    await storeHandler(request('PUT', 'ftf_safety_plans', {
+      collection: 'ftf_safety_plans',
+      recordId: storedPlan.id,
+      payload: { ...storedPlan, revision: 3, versions: [incomingVersion] },
+      audit: mutationAudit(storedPlan, 'field_changed', 'audit-hazard-orphan-control'),
+    }), res);
+
+    expect(res.statusCode).toBe(409);
+    expect(res.body.error).toMatch(/removed hazard control/i);
     expect(rpcCalls).toBe(0);
   });
 

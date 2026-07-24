@@ -105,7 +105,7 @@ describe('test inventory', () => {
     const explicitPostBaselineSupplements: Record<string, number> = {
       ...supplements,
       'src/App.safetyPlanProvider.test.tsx': 1,
-      'src/__tests__/authenticated-safety-plan-api.test.ts': 72,
+      'src/__tests__/authenticated-safety-plan-api.test.ts': 74,
       'src/__tests__/safety-plan-authority-api.test.ts': 2,
       'src/components/safety-plan/SafetyPlanAuthorityManager.test.tsx': 2,
       'src/contexts/__tests__/SafetyPlanContext.test.tsx': 30,
