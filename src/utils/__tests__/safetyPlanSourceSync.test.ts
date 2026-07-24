@@ -373,6 +373,11 @@ describe('Safety Plan source synchronisation', () => {
     expect(fields.find(({ id }) => id === 'plan_scope')?.value).toBe('Company scope');
     expect(fields.find(({ id }) => id === 'site_access_controls')?.value)
       .toBe('Company gate procedure');
+    expect(refreshed.sourceRefreshIntent?.after?.decisions).toEqual([
+      { itemId: 'context:job', action: 'accept_source_value' },
+      { itemId: 'field:job_details', action: 'accept_source_value' },
+      { itemId: 'field:operating_dates', action: 'accept_source_value' },
+    ]);
   });
 
   it('does not import hazards or links from a rejected new mission', () => {
@@ -416,5 +421,6 @@ describe('Safety Plan source synchronisation', () => {
     expect(refreshed.sourceSnapshot.missions.map(({ id }) => id)).toEqual(['mission-1']);
     expect(refreshed.sourceSnapshot.hazards).toEqual([]);
     expect(refreshed.sourceSnapshot.sourceLinks).toEqual(current.sourceLinks);
+    expect(refreshed.sourceRefreshIntent?.after?.decisions).toEqual([]);
   });
 });

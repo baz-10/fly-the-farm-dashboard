@@ -442,6 +442,39 @@ function refreshAcceptedSourceFields(
   }));
 }
 
+function actualRefreshDecisionIds(
+  version: SafetyPlanVersion,
+  sourceSnapshot: SafetyPlanSourceSnapshot,
+  sections: SafetyPlanVersion['sections']
+): Set<string> {
+  const actualDiff = diffSafetyPlanSources(version.sourceSnapshot, sourceSnapshot);
+  const ids = new Set<string>([
+    ...actualDiff.changed.map(({ current }) => current.id),
+    ...actualDiff.removed.map(({ id }) => id),
+    ...actualDiff.contextChanged.map(({ itemId }) => itemId),
+    ...actualDiff.contextRemoved.map(({ itemId }) => itemId),
+  ]);
+  const beforeFields = new Map(
+    version.sections.flatMap((section) => section.fields)
+      .map((field) => [field.id, field.value])
+  );
+  const afterFields = new Map(
+    sections.flatMap((section) => section.fields)
+      .map((field) => [field.id, field.value])
+  );
+  for (const fieldId of SOURCE_BACKED_FIELDS) {
+    const before = beforeFields.get(fieldId);
+    const after = afterFields.get(fieldId);
+    if (
+      !(isEmptySourceField(before) && isEmptySourceField(after))
+      && stableSerialise(before) !== stableSerialise(after)
+    ) {
+      ids.add(`field:${fieldId}`);
+    }
+  }
+  return ids;
+}
+
 export function applySourceRefresh(
   version: SafetyPlanVersion,
   diff: SafetyPlanSourceDiff,
@@ -471,15 +504,17 @@ export function applySourceRefresh(
     decisionMap
   );
   const sourceSections = refreshSourceFields(version, hazards);
+  const sections = refreshAcceptedSourceFields(
+    sourceSections,
+    sourceSnapshot,
+    diff,
+    decisionMap
+  );
+  const appliedDecisionIds = actualRefreshDecisionIds(version, sourceSnapshot, sections);
 
   return {
     ...version,
-    sections: refreshAcceptedSourceFields(
-      sourceSections,
-      sourceSnapshot,
-      diff,
-      decisionMap
-    ),
+    sections,
     sourceSnapshot,
     sourceRefreshIntent: {
       kind: 'source_refresh',
@@ -490,7 +525,9 @@ export function applySourceRefresh(
       after: {
         capturedAt: diff.latestSnapshot.capturedAt,
         sourceItemCount: hazards.length,
-        decisions: decisions.map((decision) => ({ ...decision })),
+        decisions: decisions
+          .filter((decision) => appliedDecisionIds.has(decision.itemId))
+          .map((decision) => ({ ...decision })),
       },
     },
   };

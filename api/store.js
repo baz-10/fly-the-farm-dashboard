@@ -724,27 +724,71 @@ const SOURCE_REFRESH_ACTIONS = new Set([
   'keep_company_value',
   'remove',
 ]);
+const SOURCE_REFRESH_BACKED_FIELDS = new Set([
+  'plan_reference',
+  'plan_scope',
+  'job_details',
+  'client_property_location',
+  'operating_dates',
+  'assigned_crew',
+  'operational_assets',
+  'chemicals_payloads',
+  'site_access_controls',
+  'hazards_and_risk_scores',
+  'mitigations_and_controls',
+  'emergency_response',
+]);
 
-function sourceRefreshDecisionIds(storedVersion, incomingVersion) {
-  const ids = new Set();
-  for (const snapshot of [
-    storedVersion?.sourceSnapshot,
-    incomingVersion?.sourceSnapshot,
-  ]) {
-    for (const hazard of snapshot?.hazards || []) {
-      if (typeof hazard?.id === 'string' && hazard.id.trim()) ids.add(hazard.id);
-    }
-    for (const category of SOURCE_REFRESH_CONTEXT_CATEGORIES) {
-      if (snapshot?.[category] !== undefined) ids.add(`context:${category}`);
+function sourceRefreshFieldValues(version) {
+  const values = new Map();
+  for (const section of version?.sections || []) {
+    for (const field of section?.fields || []) {
+      if (SOURCE_REFRESH_BACKED_FIELDS.has(field?.id)) {
+        values.set(field.id, field.value);
+      }
     }
   }
-  for (const version of [storedVersion, incomingVersion]) {
-    for (const section of version?.sections || []) {
-      for (const field of section?.fields || []) {
-        if (typeof field?.id === 'string' && field.id.trim()) {
-          ids.add(`field:${field.id}`);
-        }
-      }
+  return values;
+}
+
+function requiredSourceRefreshDecisionIds(storedVersion, incomingVersion) {
+  const ids = new Set();
+  const storedSnapshot = storedVersion?.sourceSnapshot || {};
+  const incomingSnapshot = incomingVersion?.sourceSnapshot || {};
+  const incomingHazards = new Map(
+    (incomingSnapshot.hazards || []).map((hazard) => [hazard?.id, hazard])
+  );
+  for (const storedHazard of storedSnapshot.hazards || []) {
+    const incomingHazard = incomingHazards.get(storedHazard?.id);
+    if (
+      !incomingHazard
+      || storedHazard.sourceUpdatedAt !== incomingHazard.sourceUpdatedAt
+      || storedHazard.value !== incomingHazard.value
+    ) {
+      ids.add(storedHazard.id);
+    }
+  }
+  for (const category of SOURCE_REFRESH_CONTEXT_CATEGORIES) {
+    if (
+      storedSnapshot[category] !== undefined
+      && !valuesEqual(storedSnapshot[category], incomingSnapshot[category])
+    ) {
+      ids.add(`context:${category}`);
+    }
+  }
+  const storedFields = sourceRefreshFieldValues(storedVersion);
+  const incomingFields = sourceRefreshFieldValues(incomingVersion);
+  for (const fieldId of SOURCE_REFRESH_BACKED_FIELDS) {
+    const current = storedFields.get(fieldId);
+    const latest = incomingFields.get(fieldId);
+    const currentEmpty = current == null
+      || current === ''
+      || (Array.isArray(current) && current.length === 0);
+    const latestEmpty = latest == null
+      || latest === ''
+      || (Array.isArray(latest) && latest.length === 0);
+    if (!(currentEmpty && latestEmpty) && !valuesEqual(current, latest)) {
+      ids.add(`field:${fieldId}`);
     }
   }
   return ids;
@@ -769,7 +813,7 @@ function canonicalSourceRefreshMetadata(storedVersion, incomingVersion, intent) 
   ) {
     throw createHttpError(409, 'Safety Plan source refresh metadata does not match the source snapshots.');
   }
-  const allowedIds = sourceRefreshDecisionIds(storedVersion, incomingVersion);
+  const requiredIds = requiredSourceRefreshDecisionIds(storedVersion, incomingVersion);
   const seen = new Set();
   const canonicalDecisions = decisions.map((decision) => {
     if (
@@ -778,7 +822,6 @@ function canonicalSourceRefreshMetadata(storedVersion, incomingVersion, intent) 
       || !decision.itemId.trim()
       || !SOURCE_REFRESH_ACTIONS.has(decision.action)
       || seen.has(decision.itemId)
-      || !allowedIds.has(decision.itemId)
     ) {
       throw createHttpError(409, 'Safety Plan source refresh metadata contains an invalid decision.');
     }
@@ -788,6 +831,14 @@ function canonicalSourceRefreshMetadata(storedVersion, incomingVersion, intent) 
       action: decision.action,
     };
   }).sort((left, right) => left.itemId.localeCompare(right.itemId));
+  const submittedIds = canonicalDecisions.map(({ itemId }) => itemId).sort();
+  const expectedIds = Array.from(requiredIds).sort();
+  if (!valuesEqual(submittedIds, expectedIds)) {
+    throw createHttpError(
+      409,
+      'Safety Plan source refresh decisions must exactly match changed or removed source items.'
+    );
+  }
   return {
     before: {
       capturedAt: storedSnapshot.capturedAt,

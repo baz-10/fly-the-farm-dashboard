@@ -847,6 +847,10 @@ describe('Safety Plan persistent store security', () => {
       sourceSnapshot: {
         ...storedVersion.sourceSnapshot,
         capturedAt: '2026-07-25T00:00:00.000Z',
+        job: {
+          ...storedVersion.sourceSnapshot.job,
+          name: 'Updated job scope',
+        },
       },
       sourceRefreshIntent: {
         kind: 'source_refresh' as const,
@@ -859,7 +863,7 @@ describe('Safety Plan persistent store security', () => {
           sourceItemCount: 0,
           decisions: [{
             itemId: 'context:job',
-            action: 'keep_company_value',
+            action: 'accept_source_value',
           }],
         },
       },
@@ -901,7 +905,7 @@ describe('Safety Plan persistent store security', () => {
         sourceItemCount: 0,
         decisions: [{
           itemId: 'context:job',
-          action: 'keep_company_value',
+          action: 'accept_source_value',
         }],
       },
     });
@@ -1016,6 +1020,111 @@ describe('Safety Plan persistent store security', () => {
 
     expect(res.statusCode).toBe(409);
     expect(res.body.error).toMatch(/invalid decision/i);
+    expect(rpcCalls).toBe(0);
+  });
+
+  it('rejects a source refresh that omits the exact decision for a changed source item', async () => {
+    const storedVersion = makeSafetyPlanVersion({ revision: 2 });
+    const storedPlan = makeSafetyPlan({
+      tenantId: 'tenant-a',
+      revision: 2,
+      versions: [storedVersion],
+    });
+    const incomingVersion = {
+      ...storedVersion,
+      revision: 3,
+      sourceSnapshot: {
+        ...storedVersion.sourceSnapshot,
+        capturedAt: '2026-07-25T00:00:00.000Z',
+        job: {
+          ...storedVersion.sourceSnapshot.job,
+          name: 'Changed without a decision',
+        },
+      },
+      sourceRefreshIntent: {
+        kind: 'source_refresh' as const,
+        before: {
+          capturedAt: storedVersion.sourceSnapshot.capturedAt,
+          sourceItemCount: 0,
+        },
+        after: {
+          capturedAt: '2026-07-25T00:00:00.000Z',
+          sourceItemCount: 0,
+          decisions: [],
+        },
+      },
+    };
+    let rpcCalls = 0;
+    mockApi({
+      stored: [{ tenant_id: 'tenant-a', record_id: storedPlan.id, payload: storedPlan }],
+      onRpc: () => {
+        rpcCalls += 1;
+        return { succeeded: true };
+      },
+    });
+    const res = createResponse();
+
+    await storeHandler(request('PUT', 'ftf_safety_plans', {
+      collection: 'ftf_safety_plans',
+      recordId: storedPlan.id,
+      payload: { ...storedPlan, revision: 3, versions: [incomingVersion] },
+      audit: mutationAudit(storedPlan, 'field_changed', 'audit-missing-decision'),
+    }), res);
+
+    expect(res.statusCode).toBe(409);
+    expect(res.body.error).toMatch(/exactly match changed or removed/i);
+    expect(rpcCalls).toBe(0);
+  });
+
+  it('rejects a known but unchanged source item as an extraneous decision', async () => {
+    const storedVersion = makeSafetyPlanVersion({ revision: 2 });
+    const storedPlan = makeSafetyPlan({
+      tenantId: 'tenant-a',
+      revision: 2,
+      versions: [storedVersion],
+    });
+    const incomingVersion = {
+      ...storedVersion,
+      revision: 3,
+      sourceSnapshot: {
+        ...storedVersion.sourceSnapshot,
+        capturedAt: '2026-07-25T00:00:00.000Z',
+      },
+      sourceRefreshIntent: {
+        kind: 'source_refresh' as const,
+        before: {
+          capturedAt: storedVersion.sourceSnapshot.capturedAt,
+          sourceItemCount: 0,
+        },
+        after: {
+          capturedAt: '2026-07-25T00:00:00.000Z',
+          sourceItemCount: 0,
+          decisions: [{
+            itemId: 'context:job',
+            action: 'keep_company_value',
+          }],
+        },
+      },
+    };
+    let rpcCalls = 0;
+    mockApi({
+      stored: [{ tenant_id: 'tenant-a', record_id: storedPlan.id, payload: storedPlan }],
+      onRpc: () => {
+        rpcCalls += 1;
+        return { succeeded: true };
+      },
+    });
+    const res = createResponse();
+
+    await storeHandler(request('PUT', 'ftf_safety_plans', {
+      collection: 'ftf_safety_plans',
+      recordId: storedPlan.id,
+      payload: { ...storedPlan, revision: 3, versions: [incomingVersion] },
+      audit: mutationAudit(storedPlan, 'field_changed', 'audit-extraneous-decision'),
+    }), res);
+
+    expect(res.statusCode).toBe(409);
+    expect(res.body.error).toMatch(/exactly match changed or removed/i);
     expect(rpcCalls).toBe(0);
   });
 

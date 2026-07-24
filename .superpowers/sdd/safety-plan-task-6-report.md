@@ -52,7 +52,7 @@ handling.
   `npx vitest run src/pages/SafetyPlanEditor.test.tsx src/services/__tests__/safetyPlanRepository.test.ts src/utils/__tests__/safetyPlanSourceSync.test.ts src/__tests__/authenticated-safety-plan-api.test.ts scripts/test-inventory.test.ts`
   — 5 files, 112 tests passed.
 - TypeScript: `npx tsc --noEmit` — passed.
-- Full suite: `npm test` — 76 files, 454 tests passed.
+- Full suite: `npm test` — 76 files, 456 tests passed.
 - Production build: `npm run build` — passed.
 - Patch hygiene: `git diff --check` — passed.
 
@@ -91,5 +91,15 @@ false source-change prompt.
   atomic `source_refreshed` audit event. Forged counts, unknown decision IDs,
   invalid actions, duplicate decisions and client actor/time are rejected
   before the compare-and-swap write.
-- Final authenticated API and inventory verification: 2 files, 80 tests
-  passed. The full suite increased to 454 passing tests.
+- Final authenticated API and inventory verification: 2 files, 82 tests
+  passed. The full suite increased to 456 passing tests.
+- The final canonicality pass derives the exact required decision-ID set from
+  changed or removed hazards, source-context categories and source-backed
+  field values. Submitted unique IDs must equal that set: missing decisions
+  and decisions for known-but-unchanged items are rejected.
+- The client intent reports only decisions whose result is present in the
+  resolved incoming plan. A `keep_company_value` choice therefore still
+  controls the refresh but is not falsely recorded as an applied source
+  change.
+- Valid real-diff persistence plus missing-decision and unchanged-extraneous
+  authenticated API regressions pass. Final full suite: 76 files, 456 tests.
