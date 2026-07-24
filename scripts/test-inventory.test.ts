@@ -102,9 +102,13 @@ describe('test inventory', () => {
         count + (approvedDeltas[file] ?? 0),
       ])
     );
+    const explicitPostBaselineSupplements: Record<string, number> = {
+      ...supplements,
+      'src/utils/__tests__/safetyPlanRules.test.ts': 5,
+    };
     const supplementaryCounts = Object.fromEntries(
       await Promise.all(
-        Object.keys(supplements).map(async (file) => [
+        Object.keys(explicitPostBaselineSupplements).map(async (file) => [
           file,
           countDeclaredTests(await readFile(file, 'utf8')),
         ])
@@ -118,9 +122,9 @@ describe('test inventory', () => {
       .toBe(219);
     expect(inventory.testsByFile).toEqual(expectedCurrentBaseline);
     expect(inventory.files).toEqual(Object.keys(baseline).sort());
-    expect(inventory.supplementaryFiles).toEqual(Object.keys(supplements).sort());
-    expect(supplementaryCounts).toEqual(supplements);
-    expect(inventory.files.length + inventory.supplementaryFiles.length).toBe(59);
+    expect(inventory.supplementaryFiles).toEqual(Object.keys(explicitPostBaselineSupplements).sort());
+    expect(supplementaryCounts).toEqual(explicitPostBaselineSupplements);
+    expect(inventory.files.length + inventory.supplementaryFiles.length).toBe(60);
   });
 
   it('contains no Jest runtime API in migrated React tests', async () => {

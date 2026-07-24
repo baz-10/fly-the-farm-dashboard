@@ -10,6 +10,7 @@ const POST_BASELINE_TEST_FILES = new Set([
   'src/__tests__/route-manifest.test.tsx',
   'src/config/environment.build.test.ts',
   'src/config/environment.test.ts',
+  'src/utils/__tests__/safetyPlanRules.test.ts',
 ]);
 
 async function findTestFiles(directory) {
