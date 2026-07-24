@@ -1,3 +1,5 @@
+import { describe, expect, test } from 'vitest';
+
 import { instantiateWorkPackTemplate, validateTemplateReferences } from '../workPackTemplates';
 import { WorkPackTemplate } from '../../types/workPack';
 

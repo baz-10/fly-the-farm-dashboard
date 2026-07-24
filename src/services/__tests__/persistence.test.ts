@@ -1,3 +1,5 @@
+import { afterEach, beforeEach, describe, expect, it, test, vi } from 'vitest';
+
 import { getPersistenceModeFromEnvironment } from '../../config/environment';
 import {
   PERSISTENCE_KEYS,
@@ -6,15 +8,13 @@ import {
   writeSharedCollection,
 } from '../persistence';
 
-jest.mock('../../config/environment', () => ({
-  getPersistenceModeFromEnvironment: jest.fn(),
+vi.mock('../../config/environment', () => ({
+  getPersistenceModeFromEnvironment: vi.fn(),
 }));
 
 describe('remote persistence failures', () => {
   const originalFetch = global.fetch;
-  const mockedGetPersistenceMode = getPersistenceModeFromEnvironment as jest.MockedFunction<
-    typeof getPersistenceModeFromEnvironment
-  >;
+  const mockedGetPersistenceMode = vi.mocked(getPersistenceModeFromEnvironment);
 
   beforeEach(() => {
     mockedGetPersistenceMode.mockReturnValue('remote');
@@ -23,13 +23,13 @@ describe('remote persistence failures', () => {
   });
 
   afterEach(() => {
-    jest.restoreAllMocks();
+    vi.restoreAllMocks();
     global.fetch = originalFetch;
     localStorage.clear();
   });
 
   test('scopes the browser cache to the authenticated user', async () => {
-    global.fetch = jest.fn(async () => ({
+    global.fetch = vi.fn(async () => ({
       ok: true,
       status: 200,
       json: async () => ({ ok: true }),
@@ -42,7 +42,7 @@ describe('remote persistence failures', () => {
   });
 
   test('rejects instead of reporting success when the remote write fails', async () => {
-    global.fetch = jest.fn(async () => ({
+    global.fetch = vi.fn(async () => ({
       ok: false,
       status: 503,
       json: async () => ({ error: 'Persistent storage is unavailable.' }),
@@ -55,7 +55,7 @@ describe('remote persistence failures', () => {
 
   test('does not resurrect a cached record after the server deletes it', async () => {
     localStorage.setItem(`${PERSISTENCE_KEYS.missions}:user-a`, JSON.stringify([{ id: 'deleted-mission' }]));
-    global.fetch = jest.fn(async () => ({
+    global.fetch = vi.fn(async () => ({
       ok: true,
       status: 200,
       json: async () => ({ records: [] }),
@@ -70,13 +70,13 @@ describe('remote persistence failures', () => {
 
   test('returns remote collections when the browser cache quota is exceeded', async () => {
     const nativeSetItem = Storage.prototype.setItem;
-    jest.spyOn(Storage.prototype, 'setItem').mockImplementation(function (this: Storage, key, value) {
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (this: Storage, key, value) {
       if (key.startsWith(`${PERSISTENCE_KEYS.missions}:`)) {
         throw new DOMException('The quota has been exceeded.', 'QuotaExceededError');
       }
       return nativeSetItem.call(this, key, value);
     });
-    global.fetch = jest.fn(async () => ({
+    global.fetch = vi.fn(async () => ({
       ok: true,
       status: 200,
       json: async () => ({ records: [{ id: 'mission-from-server' }] }),
@@ -89,13 +89,13 @@ describe('remote persistence failures', () => {
 
   test('returns remote singleton values when the browser cache quota is exceeded', async () => {
     const nativeSetItem = Storage.prototype.setItem;
-    jest.spyOn(Storage.prototype, 'setItem').mockImplementation(function (this: Storage, key, value) {
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (this: Storage, key, value) {
       if (key.startsWith(`${PERSISTENCE_KEYS.workPacks}:`)) {
         throw new DOMException('The quota has been exceeded.', 'QuotaExceededError');
       }
       return nativeSetItem.call(this, key, value);
     });
-    global.fetch = jest.fn(async () => ({
+    global.fetch = vi.fn(async () => ({
       ok: true,
       status: 200,
       json: async () => ({ payload: { assets: [{ id: 'trailer-1' }] } }),
@@ -108,13 +108,13 @@ describe('remote persistence failures', () => {
 
   test('still saves remotely when the browser cache quota is exceeded', async () => {
     const nativeSetItem = Storage.prototype.setItem;
-    jest.spyOn(Storage.prototype, 'setItem').mockImplementation(function (this: Storage, key, value) {
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (this: Storage, key, value) {
       if (key.startsWith(`${PERSISTENCE_KEYS.missions}:`)) {
         throw new DOMException('The quota has been exceeded.', 'QuotaExceededError');
       }
       return nativeSetItem.call(this, key, value);
     });
-    global.fetch = jest.fn(async () => ({
+    global.fetch = vi.fn(async () => ({
       ok: true,
       status: 200,
       json: async () => ({ ok: true }),
@@ -127,7 +127,7 @@ describe('remote persistence failures', () => {
   });
 
   test('retries one transient remote read', async () => {
-    global.fetch = jest.fn()
+    global.fetch = vi.fn()
       .mockRejectedValueOnce(new TypeError('temporary network failure'))
       .mockResolvedValueOnce({
         ok: true,

@@ -1,3 +1,5 @@
+import { describe, expect, test } from 'vitest';
+
 import { buildEmptyMissionSafetyAssessment, evaluateMissionSafety, getRiskControlContext, isUnsafeAnswer, MISSION_CHECKS } from '../missionSafety';
 
 describe('mission safety rules', () => {

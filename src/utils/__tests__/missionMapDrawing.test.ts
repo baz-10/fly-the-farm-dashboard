@@ -1,3 +1,5 @@
+import { describe, expect, test } from 'vitest';
+
 import { appendDraftVertex, canFinishDrawing, cancelDrawing, finishDrawing } from '../missionMapDrawing';
 
 describe('mission map drawing state', () => {

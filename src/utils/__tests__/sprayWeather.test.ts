@@ -1,3 +1,5 @@
+import { describe, expect, test } from 'vitest';
+
 import { assessInversionPotential, calculateDeltaT, calculateWetBulbC, classifyDeltaT, selectCurrentHourlyPoint } from '../sprayWeather';
 import { HourlyWeatherPoint } from '../../services/weatherService';
 

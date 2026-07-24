@@ -1,3 +1,5 @@
+import { beforeEach, describe, expect, test } from 'vitest';
+
 import { readNavigationExpansion, writeNavigationExpansion } from '../navigationPreferenceStore';
 
 describe('navigation preference store', () => {

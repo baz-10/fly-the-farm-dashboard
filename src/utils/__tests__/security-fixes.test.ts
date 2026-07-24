@@ -1,3 +1,5 @@
+import { describe, expect, test, vi } from 'vitest';
+
 /**
  * Security and Safety Tests for JSA System Fixes
  * Tests the critical security issues identified in Task 4
@@ -129,7 +131,7 @@ describe('JSA Security Fixes', () => {
 
   describe('Error Handling (CRITICAL UX)', () => {
     test('should replace alert() with proper error handling', () => {
-      const mockSetError = jest.fn();
+      const mockSetError = vi.fn();
 
       JSAErrorHandler.handleValidationError(
         'testField',
@@ -147,7 +149,7 @@ describe('JSA Security Fixes', () => {
     });
 
     test('should handle critical safety errors appropriately', () => {
-      const mockSetError = jest.fn();
+      const mockSetError = vi.fn();
 
       JSAErrorHandler.handleCriticalError(
         'System failure',
@@ -167,8 +169,8 @@ describe('JSA Security Fixes', () => {
     });
 
     test('should validate hazard with proper error feedback', () => {
-      const mockSetError = jest.fn();
-      const mockSetFieldErrors = jest.fn();
+      const mockSetError = vi.fn();
+      const mockSetFieldErrors = vi.fn();
 
       const invalidHazard = {
         title: '', // Empty title should fail

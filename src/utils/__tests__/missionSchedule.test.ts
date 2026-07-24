@@ -1,3 +1,5 @@
+import { describe, expect, test } from 'vitest';
+
 import { getCalendarRange, getOperationalWeek, groupMissionsByLocalDate } from '../missionSchedule';
 import { MissionRecord } from '../../types/mission';
 

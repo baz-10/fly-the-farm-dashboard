@@ -1,3 +1,5 @@
+import { describe, expect, test } from 'vitest';
+
 import { moveBoundaryVertex, normaliseBoundaryPolygons, removeBoundaryPolygon, removeBoundaryVertex } from '../missionBoundaryEditing';
 
 const coords = [[-27.4, 153.1], [-27.4, 153.2], [-27.5, 153.2], [-27.5, 153.1]] as Array<[number, number]>;

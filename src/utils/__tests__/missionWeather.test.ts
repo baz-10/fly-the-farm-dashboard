@@ -1,3 +1,5 @@
+import { describe, expect, test } from 'vitest';
+
 import { HourlyWeatherPoint } from '../../services/weatherService';
 import { selectWeatherWindow, validateWeatherRequest } from '../missionWeather';
 

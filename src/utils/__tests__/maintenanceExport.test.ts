@@ -1,3 +1,5 @@
+import { expect, test } from 'vitest';
+
 import { buildRpasTechnicalLog, createFirmwareCampaign } from '../maintenanceExport';
 import { MaintenanceStore } from '../../types/maintenance';
 
