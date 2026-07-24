@@ -398,3 +398,105 @@ Result: both exited `0`; no syntax or whitespace errors.
 - Deploy `docs/supabase-safety-plan-migration.sql` before the updated API.
 - Safety Plan collection callers must save records individually; multi-record
   Safety Plan writes are intentionally rejected to prevent partial commits.
+
+---
+
+## Final submitted-current bypass fix
+
+### Status and commit
+
+Complete in `d8cb33b` (`fix: lock submitted Safety Plan identity`).
+
+### RED evidence
+
+Administrator/list command:
+
+```bash
+npx vitest run src/__tests__/authenticated-safety-plan-api.test.ts -t "submitted current|same submitted version"
+```
+
+Observed exit `1`: the administrator one-record-list bypass failed its
+regression with HTTP 200 instead of 409; 1 related valid-transition test passed
+and 46 tests were skipped.
+
+Contractor/singleton command:
+
+```bash
+npx vitest run src/__tests__/authenticated-safety-plan-api.test.ts -t "contractor retaining submitted"
+```
+
+Observed exit `1`: the contractor retained the submitted version as history,
+added a draft, switched `currentVersionId`, and received HTTP 200; 47 tests were
+skipped.
+
+Both regressions captured CAS and insert calls, proving the bypass reached
+persistence before the fix.
+
+### Implemented boundary
+
+For any stored plan whose current version is submitted, a normal PUT now
+requires:
+
+- the exact stored `currentVersionId`;
+- the exact stored version-ID set, with no addition, omission or replacement;
+- byte/content equality for every non-current version;
+- the same submitted version as the only version permitted to transition;
+- authority for submitted-to-draft or submitted-to-approved;
+- unchanged submitted content for submitted-to-submitted writes, apart from
+  server-derived plan metadata.
+
+The check runs before CAS or insert for both singleton and one-record list
+writes. The positive authority regression proves a submitted-to-draft
+transition succeeds through a one-record list while retaining the same version
+ID; the existing approval regression continues to cover same-version approval.
+The explicit Safety Plan supplement now records 42 declared tests without
+changing the historical manifest.
+
+### GREEN evidence
+
+Focused command:
+
+```bash
+npx vitest run src/utils/__tests__/safetyPlanPermissions.test.ts src/utils/__tests__/safetyPlanRules.test.ts src/__tests__/authenticated-auth-api.test.ts src/__tests__/authenticated-store-api.test.ts src/__tests__/authenticated-safety-plan-api.test.ts
+```
+
+Result: exit `0`; 5 files passed, 84 tests passed.
+
+TypeScript:
+
+```bash
+npx tsc --noEmit
+```
+
+Result: exit `0`; no diagnostics.
+
+Inventory:
+
+```bash
+npx vitest run scripts/test-inventory.test.ts
+```
+
+Result: exit `0`; 1 file passed, 5 tests passed.
+
+Full suite:
+
+```bash
+npm test -- --run
+```
+
+Result: exit `0`; 64 files passed, 332 tests passed.
+
+Syntax and formatting:
+
+```bash
+node --check api/store.js
+git diff --check
+```
+
+Result: both exited `0`; no syntax or whitespace errors.
+
+### Remaining concerns
+
+- Deploy `docs/supabase-safety-plan-migration.sql` before the updated API.
+- Multi-record Safety Plan writes remain intentionally rejected; callers must
+  save Safety Plan records individually.
