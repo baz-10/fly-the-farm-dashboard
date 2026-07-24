@@ -345,4 +345,29 @@ describe('local Vercel API middleware', () => {
     expect(response.statusCode).toBe(401);
     expect(JSON.parse(response.body)).toEqual({ error: 'Authentication is required.' });
   });
+
+  it('never falls through to a configured backing store for an empty fixture collection', async () => {
+    process.env = {
+      ...originalEnvironment,
+      FTF_E2E_AUTH_FIXTURE: 'local-playwright-only',
+      SUPABASE_URL: 'https://real-looking.supabase.co',
+      SUPABASE_ANON_KEY: 'real-looking-anon-key',
+      SUPABASE_SERVICE_ROLE_KEY: 'real-looking-service-key',
+    };
+    const upstreamFetch = vi.fn();
+    vi.stubGlobal('fetch', upstreamFetch);
+
+    const { response } = await invokePlugin(
+      '/api/store?collection=ftf_work_packs',
+      'configurePreviewServer',
+      {
+        host: '127.0.0.1:4173',
+        'x-ftf-e2e-auth': 'contractor',
+      },
+    );
+
+    expect(response.statusCode).toBe(200);
+    expect(JSON.parse(response.body)).toEqual({ records: [] });
+    expect(upstreamFetch).not.toHaveBeenCalled();
+  });
 });

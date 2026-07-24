@@ -84,16 +84,22 @@ function preserveMaintenanceCosts(incomingRecords, storedRecords) {
 
 function contractorWritePayload(collection, incoming, stored) {
   const safe = contractorSafePayload(collection, incoming);
-  if (collection === 'ftf_missions' && safe?.deploymentWorkPack) {
-    const storedWorkPack = stored?.deploymentWorkPack;
-    return {
-      ...safe,
+  if (collection === 'ftf_missions') {
+    const restoredFinancials = {
       ...(stored?.financialEstimate === undefined
         ? {}
         : { financialEstimate: stored.financialEstimate }),
       ...(stored?.financialActual === undefined
         ? {}
         : { financialActual: stored.financialActual }),
+    };
+    if (!safe?.deploymentWorkPack) {
+      return { ...safe, ...restoredFinancials };
+    }
+    const storedWorkPack = stored?.deploymentWorkPack;
+    return {
+      ...safe,
+      ...restoredFinancials,
       deploymentWorkPack: {
         ...safe.deploymentWorkPack,
         assets: preserveAssetCosts(safe.deploymentWorkPack.assets, storedWorkPack?.assets),
@@ -252,8 +258,8 @@ module.exports = async function handler(req, res) {
     if (req.method === 'GET') {
       const collection = validateCollection(req.query.collection);
       const recordId = req.query.recordId ? validateRecordId(req.query.recordId) : '';
-      const fixtureRecords = req.localE2eFixture?.collections?.[collection];
-      if (fixtureRecords) {
+      if (req.localE2eFixture) {
+        const fixtureRecords = req.localE2eFixture.collections?.[collection];
         const records = Array.isArray(fixtureRecords) ? fixtureRecords : [];
         if (recordId) {
           const payload = records.find((record) => record?.id === recordId) || null;

@@ -382,6 +382,77 @@ describe('authenticated persistent store API', () => {
     expect(postedRows[0].payload.financialActual).toEqual({ totalActualCost: 2000, profitMargin: 10 });
   });
 
+  test('preserves mission financials on contractor list writes without a deployment work pack', async () => {
+    let postedRows: any[] = [];
+    global.fetch = vi.fn(async (url: string, options: RequestInit = {}) => {
+      if (url.endsWith('/auth/v1/user')) return response(200, { id: 'user-a', email: 'user-a@example.com' });
+      if (url.includes('/rest/v1/ftf_profiles')) return response(200, [{ user_id: 'user-a', tenant_id: 'tenant-a', role: 'contractor', name: 'User A', tier: 'free' }]);
+      if (url.includes('/rest/v1/ftf_store') && (!options.method || options.method === 'GET')) {
+        return response(200, [{ payload: {
+          id: 'mission-no-pack',
+          missionName: 'Before edit',
+          financialEstimate: { totalEstimatedCost: 3200 },
+          financialActual: { totalActualCost: 2800, profitMargin: 12.5 },
+        } }]);
+      }
+      if (url.includes('/rest/v1/ftf_store') && options.method === 'POST') {
+        postedRows = JSON.parse(String(options.body));
+        return response(204, null);
+      }
+      return response(500, { message: 'unexpected request' });
+    }) as any;
+
+    const res = createResponse();
+    await storeHandler(request('PUT', 'token-a', {
+      collection: 'ftf_missions',
+      records: [{ id: 'mission-no-pack', missionName: 'Operational edit' }],
+    }), res);
+
+    expect(postedRows[0].payload).toMatchObject({
+      id: 'mission-no-pack',
+      missionName: 'Operational edit',
+      financialEstimate: { totalEstimatedCost: 3200 },
+      financialActual: { totalActualCost: 2800, profitMargin: 12.5 },
+    });
+    expect(postedRows[0].payload).not.toHaveProperty('deploymentWorkPack');
+  });
+
+  test('preserves mission financials on contractor singleton writes without a deployment work pack', async () => {
+    let postedRows: any[] = [];
+    global.fetch = vi.fn(async (url: string, options: RequestInit = {}) => {
+      if (url.endsWith('/auth/v1/user')) return response(200, { id: 'user-a', email: 'user-a@example.com' });
+      if (url.includes('/rest/v1/ftf_profiles')) return response(200, [{ user_id: 'user-a', tenant_id: 'tenant-a', role: 'contractor', name: 'User A', tier: 'free' }]);
+      if (url.includes('/rest/v1/ftf_store') && (!options.method || options.method === 'GET')) {
+        return response(200, [{ payload: {
+          id: 'mission-singleton',
+          missionName: 'Before edit',
+          financialEstimate: { totalEstimatedCost: 5100 },
+          financialActual: { totalActualCost: 4700, profitMargin: 8 },
+        } }]);
+      }
+      if (url.includes('/rest/v1/ftf_store') && options.method === 'POST') {
+        postedRows = JSON.parse(String(options.body));
+        return response(204, null);
+      }
+      return response(500, { message: 'unexpected request' });
+    }) as any;
+
+    const res = createResponse();
+    await storeHandler(request('PUT', 'token-a', {
+      collection: 'ftf_missions',
+      recordId: 'mission-singleton',
+      payload: { id: 'mission-singleton', missionName: 'Singleton operational edit' },
+    }), res);
+
+    expect(postedRows[0].payload).toMatchObject({
+      id: 'mission-singleton',
+      missionName: 'Singleton operational edit',
+      financialEstimate: { totalEstimatedCost: 5100 },
+      financialActual: { totalActualCost: 4700, profitMargin: 8 },
+    });
+    expect(postedRows[0].payload).not.toHaveProperty('deploymentWorkPack');
+  });
+
   test('preserves stored maintenance costs when a contractor saves an operational update', async () => {
     let postedRows: any[] = [];
     global.fetch = vi.fn(async (url: string, options: RequestInit = {}) => {
