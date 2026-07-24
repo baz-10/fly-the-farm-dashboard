@@ -23,8 +23,8 @@ test('builds a reusable truck, aircraft, kit and crew setup', () => {
       trucks={trucks}
       aircraft={aircraft}
       equipmentKits={kits}
-      onSave={jest.fn()}
-      onCancel={jest.fn()}
+      onSave={vi.fn()}
+      onCancel={vi.fn()}
     />,
   );
 
@@ -38,7 +38,7 @@ test('builds a reusable truck, aircraft, kit and crew setup', () => {
 });
 
 test('selects multiple independent assets and assigns an aircraft and kit to a trailer', () => {
-  const onSave = jest.fn();
+  const onSave = vi.fn();
   render(
     <WorkPackTemplateForm
       assets={assets}
@@ -46,7 +46,7 @@ test('selects multiple independent assets and assigns an aircraft and kit to a t
       aircraft={aircraft}
       equipmentKits={kits}
       onSave={onSave}
-      onCancel={jest.fn()}
+      onCancel={vi.fn()}
     />,
   );
 
@@ -66,7 +66,7 @@ test('selects multiple independent assets and assigns an aircraft and kit to a t
 });
 
 test('clears an aircraft carrying assignment when its asset is deselected', () => {
-  const onSave = jest.fn();
+  const onSave = vi.fn();
   render(
     <WorkPackTemplateForm
       assets={assets}
@@ -74,7 +74,7 @@ test('clears an aircraft carrying assignment when its asset is deselected', () =
       aircraft={aircraft}
       equipmentKits={kits}
       onSave={onSave}
-      onCancel={jest.fn()}
+      onCancel={vi.fn()}
     />,
   );
 
@@ -93,8 +93,8 @@ test('clears an aircraft carrying assignment when its asset is deselected', () =
 });
 
 test('saves a support-only template with editable crew notes and supporting equipment', () => {
-  const onSave = jest.fn();
-  render(<WorkPackTemplateForm assets={assets} trucks={trucks} aircraft={aircraft} equipmentKits={kits} onSave={onSave} onCancel={jest.fn()} />);
+  const onSave = vi.fn();
+  render(<WorkPackTemplateForm assets={assets} trucks={trucks} aircraft={aircraft} equipmentKits={kits} onSave={onSave} onCancel={vi.fn()} />);
 
   fireEvent.change(screen.getByLabelText(/Template name/), { target: { value: 'Chemical support trailer' } });
   fireEvent.click(screen.getByRole('checkbox', { name: /Chemical Trailer/ }));
@@ -114,8 +114,8 @@ test('saves a support-only template with editable crew notes and supporting equi
 });
 
 test('allows an aircraft assignment to save without an equipment kit', () => {
-  const onSave = jest.fn();
-  render(<WorkPackTemplateForm trucks={trucks} aircraft={aircraft} equipmentKits={[]} onSave={onSave} onCancel={jest.fn()} />);
+  const onSave = vi.fn();
+  render(<WorkPackTemplateForm trucks={trucks} aircraft={aircraft} equipmentKits={[]} onSave={onSave} onCancel={vi.fn()} />);
   fireEvent.change(screen.getByLabelText(/Template name/), { target: { value: 'Survey aircraft' } });
   fireEvent.click(screen.getByRole('button', { name: 'Add aircraft' }));
   fireEvent.click(screen.getByRole('button', { name: 'Save template' }));

@@ -25,14 +25,14 @@ const kits = [
 ] as EquipmentKit[];
 
 test('shows model-compatible kits without requiring aircraft configurations', () => {
-  const onKitChange = jest.fn();
+  const onKitChange = vi.fn();
   render(
     <MissionEquipmentSelector
       aircraft={aircraft}
       equipmentKits={kits}
       selectedAircraftId="t100-001"
       selectedKitId=""
-      onAircraftChange={jest.fn()}
+      onAircraftChange={vi.fn()}
       onKitChange={onKitChange}
     />,
   );

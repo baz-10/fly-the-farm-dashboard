@@ -25,7 +25,7 @@ const template = {
 } as WorkPackTemplate;
 
 function renderEditor(options: { assets?: DeploymentAsset[]; templates?: WorkPackTemplate[]; value?: MissionWorkPackDraft; role?: 'admin' | 'contractor' } = {}) {
-  const onChange = jest.fn();
+  const onChange = vi.fn();
   render(<MissionDeploymentWorkPack assets={options.assets ?? [truck, trailer]} templates={options.templates ?? [template]} aircraft={aircraft} equipmentKits={kits} value={options.value} showFinancials={options.role === 'admin'} onChange={onChange} />);
   return { onChange };
 }
@@ -135,7 +135,7 @@ test('clears an aircraft carrying assignment when its asset is removed', async (
 test('synchronizes the template selector when a mission value is rerendered', async () => {
   const archivedTemplate = { ...template, id: 'template-archived', name: 'Archived template', status: 'archived' } as WorkPackTemplate;
   const secondTemplate = { ...template, id: 'template-2', name: 'Second active template' } as WorkPackTemplate;
-  const onChange = jest.fn();
+  const onChange = vi.fn();
   const view = render(
     <MissionDeploymentWorkPack assets={[truck, trailer]} templates={[template, secondTemplate, archivedTemplate]} aircraft={aircraft} equipmentKits={kits} value={{ sourceTemplateId: template.id }} showFinancials={false} onChange={onChange} />,
   );
@@ -234,7 +234,7 @@ test('marks unavailable aircraft and kit references without opaque select values
       { id: 'retired-row', aircraftId: retiredAircraft.id, kitId: 't100-kit', label: 'Retired and incompatible' },
     ],
   } as WorkPackTemplate;
-  const onChange = jest.fn();
+  const onChange = vi.fn();
   render(<MissionDeploymentWorkPack assets={[truck]} templates={[staleTemplate]} aircraft={[retiredAircraft]} equipmentKits={kits} value={undefined} showFinancials={false} onChange={onChange} />);
   const panels = screen.getAllByRole('button', { name: /Deployment Work Pack \(Optional\)/i });
   await user.click(panels[panels.length - 1]);
@@ -258,7 +258,7 @@ test('marks unavailable aircraft and kit references without opaque select values
 });
 
 test('shows a non-blocking work-pack persistence warning', async () => {
-  render(<MissionDeploymentWorkPack assets={[]} templates={[]} aircraft={aircraft} equipmentKits={kits} value={undefined} showFinancials={false} persistenceWarning="Work packs could not be saved" onChange={jest.fn()} />);
+  render(<MissionDeploymentWorkPack assets={[]} templates={[]} aircraft={aircraft} equipmentKits={kits} value={undefined} showFinancials={false} persistenceWarning="Work packs could not be saved" onChange={vi.fn()} />);
   await expand();
   expect(screen.getByText(/Work packs could not be saved.*continue planning/i)).toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'Skip for now' })).toBeEnabled();

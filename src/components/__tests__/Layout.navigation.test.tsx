@@ -3,9 +3,9 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import Layout from '../Layout';
 
-const mockLogout = jest.fn();
+const mockLogout = vi.fn();
 
-jest.mock('../../contexts/AuthContext', () => ({
+vi.mock('../../contexts/AuthContext', () => ({
   useAuth: () => ({
     user: {
       id: 'admin-1',
@@ -41,7 +41,7 @@ function installMatchMedia(initialMatches: boolean) {
 
   Object.defineProperty(window, 'matchMedia', {
     configurable: true,
-    value: jest.fn(() => mediaQueryList),
+    value: vi.fn(() => mediaQueryList),
   });
 
   return {

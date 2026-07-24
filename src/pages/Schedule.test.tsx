@@ -3,9 +3,9 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import Schedule from './Schedule';
 
-const mockNavigate = jest.fn();
-jest.mock('react-router-dom', () => ({ useNavigate: () => mockNavigate }), { virtual: true });
-jest.mock('../contexts/MissionContext', () => ({
+const mockNavigate = vi.fn();
+vi.mock('react-router-dom', () => ({ useNavigate: () => mockNavigate }));
+vi.mock('../contexts/MissionContext', () => ({
   useMission: () => ({ missions: [{ id: 'm1', missionName: 'North Paddock', missionNumber: 'MSN-1', scheduledDate: new Date().toISOString(), status: 'Planning', location: { name: 'Dalby Farm' }, aircraftConfiguration: { aircraftIds: ['a1', 'a2'] } }], isLoading: false, error: null }),
 }));
 

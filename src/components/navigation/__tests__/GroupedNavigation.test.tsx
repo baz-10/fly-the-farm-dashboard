@@ -4,7 +4,7 @@ import { GroupedNavigation } from '../GroupedNavigation';
 
 describe('GroupedNavigation', () => {
   beforeEach(() => localStorage.clear());
-  afterEach(() => jest.restoreAllMocks());
+  afterEach(() => vi.restoreAllMocks());
 
   test('opens daily and active groups and permits multiple open groups', async () => {
     const user = userEvent.setup();
@@ -14,7 +14,7 @@ describe('GroupedNavigation', () => {
         pathname="/maintenance"
         role="contractor"
         userId="u1"
-        onNavigate={jest.fn()}
+        onNavigate={vi.fn()}
       />,
     );
 
@@ -29,7 +29,7 @@ describe('GroupedNavigation', () => {
 
   test('calls onNavigate from a keyboard-operable item', async () => {
     const user = userEvent.setup();
-    const onNavigate = jest.fn();
+    const onNavigate = vi.fn();
     render(<GroupedNavigation expanded pathname="/" role="admin" userId="u1" onNavigate={onNavigate} />);
 
     await user.tab();
@@ -49,7 +49,7 @@ describe('GroupedNavigation', () => {
         pathname="/"
         role="admin"
         userId="u1"
-        onNavigate={jest.fn()}
+        onNavigate={vi.fn()}
       />,
     );
 
@@ -67,7 +67,7 @@ describe('GroupedNavigation', () => {
         pathname="/"
         role="admin"
         userId="u1"
-        onNavigate={jest.fn()}
+        onNavigate={vi.fn()}
       />,
     );
 
@@ -77,7 +77,7 @@ describe('GroupedNavigation', () => {
   });
 
   test('collapsed headings do not reference an unmounted region', () => {
-    render(<GroupedNavigation expanded pathname="/" role="admin" userId="u1" onNavigate={jest.fn()} />);
+    render(<GroupedNavigation expanded pathname="/" role="admin" userId="u1" onNavigate={vi.fn()} />);
 
     const heading = screen.getByRole('button', { name: /operational resources/i });
     expect(heading).not.toHaveAttribute('aria-controls');
@@ -86,7 +86,7 @@ describe('GroupedNavigation', () => {
   test('persists toggles and keeps the active group open after a route change', async () => {
     const user = userEvent.setup();
     const { rerender } = render(
-      <GroupedNavigation expanded pathname="/" role="admin" userId="u1" onNavigate={jest.fn()} />,
+      <GroupedNavigation expanded pathname="/" role="admin" userId="u1" onNavigate={vi.fn()} />,
     );
 
     await user.click(screen.getByRole('button', { name: /safety and compliance/i }));
@@ -98,7 +98,7 @@ describe('GroupedNavigation', () => {
         pathname="/maintenance"
         role="admin"
         userId="u1"
-        onNavigate={jest.fn()}
+        onNavigate={vi.fn()}
       />,
     );
 
@@ -114,7 +114,7 @@ describe('GroupedNavigation', () => {
         pathname="/maintenance"
         role="admin"
         userId="u1"
-        onNavigate={jest.fn()}
+        onNavigate={vi.fn()}
       />,
     );
 
@@ -128,7 +128,7 @@ describe('GroupedNavigation', () => {
     const user = userEvent.setup();
     localStorage.setItem('ftf_navigation_groups:u1', JSON.stringify(['safety']));
     localStorage.setItem('ftf_navigation_groups:u2', JSON.stringify(['commercial']));
-    const onNavigate = jest.fn();
+    const onNavigate = vi.fn();
     const { rerender } = render(
       <GroupedNavigation expanded pathname="/unknown" role="admin" userId="u1" onNavigate={onNavigate} />,
     );
@@ -153,7 +153,7 @@ describe('GroupedNavigation', () => {
   test('expands and collapses a group heading from the keyboard', async () => {
     const user = userEvent.setup();
     render(
-      <GroupedNavigation expanded pathname="/unknown" role="client" userId="u1" onNavigate={jest.fn()} />,
+      <GroupedNavigation expanded pathname="/unknown" role="client" userId="u1" onNavigate={vi.fn()} />,
     );
 
     await user.tab();
@@ -174,7 +174,7 @@ describe('GroupedNavigation', () => {
   test('expands a group heading with touch pointer activation', async () => {
     const user = userEvent.setup();
     render(
-      <GroupedNavigation expanded={false} pathname="/" role="admin" userId="u1" onNavigate={jest.fn()} />,
+      <GroupedNavigation expanded={false} pathname="/" role="admin" userId="u1" onNavigate={vi.fn()} />,
     );
     const resourcesHeading = screen.getByRole('button', { name: /operational resources/i });
 
@@ -189,8 +189,8 @@ describe('GroupedNavigation', () => {
 
   test('keeps navigation functional when expansion persistence fails', async () => {
     const user = userEvent.setup();
-    const onNavigate = jest.fn();
-    jest.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+    const onNavigate = vi.fn();
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
       throw new Error('storage unavailable');
     });
     render(<GroupedNavigation expanded pathname="/" role="admin" userId="u1" onNavigate={onNavigate} />);
@@ -204,8 +204,8 @@ describe('GroupedNavigation', () => {
   test('uses unique aria-controls relationships for simultaneous instances', () => {
     render(
       <>
-        <GroupedNavigation expanded pathname="/maintenance" role="admin" userId="u1" onNavigate={jest.fn()} />
-        <GroupedNavigation expanded pathname="/maintenance" role="admin" userId="u2" onNavigate={jest.fn()} />
+        <GroupedNavigation expanded pathname="/maintenance" role="admin" userId="u1" onNavigate={vi.fn()} />
+        <GroupedNavigation expanded pathname="/maintenance" role="admin" userId="u2" onNavigate={vi.fn()} />
       </>,
     );
 
