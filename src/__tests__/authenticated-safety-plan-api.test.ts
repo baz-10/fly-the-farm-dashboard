@@ -3334,6 +3334,121 @@ describe('Safety Plan persistent store security', () => {
     expect(res.body.error).toMatch(/required/i);
     expect(rpcCalls).toBe(0);
   });
+
+  it('rejects a compound acknowledgement and approval before persistence', async () => {
+    const submittedVersion = makeSafetyPlanVersion({
+      status: 'submitted',
+      revision: 2,
+      sourceSnapshot: {
+        ...makeSafetyPlanVersion().sourceSnapshot,
+        crew: [{ id: 'user-a', name: 'User A', role: 'PIC' }],
+      },
+    });
+    const submitted = makeSafetyPlan({
+      tenantId: 'tenant-a',
+      revision: 2,
+      status: 'submitted',
+      versions: [submittedVersion],
+    });
+    const incoming = {
+      ...submitted,
+      revision: 3,
+      status: 'approved' as const,
+      versions: [{
+        ...submittedVersion,
+        revision: 3,
+        status: 'approved' as const,
+        contentDigest: '0'.repeat(64),
+        acknowledgements: [{
+          id: 'ack-compound',
+          versionId: submittedVersion.id,
+          actor: { userId: 'user-a' },
+          assignedRole: 'PIC',
+          statement: 'Read',
+          acknowledgedAt: '2026-07-24T00:00:00.000Z',
+        }],
+      }],
+    };
+    let rpcCalls = 0;
+    mockApi({
+      role: 'contractor',
+      safetyPlanAuthority: true,
+      stored: [{ tenant_id: 'tenant-a', record_id: submitted.id, payload: submitted }],
+      onRpc: () => {
+        rpcCalls += 1;
+        return { succeeded: true };
+      },
+    });
+    const res = createResponse();
+
+    await storeHandler(request('PUT', 'ftf_safety_plans', {
+      collection: 'ftf_safety_plans',
+      recordId: incoming.id,
+      payload: incoming,
+      audit: mutationAudit(incoming as SafetyPlan, 'approved', 'operation-compound-approve'),
+    }), res);
+
+    expect(res.statusCode).toBe(409);
+    expect(res.body.error).toMatch(/separate operation/i);
+    expect(rpcCalls).toBe(0);
+  });
+
+  it('rejects a compound acknowledgement and return to draft before persistence', async () => {
+    const submittedVersion = makeSafetyPlanVersion({
+      status: 'submitted',
+      revision: 2,
+      sourceSnapshot: {
+        ...makeSafetyPlanVersion().sourceSnapshot,
+        crew: [{ id: 'user-a', name: 'User A', role: 'PIC' }],
+      },
+    });
+    const submitted = makeSafetyPlan({
+      tenantId: 'tenant-a',
+      revision: 2,
+      status: 'submitted',
+      versions: [submittedVersion],
+    });
+    const incoming = {
+      ...submitted,
+      revision: 3,
+      status: 'draft' as const,
+      versions: [{
+        ...submittedVersion,
+        revision: 3,
+        status: 'draft' as const,
+        acknowledgements: [{
+          id: 'ack-compound',
+          versionId: submittedVersion.id,
+          actor: { userId: 'user-a' },
+          assignedRole: 'PIC',
+          statement: 'Read',
+          acknowledgedAt: '2026-07-24T00:00:00.000Z',
+        }],
+      }],
+    };
+    let rpcCalls = 0;
+    mockApi({
+      role: 'contractor',
+      safetyPlanAuthority: true,
+      stored: [{ tenant_id: 'tenant-a', record_id: submitted.id, payload: submitted }],
+      onRpc: () => {
+        rpcCalls += 1;
+        return { succeeded: true };
+      },
+    });
+    const res = createResponse();
+
+    await storeHandler(request('PUT', 'ftf_safety_plans', {
+      collection: 'ftf_safety_plans',
+      recordId: incoming.id,
+      payload: incoming,
+      audit: mutationAudit(incoming as SafetyPlan, 'returned_to_draft', 'operation-compound-return'),
+    }), res);
+
+    expect(res.statusCode).toBe(409);
+    expect(res.body.error).toMatch(/separate operation/i);
+    expect(rpcCalls).toBe(0);
+  });
 });
 
 export {};

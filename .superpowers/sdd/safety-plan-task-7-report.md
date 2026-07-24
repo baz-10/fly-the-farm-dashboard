@@ -31,6 +31,9 @@ crew acknowledgement and revision.
   error instead of confirmed approval.
 - Server checks authority for approval/revision, preserves tenant/current
   revision boundaries and derives the audit action from the actual transition.
+- Compound acknowledgement plus approval, return-to-draft, revision or other
+  status changes are rejected before the database RPC. Each material lifecycle
+  change must be submitted as its own atomic, auditable operation.
 - Crew acknowledgement is allowed only for an assigned PIC/crew member.
   Actor, assigned role, statement and timestamp are server-derived; forged
   client values are discarded. Duplicate active acknowledgements are rejected.
@@ -45,12 +48,14 @@ crew acknowledgement and revision.
 - Approve/Revise controls are visible only to an administrator or nominated
   operational authority.
 - Assigned crew receive the `Read and acknowledge` action.
+- Version history lists every assigned crew member by name and role, with
+  acknowledged or pending status, controlled version and acknowledgement time.
 
 ## Tests added
 
 - 10 lifecycle/canonicalisation tests.
-- 4 approval-panel tests.
-- 5 authenticated API security/transition tests.
+- 6 approval-panel tests.
+- 7 authenticated API security/transition tests.
 - Updated immutable test inventory supplements without changing the historical
   baseline manifest.
 

@@ -440,6 +440,15 @@ function normaliseSafetyPlanProvenance(actor, stored, incoming, now) {
         if (addedAcknowledgements.length > 0) {
           addedAcknowledgementCount += addedAcknowledgements.length;
           if (
+            incoming.status !== stored.status
+            || version.status !== prior?.status
+          ) {
+            throw createHttpError(
+              409,
+              'Record acknowledgement and workflow status changes as separate operations.'
+            );
+          }
+          if (
             version.id !== incoming.currentVersionId
             || !['submitted', 'approved'].includes(prior?.status)
             || addedAcknowledgements.length !== 1
