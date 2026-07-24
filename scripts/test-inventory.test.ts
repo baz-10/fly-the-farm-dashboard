@@ -110,9 +110,10 @@ describe('test inventory', () => {
       'src/components/safety-plan/SafetyPlanAuthorityManager.test.tsx': 2,
       'src/contexts/__tests__/SafetyPlanContext.test.tsx': 30,
       'src/pages/SafetyPlanRegister.test.tsx': 3,
+      'src/pages/SafetyPlanEditor.test.tsx': 8,
       'src/pages/SafetyPlanTemplateEditor.test.tsx': 2,
       'src/services/__tests__/persistence.safetyPlan.test.ts': 9,
-      'src/services/__tests__/safetyPlanRepository.test.ts': 12,
+      'src/services/__tests__/safetyPlanRepository.test.ts': 13,
       'src/services/__tests__/safetyPlanTemplateRepository.test.ts': 2,
       'src/services/__tests__/safetyPlanPrefill.test.ts': 4,
       'src/utils/__tests__/safetyPlanPermissions.test.ts': 5,
@@ -137,7 +138,7 @@ describe('test inventory', () => {
     expect(inventory.files).toEqual(Object.keys(baseline).sort());
     expect(inventory.supplementaryFiles).toEqual(Object.keys(explicitPostBaselineSupplements).sort());
     expect(supplementaryCounts).toEqual(explicitPostBaselineSupplements);
-    expect(inventory.files.length + inventory.supplementaryFiles.length).toBe(73);
+    expect(inventory.files.length + inventory.supplementaryFiles.length).toBe(74);
   });
 
   it('contains no Jest runtime API in migrated React tests', async () => {

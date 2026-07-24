@@ -1,0 +1,67 @@
+# Safety Plan Task 6 report
+
+## Status
+
+Complete on `codex/safety-plan-design`.
+
+## Delivered
+
+- Added the authenticated route `/compliance/safety-plans/:planId`.
+- Added a responsive five-step editor:
+  1. Job details
+  2. People and assets
+  3. Hazards and controls
+  4. Emergency planning
+  5. Review and submit
+- Added a persistent readiness rail with per-step required-field progress.
+- Restores the last visited step from a non-required field within the controlled
+  draft. It does not use global or browser-local navigation state.
+- Added specialised job, people/assets, hazard/control, emergency and review
+  panels, while keeping the reusable field renderer small.
+- Hazard cards expose source mission, JSA item, original risk score, source
+  mitigation and editable company control.
+- Added autosave status, pending retry behaviour and conflict feedback without
+  dropping unsaved text.
+- Added explicit source-change review. Every conflicting source category and
+  source-backed field requires an operator decision before refresh can apply.
+- Source refresh now maps the one-shot `sourceRefreshIntent` to the
+  server-authoritative `source_refreshed` audit action in the same plan write.
+  The repository clears the intent before persistence; the client supplies
+  neither audit actor nor occurrence time.
+- Phone layout uses minmax-safe grids, horizontally scrollable step navigation,
+  full-width content, sticky bottom actions and no fixed 300 px minimum on the
+  readiness panel. All primary navigation actions are at least 44 px high.
+- Added arrow-key navigation and `aria-current="step"` semantics.
+
+## TDD evidence
+
+RED was observed for:
+
+- the missing `SafetyPlanEditor` module and route;
+- the repository retaining `sourceRefreshIntent` and recording a generic
+  `field_changed` audit action.
+
+The focused suite was then driven to GREEN for navigation, draft-restored
+position, autosave/retry, source conflict decisions, keyboard navigation,
+375 px layout safety, hazard provenance and atomic source-refresh audit
+handling.
+
+## Verification
+
+- Focused editor/repository/inventory:
+  `npx vitest run src/pages/SafetyPlanEditor.test.tsx src/services/__tests__/safetyPlanRepository.test.ts scripts/test-inventory.test.ts`
+  — 3 files, 26 tests passed.
+- TypeScript: `npx tsc --noEmit` — passed.
+- Full suite: `npm test` — 76 files, 449 tests passed.
+- Production build: `npm run build` — passed.
+- Patch hygiene: `git diff --check` — passed.
+
+The production build retains the existing pdf.js eval advisory and large
+bundle warning; neither was introduced by this editor task.
+
+## Integration note
+
+The route accepts `latestSourceSnapshot` at the Job integration boundary.
+Until Task 9 supplies the latest linked Job/Mission snapshot, the editor
+correctly treats the stored controlled snapshot as current and does not show a
+false source-change prompt.

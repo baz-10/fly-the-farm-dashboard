@@ -16,6 +16,7 @@ const POST_BASELINE_TEST_FILES = new Set([
   'src/components/safety-plan/SafetyPlanAuthorityManager.test.tsx',
   'src/contexts/__tests__/SafetyPlanContext.test.tsx',
   'src/pages/SafetyPlanRegister.test.tsx',
+  'src/pages/SafetyPlanEditor.test.tsx',
   'src/pages/SafetyPlanTemplateEditor.test.tsx',
   'src/services/__tests__/persistence.safetyPlan.test.ts',
   'src/services/__tests__/safetyPlanPrefill.test.ts',

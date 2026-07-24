@@ -167,6 +167,37 @@ describe('SafetyPlanRepository', () => {
     );
   });
 
+  it('atomically records a source refresh and consumes its one-shot intent', async () => {
+    const draft = makeSafetyPlan({
+      versions: [makeSafetyPlanVersion({
+        sourceRefreshIntent: {
+          kind: 'source_refresh',
+          before: { capturedAt: '2026-07-23T00:00:00.000Z' },
+          after: { capturedAt: '2026-07-24T00:00:00.000Z' },
+        },
+      })],
+    });
+    const dependencies = makeDependencies();
+    const repository = createSafetyPlanRepository(dependencies);
+
+    const saved = await repository.saveDraft({ plan: draft, expectedRevision: 1, actor });
+
+    expect(saved.versions[0].sourceRefreshIntent).toBeUndefined();
+    expect(dependencies.writeRecord).toHaveBeenCalledWith(
+      PERSISTENCE_KEYS.safetyPlans,
+      draft.id,
+      expect.objectContaining({
+        versions: [expect.not.objectContaining({ sourceRefreshIntent: expect.anything() })],
+      }),
+      {
+        audit: expect.objectContaining({
+          action: 'source_refreshed',
+          planId: draft.id,
+        }),
+      }
+    );
+  });
+
   it('does not append an audit event when the plan write fails', async () => {
     const dependencies = makeDependencies({
       writeRecord: vi.fn(async () => { throw new Error('offline'); }),

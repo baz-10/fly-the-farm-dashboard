@@ -1,0 +1,234 @@
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { MemoryRouter } from 'react-router-dom';
+import { afterEach, vi } from 'vitest';
+
+import type { User } from '../contexts/AuthContext';
+import { makeSafetyPlan, makeSafetyPlanVersion } from '../test/safetyPlanFixtures';
+import type { SafetyPlan, SafetyPlanSourceSnapshot } from '../types/safetyPlan';
+import type { SaveSafetyPlanDraftInput } from '../services/safetyPlanRepository';
+import SafetyPlanEditor from './SafetyPlanEditor';
+
+const useSafetyPlans = vi.fn();
+const useAuth = vi.fn();
+
+vi.mock('../contexts/SafetyPlanContext', () => ({
+  useSafetyPlans: () => useSafetyPlans(),
+}));
+
+vi.mock('../contexts/AuthContext', () => ({
+  useAuth: () => useAuth(),
+}));
+
+const admin: User = {
+  id: 'admin-1',
+  email: 'admin@example.com',
+  name: 'Admin',
+  role: 'admin',
+  tenantId: 'tenant-1',
+  tier: 'pro',
+  safetyPlanAuthority: false,
+};
+
+afterEach(() => {
+  vi.useRealTimers();
+  localStorage.clear();
+});
+
+function incompletePlan(overrides: Partial<SafetyPlan> = {}) {
+  const version = makeSafetyPlanVersion({
+    sections: makeSafetyPlanVersion().sections.map((section) => ({
+      ...section,
+      fields: section.fields.map((field) => ({ ...field, value: undefined })),
+    })),
+  });
+  return makeSafetyPlan({ versions: [version], ...overrides });
+}
+
+function renderEditor(
+  plan = incompletePlan(),
+  options: { latestSourceSnapshot?: SafetyPlanSourceSnapshot; saveState?: string; error?: string } = {}
+) {
+  const saveDraft = vi.fn(async (_input: SaveSafetyPlanDraftInput) => undefined);
+  const retrySave = vi.fn(async () => undefined);
+  useAuth.mockReturnValue({ user: admin });
+  useSafetyPlans.mockReturnValue({
+    plans: [plan],
+    saveState: options.saveState ?? 'idle',
+    error: options.error,
+    lastSavedAt: undefined,
+    pendingRetryPlanIds: [],
+    saveDraft,
+    retrySave,
+    resolveConflict: vi.fn(),
+  });
+  const result = render(
+    <MemoryRouter initialEntries={[`/compliance/safety-plans/${plan.id}`]}>
+      <SafetyPlanEditor
+        planId={plan.id}
+        latestSourceSnapshot={options.latestSourceSnapshot}
+      />
+    </MemoryRouter>
+  );
+  return { ...result, saveDraft, retrySave };
+}
+
+describe('SafetyPlanEditor', () => {
+  it('moves through five short steps and keeps readiness visible', async () => {
+    const user = userEvent.setup();
+    renderEditor();
+
+    expect(screen.getByRole('heading', { name: /job details/i })).toBeVisible();
+    expect(screen.getByTestId('safety-plan-readiness')).toBeVisible();
+
+    await user.click(screen.getByRole('button', { name: /next: people and assets/i }));
+    expect(screen.getByRole('heading', { name: /people and assets/i })).toBeVisible();
+    expect(screen.getByRole('button', { name: /next: hazards and controls/i })).toBeVisible();
+  });
+
+  it('restores the last visited step from the draft field rather than browser storage', () => {
+    localStorage.setItem('safety-plan-step', '4');
+    const plan = incompletePlan();
+    const version = plan.versions[0];
+    version.sections[0].fields.push({
+      id: 'editor_last_step',
+      label: 'Editor last step',
+      helpText: '',
+      type: 'text',
+      required: false,
+      companyEditable: true,
+      value: '2',
+    });
+
+    renderEditor(plan);
+
+    expect(screen.getByRole('heading', { name: /hazards and controls/i })).toBeVisible();
+  });
+
+  it('autosaves field edits and keeps the operator text visible', async () => {
+    vi.useFakeTimers();
+    const { saveDraft } = renderEditor();
+
+    fireEvent.change(screen.getByLabelText(/^scope/i), {
+      target: { value: 'Keep gate closed' },
+    });
+    expect(screen.getByDisplayValue('Keep gate closed')).toBeVisible();
+    expect(screen.getByText(/saving/i)).toBeVisible();
+    await vi.runAllTimersAsync();
+
+    expect(saveDraft).toHaveBeenCalledWith(expect.objectContaining({
+      plan: expect.objectContaining({
+        versions: [expect.objectContaining({
+          sections: expect.arrayContaining([
+            expect.objectContaining({
+              fields: expect.arrayContaining([
+                expect.objectContaining({ id: 'plan_scope', value: 'Keep gate closed' }),
+              ]),
+            }),
+          ]),
+        })],
+      }),
+      expectedRevision: 1,
+      actor: expect.objectContaining({ userId: admin.id }),
+    }));
+  });
+
+  it('shows failed autosave as retryable without losing entered text', async () => {
+    const user = userEvent.setup();
+    const { retrySave } = renderEditor(incompletePlan(), {
+      saveState: 'pending_retry',
+      error: 'offline',
+    });
+
+    await user.type(screen.getByLabelText(/^scope/i), 'Keep gate closed');
+
+    expect(screen.getByText(/save pending/i)).toBeVisible();
+    expect(screen.getByDisplayValue('Keep gate closed')).toBeVisible();
+    await user.click(screen.getByRole('button', { name: /retry save/i }));
+    expect(retrySave).toHaveBeenCalled();
+  });
+
+  it('shows source changes and requires every conflict decision before applying them', async () => {
+    const user = userEvent.setup();
+    const plan = incompletePlan();
+    plan.versions[0].sourceSnapshot = {
+      ...plan.versions[0].sourceSnapshot,
+      crew: [{ id: 'spotter-1', name: 'Company spotter remains', role: 'Spotter' }],
+    };
+    const latest: SafetyPlanSourceSnapshot = {
+      ...plan.versions[0].sourceSnapshot,
+      capturedAt: '2026-07-25T00:00:00.000Z',
+      crew: [{ id: 'spotter-2', name: 'Replacement spotter', role: 'Spotter' }],
+    };
+    const { saveDraft } = renderEditor(plan, { latestSourceSnapshot: latest });
+
+    await user.click(screen.getByRole('button', { name: /review source changes/i }));
+    expect(screen.getAllByText(/company spotter remains/i).length).toBeGreaterThan(0);
+    expect(screen.getByRole('button', { name: /apply refresh/i })).toBeDisabled();
+
+    for (const option of screen.getAllByLabelText(/keep current (?:assigned )?crew/i)) {
+      await user.click(option);
+    }
+    expect(screen.getByRole('button', { name: /apply refresh/i })).toBeEnabled();
+    await user.click(screen.getByRole('button', { name: /apply refresh/i }));
+
+    await waitFor(() => expect(saveDraft).toHaveBeenCalled());
+    const input = saveDraft.mock.calls.at(-1)?.[0];
+    if (!input) throw new Error('Expected the refreshed plan to be saved');
+    expect(input.plan.versions[0].sourceRefreshIntent).toMatchObject({
+      kind: 'source_refresh',
+    });
+    expect(input.plan.versions[0].sourceRefreshIntent).not.toHaveProperty('actor');
+    expect(input.plan.versions[0].sourceRefreshIntent).not.toHaveProperty('occurredAt');
+  });
+
+  it('supports keyboard step navigation with labelled current state', async () => {
+    renderEditor();
+    const navigation = screen.getByRole('navigation', { name: /safety plan steps/i });
+    const first = within(navigation).getByRole('button', { name: /job details/i });
+    first.focus();
+    fireEvent.keyDown(first, { key: 'ArrowDown' });
+
+    expect(screen.getByRole('heading', { name: /people and assets/i })).toBeVisible();
+    expect(within(navigation).getByRole('button', { name: /people & assets/i }))
+      .toHaveAttribute('aria-current', 'step');
+  });
+
+  it('uses a 375px-safe responsive shell without fixed minimum widths', () => {
+    renderEditor();
+    const shell = screen.getByTestId('safety-plan-editor-shell');
+
+    expect(shell).toHaveStyle({ maxWidth: '100%' });
+    expect(shell).toHaveStyle({ overflowX: 'clip' });
+    expect(screen.getByTestId('safety-plan-readiness')).not.toHaveStyle({ minWidth: '300px' });
+  });
+
+  it('shows source mission, JSA question, risk score, mitigation and company control', async () => {
+    const user = userEvent.setup();
+    const plan = incompletePlan();
+    plan.versions[0].sourceSnapshot = {
+      ...plan.versions[0].sourceSnapshot,
+      missions: [{ id: 'mission-1', name: 'North paddock spray' }],
+      hazards: [{
+        id: 'risk_assessment:mission-1:q-signage',
+        sourceType: 'risk_assessment',
+        sourceId: 'mission-1',
+        sourceRecordId: 'jsa-1',
+        sourceItemId: 'q-signage',
+        sourceUpdatedAt: '2026-07-24T01:00:00.000Z',
+        label: 'Will there be a need for signage?',
+        value: 'Risk score 8 · Establish exclusion area',
+        companyValue: 'Place signs at both gates',
+      }],
+    };
+    renderEditor(plan);
+
+    await user.click(screen.getByRole('button', { name: /hazards & controls/i }));
+
+    expect(screen.getByText('North paddock spray')).toBeVisible();
+    expect(screen.getByText('Will there be a need for signage?')).toBeVisible();
+    expect(screen.getByText(/risk score 8/i)).toBeVisible();
+    expect(screen.getByText(/establish exclusion area/i)).toBeVisible();
+    expect(screen.getByDisplayValue('Place signs at both gates')).toBeVisible();
+  });
+});

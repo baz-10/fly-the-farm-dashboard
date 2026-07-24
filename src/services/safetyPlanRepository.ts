@@ -187,6 +187,7 @@ function prepareDraft(input: SaveSafetyPlanDraftInput, now: string): SafetyPlan 
     version.id === activeVersion.id
       ? {
         ...version,
+        sourceRefreshIntent: undefined,
         revision: isNew || input.isNewVersion ? 1 : version.revision + 1,
         updatedAt: now,
       }
@@ -275,12 +276,16 @@ export function createSafetyPlanRepository(
     },
 
     async saveDraft(input) {
+      const sourceRefreshRequested =
+        currentVersion(input.plan).sourceRefreshIntent?.kind === 'source_refresh';
       const saved = prepareDraft(input, deps.now());
       return writePlan(
         saved,
         input.expectedRevision,
         input.actor,
-        input.expectedRevision === 0
+        sourceRefreshRequested
+          ? 'source_refreshed'
+          : input.expectedRevision === 0
           ? 'created'
           : input.isNewVersion
             ? 'revised'
