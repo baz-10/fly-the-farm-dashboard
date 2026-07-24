@@ -29,24 +29,87 @@ export interface SafetyPlanActor {
 export interface SafetyPlanSourceLink {
   sourceType: 'mission' | 'jsa' | 'risk_assessment';
   sourceId: string;
+  sourceItemId?: string;
   sourceUpdatedAt: string;
+}
+
+export interface SafetyPlanSourceItem {
+  /** Stable composite identity: source type, record ID and item ID. */
+  id: string;
+  sourceType: 'jsa' | 'risk_assessment';
+  /** Mission that owns the source safety record. */
+  sourceId: string;
+  /** JSA or Risk Assessment record that owns the item. */
+  sourceRecordId?: string;
+  sourceItemId: string;
+  sourceUpdatedAt: string;
+  label: string;
+  /** Latest value supplied by the source record. */
+  value: string;
+  /** Editable value retained by the company when resolving source changes. */
+  companyValue: string;
 }
 
 /** A typed, immutable-at-capture summary rather than a live Job or Mission object. */
 export interface SafetyPlanSourceSnapshot {
   capturedAt: string;
+  company?: {
+    id: string;
+    name: string;
+  };
   job: {
     id: string;
     name: string;
     clientName?: string;
     propertyName?: string;
+    fieldName?: string;
     location?: string;
     operatingDates?: string;
+    siteNotes?: string;
   };
   missions: Array<{
     id: string;
     name: string;
   }>;
+  client?: {
+    id: string;
+    name: string;
+    phone?: string;
+    email?: string;
+  };
+  property?: {
+    id: string;
+    name: string;
+    address?: string;
+  };
+  field?: {
+    id: string;
+    name: string;
+    sizeHa?: number;
+  };
+  crew?: Array<{
+    id: string;
+    name: string;
+    role: string;
+  }>;
+  assets?: Array<{
+    id: string;
+    name: string;
+    type: string;
+  }>;
+  chemicals?: Array<{
+    product: string;
+    activeIngredient?: string;
+    ratePerHa?: string;
+    quantity?: string;
+    sdsReference?: string;
+  }>;
+  emergencyContacts?: Array<{
+    name: string;
+    phone: string;
+    role?: string;
+  }>;
+  hazards?: SafetyPlanSourceItem[];
   sourceLinks: SafetyPlanSourceLink[];
 }
 
@@ -149,6 +212,8 @@ export interface SafetyPlanVersion {
   updatedAt: string;
   /** Optimistic-concurrency integer for this immutable or draft version. */
   revision: number;
+  createdBy?: SafetyPlanActor;
+  sourceRefreshAudit?: Pick<SafetyPlanAuditEvent, 'actor' | 'action' | 'occurredAt' | 'before' | 'after'>;
 }
 
 export interface SafetyPlan {
