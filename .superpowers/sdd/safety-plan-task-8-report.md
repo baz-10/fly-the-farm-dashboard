@@ -74,9 +74,15 @@ PDF, JPEG and PNG evidence up to 3 MiB.
   to install a server deletion result if new pending work appeared during the
   request, so unrelated edits are never silently cleared.
 - When this request created new object bytes but receipt persistence fails, the
-  gateway compensates by deleting only those request-created bytes. A
-  pre-existing same-byte object discovered during idempotent recovery is never
-  deleted by a losing request.
+  gateway re-reads the canonical receipt before considering compensation. A
+  matching committed receipt is returned successfully after response loss, and
+  ambiguous receipt-read failures preserve the bytes for safe recovery. The
+  gateway compensates only after receipt absence is conclusively confirmed,
+  deleting only request-created bytes. A pre-existing same-byte object
+  discovered during idempotent recovery is never deleted by a losing request.
+- The editor awaits server-plan acceptance before replacing its local draft.
+  If an operator edits the plan while evidence deletion is outstanding, a
+  rejected acceptance leaves that local work visible and retryable.
 
 ## TDD evidence
 
@@ -87,9 +93,9 @@ before their implementations were added.
 
 ## Verification
 
-- Focused policy/API/service/component/editor/local-route and inventory tests:
-  final delete/compensation regression run: 4 files, 44 tests passed.
-- Full suite: 82 files, 532 tests passed.
+- Focused receipt-reconciliation/editor-race/inventory tests: 3 files,
+  41 tests passed.
+- Full suite: 82 files, 535 tests passed.
 - `npx tsc --noEmit`: passed.
 - `npm run build`: passed.
 - Node syntax checks for all modified/new server JavaScript: passed.

@@ -382,15 +382,38 @@ function createSafetyAttachmentHandler(overrides = {}) {
           attachment = await deps.createReceipt(user.tenantId, plan, candidate, path);
         } catch (error) {
           if (requestCreatedObject) {
+            let confirmedReceipt;
+            try {
+              confirmedReceipt = await deps.loadReceipt(
+                user.tenantId,
+                planId,
+                versionId,
+                attachmentId,
+              );
+            } catch {
+              // The receipt transaction outcome is ambiguous. Preserve bytes
+              // because deleting them could break a committed canonical receipt.
+              throw error;
+            }
+            if (confirmedReceipt) {
+              if (
+                confirmedReceipt.status === 'stored'
+                && attachmentIdentityMatches(confirmedReceipt.attachment, candidate)
+              ) {
+                return res.status(200).json({
+                  attachment: confirmedReceipt.attachment,
+                });
+              }
+              throw createHttpError(409, 'Attachment id is already used by different evidence.');
+            }
             try {
               await deps.deleteObject(path);
             } catch (cleanupError) {
-              if (cleanupError?.statusCode !== 404) {
-                throw createHttpError(
-                  503,
-                  'Attachment upload could not be finalised and cleanup must be retried.',
-                );
-              }
+              if (cleanupError?.statusCode === 404) throw error;
+              throw createHttpError(
+                503,
+                'Attachment upload could not be finalised and cleanup must be retried.',
+              );
             }
           }
           throw error;

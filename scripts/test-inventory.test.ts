@@ -112,7 +112,7 @@ describe('test inventory', () => {
       'src/components/safety-plan/SafetyPlanAttachments.test.tsx': 5,
       'src/contexts/__tests__/SafetyPlanContext.test.tsx': 30,
       'src/pages/SafetyPlanRegister.test.tsx': 3,
-      'src/pages/SafetyPlanEditor.test.tsx': 11,
+      'src/pages/SafetyPlanEditor.test.tsx': 12,
       'src/pages/SafetyPlanTemplateEditor.test.tsx': 2,
       'src/services/__tests__/persistence.safetyPlan.test.ts': 9,
       'src/services/__tests__/safetyPlanRepository.test.ts': 13,

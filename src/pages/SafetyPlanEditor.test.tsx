@@ -32,6 +32,7 @@ const admin: User = {
 
 afterEach(() => {
   vi.useRealTimers();
+  vi.unstubAllGlobals();
   localStorage.clear();
 });
 
@@ -47,7 +48,12 @@ function incompletePlan(overrides: Partial<SafetyPlan> = {}) {
 
 function renderEditor(
   plan = incompletePlan(),
-  options: { latestSourceSnapshot?: SafetyPlanSourceSnapshot; saveState?: string; error?: string } = {}
+  options: {
+    latestSourceSnapshot?: SafetyPlanSourceSnapshot;
+    saveState?: string;
+    error?: string;
+    acceptServerPlan?: ReturnType<typeof vi.fn>;
+  } = {}
 ) {
   const saveDraft = vi.fn(async (_input: SaveSafetyPlanDraftInput) => undefined);
   const retrySave = vi.fn(async () => undefined);
@@ -61,6 +67,7 @@ function renderEditor(
     saveDraft,
     retrySave,
     resolveConflict: vi.fn(),
+    acceptServerPlan: options.acceptServerPlan ?? vi.fn(),
   });
   const result = render(
     <MemoryRouter initialEntries={[`/compliance/safety-plans/${plan.id}`]}>
@@ -189,6 +196,59 @@ describe('SafetyPlanEditor', () => {
       await user.click(screen.getByRole('button', { name: /retry draft save/i }));
       expect(retrySave).toHaveBeenCalled();
     }
+  });
+
+  it('keeps an edit made during deferred evidence deletion when server-plan acceptance rejects', async () => {
+    const user = userEvent.setup();
+    let resolveDelete!: (response: Response) => void;
+    vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>((resolve) => {
+      resolveDelete = resolve;
+    })));
+    const acceptServerPlan = vi.fn(async () => {
+      throw new Error('Draft changes appeared while evidence was being deleted.');
+    });
+    const version = makeSafetyPlanVersion({
+      attachments: [{
+        id: 'attachment-1',
+        tenantId: 'tenant-1',
+        versionId: 'safety-plan-version-1',
+        fileName: 'evidence.pdf',
+        contentType: 'application/pdf',
+        sizeBytes: 12,
+        contentDigest: 'digest',
+        source: 'upload',
+        uploadedBy: {
+          userId: admin.id,
+          name: admin.name,
+          role: 'admin',
+          operationalAuthority: true,
+        },
+        uploadedAt: '2026-07-24T00:00:00.000Z',
+      }],
+    });
+    const plan = makeSafetyPlan({ versions: [version] });
+    renderEditor(plan, { acceptServerPlan });
+    await user.click(screen.getByRole('button', { name: /review & submit/i }));
+    await user.click(screen.getByRole('button', { name: /delete evidence.pdf/i }));
+    fireEvent.change(screen.getByLabelText(/submission and review/i), {
+      target: { value: 'Keep this local edit' },
+    });
+    expect(screen.getByDisplayValue('Keep this local edit')).toBeVisible();
+
+    const serverPlan = makeSafetyPlan({
+      ...plan,
+      revision: 2,
+      versions: [{ ...version, revision: 2, attachments: [] }],
+    });
+    resolveDelete(new Response(JSON.stringify({ plan: serverPlan }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }));
+
+    expect(await screen.findByText(/draft changes appeared while evidence was being deleted/i))
+      .toBeVisible();
+    expect(screen.getByDisplayValue('Keep this local edit')).toBeVisible();
+    expect(acceptServerPlan).toHaveBeenCalledWith(serverPlan);
   });
 
   it('shows source changes and requires every conflict decision before applying them', async () => {

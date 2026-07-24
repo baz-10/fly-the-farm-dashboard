@@ -28,7 +28,7 @@ interface Props {
     versionId: string,
     attachmentId: string
   ) => Promise<SafetyPlan | undefined>;
-  onServerPlanChange?: (plan: SafetyPlan) => void;
+  onServerPlanChange?: (plan: SafetyPlan) => void | Promise<void>;
   deleteBlockedReason?: string;
   onRetryDraftSave?: () => void;
 }
@@ -118,7 +118,7 @@ export function SafetyPlanAttachments({
       confirmedLocallyRef.current = nextConfirmed;
       setConfirmedLocally(nextConfirmed);
       if (serverPlan && onServerPlanChange) {
-        onServerPlanChange(serverPlan);
+        await onServerPlanChange(serverPlan);
       } else {
         onAttachmentsChangeRef.current(
           [

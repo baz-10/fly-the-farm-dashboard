@@ -254,6 +254,75 @@ describe('/api/safety-attachments security boundary', () => {
     expect(deps.deleteObject).not.toHaveBeenCalled();
   });
 
+  it('preserves request-created bytes when the receipt committed but its response was lost', async () => {
+    const body = Buffer.from('%PDF-original');
+    const committedAttachment = {
+      id: 'a1',
+      tenantId: 'tenant-a',
+      versionId: 'v1',
+      fileName: 'proof.pdf',
+      contentType: 'application/pdf',
+      sizeBytes: body.length,
+      contentDigest: 'e2dc7dcc254d1b9d2b42ebf1fb0a7630e49255fd1f7fe3c5e220fb7ff837982b',
+      source: 'upload',
+      uploadedBy: {
+        userId: 'pilot-a',
+        name: 'Pilot A',
+        role: 'contractor',
+        operationalAuthority: false,
+      },
+      uploadedAt: '2026-07-24T00:00:00.000Z',
+    };
+    const deps = dependencies({
+      loadReceipt: vi.fn()
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce({ status: 'stored', attachment: committedAttachment }),
+      createReceipt: vi.fn().mockRejectedValue(Object.assign(new Error('response lost'), {
+        statusCode: 503,
+      })),
+    });
+    const req = request('POST', {
+      'content-type': 'application/pdf',
+      'content-length': String(body.length),
+      'x-safety-plan-id': 'plan-a',
+      'x-safety-plan-version-id': 'v1',
+      'x-attachment-id': 'a1',
+      'x-file-name': 'proof.pdf',
+    });
+    req[Symbol.asyncIterator] = async function* () { yield body; };
+    const res = response();
+    await createSafetyAttachmentHandler(deps)(req, res);
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toEqual({ attachment: committedAttachment });
+    expect(deps.deleteObject).not.toHaveBeenCalled();
+  });
+
+  it('preserves request-created bytes when receipt outcome cannot be re-read', async () => {
+    const body = Buffer.from('%PDF-original');
+    const deps = dependencies({
+      loadReceipt: vi.fn()
+        .mockResolvedValueOnce(null)
+        .mockRejectedValueOnce(new Error('receipt lookup unavailable')),
+      createReceipt: vi.fn().mockRejectedValue(Object.assign(new Error('response lost'), {
+        statusCode: 503,
+        publicMessage: 'Attachment receipt could not be confirmed.',
+      })),
+    });
+    const req = request('POST', {
+      'content-type': 'application/pdf',
+      'content-length': String(body.length),
+      'x-safety-plan-id': 'plan-a',
+      'x-safety-plan-version-id': 'v1',
+      'x-attachment-id': 'a1',
+      'x-file-name': 'proof.pdf',
+    });
+    req[Symbol.asyncIterator] = async function* () { yield body; };
+    const res = response();
+    await createSafetyAttachmentHandler(deps)(req, res);
+    expect(res.statusCode).toBe(503);
+    expect(deps.deleteObject).not.toHaveBeenCalled();
+  });
+
   it('fails closed when storage returns a plan from another tenant', async () => {
     const deps = dependencies({ loadPlan: vi.fn().mockResolvedValue(plan('tenant-b')) });
     const res = response();

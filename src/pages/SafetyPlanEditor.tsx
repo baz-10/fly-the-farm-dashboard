@@ -347,9 +347,9 @@ export default function SafetyPlanEditor({
           attachments={version.attachments}
           editable={draft.status === 'draft' && version.status === 'draft'}
           onAttachmentsChange={updateAttachments}
-          onServerPlanChange={(serverPlan) => {
+          onServerPlanChange={async (serverPlan) => {
+            await acceptServerPlan(serverPlan);
             setDraft(serverPlan);
-            acceptServerPlan(serverPlan);
           }}
           deleteBlockedReason={attachmentDeleteBlockedReason}
           onRetryDraftSave={effectiveSaveState === 'pending_retry'
