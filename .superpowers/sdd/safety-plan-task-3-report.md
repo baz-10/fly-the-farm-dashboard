@@ -212,3 +212,81 @@ GREEN:
 - `node --check api/store.js`: passed.
 - `npm test`: 68 files, 394 tests passed.
 - `git diff --check`: passed.
+
+## Per-plan race review fixes
+
+Per-plan state-model implementation commit:
+`0c56c5b5fa377a91f7a406c57a38cb5de0def3ce`.
+
+### Root cause and model
+
+The remaining races shared one cause: a single global debounce timer and
+pending input could not represent multiple plans or multiple generations of
+one plan. The provider now owns these internal structures by `planId`:
+
+- debounce timer;
+- latest pending generation;
+- failed generation;
+- active save and per-plan save chain;
+- synchronous queued count and Retry reservation;
+- exclusive lifecycle lock;
+- monotonic lifecycle epoch.
+
+Public `saveState`, `lastSavedAt`, and `error` follow the most recently
+selected/touched plan, while background operations update only their own
+per-plan entries.
+
+### Regression-first evidence
+
+The reviewer schedules were added before the state-model rewrite. The context
+run reported 6 failed and 26 passed:
+
+- A1 remained active while A2 was debounced and Retry stranded A2;
+- two failed plans could not be retried exactly once by two concurrent Retry
+  invocations;
+- save during active delete optimistically changed Plan A;
+- save during active restore optimistically changed Plan A;
+- deleting Plan A cancelled Plan B's debounce;
+- restoring Plan A cancelled Plan B's debounce.
+
+The immutable inventory supplement then reported 1 failed and 4 passed until
+the explicit context declaration count was updated from 23 to 28. The
+historical baseline manifest was not changed.
+
+### Retry isolation
+
+- A1 and A2 serialize on Plan A's chain while Plan B has an independent chain.
+- Retry does not clear A2's timer while A1 is active; A2 queues exactly once
+  when its own debounce expires and rebases on A1's canonical revision.
+- Retry reserves every eligible failed plan synchronously before its first
+  `await`. A concurrent Retry invocation therefore cannot reserve or enqueue
+  the same plan.
+- Immediate Retry of a non-active debounced edit still converts that plan's
+  timer into one immediate save.
+
+### Lifecycle isolation
+
+- Delete and restore install an exclusive same-plan lock synchronously before
+  snapshotting, cancelling, or awaiting any work.
+- `saveDraft` checks that lock before optimistic state mutation or timer
+  creation and rejects with typed HTTP-style metadata:
+  `SAFETY_PLAN_LIFECYCLE_ACTIVE`, status 409.
+- A lifecycle operation aborts and settles the active same-plan save, drains
+  invalidated same-plan queue entries under the lock, and only then calls the
+  repository.
+- Success clears only that plan's timers, pending/failed generations,
+  reservations, queues, active entry, and epoch.
+- Failure restores only that plan's retryable snapshot and releases the lock;
+  a subsequent edit is accepted normally.
+- Plan B timers and saves continue while Plan A is deleted or restored.
+
+### Final verification
+
+- Context suite: 32 tests passed.
+- Focused repository/context/persistence/provider/API command: 5 files,
+  118 tests passed.
+- Inventory command: 1 file, 5 tests passed.
+- `npx tsc --noEmit`: passed.
+- `node --check api/store.js`: passed.
+- `npm test`: 68 files, 402 tests passed.
+- `git diff --check`: passed.
