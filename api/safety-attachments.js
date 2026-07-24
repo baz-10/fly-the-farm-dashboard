@@ -404,6 +404,21 @@ function createSafetyAttachmentHandler(overrides = {}) {
                   attachment: confirmedReceipt.attachment,
                 });
               }
+              if (
+                typeof confirmedReceipt.objectPath === 'string'
+                && confirmedReceipt.objectPath !== path
+              ) {
+                try {
+                  await deps.deleteObject(path);
+                } catch (cleanupError) {
+                  if (cleanupError?.statusCode !== 404) {
+                    throw createHttpError(
+                      503,
+                      'Attachment upload could not be finalised and cleanup must be retried.',
+                    );
+                  }
+                }
+              }
               throw createHttpError(409, 'Attachment id is already used by different evidence.');
             }
             try {

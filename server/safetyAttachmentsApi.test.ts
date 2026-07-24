@@ -323,6 +323,107 @@ describe('/api/safety-attachments security boundary', () => {
     expect(deps.deleteObject).not.toHaveBeenCalled();
   });
 
+  it('removes only the request-owned loser path when a concurrent receipt wins with another filename', async () => {
+    const body = Buffer.from('%PDF-original');
+    const winnerPath = 'tenant-a/plan-a/v1/a1/winner.pdf';
+    const loserPath = 'tenant-a/plan-a/v1/a1/loser.pdf';
+    const deps = dependencies({
+      loadReceipt: vi.fn()
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce({
+          status: 'stored',
+          objectPath: winnerPath,
+          attachment: {
+            id: 'a1',
+            tenantId: 'tenant-a',
+            versionId: 'v1',
+            fileName: 'winner.pdf',
+            contentType: 'application/pdf',
+            sizeBytes: body.length,
+            contentDigest: 'different-digest',
+            source: 'upload',
+            uploadedBy: {
+              userId: 'pilot-a',
+              name: 'Pilot A',
+              role: 'contractor',
+              operationalAuthority: false,
+            },
+            uploadedAt: '2026-07-24T00:00:00.000Z',
+          },
+        }),
+      createReceipt: vi.fn().mockRejectedValue(Object.assign(new Error('race'), {
+        statusCode: 409,
+        publicMessage: 'Attachment receipt conflicted.',
+      })),
+    });
+    const req = request('POST', {
+      'content-type': 'application/pdf',
+      'content-length': String(body.length),
+      'x-safety-plan-id': 'plan-a',
+      'x-safety-plan-version-id': 'v1',
+      'x-attachment-id': 'a1',
+      'x-file-name': 'loser.pdf',
+    });
+    req[Symbol.asyncIterator] = async function* () { yield body; };
+    const res = response();
+
+    await createSafetyAttachmentHandler(deps)(req, res);
+
+    expect(res.statusCode).toBe(409);
+    expect(deps.deleteObject).toHaveBeenCalledTimes(1);
+    expect(deps.deleteObject).toHaveBeenCalledWith(loserPath);
+    expect(deps.deleteObject).not.toHaveBeenCalledWith(winnerPath);
+  });
+
+  it('keeps concurrent loser cleanup retryable without touching the canonical winner path', async () => {
+    const body = Buffer.from('%PDF-original');
+    const winnerPath = 'tenant-a/plan-a/v1/a1/winner.pdf';
+    const loserPath = 'tenant-a/plan-a/v1/a1/loser.pdf';
+    const cleanupError = Object.assign(new Error('storage unavailable'), { statusCode: 503 });
+    const deps = dependencies({
+      loadReceipt: vi.fn()
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce({
+          status: 'stored',
+          objectPath: winnerPath,
+          attachment: {
+            id: 'a1',
+            tenantId: 'tenant-a',
+            versionId: 'v1',
+            fileName: 'winner.pdf',
+            contentType: 'application/pdf',
+            sizeBytes: body.length,
+            contentDigest: 'different-digest',
+            source: 'upload',
+          },
+        }),
+      createReceipt: vi.fn().mockRejectedValue(Object.assign(new Error('race'), {
+        statusCode: 409,
+      })),
+      deleteObject: vi.fn().mockRejectedValue(cleanupError),
+    });
+    const req = request('POST', {
+      'content-type': 'application/pdf',
+      'content-length': String(body.length),
+      'x-safety-plan-id': 'plan-a',
+      'x-safety-plan-version-id': 'v1',
+      'x-attachment-id': 'a1',
+      'x-file-name': 'loser.pdf',
+    });
+    req[Symbol.asyncIterator] = async function* () { yield body; };
+    const res = response();
+
+    await createSafetyAttachmentHandler(deps)(req, res);
+
+    expect(res.statusCode).toBe(503);
+    expect(res.body).toEqual({
+      error: 'Attachment upload could not be finalised and cleanup must be retried.',
+    });
+    expect(deps.deleteObject).toHaveBeenCalledOnce();
+    expect(deps.deleteObject).toHaveBeenCalledWith(loserPath);
+    expect(deps.deleteObject).not.toHaveBeenCalledWith(winnerPath);
+  });
+
   it('fails closed when storage returns a plan from another tenant', async () => {
     const deps = dependencies({ loadPlan: vi.fn().mockResolvedValue(plan('tenant-b')) });
     const res = response();

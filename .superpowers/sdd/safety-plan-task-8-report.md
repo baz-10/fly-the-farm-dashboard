@@ -80,6 +80,11 @@ PDF, JPEG and PNG evidence up to 3 MiB.
   gateway compensates only after receipt absence is conclusively confirmed,
   deleting only request-created bytes. A pre-existing same-byte object
   discovered during idempotent recovery is never deleted by a losing request.
+- If a concurrent request wins the same attachment id with a different
+  canonical object path, the gateway deletes only its own losing path before
+  returning conflict. It never deletes the canonical path or cleans up when
+  receipt state is unknown; transient loser cleanup failures return a
+  retryable service-unavailable response.
 - The editor awaits server-plan acceptance before replacing its local draft.
   If an operator edits the plan while evidence deletion is outstanding, a
   rejected acceptance leaves that local work visible and retryable.
@@ -94,8 +99,8 @@ before their implementations were added.
 ## Verification
 
 - Focused receipt-reconciliation/editor-race/inventory tests: 3 files,
-  41 tests passed.
-- Full suite: 82 files, 535 tests passed.
+  43 tests passed.
+- Full suite: 82 files, 537 tests passed.
 - `npx tsc --noEmit`: passed.
 - `npm run build`: passed.
 - Node syntax checks for all modified/new server JavaScript: passed.
