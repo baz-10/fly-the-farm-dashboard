@@ -106,7 +106,7 @@ describe('test inventory', () => {
       ...supplements,
       'src/App.safetyPlanProvider.test.tsx': 1,
       'src/__tests__/authenticated-safety-plan-api.test.ts': 55,
-      'src/contexts/__tests__/SafetyPlanContext.test.tsx': 28,
+      'src/contexts/__tests__/SafetyPlanContext.test.tsx': 30,
       'src/services/__tests__/persistence.safetyPlan.test.ts': 9,
       'src/services/__tests__/safetyPlanRepository.test.ts': 12,
       'src/utils/__tests__/safetyPlanPermissions.test.ts': 5,

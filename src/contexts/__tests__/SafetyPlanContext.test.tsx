@@ -905,4 +905,86 @@ describe('SafetyPlanContext', () => {
       plan: expect.objectContaining({ id: 'plan-b' }),
     }));
   });
+
+  it('rejects a newer same-plan edit while deferred conflict resolution owns the plan', async () => {
+    let resolveRemote!: (plan: ReturnType<typeof makeSafetyPlan>) => void;
+    const conflict = Object.assign(new Error('Changed elsewhere'), {
+      code: 'SAFETY_PLAN_CONFLICT',
+      currentRevision: 4,
+    });
+    const saveDraft = vi.fn(async () => { throw conflict; });
+    const getPlan = vi.fn(() => new Promise<ReturnType<typeof makeSafetyPlan>>((resolve) => {
+      resolveRemote = resolve;
+    }));
+    const repository = makeRepository({ saveDraft, getPlan });
+    renderProvider(repository);
+    await act(async () => {});
+
+    fireEvent.click(screen.getByText('edit a'));
+    await act(async () => { vi.advanceTimersByTime(750); });
+    fireEvent.click(screen.getByText('keep remote'));
+    await act(async () => {});
+    fireEvent.click(screen.getByText('edit a newer'));
+    await act(async () => {});
+
+    expect(screen.getByTestId('plan-job')).toHaveTextContent('job-1');
+    expect(capturedSaveError).toMatchObject({
+      status: 409,
+      code: 'SAFETY_PLAN_CONFLICT_RESOLUTION_ACTIVE',
+    });
+    expect(getPlan).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      resolveRemote(makeSafetyPlan({
+        id: 'plan-a',
+        tenantId: 'tenant-1',
+        jobId: 'job-remote',
+        revision: 4,
+      }));
+    });
+    expect(screen.getByTestId('plan-job')).toHaveTextContent('job-remote');
+    expect(saveDraft).toHaveBeenCalledTimes(1);
+  });
+
+  it('deduplicates two concurrent create-revision conflict resolutions', async () => {
+    let resolveRemote!: (plan: ReturnType<typeof makeSafetyPlan>) => void;
+    const conflict = Object.assign(new Error('Changed elsewhere'), {
+      code: 'SAFETY_PLAN_CONFLICT',
+      currentRevision: 4,
+    });
+    const saveDraft = vi.fn()
+      .mockRejectedValueOnce(conflict)
+      .mockImplementationOnce(async ({ plan }) => ({ ...plan, revision: 5 }));
+    const getPlan = vi.fn(() => new Promise<ReturnType<typeof makeSafetyPlan>>((resolve) => {
+      resolveRemote = resolve;
+    }));
+    const repository = makeRepository({ saveDraft, getPlan });
+    renderProvider(repository);
+    await act(async () => {});
+
+    fireEvent.click(screen.getByText('edit a'));
+    await act(async () => { vi.advanceTimersByTime(750); });
+    fireEvent.click(screen.getByText('create revision'));
+    fireEvent.click(screen.getByText('create revision'));
+    await act(async () => {});
+
+    expect(getPlan).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      resolveRemote(makeSafetyPlan({ id: 'plan-a', tenantId: 'tenant-1', revision: 4 }));
+    });
+    await act(async () => {});
+
+    expect(getPlan).toHaveBeenCalledTimes(1);
+    expect(saveDraft).toHaveBeenCalledTimes(2);
+    expect(saveDraft).toHaveBeenLastCalledWith(expect.objectContaining({
+      expectedRevision: 4,
+      isNewVersion: true,
+      plan: expect.objectContaining({
+        versions: expect.arrayContaining([
+          expect.objectContaining({ id: 'safety-plan-version-1' }),
+          expect.objectContaining({ revision: 1, status: 'draft' }),
+        ]),
+      }),
+    }));
+  });
 });

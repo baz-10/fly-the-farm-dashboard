@@ -29,6 +29,16 @@ export class SafetyPlanLifecycleActiveError extends Error {
   }
 }
 
+export class SafetyPlanConflictResolutionActiveError extends Error {
+  readonly status = 409;
+  readonly code = 'SAFETY_PLAN_CONFLICT_RESOLUTION_ACTIVE';
+
+  constructor(planId: string) {
+    super(`Safety Plan ${planId} conflict resolution is active. Wait for it to finish.`);
+    this.name = 'SafetyPlanConflictResolutionActiveError';
+  }
+}
+
 export interface SafetyPlanContextValue {
   plans: SafetyPlan[];
   saveState: SaveState;
@@ -149,6 +159,7 @@ export function SafetyPlanProvider({
   const queuedCountByPlanRef = useRef(new Map<string, number>());
   const retryReservationsRef = useRef(new Set<string>());
   const lifecycleLockByPlanRef = useRef(new Map<string, LifecycleLock>());
+  const conflictResolutionByPlanRef = useRef(new Map<string, ActiveOperation>());
   const epochByPlanRef = useRef(new Map<string, number>());
   const loadControllerRef = useRef<AbortController | undefined>(undefined);
   userIdRef.current = user?.id;
@@ -189,6 +200,7 @@ export function SafetyPlanProvider({
     const operations = [
       ...activeSaveByPlanRef.current.values(),
       ...lifecycleLockByPlanRef.current.values(),
+      ...conflictResolutionByPlanRef.current.values(),
     ];
     operations.forEach(({ controller }) => controller.abort());
     await Promise.allSettled(operations.map(({ promise }) => promise));
@@ -397,6 +409,12 @@ export function SafetyPlanProvider({
       setError(lifecycleError.message);
       throw lifecycleError;
     }
+    if (conflictResolutionByPlanRef.current.has(planId)) {
+      const resolutionError = new SafetyPlanConflictResolutionActiveError(planId);
+      setSaveState('conflict');
+      setError(resolutionError.message);
+      throw resolutionError;
+    }
 
     const entry: PendingSave = {
       input,
@@ -423,6 +441,7 @@ export function SafetyPlanProvider({
       if (
         retryReservationsRef.current.has(planId)
         || lifecycleLockByPlanRef.current.has(planId)
+        || conflictResolutionByPlanRef.current.has(planId)
         || activeSaveByPlanRef.current.has(planId)
         || queuedCountByPlanRef.current.has(planId)
       ) continue;
@@ -453,18 +472,32 @@ export function SafetyPlanProvider({
   ) => {
     const planId = conflictPlanIdRef.current || currentPlanIdRef.current;
     if (!planId || !userIdRef.current) return;
+    const existingResolution = conflictResolutionByPlanRef.current.get(planId);
+    if (existingResolution) {
+      await existingResolution.promise;
+      return;
+    }
     const pending = pendingByPlanRef.current.get(planId);
     if (!pending || lifecycleLockByPlanRef.current.has(planId)) return;
     const resolvingUserId = userIdRef.current;
     const resolvingSessionGeneration = sessionGenerationRef.current;
-    clearPlanTimer(planId);
-    await abortActiveSave(planId);
-
     const controller = new AbortController();
-    const lookup = repository.getPlan(planId, { signal: controller.signal });
-    activeSaveByPlanRef.current.set(planId, { controller, promise: lookup });
+    let settleResolution!: () => void;
+    const resolutionCompletion = new Promise<void>((resolve) => {
+      settleResolution = resolve;
+    });
+    conflictResolutionByPlanRef.current.set(planId, {
+      controller,
+      promise: resolutionCompletion,
+    });
     try {
-      const remote = await lookup;
+      clearPlanTimer(planId);
+      epochByPlanRef.current.set(planId, (epochByPlanRef.current.get(planId) || 0) + 1);
+      await abortActiveSave(planId);
+      await saveChainByPlanRef.current.get(planId);
+      queuedCountByPlanRef.current.delete(planId);
+      saveChainByPlanRef.current.delete(planId);
+      const remote = await repository.getPlan(planId, { signal: controller.signal });
       if (
         !mountedRef.current
         || userIdRef.current !== resolvingUserId
@@ -534,8 +567,11 @@ export function SafetyPlanProvider({
         setStatusForPlan(planId, 'conflict', messageFrom(resolutionError));
       }
     } finally {
-      const active = activeSaveByPlanRef.current.get(planId);
-      if (active?.promise === lookup) activeSaveByPlanRef.current.delete(planId);
+      const resolution = conflictResolutionByPlanRef.current.get(planId);
+      if (resolution?.promise === resolutionCompletion) {
+        conflictResolutionByPlanRef.current.delete(planId);
+      }
+      settleResolution();
     }
   }, [
     abortActiveSave,
@@ -560,6 +596,11 @@ export function SafetyPlanProvider({
       const lifecycleError = new SafetyPlanLifecycleActiveError(planId);
       setStatusForPlan(planId, 'idle', lifecycleError.message);
       throw lifecycleError;
+    }
+    if (conflictResolutionByPlanRef.current.has(planId)) {
+      const resolutionError = new SafetyPlanConflictResolutionActiveError(planId);
+      setStatusForPlan(planId, 'conflict', resolutionError.message);
+      throw resolutionError;
     }
 
     const controller = new AbortController();
