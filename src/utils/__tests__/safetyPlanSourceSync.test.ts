@@ -164,7 +164,7 @@ describe('Safety Plan source synchronisation', () => {
     expect(refreshed).not.toBe(version);
     expect(version.revision).toBe(4);
     expect(refreshed).toMatchObject({
-      revision: 5,
+      revision: 4,
       sourceRefreshIntent: {
         kind: 'source_refresh',
       },

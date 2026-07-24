@@ -187,7 +187,6 @@ function prepareDraft(input: SaveSafetyPlanDraftInput, now: string): SafetyPlan 
     version.id === activeVersion.id
       ? {
         ...version,
-        sourceRefreshIntent: undefined,
         revision: isNew || input.isNewVersion ? 1 : version.revision + 1,
         updatedAt: now,
       }

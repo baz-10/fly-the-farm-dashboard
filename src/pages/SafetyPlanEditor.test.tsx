@@ -201,6 +201,75 @@ describe('SafetyPlanEditor', () => {
     expect(shell).toHaveStyle({ maxWidth: '100%' });
     expect(shell).toHaveStyle({ overflowX: 'clip' });
     expect(screen.getByTestId('safety-plan-readiness')).not.toHaveStyle({ minWidth: '300px' });
+    expect(screen.getByTestId('safety-plan-stepper')).toHaveStyle({ flexDirection: 'column' });
+  });
+
+  it('hydrates a direct URL when the requested plan arrives without overwriting a local edit', async () => {
+    const user = userEvent.setup();
+    useAuth.mockReturnValue({ user: admin });
+    const context = {
+      plans: [] as SafetyPlan[],
+      saveState: 'idle',
+      lastSavedAt: undefined,
+      error: undefined,
+      pendingRetryPlanIds: [],
+      saveDraft: vi.fn(async (_input: SaveSafetyPlanDraftInput) => undefined),
+      retrySave: vi.fn(),
+      resolveConflict: vi.fn(),
+    };
+    useSafetyPlans.mockImplementation(() => context);
+    const view = render(
+      <MemoryRouter initialEntries={['/compliance/safety-plans/safety-plan-1']}>
+        <SafetyPlanEditor planId="safety-plan-1" />
+      </MemoryRouter>
+    );
+    expect(screen.getByText(/could not be found/i)).toBeVisible();
+
+    context.plans = [incompletePlan()];
+    view.rerender(
+      <MemoryRouter initialEntries={['/compliance/safety-plans/safety-plan-1']}>
+        <SafetyPlanEditor planId="safety-plan-1" />
+      </MemoryRouter>
+    );
+    expect(await screen.findByRole('heading', { name: /job details/i })).toBeVisible();
+
+    await user.type(screen.getByLabelText(/^scope/i), 'Local gate control');
+    context.plans = [incompletePlan({ revision: 2 })];
+    view.rerender(
+      <MemoryRouter initialEntries={['/compliance/safety-plans/safety-plan-1']}>
+        <SafetyPlanEditor planId="safety-plan-1" />
+      </MemoryRouter>
+    );
+    expect(screen.getByDisplayValue('Local gate control')).toBeVisible();
+  });
+
+  it('offers both safe conflict recovery actions', async () => {
+    const plan = incompletePlan();
+    const resolveConflict = vi.fn();
+    useAuth.mockReturnValue({ user: admin });
+    useSafetyPlans.mockReturnValue({
+      plans: [plan],
+      saveState: 'conflict',
+      error: 'Changed elsewhere',
+      lastSavedAt: undefined,
+      pendingRetryPlanIds: [],
+      saveDraft: vi.fn(),
+      retrySave: vi.fn(),
+      resolveConflict,
+    });
+    render(
+      <MemoryRouter>
+        <SafetyPlanEditor planId={plan.id} />
+      </MemoryRouter>
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /use remote version/i }));
+    fireEvent.click(screen.getByRole('button', { name: /create revision/i }));
+
+    await waitFor(() => {
+      expect(resolveConflict).toHaveBeenNthCalledWith(1, 'keep_remote');
+      expect(resolveConflict).toHaveBeenNthCalledWith(2, 'create_revision');
+    });
   });
 
   it('shows source mission, JSA question, risk score, mitigation and company control', async () => {

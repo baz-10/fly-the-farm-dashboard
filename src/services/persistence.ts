@@ -277,10 +277,19 @@ export async function writeSharedRecord<T>(
 ): Promise<T> {
   const cacheKey = getSharedCacheKey(key);
   if (!shouldUseRemote()) {
+    const localPayload = key === PERSISTENCE_KEYS.safetyPlans
+      ? {
+        ...(payload as any),
+        versions: ((payload as any)?.versions || []).map((version: any) => {
+          const { sourceRefreshIntent: _sourceRefreshIntent, ...canonical } = version;
+          return canonical;
+        }),
+      } as T
+      : payload;
     if (key === PERSISTENCE_KEYS.safetyPlans) {
       const stored = readCollection<any>(cacheKey)
         .find((record) => record?.id === recordId);
-      const incomingRevision = (payload as { revision?: number })?.revision;
+      const incomingRevision = (localPayload as { revision?: number })?.revision;
       const expectedIncomingRevision = stored ? stored.revision + 1 : 1;
       if (
         stored?.deletedAt
@@ -297,13 +306,13 @@ export async function writeSharedRecord<T>(
         );
       }
     }
-    cacheRecord(cacheKey, recordId, payload);
+    cacheRecord(cacheKey, recordId, localPayload);
     if (key === PERSISTENCE_KEYS.safetyPlans && options.audit) {
       const session = readLocalValue<any>(PERSISTENCE_KEYS.session, null);
       const occurredAt = new Date().toISOString();
       cacheRecord(getSharedCacheKey(PERSISTENCE_KEYS.safetyPlanAudit), options.audit.id, {
         ...options.audit,
-        tenantId: (payload as any)?.tenantId,
+        tenantId: (localPayload as any)?.tenantId,
         actor: {
           userId: session?.id || '',
           name: session?.name || '',
@@ -313,7 +322,7 @@ export async function writeSharedRecord<T>(
         occurredAt,
       });
     }
-    return payload;
+    return localPayload;
   }
 
   const result = await requestRemote<{ payload?: T }>('/api/store', {

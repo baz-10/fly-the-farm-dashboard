@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   Box,
@@ -134,6 +134,7 @@ export default function SafetyPlanEditor({
     error,
     saveDraft,
     retrySave,
+    resolveConflict,
   } = useSafetyPlans();
   const storedPlan = plans.find((plan) => plan.id === planId);
   const [draft, setDraft] = useState<SafetyPlan | undefined>(storedPlan);
@@ -151,6 +152,51 @@ export default function SafetyPlanEditor({
   const [localSaveState, setLocalSaveState] = useState<SaveState>('idle');
   const [refreshOpen, setRefreshOpen] = useState(false);
   const [refreshDecisions, setRefreshDecisions] = useState<SourceRefreshDecision[]>([]);
+  const loadedPlanIdRef = useRef(planId);
+  const hasPendingLocalEditsRef = useRef(false);
+
+  useEffect(() => {
+    const planIdentityChanged = loadedPlanIdRef.current !== planId;
+    if (planIdentityChanged) {
+      loadedPlanIdRef.current = planId;
+      hasPendingLocalEditsRef.current = false;
+      setDraft(storedPlan);
+      const nextVersion = storedPlan ? currentVersion(storedPlan) : undefined;
+      const nextStep = Number(nextVersion?.sections
+        .flatMap((section) => section.fields)
+        .find((field) => field.id === 'editor_last_step')?.value ?? 0);
+      setActiveStep(
+        Number.isInteger(nextStep) && nextStep >= 0 && nextStep < STEPS.length
+          ? nextStep
+          : 0
+      );
+      return;
+    }
+    if (!draft && storedPlan) {
+      setDraft(storedPlan);
+      const nextVersion = currentVersion(storedPlan);
+      const nextStep = Number(nextVersion?.sections
+        .flatMap((section) => section.fields)
+        .find((field) => field.id === 'editor_last_step')?.value ?? 0);
+      setActiveStep(
+        Number.isInteger(nextStep) && nextStep >= 0 && nextStep < STEPS.length
+          ? nextStep
+          : 0
+      );
+    }
+  }, [draft, planId, storedPlan]);
+
+  useEffect(() => {
+    if (
+      saveState === 'saved'
+      && storedPlan
+      && draft?.id === storedPlan.id
+      && storedPlan.revision >= draft.revision
+    ) {
+      hasPendingLocalEditsRef.current = false;
+      setDraft(storedPlan);
+    }
+  }, [draft?.id, draft?.revision, saveState, storedPlan]);
 
   const groups = useMemo(
     () => sectionGroups(version?.sections ?? []),
@@ -177,6 +223,7 @@ export default function SafetyPlanEditor({
   }
 
   const persist = async (nextPlan: SafetyPlan) => {
+    hasPendingLocalEditsRef.current = true;
     setDraft(nextPlan);
     setLocalSaveState('saving');
     try {
@@ -271,6 +318,14 @@ export default function SafetyPlanEditor({
     void persist(nextPlan);
   };
 
+  const recoverConflict = async (choice: 'keep_remote' | 'create_revision') => {
+    await resolveConflict(choice);
+    hasPendingLocalEditsRef.current = false;
+    // The provider has installed the canonical remote plan or new revision.
+    // Resetting here lets the load effect adopt it without retaining stale input.
+    setDraft(undefined);
+  };
+
   return (
     <Box
       data-testid="safety-plan-editor-shell"
@@ -316,6 +371,8 @@ export default function SafetyPlanEditor({
               lastSavedAt={lastSavedAt}
               error={error}
               onRetry={() => void retrySave()}
+              onKeepRemote={() => void recoverConflict('keep_remote')}
+              onCreateRevision={() => void recoverConflict('create_revision')}
             />
           </Stack>
         </Stack>

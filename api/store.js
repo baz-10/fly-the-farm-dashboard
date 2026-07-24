@@ -641,7 +641,7 @@ const STANDALONE_SAFETY_AUDIT_ACTIONS = new Set([
   'pdf_generated',
 ]);
 
-function deriveSafetyPlanMutationAudit(stored, incoming) {
+function deriveSafetyPlanMutationAudit(stored, incoming, sourceRefreshRequested = false) {
   if (!stored) {
     return incoming.status === 'not_required'
       ? { action: 'not_required_selected' }
@@ -691,9 +691,73 @@ function deriveSafetyPlanMutationAudit(stored, incoming) {
     }
   }
 
+  if (sourceRefreshRequested) {
+    return {
+      action: 'source_refreshed',
+      versionId: incoming.currentVersionId,
+    };
+  }
+
   return {
     action: 'field_changed',
     versionId: incoming.currentVersionId,
+  };
+}
+
+function consumeSourceRefreshIntent(stored, incoming) {
+  if (!stored || !Array.isArray(incoming?.versions)) {
+    return { payload: incoming, requested: false };
+  }
+  const incomingCurrent = incoming.versions.find(
+    (version) => version?.id === incoming.currentVersionId
+  );
+  const versionsWithIntent = incoming.versions.filter(
+    (version) => version?.sourceRefreshIntent !== undefined
+  );
+  const intent = incomingCurrent?.sourceRefreshIntent;
+  if (intent === undefined) {
+    if (versionsWithIntent.length > 0) {
+      throw createHttpError(400, 'Safety Plan source refresh intent must target the current version.');
+    }
+    return { payload: incoming, requested: false };
+  }
+  if (
+    versionsWithIntent.length !== 1
+    || !isObject(intent)
+    || intent.kind !== 'source_refresh'
+    || !isObject(intent.before)
+    || !isObject(intent.after)
+    || intent.actor !== undefined
+    || intent.occurredAt !== undefined
+  ) {
+    throw createHttpError(400, 'Safety Plan source refresh intent is invalid.');
+  }
+  const storedCurrent = (stored.versions || []).find(
+    (version) => version?.id === stored.currentVersionId
+  );
+  if (
+    incoming.status !== 'draft'
+    || incoming.currentVersionId !== stored.currentVersionId
+    || storedCurrent?.status !== 'draft'
+    || intent.before.capturedAt !== storedCurrent.sourceSnapshot?.capturedAt
+    || intent.after.capturedAt !== incomingCurrent.sourceSnapshot?.capturedAt
+    || intent.before.capturedAt === intent.after.capturedAt
+  ) {
+    throw createHttpError(409, 'Safety Plan source refresh intent does not match the source transition.');
+  }
+  return {
+    requested: true,
+    payload: {
+      ...incoming,
+      versions: incoming.versions.map((version) => {
+        if (version?.sourceRefreshIntent === undefined) return version;
+        const {
+          sourceRefreshIntent: _sourceRefreshIntent,
+          ...canonicalVersion
+        } = version;
+        return canonicalVersion;
+      }),
+    },
   };
 }
 
@@ -1216,6 +1280,8 @@ module.exports = async function handler(req, res) {
       let safetyAuditEvent = null;
       if (collection === SAFETY_PLAN_COLLECTION) {
         payload = normaliseSafetyPlanProvenance(user, storedPayload, body.payload, now);
+        const sourceRefresh = consumeSourceRefreshIntent(storedPayload, payload);
+        payload = sourceRefresh.payload;
         assertSafetyPlanTransition({
           actor: user,
           stored: storedPayload,
@@ -1232,7 +1298,7 @@ module.exports = async function handler(req, res) {
           body.audit,
           auditRecordId,
           now,
-          deriveSafetyPlanMutationAudit(storedPayload, payload)
+          deriveSafetyPlanMutationAudit(storedPayload, payload, sourceRefresh.requested)
         );
       }
       if (collection === SAFETY_PLAN_AUDIT_COLLECTION) {

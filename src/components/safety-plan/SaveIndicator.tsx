@@ -8,6 +8,8 @@ export default function SaveIndicator(props: {
   lastSavedAt?: string;
   error?: string;
   onRetry(): void;
+  onKeepRemote(): void;
+  onCreateRevision(): void;
 }) {
   if (props.state === 'pending_retry') {
     return (
@@ -21,7 +23,21 @@ export default function SaveIndicator(props: {
     );
   }
   if (props.state === 'conflict') {
-    return <Alert severity="error">This plan changed elsewhere. Resolve the conflict before continuing.</Alert>;
+    return (
+      <Alert severity="error">
+        <Typography variant="body2" fontWeight={800}>
+          This plan changed elsewhere.
+        </Typography>
+        <Stack direction={{ xs: 'column', sm: 'row' }} gap={1} sx={{ mt: 1 }}>
+          <Button variant="outlined" color="inherit" onClick={props.onKeepRemote}>
+            Use remote version
+          </Button>
+          <Button variant="contained" color="error" onClick={props.onCreateRevision}>
+            Create revision
+          </Button>
+        </Stack>
+      </Alert>
+    );
   }
   return (
     <Stack direction="row" gap={1} alignItems="center" minHeight={32} aria-live="polite">

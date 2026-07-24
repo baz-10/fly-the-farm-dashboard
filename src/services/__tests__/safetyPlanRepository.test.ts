@@ -177,7 +177,18 @@ describe('SafetyPlanRepository', () => {
         },
       })],
     });
-    const dependencies = makeDependencies();
+    const dependencies = makeDependencies({
+      writeRecord: vi.fn(async (_key, _recordId, payload) => {
+        const plan = payload as SafetyPlan;
+        return {
+          ...plan,
+          versions: plan.versions.map((version) => {
+            const { sourceRefreshIntent: _intent, ...canonical } = version;
+            return canonical;
+          }),
+        };
+      }),
+    });
     const repository = createSafetyPlanRepository(dependencies);
 
     const saved = await repository.saveDraft({ plan: draft, expectedRevision: 1, actor });
@@ -187,13 +198,17 @@ describe('SafetyPlanRepository', () => {
       PERSISTENCE_KEYS.safetyPlans,
       draft.id,
       expect.objectContaining({
-        versions: [expect.not.objectContaining({ sourceRefreshIntent: expect.anything() })],
+        versions: [expect.objectContaining({
+          sourceRefreshIntent: expect.objectContaining({ kind: 'source_refresh' }),
+          revision: 2,
+        })],
       }),
       {
         audit: expect.objectContaining({
           action: 'source_refreshed',
           planId: draft.id,
         }),
+        signal: undefined,
       }
     );
   });

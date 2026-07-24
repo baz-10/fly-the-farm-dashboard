@@ -834,6 +834,58 @@ describe('Safety Plan persistent store security', () => {
     expect(rpcBody?.p_audit_payload.action).toBe('field_changed');
   });
 
+  it('atomically derives source_refreshed from a valid one-shot intent and clears it canonically', async () => {
+    const storedVersion = makeSafetyPlanVersion({ revision: 2 });
+    const storedPlan = makeSafetyPlan({
+      tenantId: 'tenant-a',
+      revision: 2,
+      versions: [storedVersion],
+    });
+    const incomingVersion = {
+      ...storedVersion,
+      revision: 3,
+      sourceSnapshot: {
+        ...storedVersion.sourceSnapshot,
+        capturedAt: '2026-07-25T00:00:00.000Z',
+      },
+      sourceRefreshIntent: {
+        kind: 'source_refresh' as const,
+        before: { capturedAt: storedVersion.sourceSnapshot.capturedAt },
+        after: { capturedAt: '2026-07-25T00:00:00.000Z' },
+      },
+    };
+    const incoming = {
+      ...storedPlan,
+      revision: 3,
+      versions: [incomingVersion],
+    };
+    let rpcBody: Record<string, any> | undefined;
+    mockApi({
+      stored: [{ tenant_id: 'tenant-a', record_id: storedPlan.id, payload: storedPlan }],
+      onRpc: (body) => {
+        rpcBody = body;
+        return { succeeded: true, new_payload: body.p_payload };
+      },
+    });
+    const res = createResponse();
+
+    await storeHandler(request('PUT', 'ftf_safety_plans', {
+      collection: 'ftf_safety_plans',
+      recordId: incoming.id,
+      payload: incoming,
+      audit: mutationAudit(incoming, 'field_changed', 'audit-source-intent'),
+    }), res);
+
+    expect(res.statusCode).toBe(200);
+    expect(rpcBody?.p_payload.versions[0].sourceRefreshIntent).toBeUndefined();
+    expect(rpcBody?.p_payload.versions[0].revision).toBe(3);
+    expect(rpcBody?.p_audit_payload).toMatchObject({
+      action: 'source_refreshed',
+      actor: { userId: 'user-a' },
+    });
+    expect(rpcBody?.p_audit_payload.occurredAt).toEqual(expect.any(String));
+  });
+
   it('derives submitted from the transition when the client forges created', async () => {
     const storedVersion = makeSafetyPlanVersion({ status: 'draft', revision: 2 });
     const storedPlan = makeSafetyPlan({

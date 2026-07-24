@@ -29,14 +29,13 @@ export default function SafetyPlanStepper({
 
   return (
     <Stack
+      data-testid="safety-plan-stepper"
       component="nav"
       aria-label="Safety Plan steps"
-      direction={{ xs: 'row', md: 'column' }}
+      direction="column"
       sx={{
-        overflowX: { xs: 'auto', md: 'visible' },
-        pb: { xs: 1, md: 0 },
+        overflowX: 'visible',
         gap: 0.75,
-        scrollbarWidth: 'thin',
       }}
     >
       {steps.map((step, index) => (
@@ -74,7 +73,7 @@ export default function SafetyPlanStepper({
           )}
           sx={{
             minHeight: 48,
-            minWidth: { xs: 150, md: 0 },
+            minWidth: 0,
             justifyContent: 'flex-start',
             px: 1.5,
             borderRadius: 2,

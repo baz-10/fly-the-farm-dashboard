@@ -481,7 +481,6 @@ export function applySourceRefresh(
       decisionMap
     ),
     sourceSnapshot,
-    revision: version.revision + 1,
     sourceRefreshIntent: {
       kind: 'source_refresh',
       before: {

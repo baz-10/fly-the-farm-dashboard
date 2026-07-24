@@ -28,9 +28,9 @@ Complete on `codex/safety-plan-design`.
   server-authoritative `source_refreshed` audit action in the same plan write.
   The repository clears the intent before persistence; the client supplies
   neither audit actor nor occurrence time.
-- Phone layout uses minmax-safe grids, horizontally scrollable step navigation,
-  full-width content, sticky bottom actions and no fixed 300 px minimum on the
-  readiness panel. All primary navigation actions are at least 44 px high.
+- Phone layout uses minmax-safe grids, a vertical step selector, full-width
+  content, sticky bottom actions and no fixed 300 px minimum on the readiness
+  panel. All primary navigation actions are at least 44 px high.
 - Added arrow-key navigation and `aria-current="step"` semantics.
 
 ## TDD evidence
@@ -48,11 +48,11 @@ handling.
 
 ## Verification
 
-- Focused editor/repository/inventory:
-  `npx vitest run src/pages/SafetyPlanEditor.test.tsx src/services/__tests__/safetyPlanRepository.test.ts scripts/test-inventory.test.ts`
-  — 3 files, 26 tests passed.
+- Focused editor/repository/source-sync/authenticated-API/inventory:
+  `npx vitest run src/pages/SafetyPlanEditor.test.tsx src/services/__tests__/safetyPlanRepository.test.ts src/utils/__tests__/safetyPlanSourceSync.test.ts src/__tests__/authenticated-safety-plan-api.test.ts scripts/test-inventory.test.ts`
+  — 5 files, 112 tests passed.
 - TypeScript: `npx tsc --noEmit` — passed.
-- Full suite: `npm test` — 76 files, 449 tests passed.
+- Full suite: `npm test` — 76 files, 452 tests passed.
 - Production build: `npm run build` — passed.
 - Patch hygiene: `git diff --check` — passed.
 
@@ -65,3 +65,21 @@ The route accepts `latestSourceSnapshot` at the Job integration boundary.
 Until Task 9 supplies the latest linked Job/Mission snapshot, the editor
 correctly treats the stored controlled snapshot as current and does not show a
 false source-change prompt.
+
+## Independent review fixes
+
+- Removed the source refresh utility's premature version-revision increment.
+  The repository now performs the single plan/version CAS increment.
+- The one-shot source refresh intent reaches the authenticated server. The
+  server validates it against the stored/current source capture, derives the
+  `source_refreshed` action, strips the intent and atomically stores the
+  canonical plan plus server-provenance audit event.
+- Added authenticated API coverage proving the canonical stored payload cannot
+  replay the intent and actor/time remain server-derived.
+- Direct editor URLs now hydrate when the provider finishes loading. Plan
+  identity changes restore the incoming draft step, while same-plan provider
+  refreshes cannot overwrite pending local field edits.
+- Added visible `Use remote version` and `Create revision` conflict actions
+  wired to the provider's serialized conflict recovery.
+- Corrected the phone step selector to the approved vertical layout and added
+  a responsive regression assertion.
