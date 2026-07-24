@@ -442,18 +442,26 @@ function refreshAcceptedSourceFields(
   }));
 }
 
-function actualRefreshDecisionIds(
+function actualRefreshDecisions(
   version: SafetyPlanVersion,
   sourceSnapshot: SafetyPlanSourceSnapshot,
   sections: SafetyPlanVersion['sections']
-): Set<string> {
+): Map<string, SourceRefreshAction> {
   const actualDiff = diffSafetyPlanSources(version.sourceSnapshot, sourceSnapshot);
-  const ids = new Set<string>([
-    ...actualDiff.changed.map(({ current }) => current.id),
-    ...actualDiff.removed.map(({ id }) => id),
-    ...actualDiff.contextChanged.map(({ itemId }) => itemId),
-    ...actualDiff.contextRemoved.map(({ itemId }) => itemId),
-  ]);
+  const expected = new Map<string, SourceRefreshAction>();
+  for (const { current, latest } of actualDiff.changed) {
+    expected.set(
+      current.id,
+      latest.companyValue === currentSectionControl(version, current)
+        ? 'keep_company_value'
+        : 'accept_source_value'
+    );
+  }
+  for (const { id } of actualDiff.removed) expected.set(id, 'remove');
+  for (const { itemId } of actualDiff.contextChanged) {
+    expected.set(itemId, 'accept_source_value');
+  }
+  for (const { itemId } of actualDiff.contextRemoved) expected.set(itemId, 'remove');
   const beforeFields = new Map(
     version.sections.flatMap((section) => section.fields)
       .map((field) => [field.id, field.value])
@@ -469,10 +477,13 @@ function actualRefreshDecisionIds(
       !(isEmptySourceField(before) && isEmptySourceField(after))
       && stableSerialise(before) !== stableSerialise(after)
     ) {
-      ids.add(`field:${fieldId}`);
+      expected.set(
+        `field:${fieldId}`,
+        isEmptySourceField(after) ? 'remove' : 'accept_source_value'
+      );
     }
   }
-  return ids;
+  return expected;
 }
 
 export function applySourceRefresh(
@@ -510,7 +521,7 @@ export function applySourceRefresh(
     diff,
     decisionMap
   );
-  const appliedDecisionIds = actualRefreshDecisionIds(version, sourceSnapshot, sections);
+  const appliedDecisions = actualRefreshDecisions(version, sourceSnapshot, sections);
 
   return {
     ...version,
@@ -526,8 +537,11 @@ export function applySourceRefresh(
         capturedAt: diff.latestSnapshot.capturedAt,
         sourceItemCount: hazards.length,
         decisions: decisions
-          .filter((decision) => appliedDecisionIds.has(decision.itemId))
-          .map((decision) => ({ ...decision })),
+          .filter((decision) => appliedDecisions.has(decision.itemId))
+          .map((decision) => ({
+            itemId: decision.itemId,
+            action: appliedDecisions.get(decision.itemId)!,
+          })),
       },
     },
   };

@@ -1128,6 +1128,265 @@ describe('Safety Plan persistent store security', () => {
     expect(rpcCalls).toBe(0);
   });
 
+  it('rejects keep or remove actions when a context value was accepted', async () => {
+    const storedVersion = makeSafetyPlanVersion({ revision: 2 });
+    const storedPlan = makeSafetyPlan({
+      tenantId: 'tenant-a',
+      revision: 2,
+      versions: [storedVersion],
+    });
+    for (const forgedAction of ['keep_company_value', 'remove']) {
+      const incomingVersion = {
+        ...storedVersion,
+        revision: 3,
+        sourceSnapshot: {
+          ...storedVersion.sourceSnapshot,
+          capturedAt: '2026-07-25T00:00:00.000Z',
+          job: { ...storedVersion.sourceSnapshot.job, name: 'Accepted job change' },
+        },
+        sourceRefreshIntent: {
+          kind: 'source_refresh' as const,
+          before: {
+            capturedAt: storedVersion.sourceSnapshot.capturedAt,
+            sourceItemCount: 0,
+          },
+          after: {
+            capturedAt: '2026-07-25T00:00:00.000Z',
+            sourceItemCount: 0,
+            decisions: [{ itemId: 'context:job', action: forgedAction }],
+          },
+        },
+      };
+      let rpcCalls = 0;
+      mockApi({
+        stored: [{ tenant_id: 'tenant-a', record_id: storedPlan.id, payload: storedPlan }],
+        onRpc: () => {
+          rpcCalls += 1;
+          return { succeeded: true };
+        },
+      });
+      const res = createResponse();
+
+      await storeHandler(request('PUT', 'ftf_safety_plans', {
+        collection: 'ftf_safety_plans',
+        recordId: storedPlan.id,
+        payload: { ...storedPlan, revision: 3, versions: [incomingVersion] },
+        audit: mutationAudit(storedPlan, 'field_changed', `audit-context-${forgedAction}`),
+      }), res);
+
+      expect(res.statusCode).toBe(409);
+      expect(res.body.error).toMatch(/decision action/i);
+      expect(rpcCalls).toBe(0);
+    }
+  });
+
+  it('rejects keep or remove actions when a source-backed field value was accepted', async () => {
+    const storedVersion = makeSafetyPlanVersion({ revision: 2 });
+    const storedPlan = makeSafetyPlan({
+      tenantId: 'tenant-a',
+      revision: 2,
+      versions: [storedVersion],
+    });
+    for (const forgedAction of ['keep_company_value', 'remove']) {
+      const incomingVersion = {
+        ...storedVersion,
+        revision: 3,
+        sourceSnapshot: {
+          ...storedVersion.sourceSnapshot,
+          capturedAt: '2026-07-25T00:00:00.000Z',
+        },
+        sections: storedVersion.sections.map((section) => ({
+          ...section,
+          fields: section.fields.map((field) => field.id === 'plan_scope'
+            ? { ...field, value: 'Accepted source scope' }
+            : field),
+        })),
+        sourceRefreshIntent: {
+          kind: 'source_refresh' as const,
+          before: {
+            capturedAt: storedVersion.sourceSnapshot.capturedAt,
+            sourceItemCount: 0,
+          },
+          after: {
+            capturedAt: '2026-07-25T00:00:00.000Z',
+            sourceItemCount: 0,
+            decisions: [{ itemId: 'field:plan_scope', action: forgedAction }],
+          },
+        },
+      };
+      let rpcCalls = 0;
+      mockApi({
+        stored: [{ tenant_id: 'tenant-a', record_id: storedPlan.id, payload: storedPlan }],
+        onRpc: () => {
+          rpcCalls += 1;
+          return { succeeded: true };
+        },
+      });
+      const res = createResponse();
+
+      await storeHandler(request('PUT', 'ftf_safety_plans', {
+        collection: 'ftf_safety_plans',
+        recordId: storedPlan.id,
+        payload: { ...storedPlan, revision: 3, versions: [incomingVersion] },
+        audit: mutationAudit(storedPlan, 'field_changed', `audit-field-${forgedAction}`),
+      }), res);
+
+      expect(res.statusCode).toBe(409);
+      expect(res.body.error).toMatch(/decision action/i);
+      expect(rpcCalls).toBe(0);
+    }
+  });
+
+  it('accepts keep-company only when a changed hazard retains its stored company control', async () => {
+    const storedHazard = {
+      id: 'jsa:mission-1:hazard-1',
+      sourceType: 'jsa' as const,
+      sourceId: 'mission-1',
+      sourceItemId: 'hazard-1',
+      sourceUpdatedAt: '2026-07-24T00:00:00.000Z',
+      label: 'Public access',
+      value: 'Old source risk',
+      companyValue: 'Keep the gate controller',
+    };
+    const storedVersion = makeSafetyPlanVersion({
+      revision: 2,
+      sourceSnapshot: {
+        ...makeSafetyPlanVersion().sourceSnapshot,
+        hazards: [storedHazard],
+      },
+    });
+    const storedPlan = makeSafetyPlan({
+      tenantId: 'tenant-a',
+      revision: 2,
+      versions: [storedVersion],
+    });
+    const incomingVersion = {
+      ...storedVersion,
+      revision: 3,
+      sourceSnapshot: {
+        ...storedVersion.sourceSnapshot,
+        capturedAt: '2026-07-25T00:00:00.000Z',
+        hazards: [{
+          ...storedHazard,
+          sourceUpdatedAt: '2026-07-25T00:00:00.000Z',
+          value: 'Updated source risk',
+          companyValue: 'Keep the gate controller',
+        }],
+      },
+      sourceRefreshIntent: {
+        kind: 'source_refresh' as const,
+        before: {
+          capturedAt: storedVersion.sourceSnapshot.capturedAt,
+          sourceItemCount: 1,
+        },
+        after: {
+          capturedAt: '2026-07-25T00:00:00.000Z',
+          sourceItemCount: 1,
+          decisions: [{
+            itemId: storedHazard.id,
+            action: 'keep_company_value',
+          }],
+        },
+      },
+    };
+    let rpcBody: Record<string, any> | undefined;
+    mockApi({
+      stored: [{ tenant_id: 'tenant-a', record_id: storedPlan.id, payload: storedPlan }],
+      onRpc: (body) => {
+        rpcBody = body;
+        return { succeeded: true, new_payload: body.p_payload };
+      },
+    });
+    const res = createResponse();
+
+    await storeHandler(request('PUT', 'ftf_safety_plans', {
+      collection: 'ftf_safety_plans',
+      recordId: storedPlan.id,
+      payload: { ...storedPlan, revision: 3, versions: [incomingVersion] },
+      audit: mutationAudit(storedPlan, 'field_changed', 'audit-hazard-keep'),
+    }), res);
+
+    expect(res.statusCode).toBe(200);
+    expect(rpcBody?.p_audit_payload.after.decisions).toEqual([{
+      itemId: storedHazard.id,
+      action: 'keep_company_value',
+    }]);
+  });
+
+  it('rejects keep-company when a changed hazard replaces the stored company control', async () => {
+    const storedHazard = {
+      id: 'jsa:mission-1:hazard-1',
+      sourceType: 'jsa' as const,
+      sourceId: 'mission-1',
+      sourceItemId: 'hazard-1',
+      sourceUpdatedAt: '2026-07-24T00:00:00.000Z',
+      label: 'Public access',
+      value: 'Old source risk',
+      companyValue: 'Keep the gate controller',
+    };
+    const storedVersion = makeSafetyPlanVersion({
+      revision: 2,
+      sourceSnapshot: {
+        ...makeSafetyPlanVersion().sourceSnapshot,
+        hazards: [storedHazard],
+      },
+    });
+    const storedPlan = makeSafetyPlan({
+      tenantId: 'tenant-a',
+      revision: 2,
+      versions: [storedVersion],
+    });
+    const incomingVersion = {
+      ...storedVersion,
+      revision: 3,
+      sourceSnapshot: {
+        ...storedVersion.sourceSnapshot,
+        capturedAt: '2026-07-25T00:00:00.000Z',
+        hazards: [{
+          ...storedHazard,
+          sourceUpdatedAt: '2026-07-25T00:00:00.000Z',
+          value: 'Updated source risk',
+          companyValue: 'Use the new exclusion control',
+        }],
+      },
+      sourceRefreshIntent: {
+        kind: 'source_refresh' as const,
+        before: {
+          capturedAt: storedVersion.sourceSnapshot.capturedAt,
+          sourceItemCount: 1,
+        },
+        after: {
+          capturedAt: '2026-07-25T00:00:00.000Z',
+          sourceItemCount: 1,
+          decisions: [{
+            itemId: storedHazard.id,
+            action: 'keep_company_value',
+          }],
+        },
+      },
+    };
+    let rpcCalls = 0;
+    mockApi({
+      stored: [{ tenant_id: 'tenant-a', record_id: storedPlan.id, payload: storedPlan }],
+      onRpc: () => {
+        rpcCalls += 1;
+        return { succeeded: true };
+      },
+    });
+    const res = createResponse();
+
+    await storeHandler(request('PUT', 'ftf_safety_plans', {
+      collection: 'ftf_safety_plans',
+      recordId: storedPlan.id,
+      payload: { ...storedPlan, revision: 3, versions: [incomingVersion] },
+      audit: mutationAudit(storedPlan, 'field_changed', 'audit-hazard-forged-keep'),
+    }), res);
+
+    expect(res.statusCode).toBe(409);
+    expect(res.body.error).toMatch(/decision action/i);
+    expect(rpcCalls).toBe(0);
+  });
+
   it('derives submitted from the transition when the client forges created', async () => {
     const storedVersion = makeSafetyPlanVersion({ status: 'draft', revision: 2 });
     const storedPlan = makeSafetyPlan({

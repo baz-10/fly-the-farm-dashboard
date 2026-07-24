@@ -52,7 +52,7 @@ handling.
   `npx vitest run src/pages/SafetyPlanEditor.test.tsx src/services/__tests__/safetyPlanRepository.test.ts src/utils/__tests__/safetyPlanSourceSync.test.ts src/__tests__/authenticated-safety-plan-api.test.ts scripts/test-inventory.test.ts`
   — 5 files, 112 tests passed.
 - TypeScript: `npx tsc --noEmit` — passed.
-- Full suite: `npm test` — 76 files, 456 tests passed.
+- Full suite: `npm test` — 76 files, 460 tests passed.
 - Production build: `npm run build` — passed.
 - Patch hygiene: `git diff --check` — passed.
 
@@ -102,4 +102,15 @@ false source-change prompt.
   controls the refresh but is not falsely recorded as an applied source
   change.
 - Valid real-diff persistence plus missing-decision and unchanged-extraneous
-  authenticated API regressions pass. Final full suite: 76 files, 456 tests.
+  authenticated API regressions pass.
+- Decision actions are now derived from the resolved outcome as well as the
+  exact ID. Present changed context and source-backed fields require
+  `accept_source_value`; removed or emptied values require `remove`.
+- A changed hazard may use `keep_company_value` only when its incoming company
+  control exactly matches the stored live company control while source value
+  or update metadata changed. Otherwise the server requires
+  `accept_source_value`; removed hazards require `remove`.
+- The client canonicalises action labels to the same outcome rules before
+  sending the one-shot intent. Authenticated regressions reject forged
+  keep/remove labels and forged hazard keep while retaining valid hazard keep.
+  Final full suite: 76 files, 460 tests.

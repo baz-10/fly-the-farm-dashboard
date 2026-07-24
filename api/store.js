@@ -751,8 +751,16 @@ function sourceRefreshFieldValues(version) {
   return values;
 }
 
-function requiredSourceRefreshDecisionIds(storedVersion, incomingVersion) {
-  const ids = new Set();
+function storedHazardCompanyControl(version, hazard) {
+  for (const section of version?.sections || []) {
+    const field = (section?.fields || []).find(({ id }) => id === hazard?.id);
+    if (typeof field?.value === 'string') return field.value;
+  }
+  return hazard?.companyValue;
+}
+
+function requiredSourceRefreshDecisions(storedVersion, incomingVersion) {
+  const expected = new Map();
   const storedSnapshot = storedVersion?.sourceSnapshot || {};
   const incomingSnapshot = incomingVersion?.sourceSnapshot || {};
   const incomingHazards = new Map(
@@ -765,7 +773,14 @@ function requiredSourceRefreshDecisionIds(storedVersion, incomingVersion) {
       || storedHazard.sourceUpdatedAt !== incomingHazard.sourceUpdatedAt
       || storedHazard.value !== incomingHazard.value
     ) {
-      ids.add(storedHazard.id);
+      expected.set(
+        storedHazard.id,
+        !incomingHazard
+          ? 'remove'
+          : incomingHazard.companyValue === storedHazardCompanyControl(storedVersion, storedHazard)
+            ? 'keep_company_value'
+            : 'accept_source_value'
+      );
     }
   }
   for (const category of SOURCE_REFRESH_CONTEXT_CATEGORIES) {
@@ -773,7 +788,10 @@ function requiredSourceRefreshDecisionIds(storedVersion, incomingVersion) {
       storedSnapshot[category] !== undefined
       && !valuesEqual(storedSnapshot[category], incomingSnapshot[category])
     ) {
-      ids.add(`context:${category}`);
+      expected.set(
+        `context:${category}`,
+        incomingSnapshot[category] === undefined ? 'remove' : 'accept_source_value'
+      );
     }
   }
   const storedFields = sourceRefreshFieldValues(storedVersion);
@@ -788,10 +806,13 @@ function requiredSourceRefreshDecisionIds(storedVersion, incomingVersion) {
       || latest === ''
       || (Array.isArray(latest) && latest.length === 0);
     if (!(currentEmpty && latestEmpty) && !valuesEqual(current, latest)) {
-      ids.add(`field:${fieldId}`);
+      expected.set(
+        `field:${fieldId}`,
+        latestEmpty ? 'remove' : 'accept_source_value'
+      );
     }
   }
-  return ids;
+  return expected;
 }
 
 function canonicalSourceRefreshMetadata(storedVersion, incomingVersion, intent) {
@@ -813,7 +834,7 @@ function canonicalSourceRefreshMetadata(storedVersion, incomingVersion, intent) 
   ) {
     throw createHttpError(409, 'Safety Plan source refresh metadata does not match the source snapshots.');
   }
-  const requiredIds = requiredSourceRefreshDecisionIds(storedVersion, incomingVersion);
+  const requiredDecisions = requiredSourceRefreshDecisions(storedVersion, incomingVersion);
   const seen = new Set();
   const canonicalDecisions = decisions.map((decision) => {
     if (
@@ -832,12 +853,20 @@ function canonicalSourceRefreshMetadata(storedVersion, incomingVersion, intent) 
     };
   }).sort((left, right) => left.itemId.localeCompare(right.itemId));
   const submittedIds = canonicalDecisions.map(({ itemId }) => itemId).sort();
-  const expectedIds = Array.from(requiredIds).sort();
+  const expectedIds = Array.from(requiredDecisions.keys()).sort();
   if (!valuesEqual(submittedIds, expectedIds)) {
     throw createHttpError(
       409,
       'Safety Plan source refresh decisions must exactly match changed or removed source items.'
     );
+  }
+  for (const decision of canonicalDecisions) {
+    if (decision.action !== requiredDecisions.get(decision.itemId)) {
+      throw createHttpError(
+        409,
+        'Safety Plan source refresh decision action does not match the resolved source outcome.'
+      );
+    }
   }
   return {
     before: {
