@@ -103,6 +103,10 @@ function localApiPlugin() {
     name: 'ftf-local-api',
     configureServer(server) {
       registerLocalApiMiddleware(server.middlewares);
+      server.middlewares.use('/api', (_req, res) => {
+        addVercelResponseHelpers(res);
+        return res.status(404).json({ error: 'API route not found.' });
+      });
     },
   };
 }

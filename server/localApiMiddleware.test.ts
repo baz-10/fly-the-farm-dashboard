@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const { Readable } = require('stream');
 const {
+  localApiPlugin,
   registerLocalApiMiddleware,
 } = require('./localApiMiddleware');
 
@@ -22,6 +23,11 @@ interface MockResponse {
   setHeader: (name: string, value: string | string[]) => void;
   getHeader: (name: string) => string | string[] | undefined;
   end: (body?: string) => MockResponse;
+}
+
+interface RegisteredMiddleware {
+  path: string;
+  middleware: LocalMiddleware;
 }
 
 function upstreamResponse(status: number, body: unknown) {
@@ -76,6 +82,48 @@ function registeredRoutes(): Map<string, LocalMiddleware> {
     },
   });
   return routes;
+}
+
+async function invokePlugin(url: string) {
+  const layers: RegisteredMiddleware[] = [];
+  localApiPlugin().configureServer({
+    middlewares: {
+      use(path: string, middleware: LocalMiddleware) {
+        layers.push({ path, middleware });
+      },
+    },
+  });
+
+  const req = createRequest({ url });
+  const response = createResponse();
+  let currentLayer = 0;
+  let spaFallbacks = 0;
+
+  const dispatch = async (error?: unknown): Promise<void> => {
+    if (error) throw error;
+    const pathname = new URL(req.url || '/', 'http://localhost').pathname;
+
+    while (currentLayer < layers.length) {
+      const { path, middleware } = layers[currentLayer];
+      currentLayer += 1;
+      if (pathname !== path && !pathname.startsWith(`${path}/`)) continue;
+
+      const originalUrl = req.url;
+      req.url = (req.url || '/').slice(path.length) || '/';
+      await middleware(req, response as unknown as ServerResponse, async (nextError) => {
+        req.url = originalUrl;
+        await dispatch(nextError);
+      });
+      return;
+    }
+
+    spaFallbacks += 1;
+    response.setHeader('Content-Type', 'text/html');
+    response.end('<!doctype html><div id="root"></div>');
+  };
+
+  await dispatch();
+  return { layers, response, spaFallbacks };
 }
 
 async function invoke(
@@ -210,6 +258,24 @@ describe('local Vercel API middleware', () => {
       error: 'Enter an Australian address between 3 and 160 characters.',
     });
     expect(response.body).not.toContain('<!doctype html>');
+    expect(spaFallbacks).toBe(0);
+  });
+
+  it('terminates unmatched API requests as JSON before Vite SPA fallback', async () => {
+    const { layers, response, spaFallbacks } = await invokePlugin('/api/not-real');
+
+    expect(layers.map(({ path }) => path)).toEqual([
+      '/api/auth',
+      '/api/store',
+      '/api/geocode',
+      '/api/pmav',
+      '/api/identify-weed',
+      '/api',
+    ]);
+    expect(response.statusCode).toBe(404);
+    expect(response.headers['content-type']).toContain('application/json');
+    expect(response.headers['content-type']).not.toContain('text/html');
+    expect(JSON.parse(response.body)).toEqual({ error: 'API route not found.' });
     expect(spaFallbacks).toBe(0);
   });
 });
