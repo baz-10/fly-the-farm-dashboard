@@ -85,10 +85,7 @@ describe('Safety Plan source synchronisation', () => {
 
     const refreshed = applySourceRefresh(version, diff, [
       { itemId: currentItem.id, action: 'keep_company_value' },
-    ], {
-      actor: { userId: 'admin-1', name: 'Admin', role: 'admin', operationalAuthority: true },
-      now: '2026-07-25T01:00:00.000Z',
-    });
+    ]);
 
     expect(refreshed.sections[0].fields).toContainEqual(
       expect.objectContaining({ id: currentItem.id, value: 'Company spotter remains at western gate' })
@@ -99,6 +96,41 @@ describe('Safety Plan source synchronisation', () => {
     });
   });
 
+  it('preserves the actual edited section control rather than a stale snapshot copy', () => {
+    const currentItem = item('risk-1', 'Source control', undefined, {
+      companyValue: 'Stale snapshot control',
+    });
+    const version = makeSafetyPlanVersion({
+      sourceSnapshot: snapshot([currentItem]),
+      sections: [{
+        id: 'consolidated_jsa_hazards_controls',
+        required: true,
+        fields: [{
+          id: currentItem.id,
+          label: 'risk-1',
+          helpText: '',
+          type: 'textarea',
+          required: false,
+          companyEditable: true,
+          value: 'Edited field control from the current draft',
+        }],
+      }],
+    });
+    const diff = diffSafetyPlanSources(
+      version.sourceSnapshot,
+      snapshot([item('risk-1', 'Changed source control', '2026-07-25T00:00:00.000Z')])
+    );
+
+    const refreshed = applySourceRefresh(version, diff, [
+      { itemId: currentItem.id, action: 'keep_company_value' },
+    ]);
+
+    expect(refreshed.sourceSnapshot.hazards?.[0].companyValue)
+      .toBe('Edited field control from the current draft');
+    expect(refreshed.sections[0].fields[0].value)
+      .toBe('Edited field control from the current draft');
+  });
+
   it('requires an explicit decision for every changed and removed item', () => {
     const current = snapshot([item('changed', 'Old'), item('removed', 'Old')]);
     const latest = snapshot([item('changed', 'New', '2026-07-25T00:00:00.000Z')]);
@@ -107,15 +139,11 @@ describe('Safety Plan source synchronisation', () => {
     expect(() => applySourceRefresh(
       makeSafetyPlanVersion({ sourceSnapshot: current }),
       diff,
-      [{ itemId: item('changed', '').id, action: 'accept_source_value' }],
-      {
-        actor: { userId: 'admin-1', name: 'Admin', role: 'admin', operationalAuthority: true },
-        now: '2026-07-25T01:00:00.000Z',
-      }
+      [{ itemId: item('changed', '').id, action: 'accept_source_value' }]
     )).toThrow(/explicit decision/i);
   });
 
-  it('records source-refreshed audit metadata without mutating the input version', () => {
+  it('emits server-authoritative source-refreshed audit metadata without actor or time', () => {
     const current = snapshot([item('changed', 'Old')]);
     const latest = snapshot([item('changed', 'New', '2026-07-25T00:00:00.000Z')]);
     const version = makeSafetyPlanVersion({ sourceSnapshot: current, revision: 4 });
@@ -124,24 +152,20 @@ describe('Safety Plan source synchronisation', () => {
     const refreshed = applySourceRefresh(
       version,
       diff,
-      [{ itemId: item('changed', '').id, action: 'accept_source_value' }],
-      {
-        actor: { userId: 'admin-1', name: 'Admin', role: 'admin', operationalAuthority: true },
-        now: '2026-07-25T01:00:00.000Z',
-      }
+      [{ itemId: item('changed', '').id, action: 'accept_source_value' }]
     );
 
     expect(refreshed).not.toBe(version);
     expect(version.revision).toBe(4);
     expect(refreshed).toMatchObject({
       revision: 5,
-      updatedAt: '2026-07-25T01:00:00.000Z',
       sourceRefreshAudit: {
         action: 'source_refreshed',
-        occurredAt: '2026-07-25T01:00:00.000Z',
-        actor: expect.objectContaining({ userId: 'admin-1' }),
       },
     });
+    expect(refreshed.updatedAt).toBe(version.updatedAt);
+    expect(refreshed.sourceRefreshAudit).not.toHaveProperty('actor');
+    expect(refreshed.sourceRefreshAudit).not.toHaveProperty('occurredAt');
   });
 
   it('adds a field for a newly imported source item', () => {
@@ -150,10 +174,7 @@ describe('Safety Plan source synchronisation', () => {
     const diff = diffSafetyPlanSources(current, snapshot([added]));
     const version = makeSafetyPlanVersion({ sourceSnapshot: current });
 
-    const refreshed = applySourceRefresh(version, diff, [], {
-      actor: { userId: 'admin-1', name: 'Admin', role: 'admin', operationalAuthority: true },
-      now: '2026-07-25T01:00:00.000Z',
-    });
+    const refreshed = applySourceRefresh(version, diff, []);
 
     expect(
       refreshed.sections
@@ -177,14 +198,45 @@ describe('Safety Plan source synchronisation', () => {
     const refreshed = applySourceRefresh(
       makeSafetyPlanVersion({ sourceSnapshot: snapshot([currentItem]) }),
       diff,
-      [{ itemId: currentItem.id, action: 'accept_source_value' }],
-      {
-        actor: { userId: 'admin-1', name: 'Admin', role: 'admin', operationalAuthority: true },
-        now: '2026-07-25T01:00:00.000Z',
-      }
+      [{ itemId: currentItem.id, action: 'accept_source_value' }]
     );
 
     expect(refreshed.sourceSnapshot.hazards?.[0].companyValue)
       .toBe('Use a visual observer and exclusion zone');
+  });
+
+  it('requires explicit review decisions for changed non-hazard source categories', () => {
+    const current = {
+      ...snapshot([]),
+      job: { id: 'job-1', name: 'Old job name' },
+      crew: [{ id: 'crew-1', name: 'Old Pilot', role: 'PIC' }],
+    };
+    const latest = {
+      ...snapshot([]),
+      job: { id: 'job-1', name: 'New job name' },
+      crew: [{ id: 'crew-1', name: 'New Pilot', role: 'PIC' }],
+    };
+    const diff = diffSafetyPlanSources(current, latest);
+
+    expect(diff.contextChanged.map(({ itemId }) => itemId)).toEqual([
+      'context:crew',
+      'context:job',
+    ]);
+    expect(() => applySourceRefresh(
+      makeSafetyPlanVersion({ sourceSnapshot: current }),
+      diff,
+      [{ itemId: 'context:job', action: 'keep_company_value' }]
+    )).toThrow(/context:crew/);
+
+    const refreshed = applySourceRefresh(
+      makeSafetyPlanVersion({ sourceSnapshot: current }),
+      diff,
+      [
+        { itemId: 'context:job', action: 'keep_company_value' },
+        { itemId: 'context:crew', action: 'accept_source_value' },
+      ]
+    );
+    expect(refreshed.sourceSnapshot.job.name).toBe('Old job name');
+    expect(refreshed.sourceSnapshot.crew?.[0].name).toBe('New Pilot');
   });
 });

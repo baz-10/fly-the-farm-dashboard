@@ -56,7 +56,7 @@ export interface BuildJobSafetyPlanInput {
   company?: SafetyPlanPrefillCompany;
   client?: Pick<Client, 'id' | 'name' | 'phone' | 'email'>;
   property?: Pick<Property, 'id' | 'name' | 'address'>;
-  field?: Pick<Field, 'id' | 'name' | 'sizeHa'>;
+  field?: Pick<Field, 'id' | 'name' | 'sizeHa' | 'boundary' | 'boundaryCoords'>;
   crew?: SafetyPlanPrefillPerson[];
   assets?: SafetyPlanPrefillAsset[];
   chemicals?: SafetyPlanPrefillChemical[];
@@ -125,7 +125,7 @@ function chemicalSnapshot(
   return (chemicals ?? fallback).map((chemical) => ({ ...chemical }));
 }
 
-function fieldValue(
+export function safetyPlanFieldValue(
   fieldId: string,
   snapshot: SafetyPlanSourceSnapshot
 ): SafetyPlanFieldValue | undefined {
@@ -194,7 +194,9 @@ export function buildJobSafetyPlan(input: BuildJobSafetyPlanInput): SafetyPlan {
     },
     client: input.client ? { ...input.client } : undefined,
     property: input.property ? { ...input.property } : undefined,
-    field: input.field ? { ...input.field } : undefined,
+    field: input.field
+      ? { id: input.field.id, name: input.field.name, sizeHa: input.field.sizeHa }
+      : undefined,
     missions: linkedMissions.map((mission) => ({
       id: mission.id,
       name: mission.missionName,
@@ -203,6 +205,24 @@ export function buildJobSafetyPlan(input: BuildJobSafetyPlanInput): SafetyPlan {
     assets: input.assets?.map((asset) => ({ ...asset })),
     chemicals: chemicalSnapshot(input.chemicals, input.job.chemicals),
     emergencyContacts: input.emergencyContacts?.map((contact) => ({ ...contact })),
+    siteMap: input.field && (input.field.boundary || input.field.boundaryCoords?.length)
+      ? {
+        boundary: input.field.boundary
+          ? {
+            fileName: input.field.boundary.fileName,
+            fileType: input.field.boundary.fileType,
+            sizeBytes: input.field.boundary.sizeBytes,
+            boundingBox: input.field.boundary.boundingBox
+              ? { ...input.field.boundary.boundingBox }
+              : undefined,
+            uploadedAt: input.field.boundary.uploadedAt,
+          }
+          : undefined,
+        boundaryCoords: (input.field.boundaryCoords ?? []).map(
+          ([latitude, longitude]) => [latitude, longitude] as [number, number]
+        ),
+      }
+      : undefined,
     hazards,
     sourceLinks: [
       ...linkedMissions.map((mission) => ({
@@ -224,7 +244,7 @@ export function buildJobSafetyPlan(input: BuildJobSafetyPlanInput): SafetyPlan {
     fields: [
       ...section.fields.map((field) => ({
         ...field,
-        value: fieldValue(field.id, snapshot),
+        value: safetyPlanFieldValue(field.id, snapshot),
       })),
       ...(section.id === 'consolidated_jsa_hazards_controls'
         ? hazards.map((hazard) => ({

@@ -115,7 +115,20 @@ describe('buildJobSafetyPlan', () => {
       job,
       client: { id: 'client-1', name: 'Client One', phone: '0400 000 000', email: 'client@example.test' },
       property: { id: 'property-1', name: 'Western Farm', address: '1 Farm Road' },
-      field: { id: 'field-1', name: 'North Field', sizeHa: 42 },
+      field: {
+        id: 'field-1',
+        name: 'North Field',
+        sizeHa: 42,
+        boundary: {
+          fileName: 'north-field.kml',
+          fileType: 'kml',
+          sizeBytes: 1234,
+          dataUrl: 'data:application/vnd.google-earth.kml+xml;base64,secret-payload',
+          boundingBox: { north: -26, south: -27, east: 153, west: 152 },
+          uploadedAt: '2026-07-22T00:00:00.000Z',
+        },
+        boundaryCoords: [[-26.5, 152.5], [-26.6, 152.6]],
+      },
       missions: [linkedMission('wrong', 'other-job'), linkedMission('m1')],
       crew: [{ id: 'pilot-1', name: 'Pilot One', role: 'PIC' }],
       assets: [{ id: 'aircraft-1', name: 'DJI T100-001', type: 'aircraft' }],
@@ -142,6 +155,16 @@ describe('buildJobSafetyPlan', () => {
       assets: [{ id: 'aircraft-1', name: 'DJI T100-001', type: 'aircraft' }],
       chemicals: [expect.objectContaining({ product: 'Product A' })],
       emergencyContacts: [{ name: 'Site manager', phone: '0400 111 111' }],
+      siteMap: {
+        boundary: {
+          fileName: 'north-field.kml',
+          fileType: 'kml',
+          sizeBytes: 1234,
+          boundingBox: { north: -26, south: -27, east: 153, west: 152 },
+          uploadedAt: '2026-07-22T00:00:00.000Z',
+        },
+        boundaryCoords: [[-26.5, 152.5], [-26.6, 152.6]],
+      },
     });
     expect(result.versions[0].sourceSnapshot.sourceLinks).not.toContainEqual(
       expect.objectContaining({ sourceId: 'wrong' })
@@ -161,5 +184,42 @@ describe('buildJobSafetyPlan', () => {
     expect(buildJobSafetyPlan(input)).toEqual(buildJobSafetyPlan(input));
     expect(buildJobSafetyPlan(input).versions[0].sourceSnapshot.missions.map(({ id }) => id))
       .toEqual(['m1', 'm2']);
+  });
+
+  it('snapshots typed site-map boundary metadata and coordinates without file payload data', () => {
+    const field = {
+      id: 'field-1',
+      name: 'North Field',
+      sizeHa: 42,
+      boundary: {
+        fileName: 'north-field.kml',
+        fileType: 'kml' as const,
+        sizeBytes: 1234,
+        dataUrl: 'data:application/vnd.google-earth.kml+xml;base64,secret-payload',
+        uploadedAt: '2026-07-22T00:00:00.000Z',
+      },
+      boundaryCoords: [[-26.5, 152.5], [-26.6, 152.6]] as Array<[number, number]>,
+    };
+
+    const result = buildJobSafetyPlan({
+      tenantId: 'tenant-1',
+      job,
+      field,
+      missions: [],
+      template: makeSafetyPlanTemplate(),
+      actor,
+      now: '2026-07-24T00:00:00.000Z',
+    });
+
+    expect(result.versions[0].sourceSnapshot.siteMap).toEqual({
+      boundary: {
+        fileName: 'north-field.kml',
+        fileType: 'kml',
+        sizeBytes: 1234,
+        uploadedAt: '2026-07-22T00:00:00.000Z',
+      },
+      boundaryCoords: [[-26.5, 152.5], [-26.6, 152.6]],
+    });
+    expect(JSON.stringify(result)).not.toContain('secret-payload');
   });
 });

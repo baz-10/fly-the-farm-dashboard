@@ -47,7 +47,7 @@ Each failure was then driven to GREEN with the minimum implementation.
 
 - Focused Task 4 tests:
   `npx vitest run src/services/__tests__/safetyPlanPrefill.test.ts src/utils/__tests__/safetyPlanSourceSync.test.ts`
-  — 2 files, 9 tests passed.
+  — 2 files, 12 tests passed.
 - Inventory:
   `npx vitest run scripts/test-inventory.test.ts`
   — 1 file, 5 tests passed.
@@ -56,7 +56,7 @@ Each failure was then driven to GREEN with the minimum implementation.
   — passed.
 - Complete suite:
   `npm test`
-  — 70 files, 413 tests passed.
+  — 70 files, 416 tests passed.
 - Patch hygiene:
   `git diff --check`
   — passed.
@@ -67,3 +67,37 @@ Historical missions do not contain a Job ID. They are intentionally excluded
 from Safety Plan prefill rather than guessed. The later Job/Mission integration
 must set `jobId` when a mission is created from a Job, or provide an explicit
 user-controlled linking/migration step for historical missions.
+
+## Independent review fixes
+
+- `keep_company_value` now reads the live edited section field. It no longer
+  trusts a potentially stale `sourceSnapshot.companyValue`.
+- Source refresh diffs company, job, mission, client, property, field, crew,
+  asset, chemical, emergency-contact and site-map categories in addition to
+  individual hazards.
+- Every changed or removed content category requires an explicit decision.
+  Applying the result constructs the accepted snapshot category by category
+  instead of spreading all latest source data into the plan.
+- Source links are derived from the accepted missions and hazards, preventing
+  an inconsistent link manifest from being selected independently.
+- Field boundary metadata and coordinate geometry are captured in a typed,
+  deterministic site-map snapshot. Embedded boundary file data is deliberately
+  excluded.
+- `applySourceRefresh` is again a three-argument pure operation. Its pending
+  audit metadata contains no client-provided actor or occurrence time; the
+  authenticated repository/server remains responsible for both.
+
+Review-fix RED evidence:
+
+- a draft field edit was replaced by the stale snapshot control;
+- site-map geometry was absent;
+- non-hazard source changes were not surfaced for decisions;
+- the three-argument API failed while trying to read client audit metadata.
+
+Final review-fix verification:
+
+- focused Task 4 suites: 12 passed;
+- inventory: 5 passed;
+- TypeScript: passed;
+- complete suite: 416 passed;
+- patch hygiene: passed.

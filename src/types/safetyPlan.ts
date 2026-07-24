@@ -50,6 +50,22 @@ export interface SafetyPlanSourceItem {
   companyValue: string;
 }
 
+export interface SafetyPlanSiteMapSnapshot {
+  boundary?: {
+    fileName: string;
+    fileType: 'kml' | 'shp' | 'kmz';
+    sizeBytes: number;
+    boundingBox?: {
+      north: number;
+      south: number;
+      east: number;
+      west: number;
+    };
+    uploadedAt: string;
+  };
+  boundaryCoords: Array<[number, number]>;
+}
+
 /** A typed, immutable-at-capture summary rather than a live Job or Mission object. */
 export interface SafetyPlanSourceSnapshot {
   capturedAt: string;
@@ -109,6 +125,7 @@ export interface SafetyPlanSourceSnapshot {
     phone: string;
     role?: string;
   }>;
+  siteMap?: SafetyPlanSiteMapSnapshot;
   hazards?: SafetyPlanSourceItem[];
   sourceLinks: SafetyPlanSourceLink[];
 }
@@ -213,7 +230,15 @@ export interface SafetyPlanVersion {
   /** Optimistic-concurrency integer for this immutable or draft version. */
   revision: number;
   createdBy?: SafetyPlanActor;
-  sourceRefreshAudit?: Pick<SafetyPlanAuditEvent, 'actor' | 'action' | 'occurredAt' | 'before' | 'after'>;
+  /**
+   * Mutation intent for the repository. The authenticated server derives
+   * actor identity and occurrence time when it appends the audit event.
+   */
+  sourceRefreshAudit?: {
+    action: 'source_refreshed';
+    before?: Record<string, unknown>;
+    after?: Record<string, unknown>;
+  };
 }
 
 export interface SafetyPlan {
