@@ -103,6 +103,7 @@ describe('Supabase authentication API', () => {
           name: 'Pilot',
           invite_code: 'PILOT1',
           tier: 'free',
+          safety_plan_authority: true,
         }]);
       }
       return response(500, { message: 'unexpected request' });
@@ -116,7 +117,12 @@ describe('Supabase authentication API', () => {
     }, res);
 
     expect(res.statusCode).toBe(200);
-    expect(res.body.user).toMatchObject({ id: 'user-a', tenantId: 'tenant-a', role: 'contractor' });
+    expect(res.body.user).toMatchObject({
+      id: 'user-a',
+      tenantId: 'tenant-a',
+      role: 'contractor',
+      safetyPlanAuthority: true,
+    });
     expect(res.headers['set-cookie']).toEqual(expect.arrayContaining([
       expect.stringContaining('ftf_access_token=access-token'),
       expect.stringContaining('ftf_refresh_token=refresh-token'),
@@ -163,6 +169,7 @@ describe('Supabase authentication API', () => {
     expect(loginRequest?.headers.Authorization).toBeUndefined();
     expect(profileRequest?.headers.apikey).toBe('sb_secret_test');
     expect(profileRequest?.headers.Authorization).toBeUndefined();
+    expect(res.body.user.safetyPlanAuthority).toBe(false);
   });
 });
 

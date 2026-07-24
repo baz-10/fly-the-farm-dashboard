@@ -104,6 +104,8 @@ describe('test inventory', () => {
     );
     const explicitPostBaselineSupplements: Record<string, number> = {
       ...supplements,
+      'src/__tests__/authenticated-safety-plan-api.test.ts': 18,
+      'src/utils/__tests__/safetyPlanPermissions.test.ts': 5,
       'src/utils/__tests__/safetyPlanRules.test.ts': 10,
     };
     const supplementaryCounts = Object.fromEntries(
@@ -124,7 +126,7 @@ describe('test inventory', () => {
     expect(inventory.files).toEqual(Object.keys(baseline).sort());
     expect(inventory.supplementaryFiles).toEqual(Object.keys(explicitPostBaselineSupplements).sort());
     expect(supplementaryCounts).toEqual(explicitPostBaselineSupplements);
-    expect(inventory.files.length + inventory.supplementaryFiles.length).toBe(60);
+    expect(inventory.files.length + inventory.supplementaryFiles.length).toBe(62);
   });
 
   it('contains no Jest runtime API in migrated React tests', async () => {
