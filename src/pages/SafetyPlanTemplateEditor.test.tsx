@@ -10,6 +10,7 @@ import SafetyPlanTemplateEditor from './SafetyPlanTemplateEditor';
 const useAuth = vi.fn();
 const loadCompanySafetyPlanTemplate = vi.fn();
 const publishCompanySafetyPlanTemplate = vi.fn();
+const saveCompanySafetyPlanTemplateDraft = vi.fn();
 
 vi.mock('../contexts/AuthContext', () => ({
   useAuth: () => useAuth(),
@@ -18,6 +19,7 @@ vi.mock('../contexts/AuthContext', () => ({
 vi.mock('../services/safetyPlanTemplateRepository', () => ({
   loadCompanySafetyPlanTemplate: (...args: unknown[]) => loadCompanySafetyPlanTemplate(...args),
   publishCompanySafetyPlanTemplate: (...args: unknown[]) => publishCompanySafetyPlanTemplate(...args),
+  saveCompanySafetyPlanTemplateDraft: (...args: unknown[]) => saveCompanySafetyPlanTemplateDraft(...args),
 }));
 
 const admin: User = {
@@ -45,6 +47,7 @@ describe('SafetyPlanTemplateEditor', () => {
       isPlatformStandard: false,
       version: '1.1',
     });
+    saveCompanySafetyPlanTemplateDraft.mockResolvedValue(undefined);
   });
 
   it('denies direct contractor access to company template controls', async () => {

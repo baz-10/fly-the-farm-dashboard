@@ -161,6 +161,8 @@ export interface SafetyPlanTemplate {
 
 export interface CompanySafetyPlanTemplate extends SafetyPlanTemplate {
   tenantId: string;
+  recordType?: 'draft' | 'published';
+  draftRevision?: number;
   standardVersion: string;
   sectionStandardVersions?: Record<string, string>;
   masterVersion: number;

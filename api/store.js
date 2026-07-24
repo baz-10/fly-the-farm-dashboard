@@ -191,18 +191,23 @@ function isSafetyPlanAuthority(user) {
     || (user.role === 'contractor' && user.safetyPlanAuthority === true);
 }
 
-function safetyPlanVersions(plan) {
-  return Array.isArray(plan?.versions) ? plan.versions : [];
+function currentSafetyPlanVersion(plan) {
+  if (!plan?.currentVersionId || !Array.isArray(plan.versions)) return null;
+  return plan.versions.find((version) => version?.id === plan.currentVersionId) || null;
 }
 
 function contractorCanAccessSafetyPlan(user, plan) {
   if (!plan || user.role !== 'contractor') return false;
   if (isSafetyPlanAuthority(user)) return true;
   if (plan.notRequiredActor?.userId === user.id) return true;
-  return safetyPlanVersions(plan).some((version) =>
-    version?.createdBy?.userId === user.id
-    || (Array.isArray(version?.sourceSnapshot?.crew)
-      && version.sourceSnapshot.crew.some((person) => person?.id === user.id))
+  const version = currentSafetyPlanVersion(plan);
+  return Boolean(
+    version
+    && (
+      version.createdBy?.userId === user.id
+      || (Array.isArray(version.sourceSnapshot?.crew)
+        && version.sourceSnapshot.crew.some((person) => person?.id === user.id))
+    )
   );
 }
 
@@ -979,6 +984,9 @@ module.exports = async function handler(req, res) {
         if (collection === SAFETY_PLAN_COLLECTION) {
           records = records.filter((plan) => canReadSafetyPlan(user, plan));
         }
+        if (collection === SAFETY_PLAN_TEMPLATE_COLLECTION && user.role === 'contractor') {
+          records = records.filter((template) => template?.recordType !== 'draft');
+        }
         if (recordId) {
           const payload = records.find((record) => record?.id === recordId) || null;
           return res.status(200).json({
@@ -1000,7 +1008,12 @@ module.exports = async function handler(req, res) {
             (payload?.deletedAt && !(user.role === 'admin' && includeDeleted))
             || (payload && !canReadSafetyPlan(user, payload))
           )
-          ? null : payload;
+          ? null
+          : collection === SAFETY_PLAN_TEMPLATE_COLLECTION
+            && user.role === 'contractor'
+            && payload?.recordType === 'draft'
+            ? null
+            : payload;
         return res.status(200).json({
           payload: user.role === 'contractor'
             ? contractorSafePayload(collection, visiblePayload)
@@ -1013,6 +1026,9 @@ module.exports = async function handler(req, res) {
       }
       if (collection === SAFETY_PLAN_COLLECTION) {
         records = records.filter((plan) => canReadSafetyPlan(user, plan));
+      }
+      if (collection === SAFETY_PLAN_TEMPLATE_COLLECTION && user.role === 'contractor') {
+        records = records.filter((template) => template?.recordType !== 'draft');
       }
       return res.status(200).json({
         records: user.role === 'contractor'
@@ -1030,6 +1046,51 @@ module.exports = async function handler(req, res) {
       const collection = validateCollection(body.collection || req.query.collection);
       assertCollectionPermission(user, collection, 'write');
       const now = new Date().toISOString();
+
+      if (
+        collection === SAFETY_PLAN_TEMPLATE_COLLECTION
+        && body.action === 'init_company_template_draft'
+      ) {
+        const content = normaliseCompanyTemplateContent(body.payload);
+        const draft = await supabaseRequest(
+          'rest/v1/rpc/ftf_init_safety_plan_template_draft',
+          {
+            method: 'POST',
+            body: JSON.stringify({
+              p_tenant_id: tenantId,
+              p_actor_user_id: user.id,
+              p_actor_name: user.name,
+              p_standard_content: content,
+            }),
+            publicMessage: 'Company Safety Plan template draft could not be initialised.',
+          }
+        );
+        return res.status(200).json({ ok: true, count: 1, payload: draft });
+      }
+
+      if (
+        collection === SAFETY_PLAN_TEMPLATE_COLLECTION
+        && body.action === 'update_company_template_draft'
+      ) {
+        const content = normaliseCompanyTemplateContent(body.payload);
+        const expectedRevision = validateExpectedRevision(body.expectedRevision);
+        const draft = await supabaseRequest(
+          'rest/v1/rpc/ftf_update_safety_plan_template_draft',
+          {
+            method: 'POST',
+            body: JSON.stringify({
+              p_tenant_id: tenantId,
+              p_actor_user_id: user.id,
+              p_actor_name: user.name,
+              p_expected_revision: expectedRevision,
+              p_template_content: content,
+            }),
+            publicMessage: 'Company Safety Plan template draft could not be saved.',
+          }
+        );
+        if (!draft) throw safetyPlanConflict(expectedRevision);
+        return res.status(200).json({ ok: true, count: 1, payload: draft });
+      }
 
       if (
         collection === SAFETY_PLAN_TEMPLATE_COLLECTION

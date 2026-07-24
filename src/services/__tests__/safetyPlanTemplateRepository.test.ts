@@ -1,7 +1,11 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { AU_REOC_SAFETY_PLAN_STANDARD } from '../../data/safetyPlanStandard';
 import type { CompanySafetyPlanTemplate } from '../../types/safetyPlan';
-import { publishCompanySafetyPlanTemplate } from '../safetyPlanTemplateRepository';
+import {
+  loadCompanySafetyPlanTemplate,
+  publishCompanySafetyPlanTemplate,
+  saveCompanySafetyPlanTemplateDraft,
+} from '../safetyPlanTemplateRepository';
 
 describe('Safety Plan company-master provenance', () => {
   beforeEach(() => {
@@ -36,5 +40,24 @@ describe('Safety Plan company-master provenance', () => {
     expect(published.standardVersion).toBe('AU-REOC-0.9');
     expect(published.sectionStandardVersions?.plan_identity_scope_version)
       .toBe('AU-REOC-0.9');
+  });
+
+  it('persists first-use edits across reload and publishes them as master version one', async () => {
+    const actor = { tenantId: 'tenant-1', userId: 'admin-1', name: 'Admin' };
+    const firstDraft = await loadCompanySafetyPlanTemplate(actor);
+    const edited = {
+      ...firstDraft,
+      sections: firstDraft.sections.map((section, index) => index === 0
+        ? { ...section, title: 'Our controlled plan identity' }
+        : section),
+    };
+
+    await saveCompanySafetyPlanTemplateDraft(actor, edited);
+    const reloaded = await loadCompanySafetyPlanTemplate(actor);
+    const published = await publishCompanySafetyPlanTemplate(actor, reloaded);
+
+    expect(reloaded.sections[0].title).toBe('Our controlled plan identity');
+    expect(published.masterVersion).toBe(1);
+    expect(published.version).toBe('1.0');
   });
 });

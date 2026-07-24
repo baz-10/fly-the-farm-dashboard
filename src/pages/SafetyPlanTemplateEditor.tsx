@@ -21,6 +21,7 @@ import { AU_REOC_SAFETY_PLAN_STANDARD } from '../data/safetyPlanStandard';
 import {
   loadCompanySafetyPlanTemplate,
   publishCompanySafetyPlanTemplate,
+  saveCompanySafetyPlanTemplateDraft,
 } from '../services/safetyPlanTemplateRepository';
 import type { CompanySafetyPlanTemplate, SafetyPlanField, SafetyPlanSection } from '../types/safetyPlan';
 
@@ -29,6 +30,7 @@ export default function SafetyPlanTemplateEditor() {
   const [template, setTemplate] = useState<CompanySafetyPlanTemplate>();
   const [loading, setLoading] = useState(true);
   const [publishing, setPublishing] = useState(false);
+  const [savingDraft, setSavingDraft] = useState(false);
   const [message, setMessage] = useState<string>();
   const [error, setError] = useState<string>();
 
@@ -111,12 +113,35 @@ export default function SafetyPlanTemplateEditor() {
         { tenantId: user.tenantId, userId: user.id, name: user.name },
         template,
       );
-      setTemplate(published);
+      const nextDraft = await loadCompanySafetyPlanTemplate({
+        tenantId: user.tenantId,
+        userId: user.id,
+        name: user.name,
+      });
+      setTemplate(nextDraft);
       setMessage(`Company master ${published.version} published. Earlier masters remain unchanged.`);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Company master could not be published.');
     } finally {
       setPublishing(false);
+    }
+  };
+
+  const saveDraft = async () => {
+    if (!template || !user.tenantId) return;
+    setSavingDraft(true);
+    setError(undefined);
+    try {
+      const saved = await saveCompanySafetyPlanTemplateDraft(
+        { tenantId: user.tenantId, userId: user.id, name: user.name },
+        template,
+      );
+      setTemplate(saved);
+      setMessage('Company template draft saved.');
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Company template draft could not be saved.');
+    } finally {
+      setSavingDraft(false);
     }
   };
 
@@ -138,15 +163,23 @@ export default function SafetyPlanTemplateEditor() {
             Adapt the Australian platform standard to the way your company works.
           </Typography>
         </Box>
-        <Button
-          variant="contained"
-          startIcon={<PublishIcon />}
-          disabled={publishing}
-          onClick={() => void publishCompanyMaster()}
-          sx={{ alignSelf: { xs: 'stretch', md: 'center' } }}
-        >
-          {publishing ? 'Publishing…' : 'Publish company master'}
-        </Button>
+        <Stack direction={{ xs: 'column', sm: 'row' }} gap={1} sx={{ alignSelf: { md: 'center' } }}>
+          <Button
+            variant="outlined"
+            disabled={savingDraft || publishing}
+            onClick={() => void saveDraft()}
+          >
+            {savingDraft ? 'Saving…' : 'Save draft'}
+          </Button>
+          <Button
+            variant="contained"
+            startIcon={<PublishIcon />}
+            disabled={publishing || savingDraft}
+            onClick={() => void publishCompanyMaster()}
+          >
+            {publishing ? 'Publishing…' : 'Publish company master'}
+          </Button>
+        </Stack>
       </Stack>
 
       <Alert severity="info" sx={{ mb: 2 }}>

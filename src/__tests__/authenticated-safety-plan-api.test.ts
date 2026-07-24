@@ -95,6 +95,7 @@ function mockApi({
   onRpc,
   onInsertRpc,
   onMasterRpc,
+  onTemplateDraftRpc,
 }: {
   role?: 'admin' | 'contractor' | 'client';
   safetyPlanAuthority?: boolean;
@@ -116,6 +117,12 @@ function mockApi({
     options: RequestInit
   ) => { succeeded: boolean; new_payload?: any };
   onMasterRpc?: (
+    body: Record<string, unknown>,
+    url: string,
+    options: RequestInit
+  ) => any;
+  onTemplateDraftRpc?: (
+    operation: 'init' | 'update',
     body: Record<string, unknown>,
     url: string,
     options: RequestInit
@@ -150,6 +157,14 @@ function mockApi({
     if (url.includes('/rest/v1/rpc/ftf_publish_safety_plan_master')) {
       const body = JSON.parse(String(options.body));
       return response(200, onMasterRpc?.(body, url, options) ?? null);
+    }
+    if (url.includes('/rest/v1/rpc/ftf_init_safety_plan_template_draft')) {
+      const body = JSON.parse(String(options.body));
+      return response(200, onTemplateDraftRpc?.('init', body, url, options) ?? null);
+    }
+    if (url.includes('/rest/v1/rpc/ftf_update_safety_plan_template_draft')) {
+      const body = JSON.parse(String(options.body));
+      return response(200, onTemplateDraftRpc?.('update', body, url, options) ?? null);
     }
     if (url.includes('/rest/v1/ftf_store') && options.method === 'POST') {
       onPost?.(JSON.parse(String(options.body)), url, options);
@@ -2153,16 +2168,73 @@ describe('Safety Plan persistent store security', () => {
     expect(res.body.records[0].id).toBe(other.id);
   });
 
+  it('removes contractor access when the current revision no longer assigns them', async () => {
+    const oldVersion = makeSafetyPlanVersion({
+      id: 'version-1',
+      planId: 'revised-plan',
+      version: '1.0',
+      status: 'superseded',
+      sourceSnapshot: {
+        capturedAt: '2026-07-24T00:00:00.000Z',
+        job: { id: 'job-1', name: 'Revised job' },
+        missions: [],
+        crew: [{ id: 'user-a', name: 'Removed Pilot', role: 'PIC' }],
+        sourceLinks: [],
+      },
+    });
+    const currentVersion = makeSafetyPlanVersion({
+      id: 'version-2',
+      planId: 'revised-plan',
+      version: '1.1',
+      sourceSnapshot: {
+        capturedAt: '2026-07-25T00:00:00.000Z',
+        job: { id: 'job-1', name: 'Revised job' },
+        missions: [],
+        crew: [{ id: 'user-b', name: 'Current Pilot', role: 'PIC' }],
+        sourceLinks: [],
+      },
+      createdBy: {
+        userId: 'user-b',
+        name: 'User B',
+        role: 'contractor',
+        operationalAuthority: false,
+      },
+    });
+    const revised = makeSafetyPlan({
+      id: 'revised-plan',
+      tenantId: 'tenant-a',
+      currentVersionId: currentVersion.id,
+      versions: [oldVersion, currentVersion],
+    });
+    mockApi({
+      role: 'contractor',
+      stored: [{
+        tenant_id: 'tenant-a',
+        collection: 'ftf_safety_plans',
+        record_id: revised.id,
+        payload: revised,
+      }],
+    });
+    const listResponse = createResponse();
+    const singletonResponse = createResponse();
+
+    await storeHandler(request('GET', 'ftf_safety_plans'), listResponse);
+    await storeHandler(request('GET', 'ftf_safety_plans', undefined, revised.id), singletonResponse);
+
+    expect(listResponse.body.records).toEqual([]);
+    expect(singletonResponse.body).toEqual({ payload: null });
+  });
+
   it('publishes company masters with server-controlled identity and provenance', async () => {
     let rpcBody: Record<string, unknown> | undefined;
     mockApi({
       onMasterRpc: (body) => {
         rpcBody = body;
         return {
-          id: 'safety-plan-master-tenant-a-3',
+          id: 'safety-plan-master-tenant-a-1',
           tenantId: 'tenant-a',
-          masterVersion: 3,
-          version: '3.0',
+          masterVersion: 1,
+          version: '1.0',
           standardVersion: 'AU-REOC-0.9',
           publishedAt: '2026-07-24T01:00:00.000Z',
           publishedBy: { userId: 'user-a', name: 'User A' },
@@ -2194,9 +2266,10 @@ describe('Safety Plan persistent store security', () => {
 
     expect(res.statusCode).toBe(200);
     expect(res.body.payload).toMatchObject({
-      id: 'safety-plan-master-tenant-a-3',
+      id: 'safety-plan-master-tenant-a-1',
       tenantId: 'tenant-a',
-      masterVersion: 3,
+      masterVersion: 1,
+      version: '1.0',
       publishedBy: { userId: 'user-a' },
     });
     expect(rpcBody).toBeDefined();
@@ -2225,6 +2298,64 @@ describe('Safety Plan persistent store security', () => {
 
     expect(res.statusCode).toBe(400);
     expect(called).toBe(false);
+  });
+
+  it('initialises and updates an editable company draft through controlled operations', async () => {
+    const operations: string[] = [];
+    mockApi({
+      onTemplateDraftRpc: (operation, body) => {
+        operations.push(operation);
+        return {
+          ...(body.p_template_content as object),
+          id: 'safety-plan-template-draft',
+          tenantId: 'tenant-a',
+          recordType: 'draft',
+          masterVersion: 0,
+          version: 'draft',
+          draftRevision: operation === 'init' ? 1 : 2,
+        };
+      },
+    });
+    const standardDraft = {
+      ...AU_REOC_SAFETY_PLAN_STANDARD,
+      isPlatformStandard: false,
+      standardVersion: AU_REOC_SAFETY_PLAN_STANDARD.version,
+      sectionStandardVersions: Object.fromEntries(
+        AU_REOC_SAFETY_PLAN_STANDARD.sections.map((section) => [
+          section.id,
+          AU_REOC_SAFETY_PLAN_STANDARD.version,
+        ])
+      ),
+    };
+    const initialised = createResponse();
+    const updated = createResponse();
+
+    await storeHandler(request('PUT', 'ftf_safety_plan_templates', {
+      collection: 'ftf_safety_plan_templates',
+      action: 'init_company_template_draft',
+      payload: standardDraft,
+    }), initialised);
+    await storeHandler(request('PUT', 'ftf_safety_plan_templates', {
+      collection: 'ftf_safety_plan_templates',
+      action: 'update_company_template_draft',
+      expectedRevision: 1,
+      payload: {
+        ...standardDraft,
+        sections: standardDraft.sections.map((section, index) => index === 0
+          ? { ...section, title: 'Company controlled title' }
+          : section),
+      },
+    }), updated);
+
+    expect(initialised.statusCode).toBe(200);
+    expect(updated.statusCode).toBe(200);
+    expect(operations).toEqual(['init', 'update']);
+    expect(updated.body.payload).toMatchObject({
+      id: 'safety-plan-template-draft',
+      tenantId: 'tenant-a',
+      recordType: 'draft',
+      draftRevision: 2,
+    });
   });
 });
 

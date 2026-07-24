@@ -13,18 +13,43 @@ export interface TemplateActor {
   name?: string;
 }
 
-function cloneTemplate(template: SafetyPlanTemplate): SafetyPlanTemplate {
+function cloneTemplate<T extends SafetyPlanTemplate>(template: T): T {
   return {
     ...template,
     sections: template.sections.map((section) => ({
       ...section,
       fields: section.fields.map((field) => ({ ...field })),
     })),
-  };
+  } as T;
 }
 
 function templateId(tenantId: string, version: number): string {
   return `safety-plan-master-${tenantId}-${version}`;
+}
+
+const DRAFT_RECORD_ID = 'safety-plan-template-draft';
+
+async function remoteTemplateOperation(
+  action: string,
+  payload: CompanySafetyPlanTemplate,
+  expectedRevision?: number,
+): Promise<CompanySafetyPlanTemplate> {
+  const response = await fetch('/api/store', {
+    method: 'PUT',
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      collection: PERSISTENCE_KEYS.safetyPlanTemplates,
+      action,
+      payload,
+      ...(expectedRevision === undefined ? {} : { expectedRevision }),
+    }),
+  });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(result.error || 'Company Safety Plan template could not be saved.');
+  }
+  return result.payload;
 }
 
 export async function loadCompanySafetyPlanTemplate(
@@ -34,25 +59,70 @@ export async function loadCompanySafetyPlanTemplate(
     PERSISTENCE_KEYS.safetyPlanTemplates,
     [],
   );
-  const owned = records
-    .filter((record) => record.tenantId === actor.tenantId)
+  const owned = records.filter((record) => record.tenantId === actor.tenantId);
+  const existingDraft = owned.find((record) =>
+    record.id === DRAFT_RECORD_ID && record.recordType === 'draft'
+  );
+  if (existingDraft) return cloneTemplate(existingDraft) as CompanySafetyPlanTemplate;
+  const published = owned
+    .filter((record) => record.recordType !== 'draft')
     .sort((left, right) => right.masterVersion - left.masterVersion);
-  if (owned[0]) return cloneTemplate(owned[0]) as CompanySafetyPlanTemplate;
 
-  const standard = cloneTemplate(AU_REOC_SAFETY_PLAN_STANDARD);
+  const standard = cloneTemplate(published[0] ?? AU_REOC_SAFETY_PLAN_STANDARD);
   const firstMaster: CompanySafetyPlanTemplate = {
     ...standard,
-    id: templateId(actor.tenantId, 1),
+    id: DRAFT_RECORD_ID,
     tenantId: actor.tenantId,
-    standardVersion: AU_REOC_SAFETY_PLAN_STANDARD.version,
-    sectionStandardVersions: Object.fromEntries(
+    recordType: 'draft',
+    draftRevision: 1,
+    standardVersion: published[0]?.standardVersion ?? AU_REOC_SAFETY_PLAN_STANDARD.version,
+    sectionStandardVersions: published[0]?.sectionStandardVersions ?? Object.fromEntries(
       standard.sections.map((section) => [section.id, AU_REOC_SAFETY_PLAN_STANDARD.version])
     ),
-    masterVersion: 1,
-    version: '1.0',
+    masterVersion: published[0]?.masterVersion ?? 0,
+    version: 'draft',
     isPlatformStandard: false,
   };
-  return firstMaster;
+  if (getPersistenceMode() === 'remote') {
+    return remoteTemplateOperation('init_company_template_draft', firstMaster);
+  }
+  return writeSharedRecord(
+    PERSISTENCE_KEYS.safetyPlanTemplates,
+    DRAFT_RECORD_ID,
+    firstMaster,
+  );
+}
+
+export async function saveCompanySafetyPlanTemplateDraft(
+  actor: TemplateActor,
+  draft: CompanySafetyPlanTemplate,
+): Promise<CompanySafetyPlanTemplate> {
+  if (draft.tenantId !== actor.tenantId) {
+    throw new Error('The company template belongs to another account.');
+  }
+  if (getPersistenceMode() === 'remote') {
+    return remoteTemplateOperation(
+      'update_company_template_draft',
+      draft,
+      draft.draftRevision,
+    );
+  }
+  const saved: CompanySafetyPlanTemplate = {
+    ...cloneTemplate(draft),
+    id: DRAFT_RECORD_ID,
+    tenantId: actor.tenantId,
+    recordType: 'draft',
+    draftRevision: (draft.draftRevision ?? 0) + 1,
+    version: 'draft',
+    publishedAt: undefined,
+    publishedBy: undefined,
+    isPlatformStandard: false,
+  };
+  return writeSharedRecord(
+    PERSISTENCE_KEYS.safetyPlanTemplates,
+    DRAFT_RECORD_ID,
+    saved,
+  );
 }
 
 export async function publishCompanySafetyPlanTemplate(
@@ -63,27 +133,24 @@ export async function publishCompanySafetyPlanTemplate(
     throw new Error('The company template belongs to another account.');
   }
   if (getPersistenceMode() === 'remote') {
-    const response = await fetch('/api/store', {
-      method: 'PUT',
-      credentials: 'same-origin',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        collection: PERSISTENCE_KEYS.safetyPlanTemplates,
-        action: 'publish_company_master',
-        payload: draft,
-      }),
-    });
-    const result = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      throw new Error(result.error || 'Company Safety Plan master could not be published.');
-    }
-    return result.payload;
+    return remoteTemplateOperation('publish_company_master', draft);
   }
-  const nextMasterVersion = draft.masterVersion + 1;
+  const records = await readSharedCollection<CompanySafetyPlanTemplate>(
+    PERSISTENCE_KEYS.safetyPlanTemplates,
+    [],
+  );
+  const latestPublishedVersion = records
+    .filter((record) =>
+      record.tenantId === actor.tenantId && record.recordType !== 'draft'
+    )
+    .reduce((latest, record) => Math.max(latest, record.masterVersion), 0);
+  const nextMasterVersion = latestPublishedVersion + 1;
   const published: CompanySafetyPlanTemplate = {
     ...cloneTemplate(draft),
     id: templateId(actor.tenantId, nextMasterVersion),
     tenantId: actor.tenantId,
+    recordType: 'published',
+    draftRevision: undefined,
     standardVersion: draft.standardVersion,
     sectionStandardVersions: draft.sectionStandardVersions,
     masterVersion: nextMasterVersion,
@@ -92,9 +159,27 @@ export async function publishCompanySafetyPlanTemplate(
     publishedBy: { userId: actor.userId, name: actor.name || 'Company administrator' },
     isPlatformStandard: false,
   };
-  return writeSharedRecord(
+  const savedPublished = await writeSharedRecord(
     PERSISTENCE_KEYS.safetyPlanTemplates,
     published.id,
     published,
   );
+  const refreshedDraft: CompanySafetyPlanTemplate = {
+    ...cloneTemplate(draft),
+    id: DRAFT_RECORD_ID,
+    tenantId: actor.tenantId,
+    recordType: 'draft',
+    draftRevision: (draft.draftRevision ?? 0) + 1,
+    masterVersion: nextMasterVersion,
+    version: 'draft',
+    publishedAt: undefined,
+    publishedBy: undefined,
+    isPlatformStandard: false,
+  };
+  await writeSharedRecord(
+    PERSISTENCE_KEYS.safetyPlanTemplates,
+    DRAFT_RECORD_ID,
+    refreshedDraft,
+  );
+  return savedPublished;
 }

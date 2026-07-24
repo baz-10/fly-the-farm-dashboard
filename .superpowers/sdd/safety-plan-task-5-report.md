@@ -45,7 +45,7 @@ GREEN verification:
 
 - focused Task 5 and security suites: 7 files, 100 tests;
 - inventory guard: 5 tests;
-- complete suite after independent-review hardening: 75 files, 437 tests;
+- complete suite after independent-review hardening: 75 files, 440 tests;
 - `npm run build`: passed (`tsc --noEmit && vite build`);
 - Node syntax checks for `api/auth.js`, `api/store.js` and
   `server/session.js`: passed;
@@ -82,3 +82,11 @@ After independent review, Task 5 was further hardened:
 - each company master preserves the standard version from which its content was
   sourced, with per-section standard-version provenance updated only when an
   administrator deliberately restores that platform section.
+- normal-contractor assignment checks now use only the exact
+  `currentVersionId` snapshot, so a crew member removed in a later revision
+  immediately loses list and singleton access to the complete plan history;
+- first use creates a separate tenant-owned editable draft record through
+  controlled admin-only initialise/update operations; saved edits survive
+  reload before any immutable master is published;
+- the draft starts from published-master version zero, and both local and
+  remote publication derive version `1.0` when no prior master exists.
