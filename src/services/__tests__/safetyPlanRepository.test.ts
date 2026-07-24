@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { makeSafetyPlan, makeSafetyPlanVersion } from '../../test/safetyPlanFixtures';
 import type { SafetyPlan, SafetyPlanActor, SafetyPlanAuditEvent } from '../../types/safetyPlan';
+import { PERSISTENCE_KEYS } from '../persistence';
 import {
   createSafetyPlanRepository,
   type SafetyPlanRepositoryDependencies,
@@ -42,6 +43,26 @@ describe('SafetyPlanRepository', () => {
 
     await expect(repository.listPlans()).resolves.toEqual([active]);
     await expect(repository.getPlan(deleted.id)).resolves.toBeNull();
+  });
+
+  it('exact-filters list and singleton reads to the authenticated tenant', async () => {
+    const own = makeSafetyPlan({ id: 'own-plan', tenantId: 'tenant-1' });
+    const other = makeSafetyPlan({ id: 'other-plan', tenantId: 'tenant-10' });
+    const dependencies = makeDependencies({
+      listRecords: vi.fn(async () => [own, other]),
+      readRecord: vi.fn(async () => other),
+      getTenantId: () => 'tenant-1',
+    });
+    const repository = createSafetyPlanRepository(dependencies);
+
+    await expect(repository.listPlans()).resolves.toEqual([own]);
+    await expect(repository.getPlan(other.id)).resolves.toBeNull();
+    await expect(repository.saveDraft({
+      plan: other,
+      expectedRevision: 1,
+      actor,
+    })).rejects.toThrow('authenticated tenant');
+    expect(dependencies.writeRecord).not.toHaveBeenCalled();
   });
 
   it('creates a new draft at revision one and requests a created audit', async () => {
@@ -270,6 +291,51 @@ describe('SafetyPlanRepository', () => {
         versionId: 'version-1',
         action: 'submitted',
       }
+    );
+  });
+
+  it('forwards caller AbortSignals through reads, writes, delete and restore', async () => {
+    const plan = makeSafetyPlan({ tenantId: 'tenant-1' });
+    const dependencies = makeDependencies({
+      listRecords: vi.fn(async () => [plan]),
+      readRecord: vi.fn(async () => plan),
+      writeRecord: vi.fn(async () => plan),
+      deleteRecord: vi.fn(async () => ({ ...plan, deletedAt: 'now' })),
+      restoreRecord: vi.fn(async () => plan),
+    });
+    const repository = createSafetyPlanRepository(dependencies);
+    const controller = new AbortController();
+    const options = { signal: controller.signal };
+    const admin = { ...actor, role: 'admin' as const };
+
+    await repository.listPlans(options);
+    await repository.getPlan(plan.id, options);
+    await repository.saveDraft({
+      plan,
+      expectedRevision: 1,
+      actor,
+      signal: controller.signal,
+    });
+    await repository.deleteDraft(plan.id, 1, admin, options);
+    await repository.restoreDraft(plan.id, 2, admin, options);
+
+    expect(dependencies.listRecords).toHaveBeenCalledWith(options);
+    expect(dependencies.readRecord).toHaveBeenCalledWith(plan.id, options);
+    expect(dependencies.writeRecord).toHaveBeenCalledWith(
+      PERSISTENCE_KEYS.safetyPlans,
+      plan.id,
+      expect.any(Object),
+      expect.objectContaining({ signal: controller.signal })
+    );
+    expect(dependencies.deleteRecord).toHaveBeenCalledWith(
+      PERSISTENCE_KEYS.safetyPlans,
+      plan.id,
+      expect.objectContaining({ signal: controller.signal })
+    );
+    expect(dependencies.restoreRecord).toHaveBeenCalledWith(
+      PERSISTENCE_KEYS.safetyPlans,
+      plan.id,
+      expect.objectContaining({ signal: controller.signal })
     );
   });
 });

@@ -53,10 +53,16 @@ export interface SharedRecordMutationOptions {
     role: 'admin' | 'contractor';
     operationalAuthority: boolean;
   };
+  signal?: AbortSignal;
 }
 
 export interface SharedRecordWriteOptions {
   audit?: Pick<SafetyPlanAuditEvent, 'id' | 'planId' | 'versionId' | 'action'>;
+  signal?: AbortSignal;
+}
+
+export interface SharedRequestOptions {
+  signal?: AbortSignal;
 }
 
 export function getPersistenceMode(): PersistenceMode {
@@ -90,16 +96,26 @@ export function writeRecordMap<T>(key: string, data: Record<string, T>): void {
 
 const REMOTE_TIMEOUT_MS = 12000;
 const SINGLETON_RECORD_ID = '__value__';
+const SAFETY_PLAN_SCOPED_KEYS = new Set<string>([
+  PERSISTENCE_KEYS.safetyPlanTemplates,
+  PERSISTENCE_KEYS.safetyPlans,
+  PERSISTENCE_KEYS.safetyPlanAudit,
+]);
 
 function shouldUseRemote(): boolean {
   return getPersistenceMode() === 'remote' && typeof fetch === 'function';
 }
 
 function getSharedCacheKey(key: string): string {
-  if (!shouldUseRemote()) return key;
-
   try {
     const session = JSON.parse(localStorage.getItem(PERSISTENCE_KEYS.session) || 'null');
+    if (SAFETY_PLAN_SCOPED_KEYS.has(key)) {
+      const userId = String(session?.id || '').trim();
+      const tenantId = String(session?.tenantId || session?.contractorId || '').trim();
+      if (!userId) throw new Error('An authenticated session is required for Safety Plan storage.');
+      return tenantId ? `${key}:${tenantId}:${userId}` : `${key}:${userId}`;
+    }
+    if (!shouldUseRemote()) return key;
     if (session?.id) return `${key}:${session.id}`;
   } catch {
     // The authenticated providers will surface the missing session below.
@@ -110,6 +126,10 @@ function getSharedCacheKey(key: string): string {
 
 async function requestRemoteAttempt<T>(path: string, options: RequestInit = {}): Promise<T> {
   const controller = new AbortController();
+  const callerSignal = options.signal;
+  const abortFromCaller = () => controller.abort(callerSignal?.reason);
+  if (callerSignal?.aborted) abortFromCaller();
+  else callerSignal?.addEventListener('abort', abortFromCaller, { once: true });
   const timeout = window.setTimeout(() => controller.abort(), REMOTE_TIMEOUT_MS);
 
   try {
@@ -140,6 +160,7 @@ async function requestRemoteAttempt<T>(path: string, options: RequestInit = {}):
     return result as T;
   } finally {
     window.clearTimeout(timeout);
+    callerSignal?.removeEventListener('abort', abortFromCaller);
   }
 }
 
@@ -151,12 +172,13 @@ async function requestRemote<T>(path: string, options: RequestInit = {}): Promis
     try {
       return await requestRemoteAttempt<T>(path, options);
     } catch (error) {
+      if ((error as { name?: string })?.name === 'AbortError') {
+        if (options.signal?.aborted) throw error;
+        throw new Error('Shared storage timed out. Check the connection and try again.');
+      }
       const status = (error as Error & { status?: number }).status;
       const retryable = status === undefined || status >= 500;
       if (attempt + 1 < attempts && retryable) continue;
-      if (error instanceof DOMException && error.name === 'AbortError') {
-        throw new Error('Shared storage timed out. Check the connection and try again.');
-      }
       throw error;
     }
   }
@@ -200,12 +222,19 @@ async function writeRemoteCollection<T>(key: string, data: T[]): Promise<void> {
   });
 }
 
-export async function readSharedCollection<T>(key: string, fallback: T[] = []): Promise<T[]> {
+export async function readSharedCollection<T>(
+  key: string,
+  fallback: T[] = [],
+  options: SharedRequestOptions = {}
+): Promise<T[]> {
   const cacheKey = getSharedCacheKey(key);
   const localData = readCollection<T>(cacheKey);
   if (!shouldUseRemote()) return localData.length > 0 ? localData : fallback;
 
-  const remote = await requestRemote<{ records: T[] }>(`/api/store?collection=${encodeURIComponent(key)}`);
+  const remote = await requestRemote<{ records: T[] }>(
+    `/api/store?collection=${encodeURIComponent(key)}`,
+    { signal: options.signal }
+  );
   const records = Array.isArray(remote.records) ? remote.records : [];
   tryWriteRemoteCache(() => writeCollection(cacheKey, records));
   return records;
@@ -221,14 +250,19 @@ export async function writeSharedCollection<T>(key: string, data: T[]): Promise<
   await writeRemoteCollection(key, data);
 }
 
-export async function readSharedRecord<T>(key: string, recordId: string): Promise<T | null> {
+export async function readSharedRecord<T>(
+  key: string,
+  recordId: string,
+  options: SharedRequestOptions = {}
+): Promise<T | null> {
   const cacheKey = getSharedCacheKey(key);
   const localRecord = readCollection<T & { id?: string }>(cacheKey)
     .find((record) => record?.id === recordId) as T | undefined;
   if (!shouldUseRemote()) return localRecord ?? null;
 
   const remote = await requestRemote<{ payload: T | null }>(
-    `/api/store?collection=${encodeURIComponent(key)}&recordId=${encodeURIComponent(recordId)}`
+    `/api/store?collection=${encodeURIComponent(key)}&recordId=${encodeURIComponent(recordId)}`,
+    { signal: options.signal }
   );
   const payload = remote.payload ?? null;
   tryWriteRemoteCache(() => cacheRecord(cacheKey, recordId, payload));
@@ -267,7 +301,7 @@ export async function writeSharedRecord<T>(
     if (key === PERSISTENCE_KEYS.safetyPlans && options.audit) {
       const session = readLocalValue<any>(PERSISTENCE_KEYS.session, null);
       const occurredAt = new Date().toISOString();
-      cacheRecord(PERSISTENCE_KEYS.safetyPlanAudit, options.audit.id, {
+      cacheRecord(getSharedCacheKey(PERSISTENCE_KEYS.safetyPlanAudit), options.audit.id, {
         ...options.audit,
         tenantId: (payload as any)?.tenantId,
         actor: {
@@ -284,6 +318,7 @@ export async function writeSharedRecord<T>(
 
   const result = await requestRemote<{ payload?: T }>('/api/store', {
     method: 'PUT',
+    signal: options.signal,
     body: JSON.stringify({
       collection: key,
       recordId,
@@ -379,7 +414,7 @@ export async function deleteSharedRecord<T = unknown>(
         options.actor!,
         occurredAt
       );
-      cacheRecord(PERSISTENCE_KEYS.safetyPlanAudit, audit.id, audit);
+      cacheRecord(getSharedCacheKey(PERSISTENCE_KEYS.safetyPlanAudit), audit.id, audit);
       return deleted as T;
     }
     cacheRecord(cacheKey, recordId, null);
@@ -391,7 +426,7 @@ export async function deleteSharedRecord<T = unknown>(
     : `&expectedRevision=${encodeURIComponent(String(options.expectedRevision))}`;
   const result = await requestRemote<{ payload?: T }>(
     `/api/store?collection=${encodeURIComponent(key)}&recordId=${encodeURIComponent(recordId)}${expectedRevision}`,
-    { method: 'DELETE' }
+    { method: 'DELETE', signal: options.signal }
   );
   const payload = result?.payload ?? null;
   tryWriteRemoteCache(() => cacheRecord(cacheKey, recordId, payload));
@@ -428,12 +463,13 @@ export async function restoreSharedRecord<T = unknown>(
       options.actor!,
       occurredAt
     );
-    cacheRecord(PERSISTENCE_KEYS.safetyPlanAudit, audit.id, audit);
+    cacheRecord(getSharedCacheKey(PERSISTENCE_KEYS.safetyPlanAudit), audit.id, audit);
     return restored as T;
   }
 
   const result = await requestRemote<{ payload?: T }>('/api/store', {
     method: 'PUT',
+    signal: options.signal,
     body: JSON.stringify({
       collection: key,
       recordId,

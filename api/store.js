@@ -518,7 +518,76 @@ function assertSafetyAuditAction(actor, plan, event) {
   }
 }
 
-function normaliseSafetyAuditEventForPlan(actor, plan, event, recordId, now) {
+const STANDALONE_SAFETY_AUDIT_ACTIONS = new Set([
+  'acknowledged',
+  'shared',
+  'pdf_generated',
+]);
+
+function deriveSafetyPlanMutationAudit(stored, incoming) {
+  if (!stored) {
+    return incoming.status === 'not_required'
+      ? { action: 'not_required_selected' }
+      : { action: 'created', versionId: incoming.currentVersionId };
+  }
+
+  if (!stored.deletedAt && incoming.deletedAt) {
+    return { action: 'draft_deleted', versionId: incoming.currentVersionId };
+  }
+  if (stored.deletedAt && !incoming.deletedAt) {
+    return { action: 'draft_restored', versionId: incoming.currentVersionId };
+  }
+  if (incoming.status === 'not_required' && stored.status !== 'not_required') {
+    return { action: 'not_required_selected' };
+  }
+
+  const storedVersions = new Map(
+    (stored.versions || []).map((version) => [version?.id, version])
+  );
+  const addedVersion = (incoming.versions || []).find(
+    (version) => !storedVersions.has(version?.id)
+  );
+  if (addedVersion) {
+    return { action: 'revised', versionId: addedVersion.id };
+  }
+
+  const supersededVersion = (incoming.versions || []).find((version) => {
+    const previous = storedVersions.get(version?.id);
+    return previous && previous.status !== 'superseded' && version.status === 'superseded';
+  });
+  if (supersededVersion) {
+    return { action: 'superseded', versionId: supersededVersion.id };
+  }
+
+  if (stored.status !== incoming.status) {
+    if (incoming.status === 'submitted') {
+      return { action: 'submitted', versionId: incoming.currentVersionId };
+    }
+    if (incoming.status === 'approved') {
+      return { action: 'approved', versionId: incoming.currentVersionId };
+    }
+    if (incoming.status === 'superseded') {
+      return { action: 'superseded', versionId: incoming.currentVersionId };
+    }
+    if (incoming.status === 'draft' && stored.status === 'submitted') {
+      return { action: 'returned_to_draft', versionId: incoming.currentVersionId };
+    }
+  }
+
+  return {
+    action: 'field_changed',
+    versionId: incoming.currentVersionId,
+  };
+}
+
+function normaliseSafetyAuditEventForPlan(
+  actor,
+  plan,
+  event,
+  recordId,
+  now,
+  derivedMutation
+) {
   if (!isObject(event) || event.id !== recordId) {
     throw createHttpError(400, 'Safety audit event id must match its record id.');
   }
@@ -531,14 +600,26 @@ function normaliseSafetyAuditEventForPlan(actor, plan, event, recordId, now) {
   if (plan.deletedAt) {
     throw createHttpError(409, 'Deleted Safety Plans accept only server-managed audit events.');
   }
-  assertSafetyAuditAction(actor, plan, event);
+  if (!derivedMutation) {
+    if (!STANDALONE_SAFETY_AUDIT_ACTIONS.has(event.action)) {
+      throw createHttpError(
+        403,
+        'Safety Plan mutation audit actions require the matching atomic plan transition.'
+      );
+    }
+    assertSafetyAuditAction(actor, plan, event);
+  }
+  const action = derivedMutation?.action || event.action;
+  const versionId = derivedMutation
+    ? derivedMutation.versionId
+    : event.versionId;
   return {
     id: event.id,
     tenantId: actor.tenantId,
     planId: plan.id,
-    ...(event.versionId ? { versionId: event.versionId } : {}),
+    ...(versionId ? { versionId } : {}),
     actor: safetyPlanActor(actor),
-    action: event.action,
+    action,
     occurredAt: now,
   };
 }
@@ -934,7 +1015,8 @@ module.exports = async function handler(req, res) {
           payload,
           body.audit,
           auditRecordId,
-          now
+          now,
+          deriveSafetyPlanMutationAudit(storedPayload, payload)
         );
       }
       if (collection === SAFETY_PLAN_AUDIT_COLLECTION) {

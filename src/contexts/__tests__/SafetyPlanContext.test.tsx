@@ -1,5 +1,5 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import type { ReactNode } from 'react';
+import { StrictMode, type ReactNode } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { makeSafetyPlan } from '../../test/safetyPlanFixtures';
@@ -168,7 +168,10 @@ describe('SafetyPlanContext', () => {
 
     fireEvent.click(screen.getByText('keep remote'));
     await act(async () => {});
-    expect(repository.getPlan).toHaveBeenCalledWith('plan-a');
+    expect(repository.getPlan).toHaveBeenCalledWith(
+      'plan-a',
+      expect.objectContaining({ signal: expect.any(AbortSignal) })
+    );
     expect(screen.getByTestId('save-state')).toHaveTextContent('idle');
     expect(screen.getByTestId('plan-count')).toHaveTextContent('1');
   });
@@ -244,7 +247,9 @@ describe('SafetyPlanContext', () => {
 
     fireEvent.click(screen.getByText('edit a newer'));
     await act(async () => { vi.advanceTimersByTime(500); });
-    fireEvent.click(screen.getByText('edit b'));
+    await act(async () => {
+      fireEvent.click(screen.getByText('edit b'));
+    });
     expect(screen.getByTestId('plan-job')).toHaveTextContent('job-confirmed');
     expect(screen.getByTestId('pending-retry-plans')).toHaveTextContent('plan-a');
 
@@ -330,6 +335,35 @@ describe('SafetyPlanContext', () => {
     expect(screen.getByTestId('plan-count')).toHaveTextContent('0');
   });
 
+  it('does not render records returned for a different tenant after a local identity switch', async () => {
+    const repository = makeRepository({
+      listPlans: vi.fn(async () => [
+        makeSafetyPlan({ id: 'plan-a', tenantId: 'tenant-1' }),
+      ]),
+    });
+    const view = renderProvider(repository);
+    await act(async () => {});
+    expect(screen.getByTestId('plan-count')).toHaveTextContent('1');
+
+    currentUser = {
+      id: 'user-2',
+      name: 'Other Operator',
+      role: 'contractor',
+      tenantId: 'tenant-2',
+      safetyPlanAuthority: false,
+    };
+    await act(async () => {
+      view.rerender(
+        <SafetyPlanProvider repository={repository}>
+          <Probe />
+        </SafetyPlanProvider>
+      );
+    });
+    await act(async () => {});
+
+    expect(screen.getByTestId('plan-count')).toHaveTextContent('0');
+  });
+
   it('does not let a late initial load overwrite a newer optimistic edit', async () => {
     let resolveLoad!: (plans: ReturnType<typeof makeSafetyPlan>[]) => void;
     const repository = makeRepository({
@@ -338,6 +372,7 @@ describe('SafetyPlanContext', () => {
       })),
     });
     renderProvider(repository);
+    await act(async () => {});
 
     fireEvent.click(screen.getByText('edit a'));
     expect(screen.getByTestId('plan-count')).toHaveTextContent('1');
@@ -429,5 +464,273 @@ describe('SafetyPlanContext', () => {
     await act(async () => {});
 
     expect(saveDraft).toHaveBeenCalledTimes(1);
+  });
+
+  it('aborts an in-flight save on logout and does not retain it for retry', async () => {
+    let saveSignal: AbortSignal | undefined;
+    const saveDraft = vi.fn(({ signal }: { signal?: AbortSignal }) =>
+      new Promise<ReturnType<typeof makeSafetyPlan>>((_resolve, reject) => {
+        saveSignal = signal;
+        signal?.addEventListener('abort', () => {
+          reject(new DOMException('cancelled', 'AbortError'));
+        }, { once: true });
+      })
+    );
+    const repository = makeRepository({ saveDraft });
+    const view = renderProvider(repository);
+    await act(async () => {});
+
+    fireEvent.click(screen.getByText('edit a'));
+    await act(async () => { vi.advanceTimersByTime(750); });
+    currentUser = null;
+    await act(async () => {
+      view.rerender(
+        <SafetyPlanProvider repository={repository}>
+          <Probe />
+        </SafetyPlanProvider>
+      );
+    });
+
+    expect(saveSignal?.aborted).toBe(true);
+    expect(saveDraft).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId('pending-retry-plans')).toHaveTextContent('');
+  });
+
+  it('aborts an in-flight save before loading a different tenant', async () => {
+    const order: string[] = [];
+    const saveDraft = vi.fn(({ signal }: { signal?: AbortSignal }) =>
+      new Promise<ReturnType<typeof makeSafetyPlan>>((_resolve, reject) => {
+        order.push('save-start');
+        signal?.addEventListener('abort', () => {
+          order.push('save-abort');
+          reject(new DOMException('cancelled', 'AbortError'));
+        }, { once: true });
+      })
+    );
+    const listPlans = vi.fn(async () => {
+      order.push('load');
+      return [];
+    });
+    const repository = makeRepository({ saveDraft, listPlans });
+    const view = renderProvider(repository);
+    await act(async () => {});
+    order.length = 0;
+
+    fireEvent.click(screen.getByText('edit a'));
+    await act(async () => { vi.advanceTimersByTime(750); });
+    currentUser = {
+      id: 'user-2',
+      name: 'Other Operator',
+      role: 'contractor',
+      tenantId: 'tenant-2',
+      safetyPlanAuthority: false,
+    };
+    await act(async () => {
+      view.rerender(
+        <SafetyPlanProvider repository={repository}>
+          <Probe />
+        </SafetyPlanProvider>
+      );
+    });
+
+    expect(order).toEqual(['save-start', 'save-abort', 'load']);
+    expect(saveDraft).toHaveBeenCalledTimes(1);
+  });
+
+  it('aborts an in-flight save on StrictMode unmount without dispatching another save', async () => {
+    let saveSignal: AbortSignal | undefined;
+    const saveDraft = vi.fn(({ signal }: { signal?: AbortSignal }) =>
+      new Promise<ReturnType<typeof makeSafetyPlan>>((_resolve, reject) => {
+        saveSignal = signal;
+        signal?.addEventListener('abort', () => {
+          reject(new DOMException('cancelled', 'AbortError'));
+        }, { once: true });
+      })
+    );
+    const repository = makeRepository({ saveDraft });
+    const view = render(
+      <StrictMode>
+        <SafetyPlanProvider repository={repository}>
+          <Probe />
+        </SafetyPlanProvider>
+      </StrictMode>
+    );
+    await act(async () => {});
+
+    fireEvent.click(screen.getByText('edit a'));
+    await act(async () => { vi.advanceTimersByTime(750); });
+    view.unmount();
+    await act(async () => {});
+
+    expect(saveSignal?.aborted).toBe(true);
+    expect(saveDraft).toHaveBeenCalledTimes(1);
+  });
+
+  it('aborts and settles the prior plan save before a switched plan save starts', async () => {
+    const order: string[] = [];
+    const saveDraft = vi.fn()
+      .mockImplementationOnce(({ signal }) => new Promise<ReturnType<typeof makeSafetyPlan>>((_resolve, reject) => {
+        order.push('a-start');
+        signal?.addEventListener('abort', () => {
+          order.push('a-abort');
+          reject(new DOMException('cancelled', 'AbortError'));
+        }, { once: true });
+      }))
+      .mockImplementationOnce(async ({ plan }) => {
+        order.push('b-start');
+        return { ...plan, revision: 2 };
+      });
+    const repository = makeRepository({ saveDraft });
+    renderProvider(repository);
+    await act(async () => {});
+
+    fireEvent.click(screen.getByText('edit a'));
+    await act(async () => { vi.advanceTimersByTime(750); });
+    fireEvent.click(screen.getByText('edit b'));
+    await act(async () => {});
+    await act(async () => { vi.advanceTimersByTime(750); });
+
+    expect(order).toEqual(['a-start', 'a-abort', 'b-start']);
+    expect(saveDraft).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    ['delete draft', 'delete'] as const,
+    ['restore draft', 'restore'] as const,
+  ])('aborts and settles an active save before %s starts', async (button, operation) => {
+    const order: string[] = [];
+    const saveDraft = vi.fn(({ signal }) => new Promise<ReturnType<typeof makeSafetyPlan>>((_resolve, reject) => {
+      order.push('save-start');
+      signal?.addEventListener('abort', () => {
+        order.push('save-abort');
+        reject(new DOMException('cancelled', 'AbortError'));
+      }, { once: true });
+    }));
+    const lifecycle = vi.fn(async () => {
+      order.push(operation);
+      return operation === 'delete'
+        ? makeSafetyPlan({ id: 'plan-a', revision: 2, deletedAt: 'now' })
+        : makeSafetyPlan({ id: 'plan-a', revision: 3 });
+    });
+    const repository = makeRepository({
+      saveDraft,
+      ...(operation === 'delete'
+        ? { deleteDraft: lifecycle }
+        : { restoreDraft: lifecycle }),
+    });
+    renderProvider(repository);
+    await act(async () => {});
+
+    fireEvent.click(screen.getByText('edit a'));
+    await act(async () => { vi.advanceTimersByTime(750); });
+    fireEvent.click(screen.getByText(button));
+    await act(async () => {});
+
+    expect(order).toEqual(['save-start', 'save-abort', operation]);
+    expect(saveDraft).toHaveBeenCalledTimes(1);
+    expect(lifecycle).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps a pending edit retryable when delete fails', async () => {
+    const active = makeSafetyPlan({
+      id: 'plan-a',
+      tenantId: 'tenant-1',
+      jobId: 'job-confirmed',
+      revision: 1,
+    });
+    const repository = makeRepository({
+      listPlans: vi.fn(async () => [active]),
+      deleteDraft: vi.fn(async () => { throw new Error('Delete unavailable'); }),
+    });
+    renderProvider(repository);
+    await act(async () => {});
+
+    fireEvent.click(screen.getByText('edit a newer'));
+    fireEvent.click(screen.getByText('delete draft'));
+    await act(async () => {});
+
+    expect(screen.getByTestId('plan-job')).toHaveTextContent('job-newer');
+    expect(screen.getByTestId('pending-retry-plans')).toHaveTextContent('plan-a');
+    expect(screen.getByTestId('error')).toHaveTextContent('Delete unavailable');
+    fireEvent.click(screen.getByText('retry'));
+    await act(async () => {});
+    expect(repository.saveDraft).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps a failed edit retryable when restore fails', async () => {
+    const active = makeSafetyPlan({
+      id: 'plan-a',
+      tenantId: 'tenant-1',
+      jobId: 'job-confirmed',
+      revision: 1,
+    });
+    const repository = makeRepository({
+      listPlans: vi.fn(async () => [active]),
+      saveDraft: vi.fn()
+        .mockRejectedValueOnce(new Error('Offline'))
+        .mockResolvedValueOnce(makeSafetyPlan({ id: 'plan-a', revision: 2 })),
+      restoreDraft: vi.fn(async () => { throw new Error('Restore unavailable'); }),
+    });
+    renderProvider(repository);
+    await act(async () => {});
+
+    fireEvent.click(screen.getByText('edit a newer'));
+    await act(async () => { vi.advanceTimersByTime(750); });
+    fireEvent.click(screen.getByText('restore draft'));
+    await act(async () => {});
+
+    expect(screen.getByTestId('plan-job')).toHaveTextContent('job-newer');
+    expect(screen.getByTestId('pending-retry-plans')).toHaveTextContent('plan-a');
+    expect(screen.getByTestId('error')).toHaveTextContent('Restore unavailable');
+    fireEvent.click(screen.getByText('retry'));
+    await act(async () => {});
+    expect(repository.saveDraft).toHaveBeenCalledTimes(2);
+  });
+
+  it('clears debounce and deduplicates retry while a save is active', async () => {
+    let resolveSave!: (plan: ReturnType<typeof makeSafetyPlan>) => void;
+    const saveDraft = vi.fn(() => new Promise<ReturnType<typeof makeSafetyPlan>>((resolve) => {
+      resolveSave = resolve;
+    }));
+    const repository = makeRepository({ saveDraft });
+    renderProvider(repository);
+    await act(async () => {});
+
+    fireEvent.click(screen.getByText('edit a'));
+    fireEvent.click(screen.getByText('retry'));
+    fireEvent.click(screen.getByText('retry'));
+    await act(async () => {});
+    await act(async () => { vi.advanceTimersByTime(750); });
+    expect(saveDraft).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      resolveSave(makeSafetyPlan({ id: 'plan-a', revision: 2 }));
+    });
+    await act(async () => {});
+    expect(saveDraft).toHaveBeenCalledTimes(1);
+  });
+
+  it('clears discarded conflict input so Retry cannot revive it', async () => {
+    const remote = makeSafetyPlan({ id: 'plan-a', revision: 4 });
+    const conflict = Object.assign(new Error('Changed elsewhere'), {
+      code: 'SAFETY_PLAN_CONFLICT',
+      currentRevision: 4,
+    });
+    const repository = makeRepository({
+      saveDraft: vi.fn(async () => { throw conflict; }),
+      getPlan: vi.fn(async () => remote),
+    });
+    renderProvider(repository);
+    await act(async () => {});
+
+    fireEvent.click(screen.getByText('edit a'));
+    await act(async () => { vi.advanceTimersByTime(750); });
+    fireEvent.click(screen.getByText('keep remote'));
+    await act(async () => {});
+    fireEvent.click(screen.getByText('retry'));
+    await act(async () => {});
+
+    expect(repository.saveDraft).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId('pending-retry-plans')).toHaveTextContent('');
   });
 });

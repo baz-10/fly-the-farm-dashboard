@@ -52,6 +52,10 @@ function messageFrom(error: unknown): string {
   return error instanceof Error ? error.message : 'Safety Plan storage failed.';
 }
 
+function isAbortError(error: unknown): boolean {
+  return (error as { name?: string })?.name === 'AbortError';
+}
+
 function replacePlan(plans: SafetyPlan[], replacement: SafetyPlan): SafetyPlan[] {
   const found = plans.some((plan) => plan.id === replacement.id);
   return found
@@ -116,6 +120,12 @@ export function SafetyPlanProvider({
   const failedInputsRef = useRef(new Map<string, SaveSafetyPlanDraftInput>());
   const latestPlanGenerationRef = useRef(new Map<string, number>());
   const saveQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const queuedPlanCountsRef = useRef(new Map<string, number>());
+  const loadControllerRef = useRef<AbortController | undefined>(undefined);
+  const inFlightPlanMutationsRef = useRef(new Map<string, {
+    controller: AbortController;
+    promise: Promise<unknown>;
+  }>());
   userIdRef.current = user?.id;
 
   const clearTimer = useCallback(() => {
@@ -125,19 +135,40 @@ export function SafetyPlanProvider({
     }
   }, []);
 
+  const abortPlanMutation = useCallback(async (planId: string) => {
+    const mutation = inFlightPlanMutationsRef.current.get(planId);
+    if (!mutation) return;
+    mutation.controller.abort();
+    try {
+      await mutation.promise;
+    } catch {
+      // The operation owns its error state; cancellation only waits for settlement.
+    }
+  }, []);
+
+  const abortAllMutations = useCallback(async () => {
+    const mutations = Array.from(inFlightPlanMutationsRef.current.values());
+    mutations.forEach(({ controller }) => controller.abort());
+    await Promise.allSettled(mutations.map(({ promise }) => promise));
+  }, []);
+
   useEffect(() => {
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
       operationGenerationRef.current += 1;
       clearTimer();
+      loadControllerRef.current?.abort();
+      void abortAllMutations();
     };
-  }, [clearTimer]);
+  }, [abortAllMutations, clearTimer]);
 
   useEffect(() => {
     const sessionGeneration = ++sessionGenerationRef.current;
     operationGenerationRef.current += 1;
     clearTimer();
+    loadControllerRef.current?.abort();
+    const priorMutationsSettled = abortAllMutations();
     pendingRef.current = undefined;
     confirmedPlansRef.current.clear();
     failedInputsRef.current.clear();
@@ -154,17 +185,22 @@ export function SafetyPlanProvider({
 
     let cancelled = false;
     const operationGeneration = operationGenerationRef.current;
-    repository.listPlans()
+    const loadController = new AbortController();
+    loadControllerRef.current = loadController;
+    priorMutationsSettled
+      .then(() => repository.listPlans({ signal: loadController.signal }))
       .then((loaded) => {
         if (
           cancelled
           || sessionGenerationRef.current !== sessionGeneration
           || operationGenerationRef.current !== operationGeneration
         ) return;
-        confirmedPlansRef.current = new Map(loaded.map((plan) => [plan.id, plan]));
-        setPlans(loaded);
+        const tenantPlans = loaded.filter((plan) => plan.tenantId === user.tenantId);
+        confirmedPlansRef.current = new Map(tenantPlans.map((plan) => [plan.id, plan]));
+        setPlans(tenantPlans);
       })
       .catch((loadError) => {
+        if (isAbortError(loadError)) return;
         if (
           !cancelled
           && sessionGenerationRef.current === sessionGeneration
@@ -178,15 +214,25 @@ export function SafetyPlanProvider({
       cancelled = true;
       operationGenerationRef.current += 1;
       clearTimer();
+      loadController.abort();
+      void abortAllMutations();
     };
-  }, [clearTimer, repository, user?.id, user?.role, user?.tenantId]);
+  }, [
+    abortAllMutations,
+    clearTimer,
+    repository,
+    user?.id,
+    user?.role,
+    user?.tenantId,
+  ]);
 
   const performSave = useCallback(async (
     originalInput: SaveSafetyPlanDraftInput,
     generation: number,
     planEpoch: number,
     queuedUserId: string,
-    queuedSessionGeneration: number
+    queuedSessionGeneration: number,
+    signal: AbortSignal
   ) => {
     if (
       userIdRef.current !== queuedUserId
@@ -199,7 +245,7 @@ export function SafetyPlanProvider({
     );
 
     try {
-      const saved = await repository.saveDraft(input);
+      const saved = await repository.saveDraft({ ...input, signal });
       if (
         !mountedRef.current
         || userIdRef.current !== queuedUserId
@@ -218,6 +264,7 @@ export function SafetyPlanProvider({
       setLastSavedAt(new Date().toISOString());
       setSaveState('saved');
     } catch (saveError) {
+      if (isAbortError(saveError)) return;
       if (
         !mountedRef.current
         || userIdRef.current !== queuedUserId
@@ -254,29 +301,59 @@ export function SafetyPlanProvider({
     if (!queuedUserId) return Promise.resolve();
     const queuedSessionGeneration = sessionGenerationRef.current;
     const planEpoch = planEpochRef.current.get(input.plan.id) || 0;
-    const queued = saveQueueRef.current.then(
-      () => performSave(
+    queuedPlanCountsRef.current.set(
+      input.plan.id,
+      (queuedPlanCountsRef.current.get(input.plan.id) || 0) + 1
+    );
+    const queued = saveQueueRef.current.then(async () => {
+      if (
+        userIdRef.current !== queuedUserId
+        || sessionGenerationRef.current !== queuedSessionGeneration
+        || (planEpochRef.current.get(input.plan.id) || 0) !== planEpoch
+      ) return;
+      const controller = new AbortController();
+      const operation = performSave(
         input,
         generation,
         planEpoch,
         queuedUserId,
-        queuedSessionGeneration
-      )
-    );
-    saveQueueRef.current = queued.catch(() => undefined);
-    return queued;
+        queuedSessionGeneration,
+        controller.signal
+      );
+      inFlightPlanMutationsRef.current.set(input.plan.id, {
+        controller,
+        promise: operation,
+      });
+      try {
+        await operation;
+      } finally {
+        const tracked = inFlightPlanMutationsRef.current.get(input.plan.id);
+        if (tracked?.promise === operation) {
+          inFlightPlanMutationsRef.current.delete(input.plan.id);
+        }
+      }
+    });
+    const settled = queued.finally(() => {
+      const remaining = (queuedPlanCountsRef.current.get(input.plan.id) || 1) - 1;
+      if (remaining > 0) queuedPlanCountsRef.current.set(input.plan.id, remaining);
+      else queuedPlanCountsRef.current.delete(input.plan.id);
+    });
+    saveQueueRef.current = settled.catch(() => undefined);
+    return settled;
   }, [performSave]);
 
   const saveDraft = useCallback(async (input: SaveSafetyPlanDraftInput) => {
     if (!userIdRef.current) return;
     const previous = pendingRef.current;
-    const isSwitchingBeforeDebounce = Boolean(
-      previous
-      && previous.plan.id !== input.plan.id
-      && timerRef.current !== undefined
-    );
-    if (isSwitchingBeforeDebounce && previous) {
+    const isSwitchingPlan = Boolean(previous && previous.plan.id !== input.plan.id);
+    if (isSwitchingPlan && previous) {
       clearTimer();
+      planEpochRef.current.set(
+        previous.plan.id,
+        (planEpochRef.current.get(previous.plan.id) || 0) + 1
+      );
+      await abortPlanMutation(previous.plan.id);
+      if (!userIdRef.current) return;
       failedInputsRef.current.set(previous.plan.id, previous);
       setPendingRetryPlanIds(Array.from(failedInputsRef.current.keys()));
       const confirmed = confirmedPlansRef.current.get(previous.plan.id);
@@ -298,18 +375,24 @@ export function SafetyPlanProvider({
       timerRef.current = undefined;
       if (userIdRef.current) void enqueueSave(input, generation);
     }, AUTOSAVE_DELAY_MS);
-  }, [clearTimer, enqueueSave]);
+  }, [abortPlanMutation, clearTimer, enqueueSave]);
 
   const retrySave = useCallback(async () => {
     if (!userIdRef.current) return;
-    const retained = Array.from(failedInputsRef.current.values());
+    clearTimer();
+    const retainedByPlan = new Map(failedInputsRef.current);
     const pending = pendingRef.current;
-    if (pending && !retained.some((input) => input.plan.id === pending.plan.id)) {
-      retained.push(pending);
+    if (pending) {
+      retainedByPlan.set(pending.plan.id, pending);
     }
+    const retained = Array.from(retainedByPlan.values()).filter(
+      (input) =>
+        !inFlightPlanMutationsRef.current.has(input.plan.id)
+        && !queuedPlanCountsRef.current.has(input.plan.id)
+    );
     if (retained.length === 0) return;
-    failedInputsRef.current.clear();
-    setPendingRetryPlanIds([]);
+    retained.forEach((input) => failedInputsRef.current.delete(input.plan.id));
+    setPendingRetryPlanIds(Array.from(failedInputsRef.current.keys()));
     setSaveState('saving');
     setError(undefined);
     for (const input of retained) {
@@ -317,7 +400,7 @@ export function SafetyPlanProvider({
       latestPlanGenerationRef.current.set(input.plan.id, generation);
       await enqueueSave(input, generation);
     }
-  }, [enqueueSave]);
+  }, [clearTimer, enqueueSave]);
 
   const resolveConflict = useCallback(async (
     choice: 'keep_remote' | 'create_revision'
@@ -330,7 +413,22 @@ export function SafetyPlanProvider({
     clearTimer();
 
     try {
-      const remote = await repository.getPlan(pending.plan.id);
+      await abortPlanMutation(pending.plan.id);
+      const controller = new AbortController();
+      const lookup = repository.getPlan(pending.plan.id, { signal: controller.signal });
+      inFlightPlanMutationsRef.current.set(pending.plan.id, {
+        controller,
+        promise: lookup,
+      });
+      let remote: SafetyPlan | null;
+      try {
+        remote = await lookup;
+      } finally {
+        const tracked = inFlightPlanMutationsRef.current.get(pending.plan.id);
+        if (tracked?.promise === lookup) {
+          inFlightPlanMutationsRef.current.delete(pending.plan.id);
+        }
+      }
       if (
         !mountedRef.current
         || userIdRef.current !== resolvingUserId
@@ -341,6 +439,8 @@ export function SafetyPlanProvider({
       if (choice === 'keep_remote') {
         confirmedPlansRef.current.set(remote.id, remote);
         pendingRef.current = undefined;
+        failedInputsRef.current.delete(remote.id);
+        setPendingRetryPlanIds(Array.from(failedInputsRef.current.keys()));
         setPlans((current) => replacePlan(current, remote));
         setError(undefined);
         setSaveState('idle');
@@ -384,6 +484,7 @@ export function SafetyPlanProvider({
       setSaveState('saving');
       await enqueueSave(nextInput, generation);
     } catch (resolutionError) {
+      if (isAbortError(resolutionError)) return;
       if (
         !mountedRef.current
         || userIdRef.current !== resolvingUserId
@@ -392,7 +493,7 @@ export function SafetyPlanProvider({
       setError(messageFrom(resolutionError));
       setSaveState('conflict');
     }
-  }, [clearTimer, enqueueSave, repository]);
+  }, [abortPlanMutation, clearTimer, enqueueSave, repository]);
 
   const deleteDraft = useCallback(async (
     planId: string,
@@ -402,24 +503,66 @@ export function SafetyPlanProvider({
     const mutationUserId = userIdRef.current;
     const mutationSessionGeneration = sessionGenerationRef.current;
     if (!mutationUserId) return;
-    ++operationGenerationRef.current;
+    const snapshotPending = pendingRef.current?.plan.id === planId
+      ? pendingRef.current
+      : undefined;
+    const snapshotFailed = failedInputsRef.current.get(planId);
+    const retryInput = snapshotPending || snapshotFailed;
+    clearTimer();
     const nextEpoch = (planEpochRef.current.get(planId) || 0) + 1;
     planEpochRef.current.set(planId, nextEpoch);
-    if (pendingRef.current?.plan.id === planId) {
-      clearTimer();
-      pendingRef.current = undefined;
-    }
-    failedInputsRef.current.delete(planId);
-    setPendingRetryPlanIds(Array.from(failedInputsRef.current.keys()));
-    const deleted = await repository.deleteDraft(planId, expectedRevision, actor);
+    await abortPlanMutation(planId);
     if (
       !mountedRef.current
       || userIdRef.current !== mutationUserId
       || sessionGenerationRef.current !== mutationSessionGeneration
     ) return;
-    confirmedPlansRef.current.delete(planId);
-    setPlans((current) => current.filter((plan) => plan.id !== deleted.id));
-  }, [clearTimer, repository]);
+    const controller = new AbortController();
+    const mutation = repository.deleteDraft(
+      planId,
+      expectedRevision,
+      actor,
+      { signal: controller.signal }
+    );
+    inFlightPlanMutationsRef.current.set(planId, { controller, promise: mutation });
+    try {
+      const deleted = await mutation;
+      if (
+        !mountedRef.current
+        || userIdRef.current !== mutationUserId
+        || sessionGenerationRef.current !== mutationSessionGeneration
+      ) return;
+      pendingRef.current = pendingRef.current?.plan.id === planId
+        ? undefined
+        : pendingRef.current;
+      failedInputsRef.current.delete(planId);
+      setPendingRetryPlanIds(Array.from(failedInputsRef.current.keys()));
+      confirmedPlansRef.current.delete(planId);
+      setPlans((current) => current.filter((plan) => plan.id !== deleted.id));
+      setError(undefined);
+      setSaveState('idle');
+    } catch (mutationError) {
+      if (isAbortError(mutationError)) return;
+      if (
+        !mountedRef.current
+        || userIdRef.current !== mutationUserId
+        || sessionGenerationRef.current !== mutationSessionGeneration
+      ) return;
+      if (retryInput) {
+        pendingRef.current = retryInput;
+        failedInputsRef.current.set(planId, retryInput);
+        setPendingRetryPlanIds(Array.from(failedInputsRef.current.keys()));
+        setPlans((current) => replacePlan(current, retryInput.plan));
+        setSaveState('pending_retry');
+      }
+      setError(messageFrom(mutationError));
+    } finally {
+      const tracked = inFlightPlanMutationsRef.current.get(planId);
+      if (tracked?.promise === mutation) {
+        inFlightPlanMutationsRef.current.delete(planId);
+      }
+    }
+  }, [abortPlanMutation, clearTimer, repository]);
 
   const restoreDraft = useCallback(async (
     planId: string,
@@ -429,24 +572,66 @@ export function SafetyPlanProvider({
     const mutationUserId = userIdRef.current;
     const mutationSessionGeneration = sessionGenerationRef.current;
     if (!mutationUserId) return;
-    ++operationGenerationRef.current;
+    const snapshotPending = pendingRef.current?.plan.id === planId
+      ? pendingRef.current
+      : undefined;
+    const snapshotFailed = failedInputsRef.current.get(planId);
+    const retryInput = snapshotPending || snapshotFailed;
+    clearTimer();
     const nextEpoch = (planEpochRef.current.get(planId) || 0) + 1;
     planEpochRef.current.set(planId, nextEpoch);
-    if (pendingRef.current?.plan.id === planId) {
-      clearTimer();
-      pendingRef.current = undefined;
-    }
-    failedInputsRef.current.delete(planId);
-    setPendingRetryPlanIds(Array.from(failedInputsRef.current.keys()));
-    const restored = await repository.restoreDraft(planId, expectedRevision, actor);
+    await abortPlanMutation(planId);
     if (
       !mountedRef.current
       || userIdRef.current !== mutationUserId
       || sessionGenerationRef.current !== mutationSessionGeneration
     ) return;
-    confirmedPlansRef.current.set(restored.id, restored);
-    setPlans((current) => replacePlan(current, restored));
-  }, [clearTimer, repository]);
+    const controller = new AbortController();
+    const mutation = repository.restoreDraft(
+      planId,
+      expectedRevision,
+      actor,
+      { signal: controller.signal }
+    );
+    inFlightPlanMutationsRef.current.set(planId, { controller, promise: mutation });
+    try {
+      const restored = await mutation;
+      if (
+        !mountedRef.current
+        || userIdRef.current !== mutationUserId
+        || sessionGenerationRef.current !== mutationSessionGeneration
+      ) return;
+      pendingRef.current = pendingRef.current?.plan.id === planId
+        ? undefined
+        : pendingRef.current;
+      failedInputsRef.current.delete(planId);
+      setPendingRetryPlanIds(Array.from(failedInputsRef.current.keys()));
+      confirmedPlansRef.current.set(restored.id, restored);
+      setPlans((current) => replacePlan(current, restored));
+      setError(undefined);
+      setSaveState('idle');
+    } catch (mutationError) {
+      if (isAbortError(mutationError)) return;
+      if (
+        !mountedRef.current
+        || userIdRef.current !== mutationUserId
+        || sessionGenerationRef.current !== mutationSessionGeneration
+      ) return;
+      if (retryInput) {
+        pendingRef.current = retryInput;
+        failedInputsRef.current.set(planId, retryInput);
+        setPendingRetryPlanIds(Array.from(failedInputsRef.current.keys()));
+        setPlans((current) => replacePlan(current, retryInput.plan));
+        setSaveState('pending_retry');
+      }
+      setError(messageFrom(mutationError));
+    } finally {
+      const tracked = inFlightPlanMutationsRef.current.get(planId);
+      if (tracked?.promise === mutation) {
+        inFlightPlanMutationsRef.current.delete(planId);
+      }
+    }
+  }, [abortPlanMutation, clearTimer, repository]);
 
   const value = useMemo<SafetyPlanContextValue>(() => ({
     plans,

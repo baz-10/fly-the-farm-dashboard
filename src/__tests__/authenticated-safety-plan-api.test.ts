@@ -344,11 +344,12 @@ describe('Safety Plan persistent store security', () => {
       collection: 'ftf_safety_plans',
       recordId: storedPlan.id,
       payload: approved,
-      audit: mutationAudit(approved, 'approved', 'audit-approved-valid'),
+      audit: mutationAudit(approved, 'field_changed', 'audit-approved-valid'),
     }), res);
 
     expect(res.statusCode).toBe(200);
     expect((rpcBody?.p_payload as SafetyPlan).status).toBe('approved');
+    expect((rpcBody?.p_audit_payload as SafetyPlanAuditEvent).action).toBe('approved');
     expect((rpcBody?.p_payload as SafetyPlan).versions[0]).toMatchObject({
       approvedAt: '2026-07-24T03:00:00.000Z',
       approvedBy: {
@@ -357,6 +358,50 @@ describe('Safety Plan persistent store security', () => {
         role: 'contractor',
         operationalAuthority: true,
       },
+    });
+  });
+
+  it('derives superseded when an approved version is superseded', async () => {
+    const approvedVersion = makeSafetyPlanVersion({ status: 'approved', revision: 2 });
+    const storedPlan = makeSafetyPlan({
+      tenantId: 'tenant-a',
+      revision: 2,
+      status: 'approved',
+      versions: [approvedVersion],
+    });
+    const supersededVersion = {
+      ...approvedVersion,
+      status: 'superseded' as const,
+      revision: 3,
+    };
+    const incoming = {
+      ...storedPlan,
+      revision: 3,
+      status: 'superseded' as const,
+      versions: [supersededVersion],
+    };
+    let rpcBody: Record<string, any> | undefined;
+    mockApi({
+      safetyPlanAuthority: true,
+      stored: [{ tenant_id: 'tenant-a', record_id: storedPlan.id, payload: storedPlan }],
+      onRpc: (body) => {
+        rpcBody = body;
+        return { succeeded: true, new_payload: body.p_payload };
+      },
+    });
+    const res = createResponse();
+
+    await storeHandler(request('PUT', 'ftf_safety_plans', {
+      collection: 'ftf_safety_plans',
+      recordId: storedPlan.id,
+      payload: incoming,
+      audit: mutationAudit(incoming, 'created', 'audit-forged-superseded'),
+    }), res);
+
+    expect(res.statusCode).toBe(200);
+    expect(rpcBody?.p_audit_payload).toMatchObject({
+      action: 'superseded',
+      versionId: supersededVersion.id,
     });
   });
 
@@ -703,6 +748,146 @@ describe('Safety Plan persistent store security', () => {
       tenantId: 'tenant-a',
       actor: { userId: 'user-a' },
       action: 'created',
+    });
+  });
+
+  it('derives created for a new plan when the client forges revised', async () => {
+    const plan = makeSafetyPlan({ tenantId: 'tenant-a', revision: 1 });
+    let insertBody: Record<string, any> | undefined;
+    mockApi({
+      onInsertRpc: (body) => {
+        insertBody = body;
+        return { succeeded: true, new_payload: body.p_plan_payload };
+      },
+    });
+    const res = createResponse();
+
+    await storeHandler(request('PUT', 'ftf_safety_plans', {
+      collection: 'ftf_safety_plans',
+      recordId: plan.id,
+      payload: plan,
+      audit: mutationAudit(plan, 'revised', 'audit-forged-revised'),
+    }), res);
+
+    expect(res.statusCode).toBe(200);
+    expect(insertBody?.p_audit_payload).toMatchObject({
+      action: 'created',
+      versionId: plan.currentVersionId,
+    });
+  });
+
+  it('derives field_changed for draft content when the client forges source_refreshed', async () => {
+    const storedPlan = makeSafetyPlan({
+      tenantId: 'tenant-a',
+      revision: 2,
+      versions: [makeSafetyPlanVersion({ revision: 2 })],
+    });
+    const incoming = makeSafetyPlan({
+      ...storedPlan,
+      revision: 3,
+      versions: [makeSafetyPlanVersion({ revision: 3 })],
+    });
+    let rpcBody: Record<string, any> | undefined;
+    mockApi({
+      stored: [{ tenant_id: 'tenant-a', record_id: storedPlan.id, payload: storedPlan }],
+      onRpc: (body) => {
+        rpcBody = body;
+        return { succeeded: true, new_payload: body.p_payload };
+      },
+    });
+    const res = createResponse();
+
+    await storeHandler(request('PUT', 'ftf_safety_plans', {
+      collection: 'ftf_safety_plans',
+      recordId: incoming.id,
+      payload: incoming,
+      audit: mutationAudit(incoming, 'source_refreshed', 'audit-forged-source'),
+    }), res);
+
+    expect(res.statusCode).toBe(200);
+    expect(rpcBody?.p_audit_payload.action).toBe('field_changed');
+  });
+
+  it('derives submitted from the transition when the client forges created', async () => {
+    const storedVersion = makeSafetyPlanVersion({ status: 'draft', revision: 2 });
+    const storedPlan = makeSafetyPlan({
+      tenantId: 'tenant-a',
+      revision: 2,
+      status: 'draft',
+      versions: [storedVersion],
+    });
+    const submittedVersion = { ...storedVersion, status: 'submitted' as const, revision: 3 };
+    const incoming = {
+      ...storedPlan,
+      revision: 3,
+      status: 'submitted' as const,
+      versions: [submittedVersion],
+    };
+    let rpcBody: Record<string, any> | undefined;
+    mockApi({
+      stored: [{ tenant_id: 'tenant-a', record_id: storedPlan.id, payload: storedPlan }],
+      onRpc: (body) => {
+        rpcBody = body;
+        return { succeeded: true, new_payload: body.p_payload };
+      },
+    });
+    const res = createResponse();
+
+    await storeHandler(request('PUT', 'ftf_safety_plans', {
+      collection: 'ftf_safety_plans',
+      recordId: incoming.id,
+      payload: incoming,
+      audit: mutationAudit(incoming, 'created', 'audit-forged-created'),
+    }), res);
+
+    expect(res.statusCode).toBe(200);
+    expect(rpcBody?.p_audit_payload.action).toBe('submitted');
+  });
+
+  it('derives revised when a controlled plan gains a new draft version', async () => {
+    const approvedVersion = makeSafetyPlanVersion({ status: 'approved', revision: 2 });
+    const storedPlan = makeSafetyPlan({
+      tenantId: 'tenant-a',
+      revision: 2,
+      status: 'approved',
+      versions: [approvedVersion],
+    });
+    const revisedVersion = makeSafetyPlanVersion({
+      id: 'safety-plan-version-2',
+      planId: storedPlan.id,
+      status: 'draft',
+      revision: 1,
+      version: '2.0',
+    });
+    const incoming = {
+      ...storedPlan,
+      revision: 3,
+      status: 'draft' as const,
+      currentVersionId: revisedVersion.id,
+      versions: [approvedVersion, revisedVersion],
+    };
+    let rpcBody: Record<string, any> | undefined;
+    mockApi({
+      safetyPlanAuthority: true,
+      stored: [{ tenant_id: 'tenant-a', record_id: storedPlan.id, payload: storedPlan }],
+      onRpc: (body) => {
+        rpcBody = body;
+        return { succeeded: true, new_payload: body.p_payload };
+      },
+    });
+    const res = createResponse();
+
+    await storeHandler(request('PUT', 'ftf_safety_plans', {
+      collection: 'ftf_safety_plans',
+      recordId: incoming.id,
+      payload: incoming,
+      audit: mutationAudit(incoming, 'submitted', 'audit-forged-submitted'),
+    }), res);
+
+    expect(res.statusCode).toBe(200);
+    expect(rpcBody?.p_audit_payload).toMatchObject({
+      action: 'revised',
+      versionId: revisedVersion.id,
     });
   });
 
@@ -1663,6 +1848,40 @@ describe('Safety Plan persistent store security', () => {
     vi.useRealTimers();
   });
 
+  it.each([
+    ['created', 'draft'],
+    ['revised', 'draft'],
+    ['source_refreshed', 'draft'],
+    ['submitted', 'submitted'],
+  ] as const)(
+    'rejects standalone %s because mutation actions require an atomic plan transition',
+    async (action, status) => {
+      const version = makeSafetyPlanVersion({ status });
+      const plan = makeSafetyPlan({ tenantId: 'tenant-a', status, versions: [version] });
+      mockApi({
+        safetyPlanAuthority: true,
+        stored: [{
+          tenant_id: 'tenant-a',
+          collection: 'ftf_safety_plans',
+          record_id: plan.id,
+          payload: plan,
+        }],
+      });
+      const res = createResponse();
+
+      await storeHandler(request('PUT', 'ftf_safety_plan_audit', {
+        collection: 'ftf_safety_plan_audit',
+        recordId: `audit-standalone-${action}`,
+        payload: {
+          ...makeAuditEvent(`audit-standalone-${action}`),
+          action,
+        },
+      }), res);
+
+      expect(res.statusCode).toBe(403);
+    }
+  );
+
   it('rejects a forged approved audit action from a normal contractor', async () => {
     const version = makeSafetyPlanVersion({ status: 'approved' });
     const plan = makeSafetyPlan({
@@ -1690,7 +1909,7 @@ describe('Safety Plan persistent store security', () => {
     expect(res.statusCode).toBe(403);
   });
 
-  it('rejects an approved audit action unless the linked version is approved', async () => {
+  it('rejects standalone approved because approval requires an atomic transition', async () => {
     const plan = makeSafetyPlan({ tenantId: 'tenant-a' });
     mockApi({
       safetyPlanAuthority: true,
@@ -1709,7 +1928,7 @@ describe('Safety Plan persistent store security', () => {
       payload: { ...makeAuditEvent('audit-approved'), action: 'approved' },
     }), res);
 
-    expect(res.statusCode).toBe(409);
+    expect(res.statusCode).toBe(403);
   });
 
   it('rejects replacement of an existing audit ID', async () => {

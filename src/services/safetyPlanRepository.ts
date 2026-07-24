@@ -12,6 +12,7 @@ import {
   restoreSharedRecord,
   writeSharedRecord,
   type SharedRecordMutationOptions,
+  type SharedRequestOptions,
   type SharedRecordWriteOptions,
 } from './persistence';
 
@@ -25,6 +26,7 @@ export interface SaveSafetyPlanDraftInput {
   actor: SafetyPlanActor;
   /** Used by conflict recovery when a draft is forked from the remote record. */
   isNewVersion?: boolean;
+  signal?: AbortSignal;
 }
 
 export class SafetyPlanConflictError extends Error {
@@ -40,29 +42,33 @@ export class SafetyPlanConflictError extends Error {
 }
 
 export interface SafetyPlanRepository {
-  listPlans(): Promise<SafetyPlan[]>;
-  getPlan(planId: string): Promise<SafetyPlan | null>;
+  listPlans(options?: SharedRequestOptions): Promise<SafetyPlan[]>;
+  getPlan(planId: string, options?: SharedRequestOptions): Promise<SafetyPlan | null>;
   saveDraft(input: SaveSafetyPlanDraftInput): Promise<SafetyPlan>;
   submitPlan(
     planId: string,
     expectedRevision: number,
-    actor: SafetyPlanActor
+    actor: SafetyPlanActor,
+    options?: SharedRequestOptions
   ): Promise<SafetyPlan>;
   markNotRequired(
     jobId: string,
     reason: string,
-    actor: SafetyPlanActor
+    actor: SafetyPlanActor,
+    options?: SharedRequestOptions
   ): Promise<SafetyPlan>;
-  appendAuditEvent(event: SafetyPlanAuditEvent): Promise<void>;
+  appendAuditEvent(event: SafetyPlanAuditEvent, options?: SharedRequestOptions): Promise<void>;
   deleteDraft(
     planId: string,
     expectedRevision: number,
-    actor: SafetyPlanActor
+    actor: SafetyPlanActor,
+    options?: SharedRequestOptions
   ): Promise<SafetyPlan>;
   restoreDraft(
     planId: string,
     expectedRevision: number,
-    actor: SafetyPlanActor
+    actor: SafetyPlanActor,
+    options?: SharedRequestOptions
   ): Promise<SafetyPlan>;
 }
 
@@ -72,8 +78,8 @@ type AuditRequest = Pick<
 >;
 
 export interface SafetyPlanRepositoryDependencies {
-  listRecords(): Promise<SafetyPlan[]>;
-  readRecord(planId: string): Promise<SafetyPlan | null>;
+  listRecords(options?: SharedRequestOptions): Promise<SafetyPlan[]>;
+  readRecord(planId: string, options?: SharedRequestOptions): Promise<SafetyPlan | null>;
   writeRecord(
     key: string,
     recordId: string,
@@ -122,9 +128,10 @@ function toAuditRequest(event: SafetyPlanAuditEvent): AuditRequest {
 
 function defaultDependencies(): SafetyPlanRepositoryDependencies {
   return {
-    listRecords: () => readSharedCollection<SafetyPlan>(PERSISTENCE_KEYS.safetyPlans),
-    readRecord: (planId) =>
-      readSharedRecord<SafetyPlan>(PERSISTENCE_KEYS.safetyPlans, planId),
+    listRecords: (options) =>
+      readSharedCollection<SafetyPlan>(PERSISTENCE_KEYS.safetyPlans, [], options),
+    readRecord: (planId, options) =>
+      readSharedRecord<SafetyPlan>(PERSISTENCE_KEYS.safetyPlans, planId, options),
     writeRecord: (key, recordId, payload, options) =>
       writeSharedRecord(key, recordId, payload, options),
     deleteRecord: (key, recordId, options) =>
@@ -221,8 +228,13 @@ export function createSafetyPlanRepository(
     plan: SafetyPlan,
     expectedRevision: number,
     actor: SafetyPlanActor,
-    action: SafetyPlanAuditEvent['action']
+    action: SafetyPlanAuditEvent['action'],
+    signal?: AbortSignal
   ): Promise<SafetyPlan> {
+    const tenantId = deps.getTenantId();
+    if (!tenantId || plan.tenantId !== tenantId) {
+      throw new Error('Safety Plan tenant must match the authenticated tenant.');
+    }
     const auditEvent = makeAuditEvent(plan, actor, action, deps.now(), deps.createId());
     let canonical: unknown;
     try {
@@ -230,7 +242,7 @@ export function createSafetyPlanRepository(
         PERSISTENCE_KEYS.safetyPlans,
         plan.id,
         plan,
-        { audit: toAuditRequest(auditEvent) }
+        { audit: toAuditRequest(auditEvent), signal }
       );
     } catch (error) {
       conflictFrom(error, expectedRevision);
@@ -241,20 +253,25 @@ export function createSafetyPlanRepository(
     const persistedPlan = returnedPlan?.id === plan.id
       ? returnedPlan
       : expectedRevision === 0
-        ? await deps.readRecord(plan.id) ?? plan
+        ? await (signal
+          ? deps.readRecord(plan.id, { signal })
+          : deps.readRecord(plan.id)) ?? plan
         : plan;
     return persistedPlan;
   }
 
   const repository: SafetyPlanRepository = {
-    async listPlans() {
-      const plans = await deps.listRecords();
-      return plans.filter((plan) => !plan.deletedAt);
+    async listPlans(options) {
+      const plans = await (options ? deps.listRecords(options) : deps.listRecords());
+      const tenantId = deps.getTenantId();
+      return plans.filter((plan) => !plan.deletedAt && plan.tenantId === tenantId);
     },
 
-    async getPlan(planId) {
-      const plan = await deps.readRecord(planId);
-      return plan?.deletedAt ? null : plan;
+    async getPlan(planId, options) {
+      const plan = await (options
+        ? deps.readRecord(planId, options)
+        : deps.readRecord(planId));
+      return plan?.deletedAt || plan?.tenantId !== deps.getTenantId() ? null : plan;
     },
 
     async saveDraft(input) {
@@ -267,12 +284,13 @@ export function createSafetyPlanRepository(
           ? 'created'
           : input.isNewVersion
             ? 'revised'
-            : 'field_changed'
+            : 'field_changed',
+        input.signal
       );
     },
 
-    async submitPlan(planId, expectedRevision, actor) {
-      const stored = await deps.readRecord(planId);
+    async submitPlan(planId, expectedRevision, actor, options) {
+      const stored = await deps.readRecord(planId, options);
       if (!stored) throw new Error('Safety Plan was not found.');
       if (stored.revision !== expectedRevision) {
         throw new SafetyPlanConflictError(
@@ -299,10 +317,10 @@ export function createSafetyPlanRepository(
             : version
         ),
       };
-      return writePlan(submitted, expectedRevision, actor, 'submitted');
+      return writePlan(submitted, expectedRevision, actor, 'submitted', options?.signal);
     },
 
-    async markNotRequired(jobId, reason, actor) {
+    async markNotRequired(jobId, reason, actor, options) {
       const trimmedReason = reason.trim();
       if (!trimmedReason) throw new Error('A reason is required.');
       const tenantId = deps.getTenantId();
@@ -319,23 +337,25 @@ export function createSafetyPlanRepository(
         createdAt: now,
         updatedAt: now,
       };
-      return writePlan(plan, 0, actor, 'not_required_selected');
+      return writePlan(plan, 0, actor, 'not_required_selected', options?.signal);
     },
 
-    async appendAuditEvent(event) {
-      await deps.writeRecord(
+    async appendAuditEvent(event, options) {
+      const args = [
         PERSISTENCE_KEYS.safetyPlanAudit,
         event.id,
-        toAuditRequest(event)
-      );
+        toAuditRequest(event),
+      ] as const;
+      if (options) await deps.writeRecord(...args, options);
+      else await deps.writeRecord(...args);
     },
 
-    async deleteDraft(planId, expectedRevision, actor) {
+    async deleteDraft(planId, expectedRevision, actor, options) {
       try {
         const deleted = await deps.deleteRecord(
           PERSISTENCE_KEYS.safetyPlans,
           planId,
-          { expectedRevision, actor }
+          { expectedRevision, actor, signal: options?.signal }
         );
         if (!deleted) throw new Error('Safety Plan was not found.');
         return deleted;
@@ -344,12 +364,12 @@ export function createSafetyPlanRepository(
       }
     },
 
-    async restoreDraft(planId, expectedRevision, actor) {
+    async restoreDraft(planId, expectedRevision, actor, options) {
       try {
         const restored = await deps.restoreRecord(
           PERSISTENCE_KEYS.safetyPlans,
           planId,
-          { expectedRevision, actor }
+          { expectedRevision, actor, signal: options?.signal }
         );
         if (!restored) throw new Error('Safety Plan was not found.');
         return restored;
