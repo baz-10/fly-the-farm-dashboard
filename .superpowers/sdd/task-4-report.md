@@ -1,98 +1,72 @@
-# Task 4 report
+# Task 4 report — Layout integration and release verification
 
 ## Status
 
-DONE
+Implemented and committed grouped collapsible navigation in both the compact desktop rail and expanded mobile drawer. No Release 2 behavior was added.
 
-## Implementation
+## RED
 
-- Generalised `TruckProfileForm` into a deployment-asset form while preserving the legacy `truck` prop. New profiles default to truck, may switch to trailer, use asset-neutral identity copy, retain financial visibility control, and submit `DeploymentAssetInput`.
-- Updated the fleet register to consume Task 1's `assets`, `createAsset`, and `updateAsset` APIs. The UI now shows deployment assets, separate ready-truck and ready-trailer counts, asset-type chips, and trailer-aware edit/create dialogs.
-- Generalised reusable templates to select zero or more independent assets. Submission includes `assetIds` and derives legacy `truckId` from the first selected truck (or an empty string when no truck is selected).
-- Added an optional carrying-asset selector to every aircraft/kit assignment. Existing templates derive `assetIds` from legacy `truckId` when needed.
-- Removed the UI guard that required a truck before creating a template.
+Command:
 
-## TDD evidence
+```sh
+npm test -- --watchAll=false src/components/__tests__/Layout.navigation.test.tsx
+```
 
-RED command:
+Result: failed as expected against the old flat `Layout`. The test could not find an accessible list named `Primary navigation`, proving the group headings were absent.
 
-`npm test -- --watchAll=false src/components/__tests__/TruckProfileForm.test.tsx src/components/__tests__/WorkPackTemplateForm.test.tsx`
+Before that intended RED result, the test harness exposed React Router 7 incompatibilities with Jest 27: package resolution failed and the jsdom environment lacked `TextEncoder`/`TextDecoder`. The test uses a virtual `react-router-dom` mock backed by React Router's CommonJS build and installs the Node `util` encoders so the regression exercises the real memory router.
 
-Observed: 2 suites failed for the intended missing behavior: no `Asset type` field and no multi-asset checkboxes.
+## GREEN
 
-GREEN command:
+Command:
 
-`npm test -- --watchAll=false src/components/__tests__/TruckProfileForm.test.tsx src/components/__tests__/WorkPackTemplateForm.test.tsx src/contexts/__tests__/WorkPackContext.test.tsx`
+```sh
+npm test -- --watchAll=false src/components/__tests__/Layout.navigation.test.tsx
+```
 
-Observed: 3 suites passed, 10 tests passed, 0 failed.
+Result: passed — 1 suite, 1 test. The regression verifies two grouped-navigation instances are rendered, the mobile drawer exposes all five headings with Daily operations expanded, and Weather navigates to `/weather`.
 
-Build command:
+Release-focused command:
 
-`npm run build`
+```sh
+npm test -- --watchAll=false src/navigation src/services/__tests__/navigationPreferenceStore.test.ts src/components/navigation src/components/__tests__/Layout.navigation.test.tsx
+```
 
-Observed: exit 0 and production bundle generated. The build emitted existing repository-wide lint warnings in unrelated files and a stale Browserslist database notice; no Task 4 compile errors were reported.
+Result: passed — 4 suites, 17 tests.
 
-`git diff --check` also completed without errors.
+## Full suite
+
+Command:
+
+```sh
+CI=true npm test -- --watchAll=false --runInBand
+```
+
+Result: passed — 56 suites, 222 tests, 0 failures.
+
+## Build
+
+Command:
+
+```sh
+npm run build
+```
+
+Result: completed successfully. The build emitted existing repository-wide ESLint warnings, a stale Browserslist data notice, and the existing bundle-size advisory; no Task 4 compile errors were reported.
 
 ## Self-review
 
-- Confirmed existing truck callers remain supported through `truck`/`trucks` compatibility props and Task 1's legacy truck APIs remain untouched.
-- Confirmed trailer submission preserves uppercase registration normalization and operational validation.
-- Confirmed financial fields remain entirely behind `showFinancials`.
-- Confirmed legacy templates initialise selection from `truckId`, and new templates derive `truckId` only from a selected truck rather than a trailer.
-- Confirmed only the five Task 4 files are included in the implementation commit.
+- Removed `NAV_ITEMS`, `isRouteActive`, and `navList` from `Layout`.
+- Passed pathname, role, user ID, and `navigateAndClose` to `GroupedNavigation` in both navigation surfaces.
+- Preserved search, account, logout, drawer, logo, and main-content behavior.
+- Confirmed the staged diff contained only `Layout.tsx` and its new regression test.
+- `git diff --cached --check` passed before commit.
+
+## Commit
+
+`851ea6e` — `feat: enable grouped dashboard navigation`
 
 ## Concerns
 
-- `assetIds` and template-level `carryingAssetId` are represented locally by the Task 4 form because the task's allowed file list does not include `src/types/workPack.ts`. Runtime persistence retains these fields through object spreads, but a later type/interface task should promote them into the shared template types so downstream consumers do not require narrowing/casts.
-- Build warnings are pre-existing and outside this task's file scope.
-
-## Review Fix
-
-### TDD evidence
-
-RED command:
-
-`npm test -- --watchAll=false src/components/__tests__/WorkPackTemplateForm.test.tsx`
-
-Observed: 1 suite failed, with 1 failing regression test and 2 passing tests. The submitted aircraft assignment retained `carryingAssetId: "trailer-1"` after the trailer was deselected; MUI also reported the stale selection as out of range.
-
-GREEN command:
-
-`npm test -- --watchAll=false src/components/__tests__/TruckProfileForm.test.tsx src/components/__tests__/WorkPackTemplateForm.test.tsx src/contexts/__tests__/WorkPackContext.test.tsx src/utils/__tests__/missionWorkPack.test.ts src/components/mission/__tests__/MissionDeploymentWorkPack.test.tsx`
-
-Observed: 5 suites passed, 24 tests passed, 0 failed.
-
-Build command:
-
-`npm run build`
-
-Observed: exit 0; the production bundle compiled. Existing repository-wide lint warnings and the stale Browserslist database notice remain, with no review-fix compile errors.
-
-`git diff --check` completed without errors.
-
-### Implementation
-
-- Deselecting a deployment asset now clears every template aircraft assignment carried by that asset.
-- `assetIds` and `carryingAssetId` now live in the shared work-pack contract used by template input, context persistence, snapshots, fleet/template consumers, and mission template application. Legacy templates still fall back to `truckId`.
-- Fleet deployment-asset iteration now consistently uses asset-neutral variable names.
-
-### Commit
-
-`fix: address task 4 review findings`
-
-### Files
-
-- `.superpowers/sdd/task-4-report.md`
-- `src/components/WorkPackTemplateForm.tsx`
-- `src/components/__tests__/WorkPackTemplateForm.test.tsx`
-- `src/components/mission/MissionDeploymentWorkPack.tsx`
-- `src/components/mission/__tests__/MissionDeploymentWorkPack.test.tsx`
-- `src/contexts/__tests__/WorkPackContext.test.tsx`
-- `src/pages/FleetWorkPacks.tsx`
-- `src/types/workPack.ts`
-- `src/utils/workPackTemplates.ts`
-
-### Concerns
-
-- The build continues to emit pre-existing warnings outside the Task 4 review-fix files.
+- The successful build retains pre-existing lint/Browserslist/bundle-size warnings outside Task 4.
+- The test includes a local Jest 27 compatibility shim for the installed React Router 7 package; production code is unaffected.
