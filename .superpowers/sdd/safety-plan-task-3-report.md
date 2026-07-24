@@ -85,3 +85,130 @@ Apply `docs/supabase-safety-plan-migration.sql` before deploying the server
 change. New Safety Plan creation depends on the
 `ftf_insert_safety_plan_with_audit` RPC, and updates depend on the expanded
 compare-and-swap RPC signature.
+
+## Controller review fixes
+
+Controller review implementation commit:
+`e79ce36ee90e9557a43673fb6150d99ea1882f33`.
+
+### 1. Local tenant and session isolation
+
+- Safety Plan template, plan, and audit browser-cache keys are now scoped by
+  exact tenant and user identity in both local and remote modes.
+- Unrelated legacy local collection keys retain their existing unscoped
+  semantics.
+- Repository list, singleton read, and write paths exact-match the
+  authenticated tenant.
+- Provider loads defensively exact-filter returned records after an identity
+  switch.
+
+RED:
+
+- Persistence, repository, and context isolation run: 3 failed, 29 passed.
+- Cross-tenant repository write regression: 1 failed, 11 skipped.
+
+GREEN:
+
+- Those regressions pass in the final focused run.
+
+### 2. Abortable mutation lifecycle
+
+- `AbortSignal` now flows from provider operations through repository methods,
+  record persistence, and the fetch transport.
+- Each in-flight plan save, conflict read, delete, or restore has a tracked
+  `AbortController`.
+- Logout, tenant changes, StrictMode unmount, plan switches, delete, and
+  restore abort the affected transport and settle it before a conflicting
+  operation starts.
+- Session/epoch guards prevent already-queued saves from dispatching after an
+  identity or lifecycle change.
+- Browser and non-browser errors named `AbortError` are cancellations, not
+  retry or conflict failures.
+
+RED:
+
+- Persistence/repository signal propagation run: 2 failed, 18 passed.
+- Provider lifecycle run: 8 failed, 14 passed, with the two expected
+  unhandled lifecycle rejections before error handling existed.
+- Generic AbortError and immediate double-retry run: 2 failed, 31 passed.
+
+GREEN:
+
+- Provider and persistence run: 33 passed.
+- Final focused run: 110 passed.
+
+Client abort can stop and discard the transport response, but it cannot recall
+server execution that has already begun. Atomic database compare-and-swap
+remains the authority that prevents a later delete, restore, or save from
+silently overwriting that execution.
+
+### 3. Delete and restore failure bookkeeping
+
+- Lifecycle operations snapshot pending and failed edits before cancelling a
+  timer or active save.
+- Failed delete or restore restores the optimistic text as explicit
+  `pending_retry`, preserves one retryable input, and exposes the lifecycle
+  error.
+- Successful lifecycle operations clear the saved snapshot only after the
+  canonical response arrives.
+- Delete and restore both wait for an aborted active save to settle before
+  their own repository call.
+
+RED:
+
+- The initial provider lifecycle run failed both delete and restore retry
+  retention regressions and surfaced their unhandled promise rejections.
+
+GREEN:
+
+- Both failure paths, plus active-save delete and restore ordering, pass in the
+  24-test context suite.
+
+### 4. Retry and conflict bookkeeping
+
+- Explicit retry clears the current debounce.
+- Per-plan queued counts and in-flight tracking prevent immediate double-click
+  retry from scheduling duplicate writes, audits, or revision increments.
+- Retry deterministically no-ops for an already queued or active plan save.
+- `keep_remote` clears both pending and failed conflict input so later Retry
+  cannot revive discarded edits.
+
+RED:
+
+- Immediate duplicate retry called the repository twice.
+- Retry after `keep_remote` also called the repository twice.
+
+GREEN:
+
+- Both regressions now assert exactly one repository save call.
+
+### 5. Server-derived audit actions
+
+- Atomic plan writes ignore caller action claims and derive the audit action
+  from the validated stored-to-incoming transition.
+- Deterministic mappings cover created, field-changed, submitted, approved,
+  revised, superseded, not-required, deleted, and restored transitions.
+- The server also derives the affected version linkage where applicable.
+- Standalone audit appends allow only explicitly non-mutating
+  `acknowledged`, `shared`, and `pdf_generated` actions; mutation-looking
+  actions require the matching atomic plan mutation.
+- Forged `created`, `revised`, `source_refreshed`, and `submitted` probes are
+  covered, along with forged approve and supersede claims.
+
+RED:
+
+- Forged mutation-action and standalone-action run: 8 failed, 55 passed.
+
+GREEN:
+
+- API suite: 64 passed.
+
+## Controller review final verification
+
+- Focused repository/context/persistence/provider/API command: 5 files,
+  110 tests passed.
+- Inventory command: 1 file, 5 tests passed.
+- `npx tsc --noEmit`: passed.
+- `node --check api/store.js`: passed.
+- `npm test`: 68 files, 394 tests passed.
+- `git diff --check`: passed.
