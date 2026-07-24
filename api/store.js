@@ -389,6 +389,36 @@ function assertVersionTransition(actor, storedVersion, incomingVersion) {
   }
 }
 
+function assertSubmittedCurrentBoundary(stored, incoming) {
+  const storedCurrent = (stored.versions || []).find(
+    (version) => version?.id === stored.currentVersionId
+  );
+  if (storedCurrent?.status !== 'submitted') return;
+
+  if (incoming.currentVersionId !== stored.currentVersionId) {
+    throw createHttpError(409, 'A submitted Safety Plan must retain its current version identity.');
+  }
+
+  const storedIds = (stored.versions || []).map((version) => version?.id).sort();
+  const incomingIds = (incoming.versions || []).map((version) => version?.id).sort();
+  if (!valuesEqual(storedIds, incomingIds)) {
+    throw createHttpError(409, 'A submitted Safety Plan must retain its exact version set.');
+  }
+
+  const incomingById = new Map(incoming.versions.map((version) => [version?.id, version]));
+  for (const storedVersion of stored.versions || []) {
+    if (storedVersion.id === stored.currentVersionId) continue;
+    if (!valuesEqual(storedVersion, incomingById.get(storedVersion.id))) {
+      throw createHttpError(403, 'Only the current submitted version may transition.');
+    }
+  }
+
+  const incomingCurrent = incomingById.get(stored.currentVersionId);
+  if (!['submitted', 'draft', 'approved'].includes(incomingCurrent?.status)) {
+    throw createHttpError(403, 'Submitted Safety Plan transition is not permitted.');
+  }
+}
+
 function assertSafetyPlanTransition({ actor, stored, incoming, recordId }) {
   assertIncomingPlanShape(actor, incoming, recordId);
 
@@ -419,9 +449,7 @@ function assertSafetyPlanTransition({ actor, stored, incoming, recordId }) {
   if (!Number.isSafeInteger(stored.revision) || incoming.revision !== stored.revision + 1) {
     throw createHttpError(409, 'Safety Plan record revision is stale.');
   }
-  if (stored.status === 'submitted' && incoming.status === 'submitted') {
-    throw createHttpError(403, 'Submitted Safety Plans require an authorised lifecycle transition.');
-  }
+  assertSubmittedCurrentBoundary(stored, incoming);
 
   const incomingById = new Map(incoming.versions.map((version) => [version?.id, version]));
   for (const storedVersion of stored.versions || []) {
