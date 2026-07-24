@@ -1,3 +1,5 @@
+import { beforeEach, describe, expect, test } from 'vitest';
+
 import { cacheForecast, getCachedForecast, readWeatherPreferences, saveWeatherPreferences } from '../weatherPreferenceStore';
 import { WeatherLocation } from '../../types/weather';
 

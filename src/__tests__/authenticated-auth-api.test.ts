@@ -1,4 +1,6 @@
-const authHandler = require('../../api/auth');
+import { vi } from 'vitest';
+
+let authHandler: any;
 
 function response(status: number, body: any) {
   return {
@@ -37,7 +39,7 @@ describe('Supabase authentication API', () => {
   const originalEnvironment = process.env;
   const originalFetch = global.fetch;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     process.env = {
       ...originalEnvironment,
       NODE_ENV: 'test',
@@ -45,17 +47,20 @@ describe('Supabase authentication API', () => {
       SUPABASE_ANON_KEY: 'anon-key',
       SUPABASE_SERVICE_ROLE_KEY: 'service-key',
     };
-    jest.spyOn(console, 'error').mockImplementation(() => undefined);
+    vi.resetModules();
+    const authModule = await import('../../api/auth');
+    authHandler = authModule.default ?? authModule;
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
   });
 
   afterEach(() => {
     process.env = originalEnvironment;
     global.fetch = originalFetch;
-    jest.restoreAllMocks();
+    vi.restoreAllMocks();
   });
 
   test('returns a null session when no signed cookie exists', async () => {
-    global.fetch = jest.fn() as any;
+    global.fetch = vi.fn() as any;
     const res = createResponse();
 
     await authHandler({ method: 'GET', headers: {} }, res);
@@ -66,7 +71,7 @@ describe('Supabase authentication API', () => {
   });
 
   test('rejects cross-origin authentication changes', async () => {
-    global.fetch = jest.fn() as any;
+    global.fetch = vi.fn() as any;
     const res = createResponse();
 
     await authHandler({
@@ -81,7 +86,7 @@ describe('Supabase authentication API', () => {
   });
 
   test('sets HttpOnly cookies after verified password login', async () => {
-    global.fetch = jest.fn(async (url: string) => {
+    global.fetch = vi.fn(async (url: string) => {
       if (url.includes('/auth/v1/token?grant_type=password')) {
         return response(200, {
           access_token: 'access-token',
@@ -123,7 +128,7 @@ describe('Supabase authentication API', () => {
     process.env.SUPABASE_ANON_KEY = 'sb_publishable_test';
     process.env.SUPABASE_SERVICE_ROLE_KEY = 'sb_secret_test';
     const requests: Array<{ url: string; headers: Record<string, string> }> = [];
-    global.fetch = jest.fn(async (url: string, options: RequestInit = {}) => {
+    global.fetch = vi.fn(async (url: string, options: RequestInit = {}) => {
       requests.push({ url, headers: options.headers as Record<string, string> });
       if (url.includes('/auth/v1/token?grant_type=password')) {
         return response(200, {

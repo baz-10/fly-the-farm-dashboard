@@ -1,12 +1,14 @@
+import { beforeEach, describe, expect, test, vi } from 'vitest';
+
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { useOperationalWeather } from '../useOperationalWeather';
 import * as weatherService from '../../services/weatherService';
 
-jest.mock('../../services/weatherService');
-const mockedWeather = weatherService as jest.Mocked<typeof weatherService>;
+vi.mock('../../services/weatherService');
+const mockedWeather = vi.mocked(weatherService);
 
 describe('useOperationalWeather', () => {
-  beforeEach(() => { localStorage.clear(); jest.resetAllMocks(); });
+  beforeEach(() => { localStorage.clear(); vi.resetAllMocks(); });
 
   test('searches a location and exposes fresh weather', async () => {
     mockedWeather.geocodeLocality.mockResolvedValue({ name: 'Dalby', latitude: -27.18, longitude: 151.26 });

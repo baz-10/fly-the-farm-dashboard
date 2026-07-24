@@ -1,4 +1,5 @@
 import React, { Component, ReactNode } from 'react';
+import { isDevelopmentEnvironment } from '../config/environment';
 
 interface MissionErrorBoundaryState {
   hasError: boolean;
@@ -143,7 +144,7 @@ class MissionErrorBoundary extends Component<MissionErrorBoundaryProps, MissionE
               marginTop: '8px'
             }}>
               {this.state.error.message}
-              {process.env.NODE_ENV === 'development' && this.state.error.stack && (
+              {isDevelopmentEnvironment() && this.state.error.stack && (
                 <>
                   {'\n\nStack trace:\n'}
                   {this.state.error.stack}

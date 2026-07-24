@@ -3,10 +3,10 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import Weather from './Weather';
 
-const mockSearchLocation = jest.fn(); const mockUseDeviceLocation = jest.fn(); const mockRefresh = jest.fn();
-jest.mock('../contexts/AuthContext', () => ({ useAuth: () => ({ user: { id: 'u1' } }) }));
-jest.mock('../hooks/useOperationalWeather', () => ({ useOperationalWeather: () => ({
-  location: { name: 'Dalby', latitude: -27.18, longitude: 151.26 }, status: 'fresh', error: '', recent: [], searchLocation: mockSearchLocation, useDeviceLocation: mockUseDeviceLocation, refresh: mockRefresh, selectRecent: jest.fn(),
+const mockSearchLocation = vi.fn(); const mockUseDeviceLocation = vi.fn(); const mockRefresh = vi.fn();
+vi.mock('../contexts/AuthContext', () => ({ useAuth: () => ({ user: { id: 'u1' } }) }));
+vi.mock('../hooks/useOperationalWeather', () => ({ useOperationalWeather: () => ({
+  location: { name: 'Dalby', latitude: -27.18, longitude: 151.26 }, status: 'fresh', error: '', recent: [], searchLocation: mockSearchLocation, useDeviceLocation: mockUseDeviceLocation, refresh: mockRefresh, selectRecent: vi.fn(),
   forecast: { fetchedAt: '2026-07-18T10:00:00Z', timezone: 'Australia/Brisbane', sunrise: '2026-07-18T06:30:00', sunset: '2026-07-18T23:00:00',
     hourly: [{ time: '2026-07-18T12:00:00', tempC: 30, humidity: 50, dewpointC: 18, deltaT: 7.7, windSpeedKmh: 12, windGustsKmh: 18, windDirectionDeg: 90, windDirectionCompass: 'E', precipitationProbability: 20, cloudCoverPercent: 15, isDay: true }, { time: '2026-07-19T18:00:00', tempC: 18, humidity: 94, dewpointC: 17, deltaT: 1, windSpeedKmh: 4, windGustsKmh: 6, windDirectionDeg: 90, windDirectionCompass: 'E', precipitationProbability: 30, cloudCoverPercent: 10, isDay: false }],
     daily: [{ date: '2026-07-18', maxTempC: 31, minTempC: 18, rainChancePercent: 25, maxWindKmh: 20, maxGustKmh: 28, sunrise: '2026-07-18T06:30:00', sunset: '2026-07-18T23:00:00' }, { date: '2026-07-19', maxTempC: 24, minTempC: 12, rainChancePercent: 30, maxWindKmh: 12, maxGustKmh: 18, sunrise: '2026-07-19T06:31:00', sunset: '2026-07-19T17:00:00' }],
@@ -15,20 +15,22 @@ jest.mock('../hooks/useOperationalWeather', () => ({ useOperationalWeather: () =
 
 describe('Weather page', () => {
   beforeEach(() => {
-    jest.useFakeTimers();
-    jest.setSystemTime(new Date('2026-07-18T02:00:00Z'));
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-07-18T02:00:00Z'));
   });
 
-  afterEach(() => jest.useRealTimers());
+  afterEach(() => vi.useRealTimers());
 
   test('shows spray indicators and forecast detail and supports location actions', async () => {
-    const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime }); render(<Weather />);
+    render(<Weather />);
     expect(screen.getByRole('heading', { name: 'Weather' })).toBeInTheDocument();
     expect(screen.getByText(/Delta T 7.7/)).toBeInTheDocument();
     expect(screen.getByText(/forecast inversion potential/i)).toBeInTheDocument();
     expect(screen.getByText('Hourly forecast')).toBeInTheDocument();
     expect(screen.getByText('high inversion')).toBeInTheDocument();
     expect(screen.getByText('Seven-day forecast')).toBeInTheDocument();
+    vi.useRealTimers();
+    const user = userEvent.setup();
     await user.type(screen.getByLabelText('Search location'), 'Toowoomba');
     await user.click(screen.getByRole('button', { name: 'Search' }));
     expect(mockSearchLocation).toHaveBeenCalledWith('Toowoomba');

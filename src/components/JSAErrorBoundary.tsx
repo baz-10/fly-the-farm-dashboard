@@ -1,6 +1,7 @@
 import React, { Component, ErrorInfo, ReactNode } from 'react';
 import { Alert, Typography, Button, Box, Card, CardContent } from '@mui/material';
 import { Error as ErrorIcon, Refresh } from '@mui/icons-material';
+import { isDevelopmentEnvironment } from '../config/environment';
 
 interface Props {
   children?: ReactNode;
@@ -125,7 +126,7 @@ export default class JSAErrorBoundary extends Component<Props, State> {
                 </Button>
               </Box>
 
-              {process.env.NODE_ENV === 'development' && this.state.error && (
+              {isDevelopmentEnvironment() && this.state.error && (
                 <Box sx={{ mt: 3, p: 2, bgcolor: 'grey.100', borderRadius: 1 }}>
                   <Typography variant="subtitle2" gutterBottom>
                     Development Error Details:

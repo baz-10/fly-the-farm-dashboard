@@ -1,3 +1,5 @@
+import { getPersistenceModeFromEnvironment } from '../config/environment';
+
 export const PERSISTENCE_KEYS = {
   actuals: 'ftf_actuals',
   aircraft: 'ftf_aircraft_data',
@@ -23,7 +25,7 @@ export const PERSISTENCE_KEYS = {
 export type PersistenceMode = 'local' | 'remote';
 
 export function getPersistenceMode(): PersistenceMode {
-  return process.env.REACT_APP_PERSISTENCE_MODE === 'remote' ? 'remote' : 'local';
+  return getPersistenceModeFromEnvironment();
 }
 
 export function readCollection<T>(key: string): T[] {

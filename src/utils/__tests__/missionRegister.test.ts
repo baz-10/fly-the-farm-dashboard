@@ -1,3 +1,5 @@
+import { describe, expect, test } from 'vitest';
+
 import { MissionRecord, MissionStatus } from '../../types/mission';
 import { getMissionNextAction, groupMissionsForRegister, MISSION_REGISTER_SECTIONS } from '../missionRegister';
 

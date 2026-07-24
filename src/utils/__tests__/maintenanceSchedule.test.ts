@@ -1,3 +1,5 @@
+import { describe, expect, test } from 'vitest';
+
 import { calculateScheduleStatus } from '../maintenanceSchedule';
 import { MaintenanceSchedule } from '../../types/maintenance';
 

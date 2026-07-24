@@ -1,14 +1,14 @@
 # Production Deployment
 
-Fly The Farm can be deployed to Vercel as a Create React App single-page application. The frontend is ready for preview deployment, but the app should not be treated as a production SaaS until browser-local persistence is replaced with the planned Supabase backend.
+Fly The Farm is deployed to Vercel as a Vite single-page application. The frontend is ready for protected preview deployment, but the app should not be treated as a production SaaS until browser-local persistence is replaced with the planned Supabase backend.
 
 ## Recommended Architecture
 
 | Layer | Recommendation | Notes |
 |---|---|---|
-| Frontend hosting | Vercel | Build command: `npm run build`; output directory: `build`. |
+| Frontend hosting | Vercel | Build command: `npm run build`; output directory: `dist`. |
 | SPA routing | Vercel rewrite | `vercel.json` rewrites deep links like `/financials` to `index.html`. |
-| Serverless API | Vercel Functions | `api/identify-weed.js` replaces the local-only CRA proxy in production. |
+| Serverless API | Vercel Functions | Vite middleware serves the same API handlers locally; Vercel Functions serve them in production. |
 | Auth/database/storage | Supabase | Existing plan: `docs/plans/2026-03-23-backend-migration.md`. |
 
 ## Current Production Status
@@ -31,29 +31,27 @@ Not production-safe yet:
 Framework preset:
 
 ```text
-Create React App
+Vite
 ```
 
 Build settings:
 
 ```text
 Install command: npm install
-Build command: CI=false npm run build
-Output directory: build
+Build command: npm run build
+Output directory: dist
 ```
-
-`CI=false` keeps the existing Create React App lint warnings from failing Vercel builds. The warnings should still be cleaned up, but they are not deployment-blocking defects.
 
 Environment variables:
 
 ```text
 ANTHROPIC_API_KEY=<server-only key for api/identify-weed.js>
-REACT_APP_PERSISTENCE_MODE=local
-REACT_APP_SUPABASE_URL=<future Supabase URL>
-REACT_APP_SUPABASE_ANON_KEY=<future Supabase anon key>
+VITE_PERSISTENCE_MODE=local
 ```
 
-Do not expose `ANTHROPIC_API_KEY` as a `REACT_APP_*` variable.
+`SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, and
+`ANTHROPIC_API_KEY` are server-only. Never expose them with a `VITE_*`
+prefix.
 
 Current Vercel environment status: no environment variables are configured yet. Add `ANTHROPIC_API_KEY` before smoke-testing real Weed ID image analysis.
 
@@ -98,15 +96,48 @@ npx vercel --prod
 
 If using GitHub integration, let Vercel create preview deployments for branches and production deployments from the production branch.
 
-## Smoke Test Checklist
+## Protected Preview Verification
 
-After each preview deployment, verify:
+Before promoting a preview, run the same local release gates used by CI:
+
+```bash
+npm test
+npm run test:coverage
+npm run build
+npm run test:e2e
+```
+
+Open the protected Vercel preview using an authorised team account. Use a
+synthetic preview account or non-production tenant only; never reuse customer
+credentials in automated tests. Verify:
 
 - `/` loads the Operations Command dashboard.
-- `/mission-planning` loads directly after refresh.
-- `/financials` loads directly after refresh and the review queue row selection updates the right inspector.
-- `/compliance` loads directly after refresh.
+- `/missions`, `/jobs`, `/aircraft`, and `/maintenance` load from navigation.
+- `/missions/new` loads directly after a hard refresh, proving the SPA rewrite.
+- A contractor view contains operational details but no administrator-only
+  costs, rates, margin, profit, or purchase values.
+- `GET /api/store?collection=ftf_missions` returns JSON (authenticated data or
+  an authentication error), never `index.html`.
 - Weed ID upload returns a clear error if `ANTHROPIC_API_KEY` is missing and identifies an image when the key is present.
+
+Local `vite preview` uses the local API middleware so the browser gates can
+verify routing without a Vercel deployment. Vercel serves `/api/*` through
+serverless functions. The SPA rewrite explicitly excludes `/api/`; do not
+point preview tests at production data.
+
+## Promotion and Rollback
+
+1. Confirm the protected preview passed the checklist and the four local
+   release commands above.
+2. Promote the exact verified Vercel deployment from the Vercel dashboard, or
+   deploy that commit with `npx vercel --prod`.
+3. Re-run the nested-route and API checks against the production alias.
+4. If verification fails, use Vercel **Deployments** to promote the
+   immediately preceding successful production deployment. Do not rebuild it:
+   rolling back to the existing immutable deployment preserves its known
+   build output and environment.
+5. Record the failed and restored deployment URLs and pause further promotion
+   until the regression is understood.
 
 ## Backend Migration Path
 

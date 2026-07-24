@@ -5,7 +5,7 @@ import { TruckProfileInput, WorkPackTemplateInput } from '../../types/workPack';
 import * as persistence from '../../services/persistence';
 
 let mockCurrentRole: 'admin' | 'contractor' = 'admin';
-jest.mock('../AuthContext', () => ({
+vi.mock('../AuthContext', () => ({
   useAuth: () => ({ user: { id: 'user-1', role: mockCurrentRole } }),
 }));
 
@@ -93,7 +93,7 @@ function StateProbe() {
 
 describe('WorkPackContext', () => {
   beforeEach(() => {
-    jest.restoreAllMocks();
+    vi.restoreAllMocks();
     localStorage.clear();
     mockCurrentRole = 'admin';
   });
@@ -208,7 +208,7 @@ describe('WorkPackContext', () => {
   });
 
   test('exposes a load error while keeping mission planning usable', async () => {
-    jest.spyOn(persistence, 'readSharedValue').mockRejectedValueOnce(new Error('Network unavailable'));
+    vi.spyOn(persistence, 'readSharedValue').mockRejectedValueOnce(new Error('Network unavailable'));
 
     render(<WorkPackProvider><StateProbe /></WorkPackProvider>);
 
@@ -217,7 +217,7 @@ describe('WorkPackContext', () => {
   });
 
   test('exposes a save error instead of swallowing a failed write', async () => {
-    jest.spyOn(persistence, 'writeSharedValue').mockRejectedValueOnce(new Error('Save failed'));
+    vi.spyOn(persistence, 'writeSharedValue').mockRejectedValueOnce(new Error('Save failed'));
     render(<WorkPackProvider><StateProbe /></WorkPackProvider>);
     await screen.findByTestId('save-error');
 

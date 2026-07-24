@@ -1,3 +1,5 @@
+import { describe, expect, test } from 'vitest';
+
 import type { Aircraft } from '../../types/aircraft';
 import { addMonthsToDateInput, getAircraftMaintenanceAlerts } from '../aircraftMaintenance';
 

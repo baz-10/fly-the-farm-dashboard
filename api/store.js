@@ -44,7 +44,12 @@ function redactMaintenanceCosts(payload) {
 function contractorSafePayload(collection, payload) {
   if (!payload || typeof payload !== 'object') return payload;
   if (collection === 'ftf_missions') {
-    return { ...payload, deploymentWorkPack: redactDeploymentWorkPack(payload.deploymentWorkPack) };
+    const {
+      financialEstimate: _financialEstimate,
+      financialActual: _financialActual,
+      ...safePayload
+    } = payload;
+    return { ...safePayload, deploymentWorkPack: redactDeploymentWorkPack(payload.deploymentWorkPack) };
   }
   if (collection === 'ftf_work_packs') {
     return {
@@ -79,10 +84,22 @@ function preserveMaintenanceCosts(incomingRecords, storedRecords) {
 
 function contractorWritePayload(collection, incoming, stored) {
   const safe = contractorSafePayload(collection, incoming);
-  if (collection === 'ftf_missions' && safe?.deploymentWorkPack) {
+  if (collection === 'ftf_missions') {
+    const restoredFinancials = {
+      ...(stored?.financialEstimate === undefined
+        ? {}
+        : { financialEstimate: stored.financialEstimate }),
+      ...(stored?.financialActual === undefined
+        ? {}
+        : { financialActual: stored.financialActual }),
+    };
+    if (!safe?.deploymentWorkPack) {
+      return { ...safe, ...restoredFinancials };
+    }
     const storedWorkPack = stored?.deploymentWorkPack;
     return {
       ...safe,
+      ...restoredFinancials,
       deploymentWorkPack: {
         ...safe.deploymentWorkPack,
         assets: preserveAssetCosts(safe.deploymentWorkPack.assets, storedWorkPack?.assets),
@@ -241,6 +258,23 @@ module.exports = async function handler(req, res) {
     if (req.method === 'GET') {
       const collection = validateCollection(req.query.collection);
       const recordId = req.query.recordId ? validateRecordId(req.query.recordId) : '';
+      if (req.localE2eFixture) {
+        const fixtureRecords = req.localE2eFixture.collections?.[collection];
+        const records = Array.isArray(fixtureRecords) ? fixtureRecords : [];
+        if (recordId) {
+          const payload = records.find((record) => record?.id === recordId) || null;
+          return res.status(200).json({
+            payload: user.role === 'contractor'
+              ? contractorSafePayload(collection, payload)
+              : payload,
+          });
+        }
+        return res.status(200).json({
+          records: user.role === 'contractor'
+            ? records.map((payload) => contractorSafePayload(collection, payload))
+            : records,
+        });
+      }
       if (recordId) {
         const payload = await getRecord(tenantId, collection, recordId);
         return res.status(200).json({ payload: user.role === 'contractor' ? contractorSafePayload(collection, payload) : payload });
@@ -249,6 +283,10 @@ module.exports = async function handler(req, res) {
       return res.status(200).json({ records: user.role === 'contractor'
         ? records.map((payload) => contractorSafePayload(collection, payload))
         : records });
+    }
+
+    if (req.localE2eFixture) {
+      throw createHttpError(405, 'The local browser fixture is read-only.');
     }
 
     if (req.method === 'PUT') {

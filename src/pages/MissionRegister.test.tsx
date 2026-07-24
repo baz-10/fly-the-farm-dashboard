@@ -3,13 +3,13 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import MissionRegister from './MissionRegister';
 
-const mockNavigate = jest.fn();
+const mockNavigate = vi.fn();
 
-jest.mock('react-router-dom', () => ({
+vi.mock('react-router-dom', () => ({
   useNavigate: () => mockNavigate,
-}), { virtual: true });
+}));
 
-jest.mock('../contexts/MissionContext', () => ({
+vi.mock('../contexts/MissionContext', () => ({
   useMission: () => ({
     missions: [
       { id: 'planning-1', missionName: 'North block spray', missionNumber: 'MSN-001', status: 'Planning', scheduledDate: '2026-07-20T08:00:00.000Z', updatedAt: '2026-07-18T08:00:00.000Z', location: { name: 'North block' } },

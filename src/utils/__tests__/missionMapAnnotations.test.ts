@@ -1,3 +1,5 @@
+import { describe, expect, it, test } from 'vitest';
+
 import { MissionMapFeature } from '../../types/missionMap';
 import { moveMapFeatureVertex, normaliseMapFeatures, removeMapFeature, upsertMapFeature } from '../missionMapAnnotations';
 

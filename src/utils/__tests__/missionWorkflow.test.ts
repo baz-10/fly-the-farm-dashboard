@@ -1,3 +1,5 @@
+import { describe, expect, test } from 'vitest';
+
 import { getMissionWorkflowState } from '../missionWorkflow';
 
 const baseInput = {
@@ -36,13 +38,15 @@ describe('mission workflow state', () => {
       environmentalReviewComplete: true,
     };
     const expected = getMissionWorkflowState(validMission);
-
-    expect(getMissionWorkflowState({ ...validMission, hasDeploymentWorkPack: false })).toEqual(expected);
-    expect(getMissionWorkflowState({
+    const missionWithoutDeploymentPack = { ...validMission, hasDeploymentWorkPack: false };
+    const missionWithIncompleteCosting = {
       ...validMission,
       hasDeploymentWorkPack: true,
       deploymentCostingComplete: false,
-    })).toEqual(expected);
+    };
+
+    expect(getMissionWorkflowState(missionWithoutDeploymentPack)).toEqual(expected);
+    expect(getMissionWorkflowState(missionWithIncompleteCosting)).toEqual(expected);
   });
 
   test('orders flight planning and authorization after mission authorization', () => {

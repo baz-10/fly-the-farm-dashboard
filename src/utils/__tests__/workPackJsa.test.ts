@@ -1,3 +1,5 @@
+import { describe, expect, test } from 'vitest';
+
 import { JSARecord } from '../../types/mission';
 import { reopenJSAForWorkPackChange } from '../workPackJsa';
 

@@ -1,7 +1,8 @@
 import * as pdfjsLib from "pdfjs-dist";
+import { getPublicAssetUrl } from "../config/environment";
 
 // Reuse the same bundled worker as sprayRecParser
-pdfjsLib.GlobalWorkerOptions.workerSrc = `${process.env.PUBLIC_URL}/pdf.worker.min.js`;
+pdfjsLib.GlobalWorkerOptions.workerSrc = getPublicAssetUrl("pdf.worker.min.js");
 
 /**
  * Fetch a PDF from a URL and extract all text content.

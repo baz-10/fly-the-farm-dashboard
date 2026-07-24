@@ -1,3 +1,5 @@
+import { expect, test } from 'vitest';
+
 import { MissionRecord } from '../../types/mission';
 import { Aircraft, EquipmentKit } from '../../types/aircraft';
 import { DeploymentAsset, WorkPackTemplate } from '../../types/workPack';

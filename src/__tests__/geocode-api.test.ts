@@ -1,4 +1,6 @@
-const geocodeHandler = require('../../api/geocode');
+import { vi, type Mock } from 'vitest';
+
+let geocodeHandler: any;
 
 function createResponse() {
   return {
@@ -22,13 +24,19 @@ function createResponse() {
 describe('address geocoding API', () => {
   const originalFetch = global.fetch;
 
+  beforeEach(async () => {
+    vi.resetModules();
+    const geocodeModule = await import('../../api/geocode');
+    geocodeHandler = geocodeModule.default ?? geocodeModule;
+  });
+
   afterEach(() => {
     global.fetch = originalFetch;
-    jest.restoreAllMocks();
+    vi.restoreAllMocks();
   });
 
   test('limits address lookup to Australia and returns safe result fields', async () => {
-    global.fetch = jest.fn(async () => ({
+    global.fetch = vi.fn(async () => ({
       ok: true,
       status: 200,
       json: async () => [{
@@ -52,14 +60,14 @@ describe('address geocoding API', () => {
         type: 'commercial',
       }],
     });
-    const requestUrl = String((global.fetch as jest.Mock).mock.calls[0][0]);
+    const requestUrl = String((global.fetch as Mock).mock.calls[0][0]);
     expect(requestUrl).toContain('countrycodes=au');
     expect(requestUrl).toContain('limit=5');
     expect(res.headers['cache-control']).toContain('s-maxage=86400');
   });
 
   test('rejects short queries without calling the provider', async () => {
-    global.fetch = jest.fn() as any;
+    global.fetch = vi.fn() as any;
     const res = createResponse();
 
     await geocodeHandler({ method: 'GET', query: { q: 'x' } }, res);
@@ -69,7 +77,7 @@ describe('address geocoding API', () => {
   });
 
   test('rejects non-GET requests', async () => {
-    global.fetch = jest.fn() as any;
+    global.fetch = vi.fn() as any;
     const res = createResponse();
 
     await geocodeHandler({ method: 'POST', query: {} }, res);

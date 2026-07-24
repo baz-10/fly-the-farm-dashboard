@@ -1,3 +1,5 @@
+import { expect, test } from 'vitest';
+
 import { validateMissionData, validateStatusTransitionRules } from '../../contexts/MissionContext';
 import { MissionRecord } from '../../types/mission';
 import { getMissionWorkflowState } from '../missionWorkflow';

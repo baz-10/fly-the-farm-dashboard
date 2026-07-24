@@ -8,10 +8,6 @@ import {
   Drawer,
   IconButton,
   InputBase,
-  List,
-  ListItemButton,
-  ListItemIcon,
-  ListItemText,
   Menu,
   MenuItem,
   Stack,
@@ -21,57 +17,18 @@ import {
   useMediaQuery,
   useTheme,
 } from '@mui/material';
-import AccountBalanceIcon from '@mui/icons-material/AccountBalance';
-import AdminPanelSettingsIcon from '@mui/icons-material/AdminPanelSettings';
-import AirplanemodeActiveIcon from '@mui/icons-material/AirplanemodeActive';
-import AssignmentIcon from '@mui/icons-material/Assignment';
-import CalculateIcon from '@mui/icons-material/Calculate';
-import FlightTakeoffIcon from '@mui/icons-material/FlightTakeoff';
-import GavelIcon from '@mui/icons-material/Gavel';
-import GrassIcon from '@mui/icons-material/Grass';
-import HomeIcon from '@mui/icons-material/Home';
 import LogoutIcon from '@mui/icons-material/Logout';
 import MenuIcon from '@mui/icons-material/Menu';
-import ReceiptLongIcon from '@mui/icons-material/ReceiptLong';
 import SearchIcon from '@mui/icons-material/Search';
-import SecurityIcon from '@mui/icons-material/Security';
 import SettingsIcon from '@mui/icons-material/Settings';
-import SmartToyIcon from '@mui/icons-material/SmartToy';
-import LocalShippingIcon from '@mui/icons-material/LocalShipping';
-import CalendarMonthIcon from '@mui/icons-material/CalendarMonth';
-import CloudQueueIcon from '@mui/icons-material/CloudQueue';
-import BuildCircleOutlinedIcon from '@mui/icons-material/BuildCircleOutlined';
 import { useAuth } from '../contexts/AuthContext';
+import { GroupedNavigation } from './navigation/GroupedNavigation';
 
 const ROLE_LABELS: Record<string, string> = {
   admin: 'FTF Admin',
   contractor: 'Contractor',
   client: 'Client',
 };
-
-const NAV_ITEMS = [
-  { label: 'Operations', shortLabel: 'Operations', path: '/', icon: <HomeIcon />, roles: ['admin', 'contractor'] },
-  { label: 'Database', shortLabel: 'Database', path: '/database', icon: <GrassIcon />, roles: ['admin', 'contractor', 'client'] },
-  { label: 'Calculator', shortLabel: 'Calculator', path: '/calculator', icon: <CalculateIcon />, roles: ['admin', 'contractor'] },
-  { label: 'Jobs', shortLabel: 'Jobs', path: '/jobs', icon: <AssignmentIcon />, roles: ['admin', 'contractor', 'client'] },
-  { label: 'Aircraft', shortLabel: 'Aircraft', path: '/aircraft', icon: <AirplanemodeActiveIcon />, roles: ['admin', 'contractor'] },
-  { label: 'Fleet & Packs', shortLabel: 'Fleet', path: '/fleet-work-packs', icon: <LocalShippingIcon />, roles: ['admin', 'contractor'] },
-  { label: 'Maintenance', shortLabel: 'Maint.', path: '/maintenance', icon: <BuildCircleOutlinedIcon />, roles: ['admin', 'contractor'] },
-  { label: 'Missions', shortLabel: 'Missions', path: '/missions', icon: <FlightTakeoffIcon />, roles: ['admin', 'contractor'] },
-  { label: 'Schedule', shortLabel: 'Schedule', path: '/schedule', icon: <CalendarMonthIcon />, roles: ['admin', 'contractor'] },
-  { label: 'Weather', shortLabel: 'Weather', path: '/weather', icon: <CloudQueueIcon />, roles: ['admin', 'contractor'] },
-  { label: 'JSA System', shortLabel: 'JSA', path: '/jsa', icon: <SecurityIcon />, roles: ['admin', 'contractor'] },
-  { label: 'Quotes', shortLabel: 'Quotes', path: '/quotes', icon: <ReceiptLongIcon />, roles: ['admin', 'contractor'] },
-  { label: 'Financials', shortLabel: 'Financials', path: '/financials', icon: <AccountBalanceIcon />, roles: ['admin', 'contractor'] },
-  { label: 'Ask FTF', shortLabel: 'Ask FTF', path: '/ask-ftf', icon: <SmartToyIcon />, roles: ['admin', 'contractor'] },
-  { label: 'Compliance', shortLabel: 'Compliance', path: '/compliance', icon: <GavelIcon />, roles: ['admin', 'contractor'] },
-  { label: 'Settings', shortLabel: 'Settings', path: '/license-settings', icon: <SettingsIcon />, roles: ['admin', 'contractor'] },
-  { label: 'Admin', shortLabel: 'Admin', path: '/admin', icon: <AdminPanelSettingsIcon />, roles: ['admin'] },
-];
-
-function isRouteActive(pathname: string, path: string) {
-  return path === '/' ? pathname === '/' : pathname.startsWith(path);
-}
 
 export default function Layout() {
   const { user, logout } = useAuth();
@@ -83,7 +40,9 @@ export default function Layout() {
   const [accountAnchor, setAccountAnchor] = React.useState<null | HTMLElement>(null);
   const [search, setSearch] = React.useState('');
 
-  const navItems = NAV_ITEMS.filter((item) => !user?.role || item.roles.includes(user.role));
+  React.useEffect(() => {
+    if (isDesktop) setDrawerOpen(false);
+  }, [isDesktop]);
 
   const navigateAndClose = (path: string) => {
     setDrawerOpen(false);
@@ -107,110 +66,72 @@ export default function Layout() {
     setSearch('');
   };
 
-  const navList = (expanded: boolean) => (
-    <List sx={{ px: expanded ? 1.25 : 0.75, py: 1, flex: 1 }}>
-      {navItems.map((item) => {
-        const active = isRouteActive(location.pathname, item.path);
-        const button = (
-          <ListItemButton
-            key={item.path}
-            selected={active}
-            onClick={() => navigateAndClose(item.path)}
-            aria-label={item.label}
-            sx={{
-              minHeight: expanded ? 46 : 50,
-              mb: 0.4,
-              px: expanded ? 1.25 : 0.5,
-              borderRadius: '8px',
-              color: active ? 'white' : alpha(theme.palette.common.white, 0.68),
-              justifyContent: expanded ? 'flex-start' : 'center',
-              flexDirection: expanded ? 'row' : 'column',
-              gap: expanded ? 0 : 0.3,
-              '&.Mui-selected': {
-                bgcolor: alpha(theme.palette.common.white, 0.12),
-                color: 'white',
-                '&:hover': { bgcolor: alpha(theme.palette.common.white, 0.14) },
-              },
-              '&:hover': {
-                bgcolor: alpha(theme.palette.common.white, 0.09),
-                color: 'white',
-              },
-            }}
-          >
-            <ListItemIcon
-              sx={{
-                minWidth: expanded ? 38 : 0,
-                color: 'inherit',
-                justifyContent: 'center',
-                '& .MuiSvgIcon-root': { fontSize: expanded ? 20 : 18 },
-              }}
-            >
-              {item.icon}
-            </ListItemIcon>
-            {expanded ? (
-              <ListItemText
-                primary={item.label}
-                primaryTypographyProps={{ fontSize: '0.86rem', fontWeight: active ? 800 : 650 }}
-              />
-            ) : (
-              <Typography sx={{ fontSize: '0.56rem', fontWeight: 750, lineHeight: 1.05, textAlign: 'center' }}>
-                {item.shortLabel}
-              </Typography>
-            )}
-          </ListItemButton>
-        );
-
-        return expanded ? button : <Tooltip key={item.path} title={item.label} placement="right">{button}</Tooltip>;
-      })}
-    </List>
-  );
-
   return (
-    <Box className="ftf-grain" sx={{ minHeight: '100vh', display: 'flex', bgcolor: '#f3f7f3' }}>
-      <Box
-        component="aside"
-        sx={{
-          width: 88,
-          display: { xs: 'none', lg: 'flex' },
-          flexDirection: 'column',
-          position: 'sticky',
-          top: 0,
-          height: '100vh',
-          overflowY: 'auto',
-          bgcolor: '#062407',
-          borderRight: '1px solid rgba(255,255,255,0.08)',
-          zIndex: 5,
-        }}
-      >
+    <Box
+      className="ftf-grain"
+      data-testid="application-shell"
+      sx={{ minHeight: '100vh', display: 'flex', bgcolor: '#f3f7f3' }}
+    >
+      {isDesktop && (
         <Box
-          component="img"
-          src="/logo.png"
-          alt="Fly the Farm"
-          onClick={() => navigate('/')}
-          sx={{ width: 62, mx: 'auto', my: 1.5, cursor: 'pointer' }}
-        />
-        {navList(false)}
-        <Tooltip title="Sign out" placement="right">
-          <IconButton onClick={handleLogout} aria-label="Sign out" sx={{ color: alpha(theme.palette.common.white, 0.68), m: 1 }}>
-            <LogoutIcon fontSize="small" />
-          </IconButton>
-        </Tooltip>
-      </Box>
-
-      <Drawer
-        open={!isDesktop && drawerOpen}
-        onClose={() => setDrawerOpen(false)}
-        PaperProps={{ sx: { width: 280, bgcolor: '#062407', color: 'white' } }}
-      >
-        <Box sx={{ px: 2.5, py: 2 }}>
-          <Box component="img" src="/logo.png" alt="Fly the Farm" sx={{ height: 44, width: 'auto' }} />
+          component="aside"
+          sx={{
+            width: 88,
+            display: 'flex',
+            flexDirection: 'column',
+            position: 'sticky',
+            top: 0,
+            height: '100vh',
+            overflowY: 'auto',
+            bgcolor: '#062407',
+            borderRight: '1px solid rgba(255,255,255,0.08)',
+            zIndex: 5,
+          }}
+        >
+          <Box
+            component="img"
+            src="/logo.png"
+            alt="Fly the Farm"
+            onClick={() => navigate('/')}
+            sx={{ width: 62, mx: 'auto', my: 1.5, cursor: 'pointer' }}
+          />
+          <GroupedNavigation
+            expanded={false}
+            pathname={location.pathname}
+            role={user?.role}
+            userId={user?.id || 'anonymous'}
+            onNavigate={navigateAndClose}
+          />
+          <Tooltip title="Sign out" placement="right">
+            <IconButton onClick={handleLogout} aria-label="Sign out" sx={{ color: alpha(theme.palette.common.white, 0.68), m: 1 }}>
+              <LogoutIcon fontSize="small" />
+            </IconButton>
+          </Tooltip>
         </Box>
-        <Divider sx={{ borderColor: alpha(theme.palette.common.white, 0.1) }} />
-        {navList(true)}
-        <Button startIcon={<LogoutIcon />} onClick={handleLogout} sx={{ justifyContent: 'flex-start', m: 1.25, color: 'rgba(255,255,255,0.72)' }}>
-          Sign out
-        </Button>
-      </Drawer>
+      )}
+
+      {!isDesktop && (
+        <Drawer
+          open={drawerOpen}
+          onClose={() => setDrawerOpen(false)}
+          PaperProps={{ sx: { width: 280, bgcolor: '#062407', color: 'white' } }}
+        >
+          <Box sx={{ px: 2.5, py: 2 }}>
+            <Box component="img" src="/logo.png" alt="Fly the Farm" sx={{ height: 44, width: 'auto' }} />
+          </Box>
+          <Divider sx={{ borderColor: alpha(theme.palette.common.white, 0.1) }} />
+          <GroupedNavigation
+            expanded
+            pathname={location.pathname}
+            role={user?.role}
+            userId={user?.id || 'anonymous'}
+            onNavigate={navigateAndClose}
+          />
+          <Button startIcon={<LogoutIcon />} onClick={handleLogout} sx={{ justifyContent: 'flex-start', m: 1.25, color: 'rgba(255,255,255,0.72)' }}>
+            Sign out
+          </Button>
+        </Drawer>
+      )}
 
       <Box sx={{ minWidth: 0, flex: 1 }}>
         <Stack

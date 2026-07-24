@@ -84,6 +84,8 @@ async function refreshSession(refreshToken) {
 }
 
 async function authenticateRequest(req, res) {
+  if (req.localE2eFixture?.user) return req.localE2eFixture.user;
+
   const cookies = parseCookies(req);
   let accessToken = cookies[ACCESS_COOKIE];
   let authUser;

@@ -1,4 +1,6 @@
-const storeHandler = require('../../api/store');
+import { vi } from 'vitest';
+
+let storeHandler: any;
 
 interface MockResponse {
   statusCode: number;
@@ -61,24 +63,27 @@ describe('authenticated persistent store API', () => {
   const originalEnvironment = process.env;
   const originalFetch = global.fetch;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     process.env = {
       ...originalEnvironment,
       SUPABASE_URL: 'https://example.supabase.co',
       SUPABASE_ANON_KEY: 'anon-key',
       SUPABASE_SERVICE_ROLE_KEY: 'service-key',
     };
-    jest.spyOn(console, 'error').mockImplementation(() => undefined);
+    vi.resetModules();
+    const storeModule = await import('../../api/store');
+    storeHandler = storeModule.default ?? storeModule;
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
   });
 
   afterEach(() => {
     process.env = originalEnvironment;
     global.fetch = originalFetch;
-    jest.restoreAllMocks();
+    vi.restoreAllMocks();
   });
 
   test('rejects unauthenticated collection access', async () => {
-    global.fetch = jest.fn() as any;
+    global.fetch = vi.fn() as any;
     const res = createResponse();
 
     await storeHandler(request('GET'), res);
@@ -89,7 +94,7 @@ describe('authenticated persistent store API', () => {
   });
 
   test('rejects malformed origins before handling a storage change', async () => {
-    global.fetch = jest.fn() as any;
+    global.fetch = vi.fn() as any;
     const res = createResponse();
     const req = request('PUT', 'token-a', {
       collection: 'ftf_missions',
@@ -106,7 +111,7 @@ describe('authenticated persistent store API', () => {
 
   test('scopes reads to the authenticated user tenant', async () => {
     const requestedUrls: string[] = [];
-    global.fetch = jest.fn(async (url: string, options: RequestInit = {}) => {
+    global.fetch = vi.fn(async (url: string, options: RequestInit = {}) => {
       requestedUrls.push(url);
       const authorization = String((options.headers as Record<string, string>)?.Authorization || '');
 
@@ -142,7 +147,7 @@ describe('authenticated persistent store API', () => {
 
   test('allows tenant-scoped maintenance storage', async () => {
     const requestedUrls: string[] = [];
-    global.fetch = jest.fn(async (url: string) => {
+    global.fetch = vi.fn(async (url: string) => {
       requestedUrls.push(url);
       if (url.endsWith('/auth/v1/user')) {
         return response(200, { id: 'user-a', email: 'user-a@example.com', user_metadata: {} });
@@ -166,7 +171,7 @@ describe('authenticated persistent store API', () => {
 
   test('does not expose workflow storage to client accounts', async () => {
     const requestedUrls: string[] = [];
-    global.fetch = jest.fn(async (url: string) => {
+    global.fetch = vi.fn(async (url: string) => {
       requestedUrls.push(url);
       if (url.endsWith('/auth/v1/user')) {
         return response(200, { id: 'client-a', email: 'client@example.com', user_metadata: {} });
@@ -193,7 +198,7 @@ describe('authenticated persistent store API', () => {
 
   test('upserts records without deleting the tenant collection', async () => {
     const requests: Array<{ url: string; method: string }> = [];
-    global.fetch = jest.fn(async (url: string, options: RequestInit = {}) => {
+    global.fetch = vi.fn(async (url: string, options: RequestInit = {}) => {
       requests.push({ url, method: options.method || 'GET' });
       if (url.endsWith('/auth/v1/user')) {
         return response(200, { id: 'user-a', email: 'user-a@example.com', user_metadata: {} });
@@ -222,7 +227,7 @@ describe('authenticated persistent store API', () => {
   });
 
   test('refreshes an expired access cookie before reading storage', async () => {
-    global.fetch = jest.fn(async (url: string) => {
+    global.fetch = vi.fn(async (url: string) => {
       if (url.includes('grant_type=refresh_token')) {
         return response(200, {
           access_token: 'new-access-token',
@@ -262,12 +267,18 @@ describe('authenticated persistent store API', () => {
       estimatedDeploymentCost: 1250,
       costingComplete: true,
     };
-    global.fetch = jest.fn(async (url: string, options: RequestInit = {}) => {
+    global.fetch = vi.fn(async (url: string, options: RequestInit = {}) => {
       if (url.endsWith('/auth/v1/user')) return response(200, { id: 'user-a', email: 'user-a@example.com' });
       if (url.includes('/rest/v1/ftf_profiles')) return response(200, [{ user_id: 'user-a', tenant_id: 'tenant-a', role: 'contractor', name: 'User A', tier: 'free' }]);
       if (url.includes('/rest/v1/ftf_store')) {
         if (url.includes('collection=eq.ftf_missions')) {
-          return response(200, [{ payload: { id: 'mission-a', deploymentWorkPack: financialPayload } }]);
+          return response(200, [{ payload: {
+            id: 'mission-a',
+            missionName: 'Operational mission',
+            deploymentWorkPack: financialPayload,
+            financialEstimate: { totalEstimatedCost: 777 },
+            financialActual: { totalActualCost: 888, profitMargin: 42 },
+          } }]);
         }
         return response(200, [{ payload: { assets: financialPayload.assets, templates: [], snapshots: [] } }]);
       }
@@ -280,6 +291,9 @@ describe('authenticated persistent store API', () => {
       assets: [{ id: 'truck-1', name: 'Truck' }],
       costingComplete: true,
     });
+    expect(missionResponse.body.records[0].missionName).toBe('Operational mission');
+    expect(missionResponse.body.records[0]).not.toHaveProperty('financialEstimate');
+    expect(missionResponse.body.records[0]).not.toHaveProperty('financialActual');
 
     const workPackResponse = createResponse();
     const req = request('GET', 'token-a', undefined, 'ftf_work_packs') as any;
@@ -289,7 +303,7 @@ describe('authenticated persistent store API', () => {
   });
 
   test('redacts maintenance costs from contractor reads', async () => {
-    global.fetch = jest.fn(async (url: string) => {
+    global.fetch = vi.fn(async (url: string) => {
       if (url.endsWith('/auth/v1/user')) return response(200, { id: 'user-a', email: 'user-a@example.com' });
       if (url.includes('/rest/v1/ftf_profiles')) return response(200, [{ user_id: 'user-a', tenant_id: 'tenant-a', role: 'contractor', name: 'User A', tier: 'free' }]);
       if (url.includes('/rest/v1/ftf_store')) return response(200, [{ payload: {
@@ -310,7 +324,7 @@ describe('authenticated persistent store API', () => {
       assets: [{ id: 'truck-1', costs: { costPerDay: 450 } }],
       estimatedDeploymentCost: 1250,
     };
-    global.fetch = jest.fn(async (url: string) => {
+    global.fetch = vi.fn(async (url: string) => {
       if (url.endsWith('/auth/v1/user')) return response(200, { id: 'admin-a', email: 'admin@example.com' });
       if (url.includes('/rest/v1/ftf_profiles')) return response(200, [{ user_id: 'admin-a', tenant_id: 'tenant-a', role: 'admin', name: 'Admin', tier: 'paid' }]);
       if (url.includes('/rest/v1/ftf_store')) {
@@ -333,13 +347,15 @@ describe('authenticated persistent store API', () => {
 
   test('preserves stored administrator costing when a contractor saves an operational mission edit', async () => {
     let postedRows: any[] = [];
-    global.fetch = jest.fn(async (url: string, options: RequestInit = {}) => {
+    global.fetch = vi.fn(async (url: string, options: RequestInit = {}) => {
       if (url.endsWith('/auth/v1/user')) return response(200, { id: 'user-a', email: 'user-a@example.com' });
       if (url.includes('/rest/v1/ftf_profiles')) return response(200, [{ user_id: 'user-a', tenant_id: 'tenant-a', role: 'contractor', name: 'User A', tier: 'free' }]);
       if (url.includes('/rest/v1/ftf_store') && (!options.method || options.method === 'GET')) {
         return response(200, [{ payload: {
           id: 'mission-a',
           deploymentWorkPack: { assets: [{ id: 'truck-1', costs: { costPerDay: 450 } }], estimatedDeploymentCost: 1250 },
+          financialEstimate: { totalEstimatedCost: 2222 },
+          financialActual: { totalActualCost: 2000, profitMargin: 10 },
         } }]);
       }
       if (url.includes('/rest/v1/ftf_store') && options.method === 'POST') {
@@ -362,11 +378,84 @@ describe('authenticated persistent store API', () => {
       estimatedDeploymentCost: 1250,
       assets: [expect.objectContaining({ id: 'truck-1', name: 'Updated truck', costs: { costPerDay: 450 } })],
     }));
+    expect(postedRows[0].payload.financialEstimate).toEqual({ totalEstimatedCost: 2222 });
+    expect(postedRows[0].payload.financialActual).toEqual({ totalActualCost: 2000, profitMargin: 10 });
+  });
+
+  test('preserves mission financials on contractor list writes without a deployment work pack', async () => {
+    let postedRows: any[] = [];
+    global.fetch = vi.fn(async (url: string, options: RequestInit = {}) => {
+      if (url.endsWith('/auth/v1/user')) return response(200, { id: 'user-a', email: 'user-a@example.com' });
+      if (url.includes('/rest/v1/ftf_profiles')) return response(200, [{ user_id: 'user-a', tenant_id: 'tenant-a', role: 'contractor', name: 'User A', tier: 'free' }]);
+      if (url.includes('/rest/v1/ftf_store') && (!options.method || options.method === 'GET')) {
+        return response(200, [{ payload: {
+          id: 'mission-no-pack',
+          missionName: 'Before edit',
+          financialEstimate: { totalEstimatedCost: 3200 },
+          financialActual: { totalActualCost: 2800, profitMargin: 12.5 },
+        } }]);
+      }
+      if (url.includes('/rest/v1/ftf_store') && options.method === 'POST') {
+        postedRows = JSON.parse(String(options.body));
+        return response(204, null);
+      }
+      return response(500, { message: 'unexpected request' });
+    }) as any;
+
+    const res = createResponse();
+    await storeHandler(request('PUT', 'token-a', {
+      collection: 'ftf_missions',
+      records: [{ id: 'mission-no-pack', missionName: 'Operational edit' }],
+    }), res);
+
+    expect(postedRows[0].payload).toMatchObject({
+      id: 'mission-no-pack',
+      missionName: 'Operational edit',
+      financialEstimate: { totalEstimatedCost: 3200 },
+      financialActual: { totalActualCost: 2800, profitMargin: 12.5 },
+    });
+    expect(postedRows[0].payload).not.toHaveProperty('deploymentWorkPack');
+  });
+
+  test('preserves mission financials on contractor singleton writes without a deployment work pack', async () => {
+    let postedRows: any[] = [];
+    global.fetch = vi.fn(async (url: string, options: RequestInit = {}) => {
+      if (url.endsWith('/auth/v1/user')) return response(200, { id: 'user-a', email: 'user-a@example.com' });
+      if (url.includes('/rest/v1/ftf_profiles')) return response(200, [{ user_id: 'user-a', tenant_id: 'tenant-a', role: 'contractor', name: 'User A', tier: 'free' }]);
+      if (url.includes('/rest/v1/ftf_store') && (!options.method || options.method === 'GET')) {
+        return response(200, [{ payload: {
+          id: 'mission-singleton',
+          missionName: 'Before edit',
+          financialEstimate: { totalEstimatedCost: 5100 },
+          financialActual: { totalActualCost: 4700, profitMargin: 8 },
+        } }]);
+      }
+      if (url.includes('/rest/v1/ftf_store') && options.method === 'POST') {
+        postedRows = JSON.parse(String(options.body));
+        return response(204, null);
+      }
+      return response(500, { message: 'unexpected request' });
+    }) as any;
+
+    const res = createResponse();
+    await storeHandler(request('PUT', 'token-a', {
+      collection: 'ftf_missions',
+      recordId: 'mission-singleton',
+      payload: { id: 'mission-singleton', missionName: 'Singleton operational edit' },
+    }), res);
+
+    expect(postedRows[0].payload).toMatchObject({
+      id: 'mission-singleton',
+      missionName: 'Singleton operational edit',
+      financialEstimate: { totalEstimatedCost: 5100 },
+      financialActual: { totalActualCost: 4700, profitMargin: 8 },
+    });
+    expect(postedRows[0].payload).not.toHaveProperty('deploymentWorkPack');
   });
 
   test('preserves stored maintenance costs when a contractor saves an operational update', async () => {
     let postedRows: any[] = [];
-    global.fetch = jest.fn(async (url: string, options: RequestInit = {}) => {
+    global.fetch = vi.fn(async (url: string, options: RequestInit = {}) => {
       if (url.endsWith('/auth/v1/user')) return response(200, { id: 'user-a', email: 'user-a@example.com' });
       if (url.includes('/rest/v1/ftf_profiles')) return response(200, [{ user_id: 'user-a', tenant_id: 'tenant-a', role: 'contractor', name: 'User A', tier: 'free' }]);
       if (url.includes('/rest/v1/ftf_store') && (!options.method || options.method === 'GET')) {

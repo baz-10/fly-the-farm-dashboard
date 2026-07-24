@@ -1,3 +1,5 @@
+import { expect, test } from 'vitest';
+
 import { canReleaseRpas, canViewMaintenanceFinancials } from '../maintenancePermissions';
 
 test('only authorised maintenance personnel release RPAS',()=>{

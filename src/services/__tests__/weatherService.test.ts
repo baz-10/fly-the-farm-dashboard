@@ -1,10 +1,12 @@
+import { afterEach, describe, expect, test, vi } from 'vitest';
+
 import { fetchWeatherForDate, reverseGeocodeLocation } from '../weatherService';
 
 describe('weather service', () => {
-  afterEach(() => jest.restoreAllMocks());
+  afterEach(() => vi.restoreAllMocks());
 
   test('requests spray-weather fields and calculates wet-bulb Delta T', async () => {
-    const fetchMock = jest.spyOn(global, 'fetch').mockResolvedValue({
+    const fetchMock = vi.spyOn(global, 'fetch').mockResolvedValue({
       ok: true,
       json: async () => ({
         latitude: -27.4, longitude: 153.1, timezone: 'Australia/Brisbane',
@@ -26,12 +28,12 @@ describe('weather service', () => {
   });
 
   test('resolves device coordinates to a readable place name', async () => {
-    jest.spyOn(global, 'fetch').mockResolvedValue({ ok: true, json: async () => ({ locality: 'Dalby', principalSubdivision: 'Queensland', countryName: 'Australia' }) } as Response);
+    vi.spyOn(global, 'fetch').mockResolvedValue({ ok: true, json: async () => ({ locality: 'Dalby', principalSubdivision: 'Queensland', countryName: 'Australia' }) } as Response);
     await expect(reverseGeocodeLocation(-27.18, 151.26)).resolves.toBe('Dalby, Queensland, Australia');
   });
 
   test('can retain adjacent dates so remote-location current time is always present', async () => {
-    jest.spyOn(global, 'fetch').mockResolvedValue({ ok: true, json: async () => ({ latitude: 0, longitude: 179, timezone: 'Pacific/Auckland', hourly: { time: ['2026-07-19T23:00', '2026-07-20T00:00', '2026-07-21T00:00'], temperature_2m: [20,20,20], relative_humidity_2m: [50,50,50], dew_point_2m: [10,10,10], wind_speed_10m: [5,5,5], wind_direction_10m: [0,0,0], wind_gusts_10m: [6,6,6], precipitation_probability: [0,0,0], cloud_cover: [0,0,0], is_day: [0,0,0] }, daily: { time: [] } }) } as Response);
+    vi.spyOn(global, 'fetch').mockResolvedValue({ ok: true, json: async () => ({ latitude: 0, longitude: 179, timezone: 'Pacific/Auckland', hourly: { time: ['2026-07-19T23:00', '2026-07-20T00:00', '2026-07-21T00:00'], temperature_2m: [20,20,20], relative_humidity_2m: [50,50,50], dew_point_2m: [10,10,10], wind_speed_10m: [5,5,5], wind_direction_10m: [0,0,0], wind_gusts_10m: [6,6,6], precipitation_probability: [0,0,0], cloud_cover: [0,0,0], is_day: [0,0,0] }, daily: { time: [] } }) } as Response);
     const result = await fetchWeatherForDate(0, 179, '2026-07-20', true);
     expect(result.hourly.map((point) => point.time)).toEqual(['2026-07-19T23:00', '2026-07-20T00:00', '2026-07-21T00:00']);
   });

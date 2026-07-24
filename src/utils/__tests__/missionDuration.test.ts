@@ -1,3 +1,5 @@
+import { describe, expect, test } from 'vitest';
+
 import { durationPartsToMinutes, minutesToDurationParts } from '../missionDuration';
 
 describe('mission duration conversion', () => {

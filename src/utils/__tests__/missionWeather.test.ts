@@ -1,3 +1,5 @@
+import { describe, expect, test } from 'vitest';
+
 import { HourlyWeatherPoint } from '../../services/weatherService';
 import { selectWeatherWindow, validateWeatherRequest } from '../missionWeather';
 
@@ -11,6 +13,9 @@ const point = (time: string, tempC: number): HourlyWeatherPoint => ({
   windGustsKmh: 17,
   windDirectionDeg: 90,
   windDirectionCompass: 'E',
+  precipitationProbability: 0,
+  cloudCoverPercent: 10,
+  isDay: true,
 });
 
 describe('mission weather selection', () => {

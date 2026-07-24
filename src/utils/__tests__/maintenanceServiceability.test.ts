@@ -1,3 +1,5 @@
+import { expect, test } from 'vitest';
+
 import { getAssetServiceability, getMissionMaintenanceBlockers } from '../maintenanceServiceability';
 import { MaintenanceAsset, MaintenanceRecord } from '../../types/maintenance';
 
