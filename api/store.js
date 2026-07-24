@@ -404,6 +404,16 @@ async function upsertRecords(rows) {
   });
 }
 
+async function appendRecords(rows) {
+  if (rows.length === 0) return;
+  await supabaseRequest(`rest/v1/${TABLE_NAME}`, {
+    method: 'POST',
+    headers: { Prefer: 'return=minimal' },
+    body: JSON.stringify(rows),
+    publicMessage: 'Safety audit append failed.',
+  });
+}
+
 async function upsertCollection(tenantId, collection, records) {
   if (!Array.isArray(records)) throw createHttpError(400, 'Records must be an array.');
   if (records.length > MAX_RECORDS_PER_WRITE) {
@@ -472,6 +482,9 @@ module.exports = async function handler(req, res) {
       const collection = validateCollection(body.collection || req.query.collection);
       assertCollectionPermission(user, collection, 'write');
       if (Array.isArray(body.records)) {
+        if (body.records.length > MAX_RECORDS_PER_WRITE) {
+          throw createHttpError(413, `Store at most ${MAX_RECORDS_PER_WRITE} records in one request.`);
+        }
         let records = body.records;
         if (collection === SAFETY_PLAN_COLLECTION) {
           assertUniqueIds(records, 'Safety Plan record');
@@ -494,7 +507,17 @@ module.exports = async function handler(req, res) {
           const storedById = new Map(storedRecords.map((record) => [record?.id, record]));
           records = records.map((record) => contractorWritePayload(collection, record, storedById.get(record?.id)));
         }
-        await upsertCollection(tenantId, collection, records);
+        if (collection === SAFETY_PLAN_AUDIT_COLLECTION) {
+          const rows = records.map((record, index) => buildRecord(
+            tenantId,
+            collection,
+            validateRecordId(record?.id || `record_${index}`),
+            record
+          ));
+          await appendRecords(rows);
+        } else {
+          await upsertCollection(tenantId, collection, records);
+        }
         return res.status(200).json({ ok: true, count: body.records.length });
       }
 
@@ -518,7 +541,12 @@ module.exports = async function handler(req, res) {
       const payload = user.role === 'contractor' && !collection.startsWith('ftf_safety_plan_')
         ? contractorWritePayload(collection, body.payload, storedPayload)
         : body.payload;
-      await upsertRecords([buildRecord(tenantId, collection, recordId, payload)]);
+      const row = buildRecord(tenantId, collection, recordId, payload);
+      if (collection === SAFETY_PLAN_AUDIT_COLLECTION) {
+        await appendRecords([row]);
+      } else {
+        await upsertRecords([row]);
+      }
       return res.status(200).json({ ok: true, count: 1 });
     }
 

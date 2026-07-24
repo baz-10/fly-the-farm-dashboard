@@ -81,7 +81,7 @@ function mockApi({
   role?: 'admin' | 'contractor' | 'client';
   safetyPlanAuthority?: boolean;
   stored?: Array<{ tenant_id?: string; record_id?: string; payload: any }>;
-  onPost?: (rows: any[]) => void;
+  onPost?: (rows: any[], url: string, options: RequestInit) => void;
 } = {}) {
   global.fetch = vi.fn(async (url: string, options: RequestInit = {}) => {
     if (url.endsWith('/auth/v1/user')) {
@@ -98,7 +98,7 @@ function mockApi({
       }]);
     }
     if (url.includes('/rest/v1/ftf_store') && options.method === 'POST') {
-      onPost?.(JSON.parse(String(options.body)));
+      onPost?.(JSON.parse(String(options.body)), url, options);
       return response(204, null);
     }
     if (url.includes('/rest/v1/ftf_store') && options.method === 'DELETE') {
@@ -448,7 +448,16 @@ describe('Safety Plan persistent store security', () => {
   it('allows new audit IDs to be appended', async () => {
     const event = makeAuditEvent('audit-new');
     let postedRows: any[] = [];
-    mockApi({ role: 'contractor', onPost: (rows) => { postedRows = rows; } });
+    let postUrl = '';
+    let prefer = '';
+    mockApi({
+      role: 'contractor',
+      onPost: (rows, url, options) => {
+        postedRows = rows;
+        postUrl = url;
+        prefer = String((options.headers as Record<string, string>)?.Prefer || '');
+      },
+    });
     const res = createResponse();
 
     await storeHandler(request('PUT', 'ftf_safety_plan_audit', {
@@ -459,6 +468,8 @@ describe('Safety Plan persistent store security', () => {
 
     expect(res.statusCode).toBe(200);
     expect(postedRows[0].payload).toEqual(event);
+    expect(postUrl).not.toContain('on_conflict=');
+    expect(prefer).not.toContain('resolution=merge-duplicates');
   });
 
   it('rejects replacement of an existing audit ID', async () => {
