@@ -10,6 +10,7 @@
 
 # production
 /build
+/dist
 /.vercel
 /.worktrees
 

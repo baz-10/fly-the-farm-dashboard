@@ -8,6 +8,7 @@ import {
   Paper,
 } from '@mui/material';
 import { ErrorOutline as ErrorIcon, Refresh as RefreshIcon } from '@mui/icons-material';
+import { isDevelopmentEnvironment } from '../config/environment';
 
 interface Props {
   children: ReactNode;
@@ -62,7 +63,7 @@ class ErrorBoundary extends Component<Props, State> {
             {this.props.fallbackMessage || 'An unexpected error occurred in this component.'}
           </Alert>
 
-          {this.state.error && process.env.NODE_ENV === 'development' && (
+          {this.state.error && isDevelopmentEnvironment() && (
             <Box sx={{ mt: 2, mb: 2, textAlign: 'left' }}>
               <Typography variant="caption" component="pre" sx={{
                 bgcolor: 'grey.100',

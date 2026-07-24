@@ -1,3 +1,4 @@
+import { getPersistenceModeFromEnvironment } from '../../config/environment';
 import {
   PERSISTENCE_KEYS,
   readSharedCollection,
@@ -5,19 +6,24 @@ import {
   writeSharedCollection,
 } from '../persistence';
 
+jest.mock('../../config/environment', () => ({
+  getPersistenceModeFromEnvironment: jest.fn(),
+}));
+
 describe('remote persistence failures', () => {
-  const originalMode = process.env.REACT_APP_PERSISTENCE_MODE;
   const originalFetch = global.fetch;
+  const mockedGetPersistenceMode = getPersistenceModeFromEnvironment as jest.MockedFunction<
+    typeof getPersistenceModeFromEnvironment
+  >;
 
   beforeEach(() => {
-    process.env.REACT_APP_PERSISTENCE_MODE = 'remote';
+    mockedGetPersistenceMode.mockReturnValue('remote');
     localStorage.clear();
     localStorage.setItem(PERSISTENCE_KEYS.session, JSON.stringify({ id: 'user-a' }));
   });
 
   afterEach(() => {
     jest.restoreAllMocks();
-    process.env.REACT_APP_PERSISTENCE_MODE = originalMode;
     global.fetch = originalFetch;
     localStorage.clear();
   });
@@ -64,7 +70,7 @@ describe('remote persistence failures', () => {
 
   test('returns remote collections when the browser cache quota is exceeded', async () => {
     const nativeSetItem = Storage.prototype.setItem;
-    jest.spyOn(Storage.prototype, 'setItem').mockImplementation(function (key, value) {
+    jest.spyOn(Storage.prototype, 'setItem').mockImplementation(function (this: Storage, key, value) {
       if (key.startsWith(`${PERSISTENCE_KEYS.missions}:`)) {
         throw new DOMException('The quota has been exceeded.', 'QuotaExceededError');
       }
@@ -83,7 +89,7 @@ describe('remote persistence failures', () => {
 
   test('returns remote singleton values when the browser cache quota is exceeded', async () => {
     const nativeSetItem = Storage.prototype.setItem;
-    jest.spyOn(Storage.prototype, 'setItem').mockImplementation(function (key, value) {
+    jest.spyOn(Storage.prototype, 'setItem').mockImplementation(function (this: Storage, key, value) {
       if (key.startsWith(`${PERSISTENCE_KEYS.workPacks}:`)) {
         throw new DOMException('The quota has been exceeded.', 'QuotaExceededError');
       }
@@ -102,7 +108,7 @@ describe('remote persistence failures', () => {
 
   test('still saves remotely when the browser cache quota is exceeded', async () => {
     const nativeSetItem = Storage.prototype.setItem;
-    jest.spyOn(Storage.prototype, 'setItem').mockImplementation(function (key, value) {
+    jest.spyOn(Storage.prototype, 'setItem').mockImplementation(function (this: Storage, key, value) {
       if (key.startsWith(`${PERSISTENCE_KEYS.missions}:`)) {
         throw new DOMException('The quota has been exceeded.', 'QuotaExceededError');
       }

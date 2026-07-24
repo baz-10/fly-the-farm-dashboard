@@ -5,13 +5,14 @@
  */
 import * as pdfjsLib from 'pdfjs-dist';
 import Tesseract from 'tesseract.js';
+import { getPublicAssetUrl } from '../config/environment';
 import { findTreatmentByBrand, getAllBrands } from '../data/chemicals';
 import { ChemicalEntry } from '../types/fieldManagement';
 import { searchAPVMAProducts } from './apvmaService';
 import { saveAPVMAProduct } from './savedChemicals';
 
 // Use the bundled worker
-pdfjsLib.GlobalWorkerOptions.workerSrc = `${process.env.PUBLIC_URL}/pdf.worker.min.js`;
+pdfjsLib.GlobalWorkerOptions.workerSrc = getPublicAssetUrl('pdf.worker.min.js');
 
 // ─── Types ──────────────────────────────────────────────────
 
@@ -89,7 +90,7 @@ async function ocrPdfPages(
 
     for (let i = 0; i < imagesToOcr.length; i++) {
       onProgress?.(`OCR processing image ${i + 1} of ${imagesToOcr.length}...`);
-      const jpegBlob = new Blob([imagesToOcr[i]], { type: 'image/jpeg' });
+      const jpegBlob = new Blob([Uint8Array.from(imagesToOcr[i])], { type: 'image/jpeg' });
       const jpegUrl = URL.createObjectURL(jpegBlob);
 
       try {
