@@ -43,6 +43,14 @@ const groupIcons: Record<NavigationGroupId, React.ReactNode> = {
   support: <HelpOutlineIcon />,
 };
 
+function initialOpenGroups(userId: string, activeGroupId?: NavigationGroupId): Set<NavigationGroupId> {
+  return new Set<NavigationGroupId>([
+    ...readNavigationExpansion(userId),
+    'daily',
+    ...(activeGroupId ? [activeGroupId] : []),
+  ]);
+}
+
 export function GroupedNavigation({
   expanded,
   pathname,
@@ -52,40 +60,50 @@ export function GroupedNavigation({
 }: GroupedNavigationProps) {
   const groups = React.useMemo(() => getVisibleNavigationGroups(role), [role]);
   const activeGroupId = getActiveGroupId(pathname, groups);
-  const [openGroups, setOpenGroups] = React.useState<Set<NavigationGroupId>>(
-    () => new Set<NavigationGroupId>([
-      ...readNavigationExpansion(userId),
-      'daily',
-      ...(activeGroupId ? [activeGroupId] : []),
-    ]),
-  );
+  const instanceId = React.useId();
+  const [expansion, setExpansion] = React.useState(() => ({
+    userId,
+    openGroups: initialOpenGroups(userId, activeGroupId),
+  }));
+  const currentUserOpenGroups = expansion.userId === userId
+    ? expansion.openGroups
+    : initialOpenGroups(userId, activeGroupId);
+  const openGroups = activeGroupId && !currentUserOpenGroups.has(activeGroupId)
+    ? new Set([...Array.from(currentUserOpenGroups), activeGroupId])
+    : currentUserOpenGroups;
 
   React.useEffect(() => {
-    if (!activeGroupId) return;
-    setOpenGroups(current => {
-      if (current.has(activeGroupId)) return current;
-      return new Set([...Array.from(current), activeGroupId]);
+    const nextUserOpenGroups = initialOpenGroups(userId, activeGroupId);
+    setExpansion(current => {
+      if (current.userId !== userId) {
+        return { userId, openGroups: nextUserOpenGroups };
+      }
+      if (!activeGroupId || current.openGroups.has(activeGroupId)) return current;
+      return {
+        userId,
+        openGroups: new Set([...Array.from(current.openGroups), activeGroupId]),
+      };
     });
-  }, [activeGroupId]);
+  }, [activeGroupId, userId]);
 
   const toggleGroup = (groupId: NavigationGroupId) => {
-    setOpenGroups(current => {
-      const next = new Set(current);
-      if (next.has(groupId)) {
-        next.delete(groupId);
-      } else {
-        next.add(groupId);
-      }
-      writeNavigationExpansion(userId, Array.from(next));
-      return next;
-    });
+    const next = new Set(openGroups);
+    if (groupId === activeGroupId) {
+      next.add(groupId);
+    } else if (next.has(groupId)) {
+      next.delete(groupId);
+    } else {
+      next.add(groupId);
+    }
+    setExpansion({ userId, openGroups: next });
+    writeNavigationExpansion(userId, Array.from(next));
   };
 
   return (
     <List aria-label="Primary navigation" sx={{ px: expanded ? 1.25 : 0.75, py: 1, flex: 1 }}>
       {groups.map(group => {
         const isOpen = openGroups.has(group.id);
-        const itemsId = `navigation-group-${group.id}`;
+        const itemsId = `${instanceId}-navigation-group-${group.id}`;
         const heading = (
           <ListItemButton
             aria-controls={itemsId}
