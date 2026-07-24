@@ -197,6 +197,8 @@ export interface SafetyPlanAcknowledgement {
 
 export interface SafetyPlanAuditEvent {
   id: string;
+  /** Correlates the plan mutation and its atomic audit append. */
+  operationId?: string;
   tenantId: string;
   planId: string;
   versionId?: string;

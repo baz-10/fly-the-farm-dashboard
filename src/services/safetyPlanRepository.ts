@@ -15,6 +15,12 @@ import {
   type SharedRequestOptions,
   type SharedRecordWriteOptions,
 } from './persistence';
+import {
+  acknowledgeSafetyPlan,
+  approveSafetyPlan,
+  reviseSafetyPlan,
+  submitSafetyPlan,
+} from './safetyPlanApproval';
 
 export interface SaveSafetyPlanDraftInput {
   plan: SafetyPlan;
@@ -51,6 +57,24 @@ export interface SafetyPlanRepository {
     actor: SafetyPlanActor,
     options?: SharedRequestOptions
   ): Promise<SafetyPlan>;
+  approvePlan(
+    planId: string,
+    expectedRevision: number,
+    actor: SafetyPlanActor,
+    options?: SharedRequestOptions
+  ): Promise<SafetyPlan>;
+  acknowledgePlan(
+    planId: string,
+    expectedRevision: number,
+    actor: SafetyPlanActor,
+    options?: SharedRequestOptions
+  ): Promise<SafetyPlan>;
+  revisePlan(
+    planId: string,
+    expectedRevision: number,
+    actor: SafetyPlanActor,
+    options?: SharedRequestOptions
+  ): Promise<SafetyPlan>;
   markNotRequired(
     jobId: string,
     reason: string,
@@ -74,7 +98,7 @@ export interface SafetyPlanRepository {
 
 type AuditRequest = Pick<
   SafetyPlanAuditEvent,
-  'id' | 'planId' | 'versionId' | 'action'
+  'id' | 'operationId' | 'planId' | 'versionId' | 'action'
 >;
 
 export interface SafetyPlanRepositoryDependencies {
@@ -120,6 +144,7 @@ function getSessionTenantId(): string {
 function toAuditRequest(event: SafetyPlanAuditEvent): AuditRequest {
   return {
     id: event.id,
+    ...(event.operationId ? { operationId: event.operationId } : {}),
     planId: event.planId,
     ...(event.versionId ? { versionId: event.versionId } : {}),
     action: event.action,
@@ -210,6 +235,7 @@ function makeAuditEvent(
 ): SafetyPlanAuditEvent {
   return {
     id,
+    operationId: id,
     tenantId: plan.tenantId,
     planId: plan.id,
     ...(plan.currentVersionId ? { versionId: plan.currentVersionId } : {}),
@@ -242,7 +268,10 @@ export function createSafetyPlanRepository(
         PERSISTENCE_KEYS.safetyPlans,
         plan.id,
         plan,
-        { audit: toAuditRequest(auditEvent), signal }
+        {
+          audit: toAuditRequest(auditEvent),
+          ...(signal ? { signal } : {}),
+        }
       );
     } catch (error) {
       conflictFrom(error, expectedRevision);
@@ -302,26 +331,39 @@ export function createSafetyPlanRepository(
           stored.revision
         );
       }
-      if (stored.status !== 'draft') throw new Error('Only a draft Safety Plan can be submitted.');
-      const activeVersion = currentVersion(stored);
       const now = deps.now();
-      const submitted: SafetyPlan = {
-        ...stored,
-        revision: expectedRevision + 1,
-        status: 'submitted',
-        updatedAt: now,
-        versions: stored.versions.map((version) =>
-          version.id === activeVersion.id
-            ? {
-              ...version,
-              status: 'submitted',
-              revision: version.revision + 1,
-              updatedAt: now,
-            }
-            : version
-        ),
-      };
+      const submitted = submitSafetyPlan(stored, actor, now);
       return writePlan(submitted, expectedRevision, actor, 'submitted', options?.signal);
+    },
+
+    async approvePlan(planId, expectedRevision, actor, options) {
+      const stored = await deps.readRecord(planId, options);
+      if (!stored) throw new Error('Safety Plan was not found.');
+      if (stored.revision !== expectedRevision) {
+        throw new SafetyPlanConflictError('Safety Plan changed in another session.', stored.revision);
+      }
+      const approved = await approveSafetyPlan(stored, actor, deps.now());
+      return writePlan(approved, expectedRevision, actor, 'approved', options?.signal);
+    },
+
+    async acknowledgePlan(planId, expectedRevision, actor, options) {
+      const stored = await deps.readRecord(planId, options);
+      if (!stored) throw new Error('Safety Plan was not found.');
+      if (stored.revision !== expectedRevision) {
+        throw new SafetyPlanConflictError('Safety Plan changed in another session.', stored.revision);
+      }
+      const acknowledged = acknowledgeSafetyPlan(stored, actor, deps.now());
+      return writePlan(acknowledged, expectedRevision, actor, 'acknowledged', options?.signal);
+    },
+
+    async revisePlan(planId, expectedRevision, actor, options) {
+      const stored = await deps.readRecord(planId, options);
+      if (!stored) throw new Error('Safety Plan was not found.');
+      if (stored.revision !== expectedRevision) {
+        throw new SafetyPlanConflictError('Safety Plan changed in another session.', stored.revision);
+      }
+      const revised = reviseSafetyPlan(stored, actor, deps.now());
+      return writePlan(revised, expectedRevision, actor, 'revised', options?.signal);
     },
 
     async markNotRequired(jobId, reason, actor, options) {

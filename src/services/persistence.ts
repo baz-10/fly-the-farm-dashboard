@@ -57,7 +57,7 @@ export interface SharedRecordMutationOptions {
 }
 
 export interface SharedRecordWriteOptions {
-  audit?: Pick<SafetyPlanAuditEvent, 'id' | 'planId' | 'versionId' | 'action'>;
+  audit?: Pick<SafetyPlanAuditEvent, 'id' | 'operationId' | 'planId' | 'versionId' | 'action'>;
   signal?: AbortSignal;
 }
 

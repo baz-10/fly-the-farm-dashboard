@@ -96,7 +96,7 @@ function actorFor(user: NonNullable<ReturnType<typeof useAuth>['user']>): Safety
     userId: user.id,
     name: user.name,
     role: user.role === 'admin' ? 'admin' : 'contractor',
-    operationalAuthority: user.safetyPlanAuthority,
+    operationalAuthority: user.role === 'admin' || user.safetyPlanAuthority,
   };
 }
 
@@ -135,6 +135,10 @@ export default function SafetyPlanEditor({
     saveDraft,
     retrySave,
     resolveConflict,
+    submitPlan,
+    approvePlan,
+    acknowledgePlan,
+    revisePlan,
   } = useSafetyPlans();
   const storedPlan = plans.find((plan) => plan.id === planId);
   const [draft, setDraft] = useState<SafetyPlan | undefined>(storedPlan);
@@ -303,7 +307,18 @@ export default function SafetyPlanEditor({
     <PeopleAssetsStep sections={groups[1]} sourceSnapshot={version.sourceSnapshot} onFieldChange={updateField} />,
     <HazardsControlsStep sections={groups[2]} sourceSnapshot={version.sourceSnapshot} onFieldChange={updateField} />,
     <EmergencyPlanningStep sections={groups[3]} sourceSnapshot={version.sourceSnapshot} onFieldChange={updateField} />,
-    <ReviewSubmitStep plan={draft} sections={groups[4]} onFieldChange={updateField} />,
+    <ReviewSubmitStep
+      plan={draft}
+      user={user}
+      sections={groups[4]}
+      onFieldChange={updateField}
+      sourceChanged={sourceChanged}
+      busy={effectiveSaveState === 'saving'}
+      onSubmit={() => void submitPlan(draft.id, draft.revision, actorFor(user)).catch(() => undefined)}
+      onApprove={() => void approvePlan(draft.id, draft.revision, actorFor(user)).catch(() => undefined)}
+      onAcknowledge={() => void acknowledgePlan(draft.id, draft.revision, actorFor(user)).catch(() => undefined)}
+      onRevise={() => void revisePlan(draft.id, draft.revision, actorFor(user)).catch(() => undefined)}
+    />,
   ][activeStep];
 
   const applyRefresh = () => {

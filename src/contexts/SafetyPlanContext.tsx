@@ -58,6 +58,10 @@ export interface SafetyPlanContextValue {
     expectedRevision: number,
     actor: SafetyPlanActor
   ): Promise<void>;
+  submitPlan(planId: string, expectedRevision: number, actor: SafetyPlanActor): Promise<void>;
+  approvePlan(planId: string, expectedRevision: number, actor: SafetyPlanActor): Promise<void>;
+  acknowledgePlan(planId: string, expectedRevision: number, actor: SafetyPlanActor): Promise<void>;
+  revisePlan(planId: string, expectedRevision: number, actor: SafetyPlanActor): Promise<void>;
 }
 
 interface SafetyPlanProviderProps {
@@ -76,7 +80,7 @@ interface ActiveOperation {
 }
 
 interface LifecycleLock extends ActiveOperation {
-  kind: 'delete' | 'restore';
+  kind: 'delete' | 'restore' | 'submit' | 'approve' | 'acknowledge' | 'revise';
 }
 
 const SafetyPlanContext = createContext<SafetyPlanContextValue | undefined>(undefined);
@@ -691,6 +695,58 @@ export function SafetyPlanProvider({
     setStatusForPlan,
   ]);
 
+  const runControlledTransition = useCallback(async (
+    kind: 'submit' | 'approve' | 'acknowledge' | 'revise',
+    planId: string,
+    expectedRevision: number,
+    actor: SafetyPlanActor
+  ) => {
+    currentPlanIdRef.current = planId;
+    if (!userIdRef.current) return;
+    if (lifecycleLockByPlanRef.current.has(planId)) {
+      throw new SafetyPlanLifecycleActiveError(planId);
+    }
+    const controller = new AbortController();
+    let settle!: () => void;
+    const completion = new Promise<void>((resolve) => { settle = resolve; });
+    lifecycleLockByPlanRef.current.set(planId, { kind, controller, promise: completion });
+    clearPlanTimer(planId);
+    epochByPlanRef.current.set(planId, (epochByPlanRef.current.get(planId) || 0) + 1);
+    setStatusForPlan(planId, 'saving');
+    try {
+      await abortActiveSave(planId);
+      await saveChainByPlanRef.current.get(planId);
+      const result = kind === 'submit'
+        ? await repository.submitPlan(planId, expectedRevision, actor, { signal: controller.signal })
+        : kind === 'approve'
+          ? await repository.approvePlan(planId, expectedRevision, actor, { signal: controller.signal })
+          : kind === 'acknowledge'
+            ? await repository.acknowledgePlan(planId, expectedRevision, actor, { signal: controller.signal })
+            : await repository.revisePlan(planId, expectedRevision, actor, { signal: controller.signal });
+      confirmedPlansRef.current.set(planId, result);
+      pendingByPlanRef.current.delete(planId);
+      failedByPlanRef.current.delete(planId);
+      refreshPendingRetryIds();
+      setPlans((current) => replacePlan(current, result));
+      setLastSavedAt(new Date().toISOString());
+      setStatusForPlan(planId, 'saved');
+    } catch (transitionError) {
+      if (!isAbortError(transitionError)) {
+        setStatusForPlan(planId, 'pending_retry', messageFrom(transitionError));
+      }
+      throw transitionError;
+    } finally {
+      lifecycleLockByPlanRef.current.delete(planId);
+      settle();
+    }
+  }, [
+    abortActiveSave,
+    clearPlanTimer,
+    refreshPendingRetryIds,
+    repository,
+    setStatusForPlan,
+  ]);
+
   const deleteDraft = useCallback((
     planId: string,
     expectedRevision: number,
@@ -703,6 +759,19 @@ export function SafetyPlanProvider({
     actor: SafetyPlanActor
   ) => runLifecycle('restore', planId, expectedRevision, actor), [runLifecycle]);
 
+  const submitPlan = useCallback((
+    planId: string, expectedRevision: number, actor: SafetyPlanActor
+  ) => runControlledTransition('submit', planId, expectedRevision, actor), [runControlledTransition]);
+  const approvePlan = useCallback((
+    planId: string, expectedRevision: number, actor: SafetyPlanActor
+  ) => runControlledTransition('approve', planId, expectedRevision, actor), [runControlledTransition]);
+  const acknowledgePlan = useCallback((
+    planId: string, expectedRevision: number, actor: SafetyPlanActor
+  ) => runControlledTransition('acknowledge', planId, expectedRevision, actor), [runControlledTransition]);
+  const revisePlan = useCallback((
+    planId: string, expectedRevision: number, actor: SafetyPlanActor
+  ) => runControlledTransition('revise', planId, expectedRevision, actor), [runControlledTransition]);
+
   const value = useMemo<SafetyPlanContextValue>(() => ({
     plans,
     saveState,
@@ -714,7 +783,13 @@ export function SafetyPlanProvider({
     resolveConflict,
     deleteDraft,
     restoreDraft,
+    submitPlan,
+    approvePlan,
+    acknowledgePlan,
+    revisePlan,
   }), [
+    acknowledgePlan,
+    approvePlan,
     deleteDraft,
     error,
     lastSavedAt,
@@ -722,9 +797,11 @@ export function SafetyPlanProvider({
     plans,
     resolveConflict,
     restoreDraft,
+    revisePlan,
     retrySave,
     saveDraft,
     saveState,
+    submitPlan,
   ]);
 
   return (

@@ -2,6 +2,7 @@ import { vi } from 'vitest';
 import { makeSafetyPlan, makeSafetyPlanVersion } from '../test/safetyPlanFixtures';
 import type { SafetyPlan, SafetyPlanAuditEvent, SafetyPlanVersion } from '../types/safetyPlan';
 import { AU_REOC_SAFETY_PLAN_STANDARD } from '../data/safetyPlanStandard';
+import { approveSafetyPlan } from '../services/safetyPlanApproval';
 
 let storeHandler: any;
 
@@ -371,16 +372,12 @@ describe('Safety Plan persistent store security', () => {
       status: 'submitted',
       versions: [makeSafetyPlanVersion({ status: 'submitted', revision: 2 })],
     });
-    const approved = makeSafetyPlan({
-      ...storedPlan,
-      revision: 2,
-      status: 'approved',
-      versions: [makeSafetyPlanVersion({
-        status: 'approved',
-        revision: 3,
-        approvedAt: '2026-07-24T01:00:00.000Z',
-      })],
-    });
+    const approved = await approveSafetyPlan(storedPlan, {
+      userId: 'user-a',
+      name: 'User A',
+      role: 'contractor',
+      operationalAuthority: true,
+    }, '2026-07-24T03:00:00.000Z');
     let rpcBody: Record<string, unknown> | undefined;
     mockApi({
       role: 'contractor',
@@ -3084,6 +3081,258 @@ describe('Safety Plan persistent store security', () => {
       recordType: 'draft',
       draftRevision: 2,
     });
+  });
+  it('server-verifies an approval digest and persists approval with one atomic audit operation', async () => {
+    const submittedVersion = makeSafetyPlanVersion({ status: 'submitted', revision: 2 });
+    const submitted = makeSafetyPlan({
+      tenantId: 'tenant-a',
+      revision: 2,
+      status: 'submitted',
+      versions: [submittedVersion],
+    });
+    const authority = {
+      userId: 'user-a',
+      name: 'User A',
+      role: 'contractor' as const,
+      operationalAuthority: true,
+    };
+    const approved = await approveSafetyPlan(
+      submitted,
+      authority,
+      '2026-07-24T00:00:00.000Z'
+    );
+    let rpcBody: Record<string, any> | undefined;
+    mockApi({
+      role: 'contractor',
+      safetyPlanAuthority: true,
+      stored: [{ tenant_id: 'tenant-a', record_id: submitted.id, payload: submitted }],
+      onRpc: (body) => {
+        rpcBody = body;
+        return { succeeded: true, new_payload: body.p_payload };
+      },
+    });
+    const res = createResponse();
+
+    await storeHandler(request('PUT', 'ftf_safety_plans', {
+      collection: 'ftf_safety_plans',
+      recordId: approved.id,
+      payload: approved,
+      audit: {
+        ...mutationAudit(approved, 'approved', 'operation-approve'),
+        operationId: 'operation-approve',
+      },
+    }), res);
+
+    expect(res.statusCode).toBe(200);
+    expect(rpcBody?.p_audit_record_id).toBe('operation-approve');
+    expect(rpcBody?.p_audit_payload).toMatchObject({
+      id: 'operation-approve',
+      operationId: 'operation-approve',
+      action: 'approved',
+    });
+    expect(rpcBody?.p_payload.versions[0]).toMatchObject({
+      approvedBy: expect.objectContaining({ userId: 'user-a' }),
+      retentionUntil: expect.stringMatching(/^2033-/),
+    });
+  });
+
+  it('rejects a mismatched approval digest before the atomic write', async () => {
+    const submittedVersion = makeSafetyPlanVersion({ status: 'submitted', revision: 2 });
+    const submitted = makeSafetyPlan({
+      tenantId: 'tenant-a',
+      revision: 2,
+      status: 'submitted',
+      versions: [submittedVersion],
+    });
+    const approved = {
+      ...submitted,
+      revision: 3,
+      status: 'approved' as const,
+      versions: [{
+        ...submittedVersion,
+        status: 'approved' as const,
+        revision: 3,
+        contentDigest: '0'.repeat(64),
+      }],
+    };
+    let rpcCalls = 0;
+    mockApi({
+      stored: [{ tenant_id: 'tenant-a', record_id: submitted.id, payload: submitted }],
+      onRpc: () => {
+        rpcCalls += 1;
+        return { succeeded: true };
+      },
+    });
+    const res = createResponse();
+
+    await storeHandler(request('PUT', 'ftf_safety_plans', {
+      collection: 'ftf_safety_plans',
+      recordId: approved.id,
+      payload: approved,
+      audit: mutationAudit(approved, 'approved', 'operation-forged-digest'),
+    }), res);
+
+    expect(res.statusCode).toBe(409);
+    expect(res.body.error).toMatch(/digest/i);
+    expect(rpcCalls).toBe(0);
+  });
+
+  it('server-derives acknowledgement identity, role, statement and time', async () => {
+    const submittedVersion = makeSafetyPlanVersion({
+      status: 'submitted',
+      revision: 2,
+      sourceSnapshot: {
+        ...makeSafetyPlanVersion().sourceSnapshot,
+        crew: [{ id: 'user-a', name: 'User A', role: 'PIC' }],
+      },
+    });
+    const submitted = makeSafetyPlan({
+      tenantId: 'tenant-a',
+      revision: 2,
+      status: 'submitted',
+      versions: [submittedVersion],
+    });
+    const incoming = {
+      ...submitted,
+      revision: 3,
+      versions: [{
+        ...submittedVersion,
+        revision: 3,
+        acknowledgements: [{
+          id: 'ack-1',
+          versionId: submittedVersion.id,
+          actor: { userId: 'forged', name: 'Forged', role: 'admin', operationalAuthority: true },
+          assignedRole: 'Forged',
+          statement: 'Forged',
+          acknowledgedAt: '2000-01-01T00:00:00.000Z',
+        }],
+      }],
+    };
+    let rpcBody: Record<string, any> | undefined;
+    mockApi({
+      role: 'contractor',
+      stored: [{ tenant_id: 'tenant-a', record_id: submitted.id, payload: submitted }],
+      onRpc: (body) => {
+        rpcBody = body;
+        return { succeeded: true, new_payload: body.p_payload };
+      },
+    });
+    const res = createResponse();
+
+    await storeHandler(request('PUT', 'ftf_safety_plans', {
+      collection: 'ftf_safety_plans',
+      recordId: incoming.id,
+      payload: incoming,
+      audit: mutationAudit(incoming as SafetyPlan, 'field_changed', 'operation-ack'),
+    }), res);
+
+    expect(res.statusCode).toBe(200);
+    expect(rpcBody?.p_audit_payload.action).toBe('acknowledged');
+    expect(rpcBody?.p_payload.versions[0].acknowledgements[0]).toMatchObject({
+      actor: expect.objectContaining({ userId: 'user-a', name: 'User A' }),
+      assignedRole: 'PIC',
+      statement: expect.stringMatching(/read and understood/i),
+    });
+    expect(rpcBody?.p_payload.versions[0].acknowledgements[0].acknowledgedAt)
+      .not.toBe('2000-01-01T00:00:00.000Z');
+  });
+
+  it('rejects acknowledgement by a user who is not assigned to the plan', async () => {
+    const submittedVersion = makeSafetyPlanVersion({ status: 'submitted', revision: 2 });
+    const submitted = makeSafetyPlan({
+      tenantId: 'tenant-a',
+      revision: 2,
+      status: 'submitted',
+      versions: [submittedVersion],
+    });
+    const incoming = {
+      ...submitted,
+      revision: 3,
+      versions: [{
+        ...submittedVersion,
+        revision: 3,
+        acknowledgements: [{
+          id: 'ack-1',
+          versionId: submittedVersion.id,
+          actor: { userId: 'user-a' },
+          assignedRole: 'PIC',
+          statement: 'Read',
+          acknowledgedAt: '2026-07-24T00:00:00.000Z',
+        }],
+      }],
+    };
+    let rpcCalls = 0;
+    mockApi({
+      role: 'contractor',
+      stored: [{ tenant_id: 'tenant-a', record_id: submitted.id, payload: submitted }],
+      onRpc: () => {
+        rpcCalls += 1;
+        return { succeeded: true };
+      },
+    });
+    const res = createResponse();
+
+    await storeHandler(request('PUT', 'ftf_safety_plans', {
+      collection: 'ftf_safety_plans',
+      recordId: incoming.id,
+      payload: incoming,
+      audit: mutationAudit(incoming as SafetyPlan, 'acknowledged', 'operation-unassigned-ack'),
+    }), res);
+
+    expect(res.statusCode).toBe(403);
+    expect(res.body.error).toMatch(/assigned/i);
+    expect(rpcCalls).toBe(0);
+  });
+
+  it('rejects direct API submission when a required section is incomplete', async () => {
+    const draftVersion = makeSafetyPlanVersion({
+      revision: 2,
+      sections: [{
+        id: 'required-section',
+        required: true,
+        fields: [{
+          id: 'required-field',
+          label: 'Required field',
+          helpText: '',
+          type: 'text',
+          required: true,
+          companyEditable: true,
+          value: '',
+        }],
+      }],
+    });
+    const draft = makeSafetyPlan({
+      tenantId: 'tenant-a',
+      revision: 2,
+      versions: [draftVersion],
+    });
+    const incoming = {
+      ...draft,
+      revision: 3,
+      status: 'submitted' as const,
+      versions: [{ ...draftVersion, revision: 3, status: 'submitted' as const }],
+    };
+    let rpcCalls = 0;
+    mockApi({
+      role: 'contractor',
+      stored: [{ tenant_id: 'tenant-a', record_id: draft.id, payload: draft }],
+      onRpc: () => {
+        rpcCalls += 1;
+        return { succeeded: true };
+      },
+    });
+    const res = createResponse();
+
+    await storeHandler(request('PUT', 'ftf_safety_plans', {
+      collection: 'ftf_safety_plans',
+      recordId: incoming.id,
+      payload: incoming,
+      audit: mutationAudit(incoming, 'submitted', 'operation-incomplete-submit'),
+    }), res);
+
+    expect(res.statusCode).toBe(409);
+    expect(res.body.error).toMatch(/required/i);
+    expect(rpcCalls).toBe(0);
   });
 });
 

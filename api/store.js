@@ -1,6 +1,6 @@
 const { authenticateRequest } = require('../server/session');
 const { createHttpError, supabaseRequest } = require('../server/supabase');
-const { randomUUID } = require('node:crypto');
+const { createHash, randomUUID } = require('node:crypto');
 
 const TABLE_NAME = 'ftf_store';
 const SINGLETON_RECORD_ID = '__value__';
@@ -49,6 +49,8 @@ const SAFETY_PLAN_ACTIONS = new Set([
   'draft_restored',
   'not_required_selected',
 ]);
+const SAFETY_PLAN_ACKNOWLEDGEMENT_STATEMENT =
+  'I have read and understood this Safety Plan and my assigned responsibilities.';
 
 function redactAssetCosts(asset) {
   if (!asset || typeof asset !== 'object') return asset;
@@ -228,6 +230,30 @@ function canonicalise(value) {
   );
 }
 
+function canonicalSafetyPlanVersion(version) {
+  return JSON.stringify(canonicalise({
+    id: version.id,
+    planId: version.planId,
+    version: version.version,
+    templateSnapshot: version.templateSnapshot,
+    sections: version.sections,
+    sourceSnapshot: version.sourceSnapshot,
+    attachments: version.attachments,
+    createdAt: version.createdAt,
+    createdBy: version.createdBy,
+  }));
+}
+
+function safetyPlanDigest(version) {
+  return createHash('sha256').update(canonicalSafetyPlanVersion(version)).digest('hex');
+}
+
+function safetyPlanRetentionUntil(approvedAt) {
+  const retention = new Date(approvedAt);
+  retention.setUTCFullYear(retention.getUTCFullYear() + 7);
+  return retention.toISOString();
+}
+
 function valuesEqual(left, right) {
   return JSON.stringify(canonicalise(left)) === JSON.stringify(canonicalise(right));
 }
@@ -339,9 +365,39 @@ function submittedVersionContent(version) {
     approvedAt: _approvedAt,
     contentDigest: _contentDigest,
     retentionUntil: _retentionUntil,
+    acknowledgements: _acknowledgements,
     ...content
   } = version;
   return content;
+}
+
+function versionWithoutAcknowledgements(version) {
+  if (!isObject(version)) return version;
+  const {
+    acknowledgements: _acknowledgements,
+    revision: _revision,
+    updatedAt: _updatedAt,
+    ...content
+  } = version;
+  return content;
+}
+
+function isAcknowledgementAppend(storedVersion, incomingVersion) {
+  if (
+    !isObject(incomingVersion)
+    || storedVersion.status !== incomingVersion.status
+    || !['submitted', 'approved'].includes(storedVersion.status)
+    || !valuesEqual(
+      versionWithoutAcknowledgements(storedVersion),
+      versionWithoutAcknowledgements(incomingVersion)
+    )
+  ) return false;
+  const storedAcknowledgements = storedVersion.acknowledgements || [];
+  const incomingAcknowledgements = incomingVersion.acknowledgements || [];
+  return incomingAcknowledgements.length === storedAcknowledgements.length + 1
+    && storedAcknowledgements.every(
+      (acknowledgement, index) => valuesEqual(acknowledgement, incomingAcknowledgements[index])
+    );
 }
 
 function safetyPlanActor(user) {
@@ -366,16 +422,79 @@ function normaliseSafetyPlanProvenance(actor, stored, incoming, now) {
   };
   if (stored && Array.isArray(incoming.versions)) {
     const storedById = new Map((stored.versions || []).map((version) => [version?.id, version]));
+    let addedAcknowledgementCount = 0;
     normalised = {
       ...normalised,
-      versions: incoming.versions.map((version) => {
+      versions: incoming.versions.map((incomingVersion) => {
+        let version = incomingVersion;
         const prior = storedById.get(version?.id);
+        const priorAcknowledgements = new Map(
+          (prior?.acknowledgements || []).map((acknowledgement) => [
+            acknowledgement?.id,
+            acknowledgement,
+          ])
+        );
+        const addedAcknowledgements = (version?.acknowledgements || []).filter(
+          (acknowledgement) => !priorAcknowledgements.has(acknowledgement?.id)
+        );
+        if (addedAcknowledgements.length > 0) {
+          addedAcknowledgementCount += addedAcknowledgements.length;
+          if (
+            version.id !== incoming.currentVersionId
+            || !['submitted', 'approved'].includes(prior?.status)
+            || addedAcknowledgements.length !== 1
+          ) {
+            throw createHttpError(403, 'Safety Plan acknowledgement transition is invalid.');
+          }
+          const assigned = (prior.sourceSnapshot?.crew || []).find(
+            (person) => person?.id === actor.id
+          );
+          if (!assigned) {
+            throw createHttpError(
+              403,
+              'Only assigned PICs and crew can acknowledge this Safety Plan.'
+            );
+          }
+          if ((prior.acknowledgements || []).some(
+            (acknowledgement) => acknowledgement?.actor?.userId === actor.id
+              && !acknowledgement?.withdrawnAt
+              && !acknowledgement?.replacementAcknowledgementId
+          )) {
+            throw createHttpError(
+              409,
+              'This crew member has already acknowledged this version.'
+            );
+          }
+          version = {
+            ...version,
+            acknowledgements: [
+              ...(prior.acknowledgements || []),
+              {
+                id: addedAcknowledgements[0].id,
+                versionId: prior.id,
+                actor: safetyPlanActor(actor),
+                assignedRole: assigned.role,
+                statement: SAFETY_PLAN_ACKNOWLEDGEMENT_STATEMENT,
+                acknowledgedAt: now,
+              },
+            ],
+          };
+        }
         if (prior?.status !== 'submitted') return version;
         if (version.status === 'approved') {
+          if (!isSafetyPlanAuthority(actor)) {
+            throw createHttpError(403, 'Only a Safety Plan authority may approve this plan.');
+          }
+          const contentDigest = safetyPlanDigest(prior);
+          if (version.contentDigest !== contentDigest) {
+            throw createHttpError(409, 'Safety Plan approval digest does not match its submitted content.');
+          }
           return {
             ...version,
             approvedBy: safetyPlanActor(actor),
             approvedAt: now,
+            contentDigest,
+            retentionUntil: safetyPlanRetentionUntil(now),
           };
         }
         if (version.status === 'draft') {
@@ -391,6 +510,12 @@ function normaliseSafetyPlanProvenance(actor, stored, incoming, now) {
         return version;
       }),
     };
+    if (addedAcknowledgementCount > 1) {
+      throw createHttpError(
+        403,
+        'Only one Safety Plan acknowledgement may be recorded per operation.'
+      );
+    }
   }
   if (incoming.status === 'not_required') {
     return {
@@ -463,11 +588,18 @@ function assertVersionTransition(actor, storedVersion, incomingVersion) {
     throw createHttpError(403, 'Safety Plan version ownership cannot be changed.');
   }
   if (valuesEqual(storedVersion, incomingVersion)) return;
+  const acknowledgementAppend = isAcknowledgementAppend(storedVersion, incomingVersion);
 
   if (storedVersion.status === 'superseded') {
     throw createHttpError(403, 'Superseded Safety Plan versions are immutable.');
   }
   if (storedVersion.status === 'approved') {
+    if (acknowledgementAppend) {
+      if (incomingVersion.revision !== storedVersion.revision + 1) {
+        throw createHttpError(409, 'Safety Plan revision is stale.');
+      }
+      return;
+    }
     const isSuperseding = incomingVersion.status === 'superseded'
       && isSafetyPlanAuthority(actor)
       && valuesEqual(
@@ -486,6 +618,12 @@ function assertVersionTransition(actor, storedVersion, incomingVersion) {
       throw createHttpError(403, 'Safety Plan workflow transition is not permitted.');
     }
     if (isSubmitted) {
+      if (acknowledgementAppend) {
+        if (incomingVersion.revision !== storedVersion.revision + 1) {
+          throw createHttpError(409, 'Safety Plan revision is stale.');
+        }
+        return;
+      }
       if (incomingVersion.status === 'submitted') {
         throw createHttpError(403, 'Submitted Safety Plan versions are immutable.');
       }
@@ -525,7 +663,16 @@ function assertSubmittedCurrentBoundary(stored, incoming) {
   const incomingById = new Map(incoming.versions.map((version) => [version?.id, version]));
   for (const storedVersion of stored.versions || []) {
     if (storedVersion.id === stored.currentVersionId) continue;
-    if (!valuesEqual(storedVersion, incomingById.get(storedVersion.id))) {
+    const incomingVersion = incomingById.get(storedVersion.id);
+    const revisionApprovalSupersession =
+      incoming.status === 'approved'
+      && storedVersion.status === 'approved'
+      && incomingVersion?.status === 'superseded'
+      && valuesEqual(
+        immutableVersionContent(storedVersion),
+        immutableVersionContent(incomingVersion)
+      );
+    if (!valuesEqual(storedVersion, incomingVersion) && !revisionApprovalSupersession) {
       throw createHttpError(403, 'Only the current submitted version may transition.');
     }
   }
@@ -533,6 +680,29 @@ function assertSubmittedCurrentBoundary(stored, incoming) {
   const incomingCurrent = incomingById.get(stored.currentVersionId);
   if (!['submitted', 'draft', 'approved'].includes(incomingCurrent?.status)) {
     throw createHttpError(403, 'Submitted Safety Plan transition is not permitted.');
+  }
+}
+
+function safetyPlanFieldIsEmpty(value) {
+  return value == null
+    || (typeof value === 'string' && value.trim() === '')
+    || (Array.isArray(value) && value.length === 0);
+}
+
+function assertSafetyPlanSubmissionReady(plan) {
+  const version = currentSafetyPlanVersion(plan);
+  const incomplete = (version?.sections || []).filter((section) => {
+    if (!section?.required) return false;
+    if (!Array.isArray(section.fields) || section.fields.length === 0) return true;
+    return section.fields
+      .filter((field) => field?.required)
+      .some((field) => safetyPlanFieldIsEmpty(field.value));
+  });
+  if (incomplete.length > 0) {
+    throw createHttpError(
+      409,
+      'Complete all required Safety Plan sections before submission.'
+    );
   }
 }
 
@@ -573,6 +743,9 @@ function assertSafetyPlanTransition({ actor, stored, incoming, recordId }) {
   if (!Number.isSafeInteger(stored.revision) || incoming.revision !== stored.revision + 1) {
     throw safetyPlanConflict(stored.revision, 'Safety Plan record revision is stale.');
   }
+  if (stored.status === 'draft' && incoming.status === 'submitted') {
+    assertSafetyPlanSubmissionReady(incoming);
+  }
   assertSubmittedCurrentBoundary(stored, incoming);
 
   const incomingById = new Map(incoming.versions.map((version) => [version?.id, version]));
@@ -583,6 +756,12 @@ function assertSafetyPlanTransition({ actor, stored, incoming, recordId }) {
   const storedIds = new Set((stored.versions || []).map((version) => version?.id));
   for (const incomingVersion of incoming.versions) {
     if (storedIds.has(incomingVersion.id)) continue;
+    if (!isSafetyPlanAuthority(actor)) {
+      throw createHttpError(
+        403,
+        'Only a Safety Plan authority may create a controlled revision.'
+      );
+    }
     if (incomingVersion.status !== 'draft' || incomingVersion.revision !== 1) {
       throw createHttpError(403, 'New Safety Plan versions must start as drafts.');
     }
@@ -668,12 +847,15 @@ function deriveSafetyPlanMutationAudit(stored, incoming, sourceRefreshMetadata) 
     return { action: 'revised', versionId: addedVersion.id };
   }
 
-  const supersededVersion = (incoming.versions || []).find((version) => {
-    const previous = storedVersions.get(version?.id);
-    return previous && previous.status !== 'superseded' && version.status === 'superseded';
-  });
-  if (supersededVersion) {
-    return { action: 'superseded', versionId: supersededVersion.id };
+  const storedCurrent = currentSafetyPlanVersion(stored);
+  const incomingCurrent = currentSafetyPlanVersion(incoming);
+  if (
+    storedCurrent
+    && incomingCurrent
+    && (incomingCurrent.acknowledgements || []).length
+      === (storedCurrent.acknowledgements || []).length + 1
+  ) {
+    return { action: 'acknowledged', versionId: incoming.currentVersionId };
   }
 
   if (stored.status !== incoming.status) {
@@ -689,6 +871,14 @@ function deriveSafetyPlanMutationAudit(stored, incoming, sourceRefreshMetadata) 
     if (incoming.status === 'draft' && stored.status === 'submitted') {
       return { action: 'returned_to_draft', versionId: incoming.currentVersionId };
     }
+  }
+
+  const supersededVersion = (incoming.versions || []).find((version) => {
+    const previous = storedVersions.get(version?.id);
+    return previous && previous.status !== 'superseded' && version.status === 'superseded';
+  });
+  if (supersededVersion) {
+    return { action: 'superseded', versionId: supersededVersion.id };
   }
 
   if (sourceRefreshMetadata) {
@@ -1009,6 +1199,9 @@ function normaliseSafetyAuditEventForPlan(
     : event.versionId;
   return {
     id: event.id,
+    ...(derivedMutation || event.operationId === event.id
+      ? { operationId: event.id }
+      : {}),
     tenantId: actor.tenantId,
     planId: plan.id,
     ...(versionId ? { versionId } : {}),
@@ -1207,8 +1400,10 @@ async function compareAndSwapSafetyPlan(
 }
 
 function buildServerAuditEvent(actor, plan, action, occurredAt) {
+  const operationId = randomUUID();
   return {
-    id: randomUUID(),
+    id: operationId,
+    operationId,
     tenantId: actor.tenantId,
     planId: plan.id,
     versionId: plan.currentVersionId,

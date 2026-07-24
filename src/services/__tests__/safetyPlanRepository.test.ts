@@ -159,6 +159,7 @@ describe('SafetyPlanRepository', () => {
       {
         audit: {
           id: 'generated-id',
+          operationId: 'generated-id',
           action: 'field_changed',
           planId: draft.id,
           versionId: draft.currentVersionId,

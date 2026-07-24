@@ -105,9 +105,10 @@ describe('test inventory', () => {
     const explicitPostBaselineSupplements: Record<string, number> = {
       ...supplements,
       'src/App.safetyPlanProvider.test.tsx': 1,
-      'src/__tests__/authenticated-safety-plan-api.test.ts': 74,
+      'src/__tests__/authenticated-safety-plan-api.test.ts': 79,
       'src/__tests__/safety-plan-authority-api.test.ts': 2,
       'src/components/safety-plan/SafetyPlanAuthorityManager.test.tsx': 2,
+      'src/components/safety-plan/SafetyPlanApprovalPanel.test.tsx': 4,
       'src/contexts/__tests__/SafetyPlanContext.test.tsx': 30,
       'src/pages/SafetyPlanRegister.test.tsx': 3,
       'src/pages/SafetyPlanEditor.test.tsx': 10,
@@ -116,6 +117,7 @@ describe('test inventory', () => {
       'src/services/__tests__/safetyPlanRepository.test.ts': 13,
       'src/services/__tests__/safetyPlanTemplateRepository.test.ts': 2,
       'src/services/__tests__/safetyPlanPrefill.test.ts': 4,
+      'src/services/__tests__/safetyPlanApproval.test.ts': 10,
       'src/utils/__tests__/safetyPlanPermissions.test.ts': 5,
       'src/utils/__tests__/safetyPlanRules.test.ts': 10,
       'src/utils/__tests__/safetyPlanSourceSync.test.ts': 11,
@@ -138,7 +140,7 @@ describe('test inventory', () => {
     expect(inventory.files).toEqual(Object.keys(baseline).sort());
     expect(inventory.supplementaryFiles).toEqual(Object.keys(explicitPostBaselineSupplements).sort());
     expect(supplementaryCounts).toEqual(explicitPostBaselineSupplements);
-    expect(inventory.files.length + inventory.supplementaryFiles.length).toBe(74);
+    expect(inventory.files.length + inventory.supplementaryFiles.length).toBe(76);
   });
 
   it('contains no Jest runtime API in migrated React tests', async () => {
