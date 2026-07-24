@@ -20,9 +20,7 @@ export default defineConfig(({ mode }) => {
     base: publicBaseUrl,
     envPrefix: '__FTF_NO_AUTOMATIC_CLIENT_ENV__',
     define: {
-      'process.env.REACT_APP_PERSISTENCE_MODE': JSON.stringify(persistenceMode),
-      'process.env.NODE_ENV': JSON.stringify(mode === 'development' ? 'development' : 'production'),
-      'process.env.PUBLIC_URL': JSON.stringify(publicBaseUrl),
+      'import.meta.env.VITE_PERSISTENCE_MODE': JSON.stringify(persistenceMode),
     },
     build: {
       outDir: 'dist',

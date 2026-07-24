@@ -34,6 +34,49 @@ async function findPatterns(root: string, pattern: RegExp): Promise<string[]> {
   return offenders.sort();
 }
 
+async function findProductionPatterns(root: string, pattern: RegExp): Promise<string[]> {
+  const offenders: string[] = [];
+
+  async function visit(directory: string): Promise<void> {
+    for (const entry of await readdir(directory, { withFileTypes: true })) {
+      const entryPath = path.join(directory, entry.name);
+      if (entry.isDirectory()) {
+        await visit(entryPath);
+      } else if (
+        /\.(?:[cm]?[jt]sx?|html|css)$/.test(entry.name) &&
+        !/\.test\.[jt]sx?$/.test(entry.name) &&
+        pattern.test(await readFile(entryPath, 'utf8'))
+      ) {
+        offenders.push(entryPath);
+      }
+    }
+  }
+
+  await visit(root);
+  return offenders.sort();
+}
+
+async function findEmittedPatterns(root: string, pattern: RegExp): Promise<string[]> {
+  const offenders: string[] = [];
+
+  async function visit(directory: string): Promise<void> {
+    for (const entry of await readdir(directory, { withFileTypes: true })) {
+      const entryPath = path.join(directory, entry.name);
+      if (entry.isDirectory()) {
+        await visit(entryPath);
+      } else if (
+        /\.(?:js|css|html)$/.test(entry.name) &&
+        pattern.test(await readFile(entryPath, 'utf8'))
+      ) {
+        offenders.push(entryPath);
+      }
+    }
+  }
+
+  await visit(root);
+  return offenders.sort();
+}
+
 describe('test inventory', () => {
   it('discovers the complete source test file inventory', async () => {
     const inventory = await collectTestInventory('src');
@@ -74,5 +117,25 @@ describe('test inventory', () => {
     expect(await pathExists('src/setupProxy.js')).toBe(false);
     expect(await pathExists('src/react-app-env.d.ts')).toBe(false);
     expect(await pathExists('public/index.html')).toBe(false);
+  });
+
+  it('keeps the final client dependency and source surface migration-clean', async () => {
+    const pkg = JSON.parse(await readFile('package.json', 'utf8'));
+
+    expect(pkg.dependencies?.['react-scripts']).toBeUndefined();
+    expect(pkg.devDependencies?.['@types/jest']).toBeUndefined();
+    expect(pkg.dependencies?.['react-router-dom']).toMatch(/^\^7/);
+    expect(
+      await findProductionPatterns(
+        'src',
+        /process\.env\.REACT_APP_|%PUBLIC_URL%|react-router(?:-dom)?\/dist/
+      )
+    ).toEqual([]);
+  });
+
+  it('does not emit server secret names into the production client bundle', async () => {
+    expect(
+      await findEmittedPatterns('dist', /SUPABASE_SERVICE_ROLE_KEY|ANTHROPIC_API_KEY/)
+    ).toEqual([]);
   });
 });

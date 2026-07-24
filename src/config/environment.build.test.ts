@@ -88,7 +88,7 @@ describe('Vite client environment allowlist', () => {
       path.join(fixtureDirectory, 'main.ts'),
       [
         "import './style.css';",
-        'document.body.dataset.publicBase = process.env.PUBLIC_URL;',
+        'document.body.dataset.publicBase = import.meta.env.BASE_URL;',
       ].join('\n')
     );
     await writeFile(path.join(fixtureDirectory, 'style.css'), 'body { color: #123456; }');

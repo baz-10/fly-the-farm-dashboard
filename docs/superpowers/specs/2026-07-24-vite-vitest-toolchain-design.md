@@ -1,7 +1,7 @@
 # Vite, Vitest and React Router 7 Toolchain Design
 
 **Date:** 24 July 2026  
-**Status:** Approved for written-spec review  
+**Status:** Implemented — protected preview pending
 **Scope:** Replace Create React App and Jest 27 while preserving the existing React SPA, Vercel functions, routes, tests and production data.
 
 ## 1. Objective
@@ -69,7 +69,11 @@ Create:
 - `src/vite-env.d.ts` for typed Vite environment variables;
 - `src/config/environment.ts` as the single application-facing environment adapter.
 
-Application code reads configuration through the adapter. While CRA and Vite coexist, that adapter is the only browser module allowed to read `process.env.REACT_APP_PERSISTENCE_MODE`, `process.env.NODE_ENV` and `process.env.PUBLIC_URL`. Vite maps the new `VITE_PERSISTENCE_MODE`/`VITE_PUBLIC_URL` names and their legacy equivalents onto those three exact compile-time expressions.
+Application code reads configuration through the adapter. The completed Vite
+implementation reads the exact `import.meta.env.VITE_PERSISTENCE_MODE`,
+`import.meta.env.MODE` and `import.meta.env.BASE_URL` keys. Vite maps the
+supported `VITE_PERSISTENCE_MODE` value and its legacy deployment fallback onto
+that exact client expression; mode and base URL use Vite's built-in exact keys.
 
 Vite does not expose the `VITE_*` or `REACT_APP_*` namespaces to browser code. A production-transform regression injects synthetic service-role values under both prefixes and proves neither value appears in emitted HTML, CSS or JavaScript. Server secrets remain available only to Vercel functions and local server middleware.
 
