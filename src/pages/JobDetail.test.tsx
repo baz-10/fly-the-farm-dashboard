@@ -71,4 +71,58 @@ describe('JobDetail Safety Plan boundary', () => {
       }],
     }, actor)).toBe(false);
   });
+
+  it('does not fabricate the plan creator as PIC and includes real VO and CRP assignments', () => {
+    const admin = {
+      userId: 'admin-creator',
+      name: 'Admin Creator',
+      role: 'admin' as const,
+      operationalAuthority: true,
+    };
+    expect(assignedPicCrew([], 'job-1', admin)).toEqual([]);
+
+    const mission = {
+      id: 'mission-1',
+      jobId: 'job-1',
+      jsaRecord: {
+        signOffs: {
+          pilot: { userId: 'pilot-1' },
+          crp: { userId: 'crp-1' },
+        },
+      },
+      flightExecution: {
+        crew: {
+          pilot: { userId: 'pilot-1' },
+          visualObserver: { userId: 'vo-1' },
+          crp: { userId: 'crp-1' },
+        },
+      },
+    } as unknown as MissionRecord;
+    expect(assignedPicCrew([mission], 'job-1', admin)).toEqual([
+      { id: 'crp-1', name: 'Assigned crew crp-1', role: 'CRP' },
+      { id: 'pilot-1', name: 'Assigned crew pilot-1', role: 'PIC' },
+      { id: 'vo-1', name: 'Assigned crew vo-1', role: 'Visual observer' },
+    ]);
+
+    const version = makeSafetyPlanVersion({
+      status: 'approved',
+      sourceSnapshot: {
+        ...makeSafetyPlanVersion().sourceSnapshot,
+        crew: assignedPicCrew([mission], 'job-1', admin),
+      },
+    });
+    expect(canActorAcknowledgeVersion(version, admin)).toBe(false);
+    expect(canActorAcknowledgeVersion(version, {
+      userId: 'vo-1',
+      name: 'Observer',
+      role: 'contractor',
+      operationalAuthority: false,
+    })).toBe(true);
+    expect(canActorAcknowledgeVersion(version, {
+      userId: 'crp-1',
+      name: 'CRP',
+      role: 'contractor',
+      operationalAuthority: true,
+    })).toBe(true);
+  });
 });

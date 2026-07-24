@@ -18,6 +18,11 @@ import type {
 export interface SafetyPlanPrefillCompany {
   id: string;
   name: string;
+  abn?: string;
+  reocNumber?: string;
+  phone?: string;
+  email?: string;
+  logoDataUrl?: string;
 }
 
 export interface SafetyPlanPrefillPerson {

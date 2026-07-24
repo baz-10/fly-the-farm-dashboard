@@ -112,7 +112,7 @@ describe('test inventory', () => {
       'src/components/safety-plan/SafetyPlanApprovalPanel.test.tsx': 6,
       'src/components/safety-plan/SafetyPlanAttachments.test.tsx': 5,
       'src/contexts/__tests__/SafetyPlanContext.test.tsx': 30,
-      'src/pages/JobDetail.test.tsx': 3,
+      'src/pages/JobDetail.test.tsx': 4,
       'src/pages/SafetyPlanRegister.test.tsx': 3,
       'src/pages/SafetyPlanEditor.test.tsx': 13,
       'src/pages/SafetyPlanTemplateEditor.test.tsx': 2,
@@ -120,12 +120,12 @@ describe('test inventory', () => {
       'src/services/__tests__/safetyPlanRepository.test.ts': 15,
       'src/services/__tests__/safetyPlanTemplateRepository.test.ts': 3,
       'src/services/__tests__/safetyPlanPrefill.test.ts': 4,
-      'src/services/__tests__/safetyPlanApproval.test.ts': 10,
+      'src/services/__tests__/safetyPlanApproval.test.ts': 11,
       'src/services/__tests__/safetyPlanAttachments.test.ts': 3,
       'src/utils/__tests__/safetyPlanPermissions.test.ts': 5,
       'src/utils/__tests__/safetyPlanRules.test.ts': 10,
       'src/utils/__tests__/safetyPlanSourceSync.test.ts': 11,
-      'src/utils/__tests__/safetyPlanPdf.test.ts': 6,
+      'src/utils/__tests__/safetyPlanPdf.test.ts': 7,
     };
     const supplementaryCounts = Object.fromEntries(
       await Promise.all(

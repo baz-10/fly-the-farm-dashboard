@@ -111,18 +111,26 @@ export function assignedPicCrew(
   jobId: string,
   actor: SafetyPlanActor
 ) {
-  const pilotIds = new Set<string>();
+  const assignments = new Map<string, Set<string>>();
+  const assign = (id: string | undefined, role: string) => {
+    if (!id) return;
+    const roles = assignments.get(id) ?? new Set<string>();
+    roles.add(role);
+    assignments.set(id, roles);
+  };
   for (const mission of missions.filter((candidate) => candidate.jobId === jobId)) {
-    const plannedPilotId = mission.jsaRecord?.signOffs?.pilot?.userId;
-    const executedPilotId = mission.flightExecution?.crew?.pilot?.userId;
-    if (plannedPilotId) pilotIds.add(plannedPilotId);
-    if (executedPilotId) pilotIds.add(executedPilotId);
+    assign(mission.jsaRecord?.signOffs?.pilot?.userId, 'PIC');
+    assign(mission.flightExecution?.crew?.pilot?.userId, 'PIC');
+    assign(mission.flightExecution?.crew?.visualObserver?.userId, 'Visual observer');
+    assign(mission.jsaRecord?.signOffs?.crp?.userId, 'CRP');
+    assign(mission.flightExecution?.crew?.crp?.userId, 'CRP');
+    assign(mission.approvals?.planningApproval?.approvedBy, 'CRP');
+    assign(mission.approvals?.flyingAuthorization?.authorizedBy, 'CRP');
   }
-  if (pilotIds.size === 0) pilotIds.add(actor.userId);
-  return Array.from(pilotIds).sort().map((id) => ({
+  return Array.from(assignments.entries()).sort(([left], [right]) => left.localeCompare(right)).map(([id, roles]) => ({
     id,
-    name: id === actor.userId ? actor.name : `Assigned pilot ${id}`,
-    role: 'PIC',
+    name: id === actor.userId ? actor.name : `Assigned crew ${id}`,
+    role: Array.from(roles).sort().join(' / '),
   }));
 }
 
@@ -216,7 +224,11 @@ export default function JobDetail() {
       template: currentTemplate,
       actor,
       now: new Date().toISOString(),
-      company: { id: user?.tenantId || user?.id || '', name: companyName },
+      company: {
+        id: user?.tenantId || user?.id || '',
+        name: companyName,
+        abn: licenseProfile?.generalInfo.abn || undefined,
+      },
       client,
       property,
       field,
@@ -248,7 +260,11 @@ export default function JobDetail() {
       template,
       actor,
       now,
-      company: { id: tenantId, name: companyName },
+      company: {
+        id: tenantId,
+        name: companyName,
+        abn: licenseProfile?.generalInfo.abn || undefined,
+      },
       client,
       property,
       field,

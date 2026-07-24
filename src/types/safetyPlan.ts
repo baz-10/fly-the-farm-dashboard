@@ -72,6 +72,11 @@ export interface SafetyPlanSourceSnapshot {
   company?: {
     id: string;
     name: string;
+    abn?: string;
+    reocNumber?: string;
+    phone?: string;
+    email?: string;
+    logoDataUrl?: string;
   };
   job: {
     id: string;

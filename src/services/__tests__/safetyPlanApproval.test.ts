@@ -78,6 +78,7 @@ describe('Safety Plan controlled lifecycle', () => {
           sourceLinks: version.sourceSnapshot.sourceLinks,
           missions: version.sourceSnapshot.missions,
           job: version.sourceSnapshot.job,
+          company: version.sourceSnapshot.company,
           capturedAt: version.sourceSnapshot.capturedAt,
         },
       })),
@@ -192,5 +193,39 @@ describe('Safety Plan controlled lifecycle', () => {
     expect(() => acknowledgeSafetyPlan(approved, authority, NOW)).toThrow(/assigned/i);
     const acknowledged = acknowledgeSafetyPlan(approved, pic, NOW);
     expect(() => acknowledgeSafetyPlan(acknowledged, pic, NOW)).toThrow(/already/i);
+  });
+
+  it.each([
+    ['vo-1', 'Visual observer'],
+    ['crp-1', 'CRP'],
+  ])('allows exact snapshotted %s crew to acknowledge', async (userId, role) => {
+    const version = makeSafetyPlanVersion({
+      sourceSnapshot: {
+        capturedAt: NOW,
+        company: { id: 'tenant-1', name: 'Operator Co' },
+        job: { id: 'job-1', name: 'Test job' },
+        missions: [],
+        crew: [
+          { id: 'vo-1', name: 'Observer', role: 'Visual observer' },
+          { id: 'crp-1', name: 'CRP', role: 'CRP' },
+        ],
+        sourceLinks: [],
+      },
+    });
+    const approved = await approveSafetyPlan(
+      submitSafetyPlan(makeSafetyPlan({ versions: [version] }), pic, NOW),
+      admin,
+      NOW
+    );
+    const acknowledged = acknowledgeSafetyPlan(approved, {
+      userId,
+      name: userId,
+      role: 'contractor',
+      operationalAuthority: role === 'CRP',
+    }, NOW);
+    expect(acknowledged.versions[0].acknowledgements[0]).toMatchObject({
+      actor: { userId },
+      assignedRole: role,
+    });
   });
 });

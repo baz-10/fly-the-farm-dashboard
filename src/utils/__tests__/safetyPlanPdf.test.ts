@@ -5,6 +5,19 @@ import {
   buildSafetyPlanPdf,
   safetyPlanPdfFilename,
 } from '../safetyPlanPdf';
+import type { SafetyPlanVersion } from '../../types/safetyPlan';
+
+function makePdfVersion(overrides: Partial<SafetyPlanVersion> = {}) {
+  const base = makeSafetyPlanVersion();
+  return makeSafetyPlanVersion({
+    ...overrides,
+    sourceSnapshot: {
+      ...base.sourceSnapshot,
+      company: { id: 'tenant-1', name: 'Test Operator Company' },
+      ...overrides.sourceSnapshot,
+    },
+  });
+}
 
 function extractJsPdfText(doc: Awaited<ReturnType<typeof buildSafetyPlanPdf>>): string {
   return Array.from(
@@ -14,10 +27,11 @@ function extractJsPdfText(doc: Awaited<ReturnType<typeof buildSafetyPlanPdf>>): 
 
 describe('buildSafetyPlanPdf', () => {
   it('renders the approved snapshot rather than changed live mission data', async () => {
-    const version = makeSafetyPlanVersion({
+    const version = makePdfVersion({
       status: 'approved',
       sourceSnapshot: {
         capturedAt: '2026-07-24T00:00:00.000Z',
+        company: { id: 'tenant-1', name: 'Operator Co' },
         job: { id: 'job-1', name: 'Western boundary spotter' },
         missions: [{ id: 'mission-1', name: 'Captured mission' }],
         sourceLinks: [],
@@ -38,7 +52,7 @@ describe('buildSafetyPlanPdf', () => {
   });
 
   it('includes controlled sections, provenance, approvals, acknowledgements and notice', async () => {
-    const version = makeSafetyPlanVersion({
+    const version = makePdfVersion({
       status: 'approved',
       contentDigest: 'sha256-controlled-digest',
       approvedAt: '2026-07-24T01:00:00.000Z',
@@ -99,12 +113,13 @@ describe('buildSafetyPlanPdf', () => {
   });
 
   it('strips internal audit details from a client copy', async () => {
-    const version = makeSafetyPlanVersion({
+    const version = makePdfVersion({
       status: 'approved',
       contentDigest: 'public-digest',
       approvedAt: '2026-07-24T01:00:00.000Z',
       sourceSnapshot: {
         capturedAt: '2026-07-24T00:00:00.000Z',
+        company: { id: 'tenant-1', name: 'Operator Co' },
         job: { id: 'job-1', name: 'Client job' },
         missions: [],
         sourceLinks: [{
@@ -135,7 +150,7 @@ describe('buildSafetyPlanPdf', () => {
   });
 
   it('produces identical bytes for the same immutable approved snapshot', async () => {
-    const version = makeSafetyPlanVersion({
+    const version = makePdfVersion({
       status: 'approved',
       approvedAt: '2026-07-24T01:00:00.000Z',
       contentDigest: 'abcdef0123456789abcdef0123456789',
@@ -151,10 +166,47 @@ describe('buildSafetyPlanPdf', () => {
       .toEqual(new Uint8Array(second.output('arraybuffer')));
   });
 
+  it('uses only immutable snapshot company identity after runtime licence changes', async () => {
+    const base = makePdfVersion();
+    const version = makePdfVersion({
+      status: 'approved',
+      approvedAt: '2026-07-24T01:00:00.000Z',
+      contentDigest: 'abcdef0123456789abcdef0123456789',
+      sourceSnapshot: {
+        ...base.sourceSnapshot,
+        company: {
+          id: 'tenant-1',
+          name: 'Approved Operator Pty Ltd',
+          abn: '11 222 333 444',
+        },
+      },
+    });
+    const plan = makeSafetyPlan({
+      status: 'approved',
+      currentVersionId: version.id,
+      versions: [version],
+    });
+    const approvedRuntime = await buildSafetyPlanPdf(plan, version, {
+      name: 'Approved Operator Pty Ltd',
+      abn: '11 222 333 444',
+    });
+    const mutatedRuntime = await buildSafetyPlanPdf(plan, version, {
+      name: 'Wrong Contractor Name',
+      abn: '99 999 999 999',
+    });
+    expect(new Uint8Array(mutatedRuntime.output('arraybuffer')))
+      .toEqual(new Uint8Array(approvedRuntime.output('arraybuffer')));
+    const text = extractJsPdfText(mutatedRuntime);
+    expect(text).toContain('Approved Operator Pty Ltd');
+    expect(text).toContain('11 222 333 444');
+    expect(text).not.toContain('Wrong Contractor Name');
+    expect(text).not.toContain('99 999 999 999');
+  });
+
   it('paginates a long wrapped field without writing body text over the footer', async () => {
-    const base = makeSafetyPlanVersion();
+    const base = makePdfVersion();
     const longValue = Array.from({ length: 800 }, (_, index) => `control-${index}`).join(' ');
-    const version = makeSafetyPlanVersion({
+    const version = makePdfVersion({
       status: 'approved',
       approvedAt: '2026-07-24T01:00:00.000Z',
       contentDigest: 'abcdef0123456789abcdef0123456789',

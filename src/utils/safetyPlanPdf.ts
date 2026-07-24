@@ -69,7 +69,7 @@ function valueText(value: SafetyPlanFieldValue | undefined): string {
 export async function buildSafetyPlanPdf(
   plan: SafetyPlan,
   version: SafetyPlanVersion,
-  company: SafetyPlanPdfCompany,
+  _runtimeCompany: SafetyPlanPdfCompany,
   options: SafetyPlanPdfOptions = {}
 ): Promise<jsPDF> {
   if (version.planId !== plan.id || !plan.versions.some((item) => item.id === version.id)) {
@@ -77,6 +77,10 @@ export async function buildSafetyPlanPdf(
   }
   if (version.status !== 'approved' || !version.approvedAt || !version.contentDigest) {
     throw new Error('Only an immutable approved Safety Plan version can be exported.');
+  }
+  const company = version.sourceSnapshot.company;
+  if (!company?.id || !company.name.trim()) {
+    throw new Error('Approved Safety Plan company identity is missing from the immutable snapshot.');
   }
 
   const doc = new jsPDF('p', 'mm', 'a4') as InstrumentedDocument;
@@ -138,6 +142,8 @@ export async function buildSafetyPlanPdf(
   text(company.name, { size: 13, bold: true });
   if (company.abn) text(`ABN: ${company.abn}`);
   if (company.reocNumber) text(`ReOC: ${company.reocNumber}`);
+  if (company.phone) text(`Company phone: ${company.phone}`);
+  if (company.email) text(`Company email: ${company.email}`);
   text(version.sourceSnapshot.job.name, { size: 15, bold: true });
   text(`Version ${version.version}`);
   text(`Snapshot captured: ${version.sourceSnapshot.capturedAt}`);

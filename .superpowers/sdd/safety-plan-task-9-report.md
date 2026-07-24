@@ -67,3 +67,22 @@
   snapshot data. Repeated generation produces identical bytes.
 - Wrapped body text is paginated line-by-line and is constrained above the
   footer boundary.
+
+## Final provenance fixes
+
+- Company name, ABN and optional ReOC/contact identity are captured in the
+  version source snapshot at Job-plan creation. That snapshot is part of the
+  canonical approval digest.
+- Approved PDF rendering ignores mutable runtime user/licence company values
+  and reads company identity exclusively from the immutable approved version.
+  A changed contractor/licence profile therefore cannot alter approved PDF
+  bytes or displayed operator identity.
+- Crew prefill now collects actual stable mission assignments for PIC, visual
+  observer and CRP roles from JSA sign-offs, execution crew and mission
+  approvals. Duplicate people are consolidated without losing roles.
+- The plan creator is never invented as PIC. Jobs with no assigned PIC retain
+  an empty crew field so readiness reports the missing assignment.
+- Job acknowledgement visibility and repository acknowledgement both require
+  the actor's exact stable ID in the approved/submitted crew snapshot. Tests
+  cover an unassigned administrator plus assigned visual-observer and CRP
+  acknowledgements.
