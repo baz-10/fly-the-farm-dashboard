@@ -623,7 +623,8 @@ async function compareAndSwapSafetyPlan(
   tenantId,
   recordId,
   expectedRevision,
-  payload
+  payload,
+  auditEvent
 ) {
   const rows = await supabaseRequest('rest/v1/rpc/ftf_compare_and_swap_store_payload', {
     method: 'POST',
@@ -633,6 +634,12 @@ async function compareAndSwapSafetyPlan(
       p_record_id: recordId,
       p_expected_revision: expectedRevision,
       p_payload: payload,
+      ...(auditEvent
+        ? {
+          p_audit_record_id: auditEvent.id,
+          p_audit_payload: auditEvent,
+        }
+        : {}),
     }),
     publicMessage: 'Safety Plan concurrency check failed.',
   });
@@ -653,13 +660,6 @@ function buildServerAuditEvent(actor, plan, action, occurredAt) {
     action,
     occurredAt,
   };
-}
-
-async function appendServerAuditEvent(actor, plan, action, occurredAt) {
-  const event = buildServerAuditEvent(actor, plan, action, occurredAt);
-  await appendRecords([
-    buildRecord(actor.tenantId, SAFETY_PLAN_AUDIT_COLLECTION, event.id, event),
-  ]);
 }
 
 async function upsertCollection(tenantId, collection, records) {
@@ -776,13 +776,14 @@ module.exports = async function handler(req, res) {
           revision: stored.revision + 1,
           updatedAt: now,
         };
+        const auditEvent = buildServerAuditEvent(user, restored, 'draft_restored', now);
         const saved = await compareAndSwapSafetyPlan(
           tenantId,
           recordId,
           stored.revision,
-          restored
+          restored,
+          auditEvent
         );
-        await appendServerAuditEvent(user, saved, 'draft_restored', now);
         return res.status(200).json({ ok: true, count: 1, payload: saved });
       }
 
@@ -917,13 +918,14 @@ module.exports = async function handler(req, res) {
           deletedBy: safetyPlanActor(user),
           updatedAt: occurredAt,
         };
+        const auditEvent = buildServerAuditEvent(user, deleted, 'draft_deleted', occurredAt);
         const saved = await compareAndSwapSafetyPlan(
           tenantId,
           recordId,
           stored.revision,
-          deleted
+          deleted,
+          auditEvent
         );
-        await appendServerAuditEvent(user, saved, 'draft_deleted', occurredAt);
         return res.status(200).json({ ok: true, payload: saved });
       }
       if (recordId) {

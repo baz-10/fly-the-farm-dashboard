@@ -712,10 +712,12 @@ describe('Safety Plan persistent store security', () => {
     vi.setSystemTime(new Date('2026-07-24T04:00:00.000Z'));
     const storedPlan = makeSafetyPlan({ tenantId: 'tenant-a', revision: 3 });
     let deletedPayload: SafetyPlan | undefined;
+    let rpcBody: Record<string, any> | undefined;
     const auditRows: any[] = [];
     mockApi({
       stored: [{ tenant_id: 'tenant-a', record_id: storedPlan.id, payload: storedPlan }],
       onRpc: (body) => {
+        rpcBody = body;
         deletedPayload = body.p_payload as SafetyPlan;
         return { succeeded: true, new_payload: body.p_payload };
       },
@@ -737,12 +739,14 @@ describe('Safety Plan persistent store security', () => {
         operationalAuthority: true,
       },
     });
-    expect(auditRows[0].payload).toMatchObject({
+    expect(rpcBody?.p_audit_payload).toMatchObject({
       tenantId: 'tenant-a',
       planId: storedPlan.id,
       action: 'draft_deleted',
       occurredAt: '2026-07-24T04:00:00.000Z',
     });
+    expect(rpcBody?.p_audit_record_id).toBe(rpcBody?.p_audit_payload.id);
+    expect(auditRows).toEqual([]);
     vi.useRealTimers();
   });
 
