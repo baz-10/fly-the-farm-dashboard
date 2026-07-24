@@ -17,6 +17,7 @@ let currentUser: {
   tenantId: string;
   safetyPlanAuthority: boolean;
 } | null;
+let capturedSaveError: unknown;
 
 vi.mock('../AuthContext', () => ({
   useAuth: () => ({ user: currentUser }),
@@ -61,25 +62,26 @@ function Probe() {
       <span data-testid="children-alive">alive</span>
       <span data-testid="plan-count">{plans.length}</span>
       <span data-testid="plan-job">{plans.find((plan) => plan.id === 'plan-a')?.jobId || ''}</span>
+      <span data-testid="plan-b-job">{plans.find((plan) => plan.id === 'plan-b')?.jobId || ''}</span>
       <span data-testid="save-state">{saveState}</span>
       <span data-testid="error">{error || ''}</span>
       <span data-testid="saved-at">{lastSavedAt || ''}</span>
       <span data-testid="pending-retry-plans">{pendingRetryPlanIds.join(',')}</span>
-      <button onClick={() => saveDraft({
+      <button onClick={() => void saveDraft({
         plan: makeSafetyPlan({ id: 'plan-a', revision: 1 }),
         expectedRevision: 1,
         actor,
-      })}>edit a</button>
-      <button onClick={() => saveDraft({
+      }).catch((saveError) => { capturedSaveError = saveError; })}>edit a</button>
+      <button onClick={() => void saveDraft({
         plan: makeSafetyPlan({ id: 'plan-a', jobId: 'job-newer', revision: 1 }),
         expectedRevision: 1,
         actor,
-      })}>edit a newer</button>
-      <button onClick={() => saveDraft({
+      }).catch((saveError) => { capturedSaveError = saveError; })}>edit a newer</button>
+      <button onClick={() => void saveDraft({
         plan: makeSafetyPlan({ id: 'plan-b', revision: 1 }),
         expectedRevision: 1,
         actor,
-      })}>edit b</button>
+      }).catch((saveError) => { capturedSaveError = saveError; })}>edit b</button>
       <button onClick={retrySave}>retry</button>
       <button onClick={() => resolveConflict('keep_remote')}>keep remote</button>
       <button onClick={() => resolveConflict('create_revision')}>create revision</button>
@@ -100,6 +102,7 @@ function renderProvider(repository: SafetyPlanRepository) {
 describe('SafetyPlanContext', () => {
   beforeEach(() => {
     vi.useFakeTimers();
+    capturedSaveError = undefined;
     currentUser = {
       id: 'user-1',
       name: 'Operator',
@@ -236,11 +239,13 @@ describe('SafetyPlanContext', () => {
     expect(screen.getByTestId('plan-count')).toHaveTextContent('1');
   });
 
-  it('retains a pending save for explicit retry when switching plans', async () => {
+  it('keeps independent per-plan debounces when switching plans', async () => {
+    const saveDraft = vi.fn(async ({ plan }) => ({ ...plan, revision: plan.revision + 1 }));
     const repository = makeRepository({
       listPlans: vi.fn(async () => [
         makeSafetyPlan({ id: 'plan-a', jobId: 'job-confirmed', revision: 1 }),
       ]),
+      saveDraft,
     });
     renderProvider(repository);
     await act(async () => {});
@@ -250,22 +255,18 @@ describe('SafetyPlanContext', () => {
     await act(async () => {
       fireEvent.click(screen.getByText('edit b'));
     });
-    expect(screen.getByTestId('plan-job')).toHaveTextContent('job-confirmed');
-    expect(screen.getByTestId('pending-retry-plans')).toHaveTextContent('plan-a');
+    expect(screen.getByTestId('plan-job')).toHaveTextContent('job-newer');
+    expect(screen.getByTestId('pending-retry-plans')).toHaveTextContent('');
 
     await act(async () => { vi.advanceTimersByTime(750); });
 
-    expect(repository.saveDraft).toHaveBeenCalledTimes(1);
-    expect(repository.saveDraft).toHaveBeenCalledWith(expect.objectContaining({
-      plan: expect.objectContaining({ id: 'plan-b' }),
-    }));
+    expect(repository.saveDraft).toHaveBeenCalledTimes(2);
+    expect(saveDraft.mock.calls.map(([input]) => input.plan.id).sort())
+      .toEqual(['plan-a', 'plan-b']);
 
     fireEvent.click(screen.getByText('retry'));
     await act(async () => {});
     expect(repository.saveDraft).toHaveBeenCalledTimes(2);
-    expect(repository.saveDraft).toHaveBeenLastCalledWith(expect.objectContaining({
-      plan: expect.objectContaining({ id: 'plan-a', jobId: 'job-newer' }),
-    }));
     expect(screen.getByTestId('pending-retry-plans')).toHaveTextContent('');
   });
 
@@ -566,7 +567,7 @@ describe('SafetyPlanContext', () => {
     expect(saveDraft).toHaveBeenCalledTimes(1);
   });
 
-  it('aborts and settles the prior plan save before a switched plan save starts', async () => {
+  it('allows a switched plan save to start without cancelling the prior plan', async () => {
     const order: string[] = [];
     const saveDraft = vi.fn()
       .mockImplementationOnce(({ signal }) => new Promise<ReturnType<typeof makeSafetyPlan>>((_resolve, reject) => {
@@ -590,7 +591,7 @@ describe('SafetyPlanContext', () => {
     await act(async () => {});
     await act(async () => { vi.advanceTimersByTime(750); });
 
-    expect(order).toEqual(['a-start', 'a-abort', 'b-start']);
+    expect(order).toEqual(['a-start', 'b-start']);
     expect(saveDraft).toHaveBeenCalledTimes(2);
   });
 
@@ -732,5 +733,176 @@ describe('SafetyPlanContext', () => {
 
     expect(repository.saveDraft).toHaveBeenCalledTimes(1);
     expect(screen.getByTestId('pending-retry-plans')).toHaveTextContent('');
+  });
+
+  it('preserves newer A2 debounce when Retry is clicked while A1 is active', async () => {
+    let resolveA1!: (plan: ReturnType<typeof makeSafetyPlan>) => void;
+    const saveDraft = vi.fn()
+      .mockImplementationOnce(() => new Promise<ReturnType<typeof makeSafetyPlan>>((resolve) => {
+        resolveA1 = resolve;
+      }))
+      .mockImplementationOnce(async ({ plan }) => ({ ...plan, revision: 3 }));
+    const repository = makeRepository({ saveDraft });
+    renderProvider(repository);
+    await act(async () => {});
+
+    fireEvent.click(screen.getByText('edit a'));
+    await act(async () => { vi.advanceTimersByTime(750); });
+    fireEvent.click(screen.getByText('edit a newer'));
+    fireEvent.click(screen.getByText('retry'));
+    fireEvent.click(screen.getByText('retry'));
+    await act(async () => { vi.advanceTimersByTime(750); });
+    expect(saveDraft).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      resolveA1(makeSafetyPlan({
+        id: 'plan-a',
+        revision: 2,
+        versions: [{ ...makeSafetyPlan().versions[0], revision: 2 }],
+      }));
+    });
+    await act(async () => {});
+
+    expect(saveDraft).toHaveBeenCalledTimes(2);
+    expect(saveDraft).toHaveBeenLastCalledWith(expect.objectContaining({
+      expectedRevision: 2,
+      plan: expect.objectContaining({ id: 'plan-a', jobId: 'job-newer' }),
+    }));
+  });
+
+  it('reserves all failed plan IDs synchronously across two concurrent Retry calls', async () => {
+    const saveDraft = vi.fn()
+      .mockRejectedValueOnce(new Error('A offline'))
+      .mockRejectedValueOnce(new Error('B offline'))
+      .mockImplementation(async ({ plan }) => ({ ...plan, revision: 2 }));
+    const repository = makeRepository({ saveDraft });
+    renderProvider(repository);
+    await act(async () => {});
+
+    fireEvent.click(screen.getByText('edit a'));
+    fireEvent.click(screen.getByText('edit b'));
+    await act(async () => { vi.advanceTimersByTime(750); });
+    await act(async () => {});
+    expect(saveDraft).toHaveBeenCalledTimes(2);
+    expect(screen.getByTestId('pending-retry-plans')).toHaveTextContent('plan-a');
+    expect(screen.getByTestId('pending-retry-plans')).toHaveTextContent('plan-b');
+
+    fireEvent.click(screen.getByText('retry'));
+    fireEvent.click(screen.getByText('retry'));
+    await act(async () => {});
+
+    expect(saveDraft).toHaveBeenCalledTimes(4);
+    const retriedIds = saveDraft.mock.calls.slice(2).map(([input]) => input.plan.id);
+    expect(retriedIds.sort()).toEqual(['plan-a', 'plan-b']);
+  });
+
+  it.each([
+    ['delete draft', 'delete'] as const,
+    ['restore draft', 'restore'] as const,
+  ])('rejects saveDraft before optimistic mutation while %s is active', async (button, operation) => {
+    let resolveLifecycle!: (plan: ReturnType<typeof makeSafetyPlan>) => void;
+    const active = makeSafetyPlan({
+      id: 'plan-a',
+      tenantId: 'tenant-1',
+      jobId: 'job-confirmed',
+      revision: 1,
+    });
+    const lifecycle = vi.fn(() => new Promise<ReturnType<typeof makeSafetyPlan>>((resolve) => {
+      resolveLifecycle = resolve;
+    }));
+    const repository = makeRepository({
+      listPlans: vi.fn(async () => [active]),
+      ...(operation === 'delete'
+        ? { deleteDraft: lifecycle }
+        : { restoreDraft: lifecycle }),
+    });
+    renderProvider(repository);
+    await act(async () => {});
+
+    fireEvent.click(screen.getByText(button));
+    await act(async () => {});
+    fireEvent.click(screen.getByText('edit a newer'));
+    await act(async () => { vi.advanceTimersByTime(750); });
+
+    expect(screen.getByTestId('plan-job')).toHaveTextContent('job-confirmed');
+    expect(screen.getByTestId('error')).toHaveTextContent('lifecycle operation is active');
+    expect(capturedSaveError).toMatchObject({
+      status: 409,
+      code: 'SAFETY_PLAN_LIFECYCLE_ACTIVE',
+    });
+    expect(repository.saveDraft).not.toHaveBeenCalled();
+
+    await act(async () => {
+      resolveLifecycle(operation === 'delete'
+        ? { ...active, revision: 2, deletedAt: 'now' }
+        : { ...active, revision: 3 });
+    });
+  });
+
+  it.each([
+    ['delete draft', 'delete'] as const,
+    ['restore draft', 'restore'] as const,
+  ])('releases the same-plan lifecycle lock after failed %s', async (button, operation) => {
+    let rejectLifecycle!: (error: Error) => void;
+    const active = makeSafetyPlan({
+      id: 'plan-a',
+      tenantId: 'tenant-1',
+      jobId: 'job-confirmed',
+      revision: 1,
+    });
+    const lifecycle = vi.fn(() => new Promise<ReturnType<typeof makeSafetyPlan>>((_resolve, reject) => {
+      rejectLifecycle = reject;
+    }));
+    const repository = makeRepository({
+      listPlans: vi.fn(async () => [active]),
+      ...(operation === 'delete'
+        ? { deleteDraft: lifecycle }
+        : { restoreDraft: lifecycle }),
+    });
+    renderProvider(repository);
+    await act(async () => {});
+
+    fireEvent.click(screen.getByText(button));
+    await act(async () => {});
+    fireEvent.click(screen.getByText('edit a newer'));
+    await act(async () => {});
+    expect(repository.saveDraft).not.toHaveBeenCalled();
+
+    await act(async () => {
+      rejectLifecycle(new Error(`${operation} unavailable`));
+    });
+    fireEvent.click(screen.getByText('edit a newer'));
+    await act(async () => { vi.advanceTimersByTime(750); });
+
+    expect(repository.saveDraft).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId('plan-job')).toHaveTextContent('job-newer');
+  });
+
+  it.each([
+    ['delete draft', 'delete'] as const,
+    ['restore draft', 'restore'] as const,
+  ])('keeps Plan B debounce alive while Plan A completes %s', async (button, operation) => {
+    const active = makeSafetyPlan({ id: 'plan-a', tenantId: 'tenant-1', revision: 1 });
+    const lifecycle = vi.fn(async () => operation === 'delete'
+      ? { ...active, revision: 2, deletedAt: 'now' }
+      : { ...active, revision: 3 });
+    const repository = makeRepository({
+      listPlans: vi.fn(async () => [active]),
+      ...(operation === 'delete'
+        ? { deleteDraft: lifecycle }
+        : { restoreDraft: lifecycle }),
+    });
+    renderProvider(repository);
+    await act(async () => {});
+
+    fireEvent.click(screen.getByText('edit b'));
+    fireEvent.click(screen.getByText(button));
+    await act(async () => {});
+    await act(async () => { vi.advanceTimersByTime(750); });
+
+    expect(repository.saveDraft).toHaveBeenCalledTimes(1);
+    expect(repository.saveDraft).toHaveBeenCalledWith(expect.objectContaining({
+      plan: expect.objectContaining({ id: 'plan-b' }),
+    }));
   });
 });

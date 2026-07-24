@@ -19,6 +19,16 @@ import { useAuth } from './AuthContext';
 
 export type SaveState = 'idle' | 'saving' | 'saved' | 'pending_retry' | 'conflict';
 
+export class SafetyPlanLifecycleActiveError extends Error {
+  readonly status = 409;
+  readonly code = 'SAFETY_PLAN_LIFECYCLE_ACTIVE';
+
+  constructor(planId: string) {
+    super(`Safety Plan ${planId} lifecycle operation is active. Wait for it to finish.`);
+    this.name = 'SafetyPlanLifecycleActiveError';
+  }
+}
+
 export interface SafetyPlanContextValue {
   plans: SafetyPlan[];
   saveState: SaveState;
@@ -43,6 +53,20 @@ export interface SafetyPlanContextValue {
 interface SafetyPlanProviderProps {
   children: ReactNode;
   repository?: SafetyPlanRepository;
+}
+
+interface PendingSave {
+  input: SaveSafetyPlanDraftInput;
+  generation: number;
+}
+
+interface ActiveOperation {
+  controller: AbortController;
+  promise: Promise<unknown>;
+}
+
+interface LifecycleLock extends ActiveOperation {
+  kind: 'delete' | 'restore';
 }
 
 const SafetyPlanContext = createContext<SafetyPlanContextValue | undefined>(undefined);
@@ -109,102 +133,118 @@ export function SafetyPlanProvider({
   const [lastSavedAt, setLastSavedAt] = useState<string>();
   const [error, setError] = useState<string>();
   const [pendingRetryPlanIds, setPendingRetryPlanIds] = useState<string[]>([]);
-  const timerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  const pendingRef = useRef<SaveSafetyPlanDraftInput | undefined>(undefined);
+
   const mountedRef = useRef(true);
   const userIdRef = useRef(user?.id);
   const sessionGenerationRef = useRef(0);
-  const operationGenerationRef = useRef(0);
-  const planEpochRef = useRef(new Map<string, number>());
+  const generationRef = useRef(0);
+  const currentPlanIdRef = useRef<string | undefined>(undefined);
+  const conflictPlanIdRef = useRef<string | undefined>(undefined);
   const confirmedPlansRef = useRef(new Map<string, SafetyPlan>());
-  const failedInputsRef = useRef(new Map<string, SaveSafetyPlanDraftInput>());
-  const latestPlanGenerationRef = useRef(new Map<string, number>());
-  const saveQueueRef = useRef<Promise<void>>(Promise.resolve());
-  const queuedPlanCountsRef = useRef(new Map<string, number>());
+  const timerByPlanRef = useRef(new Map<string, ReturnType<typeof setTimeout>>());
+  const pendingByPlanRef = useRef(new Map<string, PendingSave>());
+  const failedByPlanRef = useRef(new Map<string, PendingSave>());
+  const activeSaveByPlanRef = useRef(new Map<string, ActiveOperation>());
+  const saveChainByPlanRef = useRef(new Map<string, Promise<void>>());
+  const queuedCountByPlanRef = useRef(new Map<string, number>());
+  const retryReservationsRef = useRef(new Set<string>());
+  const lifecycleLockByPlanRef = useRef(new Map<string, LifecycleLock>());
+  const epochByPlanRef = useRef(new Map<string, number>());
   const loadControllerRef = useRef<AbortController | undefined>(undefined);
-  const inFlightPlanMutationsRef = useRef(new Map<string, {
-    controller: AbortController;
-    promise: Promise<unknown>;
-  }>());
   userIdRef.current = user?.id;
 
-  const clearTimer = useCallback(() => {
-    if (timerRef.current !== undefined) {
-      clearTimeout(timerRef.current);
-      timerRef.current = undefined;
-    }
+  const refreshPendingRetryIds = useCallback(() => {
+    setPendingRetryPlanIds(Array.from(failedByPlanRef.current.keys()));
   }, []);
 
-  const abortPlanMutation = useCallback(async (planId: string) => {
-    const mutation = inFlightPlanMutationsRef.current.get(planId);
-    if (!mutation) return;
-    mutation.controller.abort();
-    try {
-      await mutation.promise;
-    } catch {
-      // The operation owns its error state; cancellation only waits for settlement.
-    }
+  const setStatusForPlan = useCallback((
+    planId: string,
+    state: SaveState,
+    nextError?: string
+  ) => {
+    if (currentPlanIdRef.current !== planId) return;
+    setSaveState(state);
+    setError(nextError);
   }, []);
 
-  const abortAllMutations = useCallback(async () => {
-    const mutations = Array.from(inFlightPlanMutationsRef.current.values());
-    mutations.forEach(({ controller }) => controller.abort());
-    await Promise.allSettled(mutations.map(({ promise }) => promise));
+  const clearPlanTimer = useCallback((planId: string) => {
+    const timer = timerByPlanRef.current.get(planId);
+    if (timer !== undefined) clearTimeout(timer);
+    timerByPlanRef.current.delete(planId);
+  }, []);
+
+  const clearAllTimers = useCallback(() => {
+    timerByPlanRef.current.forEach((timer) => clearTimeout(timer));
+    timerByPlanRef.current.clear();
+  }, []);
+
+  const abortActiveSave = useCallback(async (planId: string) => {
+    const active = activeSaveByPlanRef.current.get(planId);
+    if (!active) return;
+    active.controller.abort();
+    await Promise.allSettled([active.promise]);
+  }, []);
+
+  const abortAllOperations = useCallback(async () => {
+    const operations = [
+      ...activeSaveByPlanRef.current.values(),
+      ...lifecycleLockByPlanRef.current.values(),
+    ];
+    operations.forEach(({ controller }) => controller.abort());
+    await Promise.allSettled(operations.map(({ promise }) => promise));
   }, []);
 
   useEffect(() => {
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
-      operationGenerationRef.current += 1;
-      clearTimer();
+      clearAllTimers();
       loadControllerRef.current?.abort();
-      void abortAllMutations();
+      void abortAllOperations();
     };
-  }, [abortAllMutations, clearTimer]);
+  }, [abortAllOperations, clearAllTimers]);
 
   useEffect(() => {
     const sessionGeneration = ++sessionGenerationRef.current;
-    operationGenerationRef.current += 1;
-    clearTimer();
+    clearAllTimers();
     loadControllerRef.current?.abort();
-    const priorMutationsSettled = abortAllMutations();
-    pendingRef.current = undefined;
+    const priorOperationsSettled = abortAllOperations();
+    pendingByPlanRef.current.clear();
+    failedByPlanRef.current.clear();
+    retryReservationsRef.current.clear();
     confirmedPlansRef.current.clear();
-    failedInputsRef.current.clear();
-    latestPlanGenerationRef.current.clear();
+    currentPlanIdRef.current = undefined;
+    conflictPlanIdRef.current = undefined;
     setPlans([]);
     setSaveState('idle');
     setError(undefined);
     setLastSavedAt(undefined);
     setPendingRetryPlanIds([]);
 
-    if (!user || (user.role !== 'admin' && user.role !== 'contractor')) {
-      return;
-    }
+    if (!user || (user.role !== 'admin' && user.role !== 'contractor')) return;
 
     let cancelled = false;
-    const operationGeneration = operationGenerationRef.current;
+    const generationAtLoadStart = generationRef.current;
     const loadController = new AbortController();
     loadControllerRef.current = loadController;
-    priorMutationsSettled
+    priorOperationsSettled
       .then(() => repository.listPlans({ signal: loadController.signal }))
       .then((loaded) => {
         if (
           cancelled
           || sessionGenerationRef.current !== sessionGeneration
-          || operationGenerationRef.current !== operationGeneration
+          || loadController.signal.aborted
+          || generationRef.current !== generationAtLoadStart
         ) return;
         const tenantPlans = loaded.filter((plan) => plan.tenantId === user.tenantId);
         confirmedPlansRef.current = new Map(tenantPlans.map((plan) => [plan.id, plan]));
         setPlans(tenantPlans);
       })
       .catch((loadError) => {
-        if (isAbortError(loadError)) return;
         if (
           !cancelled
+          && !isAbortError(loadError)
           && sessionGenerationRef.current === sessionGeneration
-          && operationGenerationRef.current === operationGeneration
         ) {
           setError(messageFrom(loadError));
         }
@@ -212,14 +252,13 @@ export function SafetyPlanProvider({
 
     return () => {
       cancelled = true;
-      operationGenerationRef.current += 1;
-      clearTimer();
       loadController.abort();
-      void abortAllMutations();
+      clearAllTimers();
+      void abortAllOperations();
     };
   }, [
-    abortAllMutations,
-    clearTimer,
+    abortAllOperations,
+    clearAllTimers,
     repository,
     user?.id,
     user?.role,
@@ -227,208 +266,205 @@ export function SafetyPlanProvider({
   ]);
 
   const performSave = useCallback(async (
-    originalInput: SaveSafetyPlanDraftInput,
-    generation: number,
-    planEpoch: number,
+    entry: PendingSave,
+    epoch: number,
     queuedUserId: string,
     queuedSessionGeneration: number,
     signal: AbortSignal
   ) => {
+    const planId = entry.input.plan.id;
     if (
       userIdRef.current !== queuedUserId
       || sessionGenerationRef.current !== queuedSessionGeneration
+      || (epochByPlanRef.current.get(planId) || 0) !== epoch
+      || lifecycleLockByPlanRef.current.has(planId)
     ) return;
-    if ((planEpochRef.current.get(originalInput.plan.id) || 0) !== planEpoch) return;
-    const input = rebaseInput(
-      originalInput,
-      confirmedPlansRef.current.get(originalInput.plan.id)
-    );
 
+    const input = rebaseInput(entry.input, confirmedPlansRef.current.get(planId));
     try {
       const saved = await repository.saveDraft({ ...input, signal });
       if (
         !mountedRef.current
         || userIdRef.current !== queuedUserId
         || sessionGenerationRef.current !== queuedSessionGeneration
-        || (planEpochRef.current.get(saved.id) || 0) !== planEpoch
+        || (epochByPlanRef.current.get(planId) || 0) !== epoch
       ) return;
+
       confirmedPlansRef.current.set(saved.id, saved);
-      failedInputsRef.current.delete(saved.id);
-      setPendingRetryPlanIds(Array.from(failedInputsRef.current.keys()));
-      const latestForPlan = latestPlanGenerationRef.current.get(saved.id) === generation;
-      if (latestForPlan) {
+      failedByPlanRef.current.delete(saved.id);
+      refreshPendingRetryIds();
+      const latest = pendingByPlanRef.current.get(saved.id);
+      if (latest?.generation === entry.generation) {
+        pendingByPlanRef.current.delete(saved.id);
         setPlans((current) => replacePlan(current, saved));
+        if (currentPlanIdRef.current === saved.id) {
+          setLastSavedAt(new Date().toISOString());
+          setSaveState('saved');
+          setError(undefined);
+        }
       }
-      if (generation !== operationGenerationRef.current) return;
-      pendingRef.current = undefined;
-      setLastSavedAt(new Date().toISOString());
-      setSaveState('saved');
     } catch (saveError) {
       if (isAbortError(saveError)) return;
       if (
         !mountedRef.current
         || userIdRef.current !== queuedUserId
         || sessionGenerationRef.current !== queuedSessionGeneration
-        || (planEpochRef.current.get(originalInput.plan.id) || 0) !== planEpoch
+        || (epochByPlanRef.current.get(planId) || 0) !== epoch
       ) return;
-      const latestForPlan =
-        latestPlanGenerationRef.current.get(originalInput.plan.id) === generation;
-      if (latestForPlan) {
-        failedInputsRef.current.set(originalInput.plan.id, input);
-        setPendingRetryPlanIds(Array.from(failedInputsRef.current.keys()));
-        const confirmed = confirmedPlansRef.current.get(originalInput.plan.id);
-        if (confirmed) {
-          setPlans((current) => replacePlan(current, confirmed));
-        } else if (generation !== operationGenerationRef.current) {
-          setPlans((current) =>
-            current.filter((plan) => plan.id !== originalInput.plan.id)
-          );
-        }
-      }
-      if (generation !== operationGenerationRef.current) return;
-      pendingRef.current = input;
-      setError(messageFrom(saveError));
+      const latest = pendingByPlanRef.current.get(planId);
+      if (latest?.generation !== entry.generation) return;
+      failedByPlanRef.current.set(planId, { ...entry, input });
+      refreshPendingRetryIds();
       const code = (saveError as { code?: string })?.code;
-      setSaveState(code === 'SAFETY_PLAN_CONFLICT' ? 'conflict' : 'pending_retry');
+      if (code === 'SAFETY_PLAN_CONFLICT') conflictPlanIdRef.current = planId;
+      setStatusForPlan(
+        planId,
+        code === 'SAFETY_PLAN_CONFLICT' ? 'conflict' : 'pending_retry',
+        messageFrom(saveError)
+      );
     }
-  }, [repository]);
+  }, [refreshPendingRetryIds, repository, setStatusForPlan]);
 
-  const enqueueSave = useCallback((
-    input: SaveSafetyPlanDraftInput,
-    generation: number
-  ): Promise<void> => {
+  const enqueueSave = useCallback((entry: PendingSave): Promise<void> => {
+    const planId = entry.input.plan.id;
     const queuedUserId = userIdRef.current;
     if (!queuedUserId) return Promise.resolve();
     const queuedSessionGeneration = sessionGenerationRef.current;
-    const planEpoch = planEpochRef.current.get(input.plan.id) || 0;
-    queuedPlanCountsRef.current.set(
-      input.plan.id,
-      (queuedPlanCountsRef.current.get(input.plan.id) || 0) + 1
+    const epoch = epochByPlanRef.current.get(planId) || 0;
+    queuedCountByPlanRef.current.set(
+      planId,
+      (queuedCountByPlanRef.current.get(planId) || 0) + 1
     );
-    const queued = saveQueueRef.current.then(async () => {
+
+    const prior = saveChainByPlanRef.current.get(planId) || Promise.resolve();
+    const task = prior.catch(() => undefined).then(async () => {
       if (
         userIdRef.current !== queuedUserId
         || sessionGenerationRef.current !== queuedSessionGeneration
-        || (planEpochRef.current.get(input.plan.id) || 0) !== planEpoch
+        || (epochByPlanRef.current.get(planId) || 0) !== epoch
+        || lifecycleLockByPlanRef.current.has(planId)
       ) return;
       const controller = new AbortController();
       const operation = performSave(
-        input,
-        generation,
-        planEpoch,
+        entry,
+        epoch,
         queuedUserId,
         queuedSessionGeneration,
         controller.signal
       );
-      inFlightPlanMutationsRef.current.set(input.plan.id, {
-        controller,
-        promise: operation,
-      });
+      activeSaveByPlanRef.current.set(planId, { controller, promise: operation });
       try {
         await operation;
       } finally {
-        const tracked = inFlightPlanMutationsRef.current.get(input.plan.id);
-        if (tracked?.promise === operation) {
-          inFlightPlanMutationsRef.current.delete(input.plan.id);
-        }
+        const active = activeSaveByPlanRef.current.get(planId);
+        if (active?.promise === operation) activeSaveByPlanRef.current.delete(planId);
       }
     });
-    const settled = queued.finally(() => {
-      const remaining = (queuedPlanCountsRef.current.get(input.plan.id) || 1) - 1;
-      if (remaining > 0) queuedPlanCountsRef.current.set(input.plan.id, remaining);
-      else queuedPlanCountsRef.current.delete(input.plan.id);
+
+    const settled = task.finally(() => {
+      const remaining = (queuedCountByPlanRef.current.get(planId) || 1) - 1;
+      if (remaining > 0) queuedCountByPlanRef.current.set(planId, remaining);
+      else queuedCountByPlanRef.current.delete(planId);
     });
-    saveQueueRef.current = settled.catch(() => undefined);
+    const safe = settled.catch(() => undefined);
+    saveChainByPlanRef.current.set(planId, safe);
+    void safe.finally(() => {
+      if (saveChainByPlanRef.current.get(planId) === safe) {
+        saveChainByPlanRef.current.delete(planId);
+      }
+    });
     return settled;
   }, [performSave]);
 
-  const saveDraft = useCallback(async (input: SaveSafetyPlanDraftInput) => {
-    if (!userIdRef.current) return;
-    const previous = pendingRef.current;
-    const isSwitchingPlan = Boolean(previous && previous.plan.id !== input.plan.id);
-    if (isSwitchingPlan && previous) {
-      clearTimer();
-      planEpochRef.current.set(
-        previous.plan.id,
-        (planEpochRef.current.get(previous.plan.id) || 0) + 1
-      );
-      await abortPlanMutation(previous.plan.id);
-      if (!userIdRef.current) return;
-      failedInputsRef.current.set(previous.plan.id, previous);
-      setPendingRetryPlanIds(Array.from(failedInputsRef.current.keys()));
-      const confirmed = confirmedPlansRef.current.get(previous.plan.id);
-      setPlans((current) => confirmed
-        ? replacePlan(current, confirmed)
-        : current.filter((plan) => plan.id !== previous.plan.id)
-      );
-    }
-    const generation = ++operationGenerationRef.current;
-    latestPlanGenerationRef.current.set(input.plan.id, generation);
-    clearTimer();
-    failedInputsRef.current.delete(input.plan.id);
-    setPendingRetryPlanIds(Array.from(failedInputsRef.current.keys()));
-    pendingRef.current = input;
-    setPlans((current) => replacePlan(current, input.plan));
-    setError(undefined);
-    setSaveState('saving');
-    timerRef.current = setTimeout(() => {
-      timerRef.current = undefined;
-      if (userIdRef.current) void enqueueSave(input, generation);
+  const scheduleSave = useCallback((entry: PendingSave) => {
+    const planId = entry.input.plan.id;
+    clearPlanTimer(planId);
+    const timer = setTimeout(() => {
+      timerByPlanRef.current.delete(planId);
+      const latest = pendingByPlanRef.current.get(planId);
+      if (latest?.generation === entry.generation) void enqueueSave(latest);
     }, AUTOSAVE_DELAY_MS);
-  }, [abortPlanMutation, clearTimer, enqueueSave]);
+    timerByPlanRef.current.set(planId, timer);
+  }, [clearPlanTimer, enqueueSave]);
+
+  const saveDraft = useCallback(async (input: SaveSafetyPlanDraftInput) => {
+    const planId = input.plan.id;
+    currentPlanIdRef.current = planId;
+    if (!userIdRef.current) return;
+    if (lifecycleLockByPlanRef.current.has(planId)) {
+      const lifecycleError = new SafetyPlanLifecycleActiveError(planId);
+      setSaveState('idle');
+      setError(lifecycleError.message);
+      throw lifecycleError;
+    }
+
+    const entry: PendingSave = {
+      input,
+      generation: ++generationRef.current,
+    };
+    pendingByPlanRef.current.set(planId, entry);
+    failedByPlanRef.current.delete(planId);
+    refreshPendingRetryIds();
+    setPlans((current) => replacePlan(current, input.plan));
+    setSaveState('saving');
+    setError(undefined);
+    scheduleSave(entry);
+  }, [refreshPendingRetryIds, scheduleSave]);
 
   const retrySave = useCallback(async () => {
     if (!userIdRef.current) return;
-    clearTimer();
-    const retainedByPlan = new Map(failedInputsRef.current);
-    const pending = pendingRef.current;
-    if (pending) {
-      retainedByPlan.set(pending.plan.id, pending);
+    const candidates = new Map(failedByPlanRef.current);
+    pendingByPlanRef.current.forEach((entry, planId) => {
+      if (!candidates.has(planId)) candidates.set(planId, entry);
+    });
+
+    const reserved: PendingSave[] = [];
+    for (const [planId, entry] of candidates) {
+      if (
+        retryReservationsRef.current.has(planId)
+        || lifecycleLockByPlanRef.current.has(planId)
+        || activeSaveByPlanRef.current.has(planId)
+        || queuedCountByPlanRef.current.has(planId)
+      ) continue;
+      retryReservationsRef.current.add(planId);
+      clearPlanTimer(planId);
+      failedByPlanRef.current.delete(planId);
+      reserved.push(entry);
     }
-    const retained = Array.from(retainedByPlan.values()).filter(
-      (input) =>
-        !inFlightPlanMutationsRef.current.has(input.plan.id)
-        && !queuedPlanCountsRef.current.has(input.plan.id)
-    );
-    if (retained.length === 0) return;
-    retained.forEach((input) => failedInputsRef.current.delete(input.plan.id));
-    setPendingRetryPlanIds(Array.from(failedInputsRef.current.keys()));
-    setSaveState('saving');
-    setError(undefined);
-    for (const input of retained) {
-      const generation = ++operationGenerationRef.current;
-      latestPlanGenerationRef.current.set(input.plan.id, generation);
-      await enqueueSave(input, generation);
+    refreshPendingRetryIds();
+    if (reserved.length === 0) return;
+
+    const activePlanId = currentPlanIdRef.current;
+    if (activePlanId && reserved.some((entry) => entry.input.plan.id === activePlanId)) {
+      setSaveState('saving');
+      setError(undefined);
     }
-  }, [clearTimer, enqueueSave]);
+    await Promise.all(reserved.map(async (entry) => {
+      try {
+        await enqueueSave(entry);
+      } finally {
+        retryReservationsRef.current.delete(entry.input.plan.id);
+      }
+    }));
+  }, [clearPlanTimer, enqueueSave, refreshPendingRetryIds]);
 
   const resolveConflict = useCallback(async (
     choice: 'keep_remote' | 'create_revision'
   ) => {
-    const pending = pendingRef.current;
-    if (!pending || !userIdRef.current) return;
+    const planId = conflictPlanIdRef.current || currentPlanIdRef.current;
+    if (!planId || !userIdRef.current) return;
+    const pending = pendingByPlanRef.current.get(planId);
+    if (!pending || lifecycleLockByPlanRef.current.has(planId)) return;
     const resolvingUserId = userIdRef.current;
     const resolvingSessionGeneration = sessionGenerationRef.current;
-    const generation = ++operationGenerationRef.current;
-    clearTimer();
+    clearPlanTimer(planId);
+    await abortActiveSave(planId);
 
+    const controller = new AbortController();
+    const lookup = repository.getPlan(planId, { signal: controller.signal });
+    activeSaveByPlanRef.current.set(planId, { controller, promise: lookup });
     try {
-      await abortPlanMutation(pending.plan.id);
-      const controller = new AbortController();
-      const lookup = repository.getPlan(pending.plan.id, { signal: controller.signal });
-      inFlightPlanMutationsRef.current.set(pending.plan.id, {
-        controller,
-        promise: lookup,
-      });
-      let remote: SafetyPlan | null;
-      try {
-        remote = await lookup;
-      } finally {
-        const tracked = inFlightPlanMutationsRef.current.get(pending.plan.id);
-        if (tracked?.promise === lookup) {
-          inFlightPlanMutationsRef.current.delete(pending.plan.id);
-        }
-      }
+      const remote = await lookup;
       if (
         !mountedRef.current
         || userIdRef.current !== resolvingUserId
@@ -438,17 +474,17 @@ export function SafetyPlanProvider({
 
       if (choice === 'keep_remote') {
         confirmedPlansRef.current.set(remote.id, remote);
-        pendingRef.current = undefined;
-        failedInputsRef.current.delete(remote.id);
-        setPendingRetryPlanIds(Array.from(failedInputsRef.current.keys()));
+        pendingByPlanRef.current.delete(remote.id);
+        failedByPlanRef.current.delete(remote.id);
+        conflictPlanIdRef.current = undefined;
+        refreshPendingRetryIds();
         setPlans((current) => replacePlan(current, remote));
-        setError(undefined);
-        setSaveState('idle');
+        setStatusForPlan(remote.id, 'idle');
         return;
       }
 
-      const sourceVersion = pending.plan.versions.find(
-        (version) => version.id === pending.plan.currentVersionId
+      const sourceVersion = pending.input.plan.versions.find(
+        (version) => version.id === pending.input.plan.currentVersionId
       );
       if (!sourceVersion) throw new Error('The conflicting draft version was not found.');
       const remoteCurrentVersion = remote.versions.find(
@@ -472,75 +508,119 @@ export function SafetyPlanProvider({
         versions: [...remote.versions, revision],
         updatedAt: now,
       };
-      const nextInput: SaveSafetyPlanDraftInput = {
-        plan: rebased,
-        expectedRevision: remote.revision,
-        actor: pending.actor,
-        isNewVersion: true,
+      const entry: PendingSave = {
+        generation: ++generationRef.current,
+        input: {
+          plan: rebased,
+          expectedRevision: remote.revision,
+          actor: pending.input.actor,
+          isNewVersion: true,
+        },
       };
-      pendingRef.current = nextInput;
-      latestPlanGenerationRef.current.set(nextInput.plan.id, generation);
+      pendingByPlanRef.current.set(planId, entry);
+      failedByPlanRef.current.delete(planId);
+      conflictPlanIdRef.current = undefined;
+      refreshPendingRetryIds();
       setPlans((current) => replacePlan(current, rebased));
-      setSaveState('saving');
-      await enqueueSave(nextInput, generation);
+      setStatusForPlan(planId, 'saving');
+      await enqueueSave(entry);
     } catch (resolutionError) {
       if (isAbortError(resolutionError)) return;
       if (
-        !mountedRef.current
-        || userIdRef.current !== resolvingUserId
-        || sessionGenerationRef.current !== resolvingSessionGeneration
-      ) return;
-      setError(messageFrom(resolutionError));
-      setSaveState('conflict');
+        mountedRef.current
+        && userIdRef.current === resolvingUserId
+        && sessionGenerationRef.current === resolvingSessionGeneration
+      ) {
+        setStatusForPlan(planId, 'conflict', messageFrom(resolutionError));
+      }
+    } finally {
+      const active = activeSaveByPlanRef.current.get(planId);
+      if (active?.promise === lookup) activeSaveByPlanRef.current.delete(planId);
     }
-  }, [abortPlanMutation, clearTimer, enqueueSave, repository]);
+  }, [
+    abortActiveSave,
+    clearPlanTimer,
+    enqueueSave,
+    refreshPendingRetryIds,
+    repository,
+    setStatusForPlan,
+  ]);
 
-  const deleteDraft = useCallback(async (
+  const runLifecycle = useCallback(async (
+    kind: 'delete' | 'restore',
     planId: string,
     expectedRevision: number,
     actor: SafetyPlanActor
   ) => {
+    currentPlanIdRef.current = planId;
     const mutationUserId = userIdRef.current;
     const mutationSessionGeneration = sessionGenerationRef.current;
     if (!mutationUserId) return;
-    const snapshotPending = pendingRef.current?.plan.id === planId
-      ? pendingRef.current
-      : undefined;
-    const snapshotFailed = failedInputsRef.current.get(planId);
-    const retryInput = snapshotPending || snapshotFailed;
-    clearTimer();
-    const nextEpoch = (planEpochRef.current.get(planId) || 0) + 1;
-    planEpochRef.current.set(planId, nextEpoch);
-    await abortPlanMutation(planId);
-    if (
-      !mountedRef.current
-      || userIdRef.current !== mutationUserId
-      || sessionGenerationRef.current !== mutationSessionGeneration
-    ) return;
+    if (lifecycleLockByPlanRef.current.has(planId)) {
+      const lifecycleError = new SafetyPlanLifecycleActiveError(planId);
+      setStatusForPlan(planId, 'idle', lifecycleError.message);
+      throw lifecycleError;
+    }
+
     const controller = new AbortController();
-    const mutation = repository.deleteDraft(
-      planId,
-      expectedRevision,
-      actor,
-      { signal: controller.signal }
-    );
-    inFlightPlanMutationsRef.current.set(planId, { controller, promise: mutation });
+    let settleLock!: () => void;
+    const lockPromise = new Promise<void>((resolve) => {
+      settleLock = resolve;
+    });
+    lifecycleLockByPlanRef.current.set(planId, {
+      kind,
+      controller,
+      promise: lockPromise,
+    });
+
+    const snapshotPending = pendingByPlanRef.current.get(planId);
+    const snapshotFailed = failedByPlanRef.current.get(planId);
+    const retryEntry = snapshotPending || snapshotFailed;
+    clearPlanTimer(planId);
+    epochByPlanRef.current.set(planId, (epochByPlanRef.current.get(planId) || 0) + 1);
+
     try {
-      const deleted = await mutation;
+      await abortActiveSave(planId);
+      await saveChainByPlanRef.current.get(planId);
       if (
         !mountedRef.current
         || userIdRef.current !== mutationUserId
         || sessionGenerationRef.current !== mutationSessionGeneration
       ) return;
-      pendingRef.current = pendingRef.current?.plan.id === planId
+      const mutation = kind === 'delete'
+        ? repository.deleteDraft(planId, expectedRevision, actor, {
+          signal: controller.signal,
+        })
+        : repository.restoreDraft(planId, expectedRevision, actor, {
+          signal: controller.signal,
+        });
+      const result = await mutation;
+      if (
+        !mountedRef.current
+        || userIdRef.current !== mutationUserId
+        || sessionGenerationRef.current !== mutationSessionGeneration
+      ) return;
+
+      clearPlanTimer(planId);
+      pendingByPlanRef.current.delete(planId);
+      failedByPlanRef.current.delete(planId);
+      retryReservationsRef.current.delete(planId);
+      queuedCountByPlanRef.current.delete(planId);
+      saveChainByPlanRef.current.delete(planId);
+      activeSaveByPlanRef.current.delete(planId);
+      epochByPlanRef.current.delete(planId);
+      conflictPlanIdRef.current = conflictPlanIdRef.current === planId
         ? undefined
-        : pendingRef.current;
-      failedInputsRef.current.delete(planId);
-      setPendingRetryPlanIds(Array.from(failedInputsRef.current.keys()));
-      confirmedPlansRef.current.delete(planId);
-      setPlans((current) => current.filter((plan) => plan.id !== deleted.id));
-      setError(undefined);
-      setSaveState('idle');
+        : conflictPlanIdRef.current;
+      refreshPendingRetryIds();
+      if (kind === 'delete') {
+        confirmedPlansRef.current.delete(planId);
+        setPlans((current) => current.filter((plan) => plan.id !== result.id));
+      } else {
+        confirmedPlansRef.current.set(result.id, result);
+        setPlans((current) => replacePlan(current, result));
+      }
+      setStatusForPlan(planId, 'idle');
     } catch (mutationError) {
       if (isAbortError(mutationError)) return;
       if (
@@ -548,90 +628,39 @@ export function SafetyPlanProvider({
         || userIdRef.current !== mutationUserId
         || sessionGenerationRef.current !== mutationSessionGeneration
       ) return;
-      if (retryInput) {
-        pendingRef.current = retryInput;
-        failedInputsRef.current.set(planId, retryInput);
-        setPendingRetryPlanIds(Array.from(failedInputsRef.current.keys()));
-        setPlans((current) => replacePlan(current, retryInput.plan));
-        setSaveState('pending_retry');
+      if (retryEntry) {
+        pendingByPlanRef.current.set(planId, retryEntry);
+        failedByPlanRef.current.set(planId, retryEntry);
+        setPlans((current) => replacePlan(current, retryEntry.input.plan));
+        refreshPendingRetryIds();
+        setStatusForPlan(planId, 'pending_retry', messageFrom(mutationError));
+      } else {
+        setStatusForPlan(planId, 'idle', messageFrom(mutationError));
       }
-      setError(messageFrom(mutationError));
     } finally {
-      const tracked = inFlightPlanMutationsRef.current.get(planId);
-      if (tracked?.promise === mutation) {
-        inFlightPlanMutationsRef.current.delete(planId);
-      }
+      const lock = lifecycleLockByPlanRef.current.get(planId);
+      if (lock?.promise === lockPromise) lifecycleLockByPlanRef.current.delete(planId);
+      settleLock();
     }
-  }, [abortPlanMutation, clearTimer, repository]);
+  }, [
+    abortActiveSave,
+    clearPlanTimer,
+    refreshPendingRetryIds,
+    repository,
+    setStatusForPlan,
+  ]);
 
-  const restoreDraft = useCallback(async (
+  const deleteDraft = useCallback((
     planId: string,
     expectedRevision: number,
     actor: SafetyPlanActor
-  ) => {
-    const mutationUserId = userIdRef.current;
-    const mutationSessionGeneration = sessionGenerationRef.current;
-    if (!mutationUserId) return;
-    const snapshotPending = pendingRef.current?.plan.id === planId
-      ? pendingRef.current
-      : undefined;
-    const snapshotFailed = failedInputsRef.current.get(planId);
-    const retryInput = snapshotPending || snapshotFailed;
-    clearTimer();
-    const nextEpoch = (planEpochRef.current.get(planId) || 0) + 1;
-    planEpochRef.current.set(planId, nextEpoch);
-    await abortPlanMutation(planId);
-    if (
-      !mountedRef.current
-      || userIdRef.current !== mutationUserId
-      || sessionGenerationRef.current !== mutationSessionGeneration
-    ) return;
-    const controller = new AbortController();
-    const mutation = repository.restoreDraft(
-      planId,
-      expectedRevision,
-      actor,
-      { signal: controller.signal }
-    );
-    inFlightPlanMutationsRef.current.set(planId, { controller, promise: mutation });
-    try {
-      const restored = await mutation;
-      if (
-        !mountedRef.current
-        || userIdRef.current !== mutationUserId
-        || sessionGenerationRef.current !== mutationSessionGeneration
-      ) return;
-      pendingRef.current = pendingRef.current?.plan.id === planId
-        ? undefined
-        : pendingRef.current;
-      failedInputsRef.current.delete(planId);
-      setPendingRetryPlanIds(Array.from(failedInputsRef.current.keys()));
-      confirmedPlansRef.current.set(restored.id, restored);
-      setPlans((current) => replacePlan(current, restored));
-      setError(undefined);
-      setSaveState('idle');
-    } catch (mutationError) {
-      if (isAbortError(mutationError)) return;
-      if (
-        !mountedRef.current
-        || userIdRef.current !== mutationUserId
-        || sessionGenerationRef.current !== mutationSessionGeneration
-      ) return;
-      if (retryInput) {
-        pendingRef.current = retryInput;
-        failedInputsRef.current.set(planId, retryInput);
-        setPendingRetryPlanIds(Array.from(failedInputsRef.current.keys()));
-        setPlans((current) => replacePlan(current, retryInput.plan));
-        setSaveState('pending_retry');
-      }
-      setError(messageFrom(mutationError));
-    } finally {
-      const tracked = inFlightPlanMutationsRef.current.get(planId);
-      if (tracked?.promise === mutation) {
-        inFlightPlanMutationsRef.current.delete(planId);
-      }
-    }
-  }, [abortPlanMutation, clearTimer, repository]);
+  ) => runLifecycle('delete', planId, expectedRevision, actor), [runLifecycle]);
+
+  const restoreDraft = useCallback((
+    planId: string,
+    expectedRevision: number,
+    actor: SafetyPlanActor
+  ) => runLifecycle('restore', planId, expectedRevision, actor), [runLifecycle]);
 
   const value = useMemo<SafetyPlanContextValue>(() => ({
     plans,
@@ -648,8 +677,8 @@ export function SafetyPlanProvider({
     deleteDraft,
     error,
     lastSavedAt,
-    plans,
     pendingRetryPlanIds,
+    plans,
     resolveConflict,
     restoreDraft,
     retrySave,
