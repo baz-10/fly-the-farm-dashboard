@@ -390,7 +390,7 @@ describe('Safety Plan persistent store security', () => {
     expect(rpcBody?.p_expected_revision).toBe(1);
   });
 
-  it('validates every Safety Plan in a list write against its stored ID', async () => {
+  it('rejects multi-record Safety Plan list writes before transition validation', async () => {
     const firstStored = makeSafetyPlan({
       id: 'plan-1',
       tenantId: 'tenant-a',
@@ -438,7 +438,7 @@ describe('Safety Plan persistent store security', () => {
       records: [firstIncoming, staleSecond],
     }), res);
 
-    expect(res.statusCode).toBe(409);
+    expect(res.statusCode).toBe(400);
   });
 
   it('rejects duplicate version IDs inside a Safety Plan', async () => {
@@ -705,6 +705,250 @@ describe('Safety Plan persistent store security', () => {
     }), res);
 
     expect(res.statusCode).toBe(403);
+  });
+
+  it('rejects singleton replacement of a stored draft version without writing', async () => {
+    const storedVersion = makeSafetyPlanVersion({ id: 'stored-draft', revision: 2 });
+    const storedPlan = makeSafetyPlan({
+      tenantId: 'tenant-a',
+      revision: 2,
+      currentVersionId: storedVersion.id,
+      versions: [storedVersion],
+    });
+    const replacement = makeSafetyPlanVersion({
+      id: 'replacement-draft',
+      revision: 1,
+    });
+    const incoming = makeSafetyPlan({
+      ...storedPlan,
+      revision: 3,
+      currentVersionId: replacement.id,
+      versions: [replacement],
+    });
+    let rpcCalls = 0;
+    let inserts = 0;
+    mockApi({
+      stored: [{ tenant_id: 'tenant-a', record_id: storedPlan.id, payload: storedPlan }],
+      onRpc: (body) => {
+        rpcCalls += 1;
+        return { succeeded: true, new_payload: body.p_payload };
+      },
+      onPost: () => { inserts += 1; },
+    });
+    const res = createResponse();
+
+    await storeHandler(request('PUT', 'ftf_safety_plans', {
+      collection: 'ftf_safety_plans',
+      recordId: storedPlan.id,
+      payload: incoming,
+    }), res);
+
+    expect(res.statusCode).toBe(409);
+    expect(rpcCalls).toBe(0);
+    expect(inserts).toBe(0);
+    expect(storedPlan.versions.map((version) => version.id)).toEqual(['stored-draft']);
+  });
+
+  it('rejects admin replacement of a submitted version instead of returning it to draft', async () => {
+    const submitted = makeSafetyPlanVersion({
+      id: 'submitted-version',
+      status: 'submitted',
+      revision: 2,
+    });
+    const storedPlan = makeSafetyPlan({
+      tenantId: 'tenant-a',
+      revision: 2,
+      status: 'submitted',
+      currentVersionId: submitted.id,
+      versions: [submitted],
+    });
+    const replacement = makeSafetyPlanVersion({
+      id: 'replacement-version',
+      status: 'draft',
+      revision: 1,
+    });
+    const incoming = makeSafetyPlan({
+      ...storedPlan,
+      revision: 3,
+      status: 'draft',
+      currentVersionId: replacement.id,
+      versions: [replacement],
+    });
+    let rpcCalls = 0;
+    let inserts = 0;
+    mockApi({
+      stored: [{ tenant_id: 'tenant-a', record_id: storedPlan.id, payload: storedPlan }],
+      onRpc: (body) => {
+        rpcCalls += 1;
+        return { succeeded: true, new_payload: body.p_payload };
+      },
+      onPost: () => { inserts += 1; },
+    });
+    const res = createResponse();
+
+    await storeHandler(request('PUT', 'ftf_safety_plans', {
+      collection: 'ftf_safety_plans',
+      recordId: storedPlan.id,
+      payload: incoming,
+    }), res);
+
+    expect(res.statusCode).toBe(409);
+    expect(rpcCalls).toBe(0);
+    expect(inserts).toBe(0);
+    expect(storedPlan.versions[0]).toMatchObject({
+      id: 'submitted-version',
+      status: 'submitted',
+    });
+  });
+
+  it('returns a submitted version to draft without changing its identity', async () => {
+    const submitted = makeSafetyPlanVersion({
+      id: 'submitted-version',
+      status: 'submitted',
+      revision: 2,
+    });
+    const storedPlan = makeSafetyPlan({
+      tenantId: 'tenant-a',
+      revision: 2,
+      status: 'submitted',
+      currentVersionId: submitted.id,
+      versions: [submitted],
+    });
+    const incoming = makeSafetyPlan({
+      ...storedPlan,
+      revision: 3,
+      status: 'draft',
+      versions: [{ ...submitted, status: 'draft', revision: 3 }],
+    });
+    let saved: SafetyPlan | undefined;
+    mockApi({
+      stored: [{ tenant_id: 'tenant-a', record_id: storedPlan.id, payload: storedPlan }],
+      onRpc: (body) => {
+        saved = body.p_payload as SafetyPlan;
+        return { succeeded: true, new_payload: body.p_payload };
+      },
+    });
+    const res = createResponse();
+
+    await storeHandler(request('PUT', 'ftf_safety_plans', {
+      collection: 'ftf_safety_plans',
+      recordId: storedPlan.id,
+      payload: incoming,
+    }), res);
+
+    expect(res.statusCode).toBe(200);
+    expect(saved?.currentVersionId).toBe('submitted-version');
+    expect(saved?.versions).toEqual([
+      expect.objectContaining({
+        id: 'submitted-version',
+        status: 'draft',
+        revision: 3,
+      }),
+    ]);
+  });
+
+  it('rejects a single-record list replacement that omits a stored version', async () => {
+    const storedVersion = makeSafetyPlanVersion({ id: 'stored-draft', revision: 2 });
+    const storedPlan = makeSafetyPlan({
+      tenantId: 'tenant-a',
+      revision: 2,
+      currentVersionId: storedVersion.id,
+      versions: [storedVersion],
+    });
+    const replacement = makeSafetyPlanVersion({ id: 'replacement-draft', revision: 1 });
+    const incoming = makeSafetyPlan({
+      ...storedPlan,
+      revision: 3,
+      currentVersionId: replacement.id,
+      versions: [replacement],
+    });
+    let rpcCalls = 0;
+    mockApi({
+      stored: [{ tenant_id: 'tenant-a', record_id: storedPlan.id, payload: storedPlan }],
+      onRpc: (body) => {
+        rpcCalls += 1;
+        return { succeeded: true, new_payload: body.p_payload };
+      },
+    });
+    const res = createResponse();
+
+    await storeHandler(request('PUT', 'ftf_safety_plans', {
+      collection: 'ftf_safety_plans',
+      records: [incoming],
+    }), res);
+
+    expect(res.statusCode).toBe(409);
+    expect(rpcCalls).toBe(0);
+  });
+
+  it('rejects multi-record Safety Plan writes before a later conflict can partially commit', async () => {
+    const firstStored = makeSafetyPlan({
+      id: 'plan-first',
+      tenantId: 'tenant-a',
+      revision: 2,
+      currentVersionId: 'version-first',
+      versions: [makeSafetyPlanVersion({
+        id: 'version-first',
+        planId: 'plan-first',
+        revision: 2,
+      })],
+    });
+    const secondStored = makeSafetyPlan({
+      id: 'plan-second',
+      tenantId: 'tenant-a',
+      revision: 2,
+      currentVersionId: 'version-second',
+      versions: [makeSafetyPlanVersion({
+        id: 'version-second',
+        planId: 'plan-second',
+        revision: 2,
+      })],
+    });
+    const firstIncoming = makeSafetyPlan({
+      ...firstStored,
+      revision: 3,
+      versions: [makeSafetyPlanVersion({
+        id: 'version-first',
+        planId: 'plan-first',
+        revision: 3,
+      })],
+    });
+    const conflictingSecond = makeSafetyPlan({
+      ...secondStored,
+      revision: 3,
+      versions: [makeSafetyPlanVersion({
+        id: 'version-second',
+        planId: 'plan-second',
+        revision: 3,
+      })],
+    });
+    let rpcCalls = 0;
+    let inserts = 0;
+    mockApi({
+      stored: [
+        { tenant_id: 'tenant-a', record_id: firstStored.id, payload: firstStored },
+        { tenant_id: 'tenant-a', record_id: secondStored.id, payload: secondStored },
+      ],
+      onRpc: (body) => {
+        rpcCalls += 1;
+        return rpcCalls === 1
+          ? { succeeded: true, new_payload: body.p_payload }
+          : { succeeded: false };
+      },
+      onPost: () => { inserts += 1; },
+    });
+    const res = createResponse();
+
+    await storeHandler(request('PUT', 'ftf_safety_plans', {
+      collection: 'ftf_safety_plans',
+      records: [firstIncoming, conflictingSecond],
+    }), res);
+
+    expect(res.statusCode).toBe(400);
+    expect(rpcCalls).toBe(0);
+    expect(inserts).toBe(0);
+    expect(firstStored.revision).toBe(2);
+    expect(firstStored.versions[0].revision).toBe(2);
   });
 
   it('soft deletes a draft with server-derived metadata and audit', async () => {

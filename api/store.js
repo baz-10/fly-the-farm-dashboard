@@ -337,13 +337,10 @@ function assertIncomingPlanShape(actor, incoming, recordId) {
 
 function assertVersionTransition(actor, storedVersion, incomingVersion) {
   if (!incomingVersion) {
-    if (['approved', 'superseded'].includes(storedVersion.status)) {
-      throw createHttpError(403, 'Approved and superseded Safety Plan versions cannot be deleted.');
-    }
-    if (actor.role !== 'admin') {
-      throw createHttpError(403, 'Only administrators may delete draft Safety Plan versions.');
-    }
-    return;
+    throw createHttpError(
+      409,
+      'Safety Plan versions cannot be removed by an update. Use recoverable draft deletion.'
+    );
   }
   if (incomingVersion.planId !== storedVersion.planId) {
     throw createHttpError(403, 'Safety Plan version ownership cannot be changed.');
@@ -790,6 +787,12 @@ module.exports = async function handler(req, res) {
       if (Array.isArray(body.records)) {
         if (body.records.length > MAX_RECORDS_PER_WRITE) {
           throw createHttpError(413, `Store at most ${MAX_RECORDS_PER_WRITE} records in one request.`);
+        }
+        if (collection === SAFETY_PLAN_COLLECTION && body.records.length > 1) {
+          throw createHttpError(
+            400,
+            'Safety Plans must be saved one record at a time to preserve atomic revisions.'
+          );
         }
         let records = body.records;
         let safetyPlanWrites = [];
