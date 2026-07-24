@@ -272,7 +272,13 @@ describe('authenticated persistent store API', () => {
       if (url.includes('/rest/v1/ftf_profiles')) return response(200, [{ user_id: 'user-a', tenant_id: 'tenant-a', role: 'contractor', name: 'User A', tier: 'free' }]);
       if (url.includes('/rest/v1/ftf_store')) {
         if (url.includes('collection=eq.ftf_missions')) {
-          return response(200, [{ payload: { id: 'mission-a', deploymentWorkPack: financialPayload } }]);
+          return response(200, [{ payload: {
+            id: 'mission-a',
+            missionName: 'Operational mission',
+            deploymentWorkPack: financialPayload,
+            financialEstimate: { totalEstimatedCost: 777 },
+            financialActual: { totalActualCost: 888, profitMargin: 42 },
+          } }]);
         }
         return response(200, [{ payload: { assets: financialPayload.assets, templates: [], snapshots: [] } }]);
       }
@@ -285,6 +291,9 @@ describe('authenticated persistent store API', () => {
       assets: [{ id: 'truck-1', name: 'Truck' }],
       costingComplete: true,
     });
+    expect(missionResponse.body.records[0].missionName).toBe('Operational mission');
+    expect(missionResponse.body.records[0]).not.toHaveProperty('financialEstimate');
+    expect(missionResponse.body.records[0]).not.toHaveProperty('financialActual');
 
     const workPackResponse = createResponse();
     const req = request('GET', 'token-a', undefined, 'ftf_work_packs') as any;
@@ -345,6 +354,8 @@ describe('authenticated persistent store API', () => {
         return response(200, [{ payload: {
           id: 'mission-a',
           deploymentWorkPack: { assets: [{ id: 'truck-1', costs: { costPerDay: 450 } }], estimatedDeploymentCost: 1250 },
+          financialEstimate: { totalEstimatedCost: 2222 },
+          financialActual: { totalActualCost: 2000, profitMargin: 10 },
         } }]);
       }
       if (url.includes('/rest/v1/ftf_store') && options.method === 'POST') {
@@ -367,6 +378,8 @@ describe('authenticated persistent store API', () => {
       estimatedDeploymentCost: 1250,
       assets: [expect.objectContaining({ id: 'truck-1', name: 'Updated truck', costs: { costPerDay: 450 } })],
     }));
+    expect(postedRows[0].payload.financialEstimate).toEqual({ totalEstimatedCost: 2222 });
+    expect(postedRows[0].payload.financialActual).toEqual({ totalActualCost: 2000, profitMargin: 10 });
   });
 
   test('preserves stored maintenance costs when a contractor saves an operational update', async () => {

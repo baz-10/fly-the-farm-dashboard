@@ -19,6 +19,9 @@ export default defineConfig({
   ],
   webServer: {
     command: 'npm run build && npm run preview -- --host 127.0.0.1',
+    env: {
+      FTF_E2E_AUTH_FIXTURE: 'local-playwright-only',
+    },
     port: 4173,
     reuseExistingServer: false,
     timeout: 120_000,

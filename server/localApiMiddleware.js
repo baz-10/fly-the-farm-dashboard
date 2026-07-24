@@ -13,6 +13,65 @@ const LOCAL_API_HANDLERS = [
   ['/api/identify-weed', identifyWeedHandler],
 ];
 
+const LOCAL_E2E_FIXTURE = {
+  user: {
+    id: 'e2e-contractor',
+    email: 'operator@example.test',
+    name: 'Synthetic Operator',
+    role: 'contractor',
+    tenantId: 'e2e-tenant',
+    tier: 'free',
+  },
+  collections: {
+    ftf_missions: [{
+      id: 'e2e-mission',
+      missionName: 'Synthetic boundary mission',
+      deploymentWorkPack: {
+        assets: [{
+          id: 'e2e-truck',
+          name: 'Synthetic truck',
+          costs: {
+            cost: 'E2E_COST_SENTINEL',
+            rate: 'E2E_RATE_SENTINEL',
+            purchasePrice: 'E2E_PURCHASE_SENTINEL',
+          },
+        }],
+        estimatedDeploymentCost: 'E2E_DEPLOYMENT_SENTINEL',
+        costingComplete: true,
+      },
+      financialEstimate: {
+        totalEstimatedCost: 'E2E_COST_SENTINEL',
+        rate: 'E2E_RATE_SENTINEL',
+      },
+      financialActual: {
+        profitMargin: 'E2E_MARGIN_SENTINEL',
+        profit: 'E2E_PROFIT_SENTINEL',
+      },
+    }],
+  },
+};
+
+function isLoopbackHost(host) {
+  return /^(?:127\.0\.0\.1|localhost)(?::\d+)?$/.test(String(host || ''))
+    || /^\[::1\](?::\d+)?$/.test(String(host || ''));
+}
+
+function attachLocalE2eFixture(req) {
+  if (
+    process.env.FTF_E2E_AUTH_FIXTURE === 'local-playwright-only'
+    && process.env.VERCEL !== '1'
+    && req.method === 'GET'
+    && req.headers?.['x-ftf-e2e-auth'] === 'contractor'
+    && isLoopbackHost(req.headers?.host)
+  ) {
+    Object.defineProperty(req, 'localE2eFixture', {
+      configurable: true,
+      enumerable: false,
+      value: LOCAL_E2E_FIXTURE,
+    });
+  }
+}
+
 function parseQuery(url) {
   const query = {};
   const searchParams = new URL(url || '/', 'http://localhost').searchParams;
@@ -66,6 +125,7 @@ async function readJsonBody(req) {
 function createLocalApiMiddleware(handler) {
   return async function localApiMiddleware(req, res, next) {
     addVercelResponseHelpers(res);
+    attachLocalE2eFixture(req);
 
     if (!req.query) {
       Object.defineProperty(req, 'query', {

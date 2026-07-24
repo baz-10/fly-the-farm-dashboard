@@ -8,7 +8,7 @@ Fly The Farm is deployed to Vercel as a Vite single-page application. The fronte
 |---|---|---|
 | Frontend hosting | Vercel | Build command: `npm run build`; output directory: `dist`. |
 | SPA routing | Vercel rewrite | `vercel.json` rewrites deep links like `/financials` to `index.html`. |
-| Serverless API | Vercel Functions | `api/identify-weed.js` replaces the local-only CRA proxy in production. |
+| Serverless API | Vercel Functions | Vite middleware serves the same API handlers locally; Vercel Functions serve them in production. |
 | Auth/database/storage | Supabase | Existing plan: `docs/plans/2026-03-23-backend-migration.md`. |
 
 ## Current Production Status

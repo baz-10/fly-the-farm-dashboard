@@ -84,7 +84,11 @@ function registeredRoutes(): Map<string, LocalMiddleware> {
   return routes;
 }
 
-async function invokePlugin(url: string, hook: 'configureServer' | 'configurePreviewServer' = 'configureServer') {
+async function invokePlugin(
+  url: string,
+  hook: 'configureServer' | 'configurePreviewServer' = 'configureServer',
+  headers: Record<string, string> = {},
+) {
   const layers: RegisteredMiddleware[] = [];
   localApiPlugin()[hook]({
     middlewares: {
@@ -94,7 +98,7 @@ async function invokePlugin(url: string, hook: 'configureServer' | 'configurePre
     },
   });
 
-  const req = createRequest({ url });
+  const req = createRequest({ url, headers });
   const response = createResponse();
   let currentLayer = 0;
   let spaFallbacks = 0;
@@ -289,5 +293,56 @@ describe('local Vercel API middleware', () => {
     expect(preview.response.statusCode).toBe(404);
     expect(preview.response.headers['content-type']).toContain('application/json');
     expect(preview.spaFallbacks).toBe(0);
+  });
+
+  it('offers a loopback-only authenticated read fixture without exposing financial sentinels', async () => {
+    process.env = {
+      ...originalEnvironment,
+      FTF_E2E_AUTH_FIXTURE: 'local-playwright-only',
+    };
+
+    const { response } = await invokePlugin(
+      '/api/store?collection=ftf_missions',
+      'configurePreviewServer',
+      {
+        host: '127.0.0.1:4173',
+        'x-ftf-e2e-auth': 'contractor',
+      },
+    );
+
+    expect(response.statusCode).toBe(200);
+    const body = JSON.parse(response.body);
+    expect(body.records[0]).toMatchObject({
+      id: 'e2e-mission',
+      missionName: 'Synthetic boundary mission',
+      deploymentWorkPack: {
+        assets: [{ id: 'e2e-truck', name: 'Synthetic truck' }],
+      },
+    });
+    expect(JSON.stringify(body)).not.toMatch(
+      /E2E_(?:COST|RATE|MARGIN|PROFIT|PURCHASE|DEPLOYMENT)_SENTINEL/
+    );
+    expect(body.records[0]).not.toHaveProperty('financialEstimate');
+    expect(body.records[0]).not.toHaveProperty('financialActual');
+  });
+
+  it('never enables the synthetic fixture in Vercel', async () => {
+    process.env = {
+      ...originalEnvironment,
+      FTF_E2E_AUTH_FIXTURE: 'local-playwright-only',
+      VERCEL: '1',
+    };
+
+    const { response } = await invokePlugin(
+      '/api/store?collection=ftf_missions',
+      'configurePreviewServer',
+      {
+        host: '127.0.0.1:4173',
+        'x-ftf-e2e-auth': 'contractor',
+      },
+    );
+
+    expect(response.statusCode).toBe(401);
+    expect(JSON.parse(response.body)).toEqual({ error: 'Authentication is required.' });
   });
 });

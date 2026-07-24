@@ -233,10 +233,15 @@ const validateMissionArray = (data: any): data is MissionRecord[] => {
 };
 
 export function redactMissionDeploymentFinancials(mission: MissionRecord): MissionRecord {
-  if (!mission.deploymentWorkPack) return mission;
+  const {
+    financialEstimate: _financialEstimate,
+    financialActual: _financialActual,
+    ...safeMission
+  } = mission;
+  if (!mission.deploymentWorkPack) return safeMission as MissionRecord;
   const { estimatedDeploymentCost: _estimatedDeploymentCost, ...safeWorkPack } = mission.deploymentWorkPack;
   return {
-    ...mission,
+    ...safeMission,
     deploymentWorkPack: {
       ...safeWorkPack,
       assets: mission.deploymentWorkPack.assets.map((asset) => {
@@ -244,18 +249,28 @@ export function redactMissionDeploymentFinancials(mission: MissionRecord): Missi
         return safeAsset as typeof asset;
       }),
     },
-  };
+  } as MissionRecord;
 }
 
 export function restoreMissionDeploymentFinancials(
   mission: MissionRecord,
   privilegedMission: MissionRecord | undefined,
 ): MissionRecord {
-  if (!mission.deploymentWorkPack || !privilegedMission?.deploymentWorkPack) return mission;
+  if (!privilegedMission) return mission;
+  const restoredFinancials = {
+    financialEstimate: privilegedMission.financialEstimate,
+    ...(privilegedMission.financialActual === undefined
+      ? {}
+      : { financialActual: privilegedMission.financialActual }),
+  };
+  if (!mission.deploymentWorkPack || !privilegedMission.deploymentWorkPack) {
+    return { ...mission, ...restoredFinancials };
+  }
   const privilegedAssetsById = new Map(privilegedMission.deploymentWorkPack.assets.map((asset) => [asset.id, asset]));
   const privilegedEstimate = privilegedMission.deploymentWorkPack.estimatedDeploymentCost;
   return {
     ...mission,
+    ...restoredFinancials,
     deploymentWorkPack: {
       ...mission.deploymentWorkPack,
       assets: mission.deploymentWorkPack.assets.map((asset) => {
