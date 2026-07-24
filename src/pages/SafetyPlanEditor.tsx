@@ -11,7 +11,7 @@ import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import ArrowForwardIcon from '@mui/icons-material/ArrowForward';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import ShieldOutlinedIcon from '@mui/icons-material/ShieldOutlined';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useLocation, useParams } from 'react-router-dom';
 
 import EmergencyPlanningStep from '../components/safety-plan/EmergencyPlanningStep';
 import HazardsControlsStep from '../components/safety-plan/HazardsControlsStep';
@@ -126,6 +126,7 @@ export default function SafetyPlanEditor({
   latestSourceSnapshot,
 }: SafetyPlanEditorProps) {
   const params = useParams();
+  const location = useLocation();
   const planId = explicitPlanId ?? params.planId;
   const { user } = useAuth();
   const {
@@ -143,6 +144,11 @@ export default function SafetyPlanEditor({
     acceptServerPlan,
   } = useSafetyPlans();
   const storedPlan = plans.find((plan) => plan.id === planId);
+  const routedSourceSnapshot = (
+    location.state as { latestSourceSnapshot?: SafetyPlanSourceSnapshot } | null
+  )?.latestSourceSnapshot;
+  const effectiveLatestSourceSnapshot = latestSourceSnapshot
+    ?? (routedSourceSnapshot?.job?.id === storedPlan?.jobId ? routedSourceSnapshot : undefined);
   const [draft, setDraft] = useState<SafetyPlan | undefined>(storedPlan);
   const version = draft ? currentVersion(draft) : undefined;
   const restoredStep = Number(
@@ -209,10 +215,10 @@ export default function SafetyPlanEditor({
     [version?.sections]
   );
   const sourceDiff = useMemo(
-    () => version && latestSourceSnapshot
-      ? diffSafetyPlanSources(version.sourceSnapshot, latestSourceSnapshot)
+    () => version && effectiveLatestSourceSnapshot
+      ? diffSafetyPlanSources(version.sourceSnapshot, effectiveLatestSourceSnapshot)
       : undefined,
-    [latestSourceSnapshot, version]
+    [effectiveLatestSourceSnapshot, version]
   );
   const sourceChanged = Boolean(sourceDiff && hasSourceChanges(sourceDiff));
   const effectiveSaveState = saveState === 'idle' && localSaveState !== 'idle'

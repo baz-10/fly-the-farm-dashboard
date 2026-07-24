@@ -216,6 +216,7 @@ export interface SafetyPlanAuditEvent {
     | 'superseded'
     | 'shared'
     | 'pdf_generated'
+    | 'client_copy_exported'
     | 'draft_deleted'
     | 'draft_restored'
     | 'not_required_selected'
@@ -225,6 +226,7 @@ export interface SafetyPlanAuditEvent {
   occurredAt: string;
   before?: Record<string, unknown>;
   after?: Record<string, unknown>;
+  clientId?: string;
 }
 
 export interface SafetyPlanVersion {

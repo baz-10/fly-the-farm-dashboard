@@ -16,8 +16,10 @@ const POST_BASELINE_TEST_FILES = new Set([
   'src/components/safety-plan/SafetyPlanAuthorityManager.test.tsx',
   'src/components/safety-plan/SafetyPlanApprovalPanel.test.tsx',
   'src/components/safety-plan/SafetyPlanAttachments.test.tsx',
+  'src/components/safety-plan/JobSafetyPlanCard.test.tsx',
   'src/contexts/__tests__/SafetyPlanContext.test.tsx',
   'src/pages/SafetyPlanRegister.test.tsx',
+  'src/pages/JobDetail.test.tsx',
   'src/pages/SafetyPlanEditor.test.tsx',
   'src/pages/SafetyPlanTemplateEditor.test.tsx',
   'src/services/__tests__/persistence.safetyPlan.test.ts',
@@ -29,6 +31,7 @@ const POST_BASELINE_TEST_FILES = new Set([
   'src/utils/__tests__/safetyPlanPermissions.test.ts',
   'src/utils/__tests__/safetyPlanRules.test.ts',
   'src/utils/__tests__/safetyPlanSourceSync.test.ts',
+  'src/utils/__tests__/safetyPlanPdf.test.ts',
 ]);
 
 async function findTestFiles(directory) {

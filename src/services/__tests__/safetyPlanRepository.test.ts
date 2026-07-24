@@ -341,6 +341,30 @@ describe('SafetyPlanRepository', () => {
     );
   });
 
+  it('records a client-copy export with only server-verifiable linkage and client identity', async () => {
+    const writeRecord = vi.fn(async () => undefined);
+    const repository = createSafetyPlanRepository(makeDependencies({ writeRecord }));
+
+    await repository.recordClientCopyExport(
+      'safety-plan-1',
+      'version-1',
+      'client-9',
+      { ...actor, role: 'admin' }
+    );
+
+    expect(writeRecord).toHaveBeenCalledWith(
+      'ftf_safety_plan_audit',
+      'generated-id',
+      {
+        id: 'generated-id',
+        planId: 'safety-plan-1',
+        versionId: 'version-1',
+        action: 'client_copy_exported',
+        clientId: 'client-9',
+      }
+    );
+  });
+
   it('forwards caller AbortSignals through reads, writes, delete and restore', async () => {
     const plan = makeSafetyPlan({ tenantId: 'tenant-1' });
     const dependencies = makeDependencies({

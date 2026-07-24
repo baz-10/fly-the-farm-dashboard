@@ -53,6 +53,7 @@ function renderEditor(
     saveState?: string;
     error?: string;
     acceptServerPlan?: ReturnType<typeof vi.fn>;
+    routedSourceSnapshot?: SafetyPlanSourceSnapshot;
   } = {}
 ) {
   const saveDraft = vi.fn(async (_input: SaveSafetyPlanDraftInput) => undefined);
@@ -70,7 +71,12 @@ function renderEditor(
     acceptServerPlan: options.acceptServerPlan ?? vi.fn(),
   });
   const result = render(
-    <MemoryRouter initialEntries={[`/compliance/safety-plans/${plan.id}`]}>
+    <MemoryRouter initialEntries={[{
+      pathname: `/compliance/safety-plans/${plan.id}`,
+      state: options.routedSourceSnapshot
+        ? { latestSourceSnapshot: options.routedSourceSnapshot }
+        : undefined,
+    }]}>
       <SafetyPlanEditor
         planId={plan.id}
         latestSourceSnapshot={options.latestSourceSnapshot}
@@ -283,6 +289,33 @@ describe('SafetyPlanEditor', () => {
     });
     expect(input.plan.versions[0].sourceRefreshIntent).not.toHaveProperty('actor');
     expect(input.plan.versions[0].sourceRefreshIntent).not.toHaveProperty('occurredAt');
+  });
+
+  it('accepts routed latest source data only when its exact job identity matches', () => {
+    const plan = incompletePlan();
+    const foreign: SafetyPlanSourceSnapshot = {
+      ...plan.versions[0].sourceSnapshot,
+      capturedAt: '2026-07-25T00:00:00.000Z',
+      job: { id: 'job-10', name: 'Foreign job' },
+      crew: [{ id: 'foreign', name: 'Foreign crew', role: 'PIC' }],
+    };
+    const { unmount } = renderEditor(plan, { routedSourceSnapshot: foreign });
+    expect(screen.queryByRole('button', { name: /review source changes/i })).not.toBeInTheDocument();
+    unmount();
+
+    const exact = {
+      ...foreign,
+      job: { id: plan.jobId, name: 'Exact job' },
+    };
+    render(
+      <MemoryRouter initialEntries={[{
+        pathname: `/compliance/safety-plans/${plan.id}`,
+        state: { latestSourceSnapshot: exact },
+      }]}>
+        <SafetyPlanEditor planId={plan.id} />
+      </MemoryRouter>
+    );
+    expect(screen.getByRole('button', { name: /review source changes/i })).toBeVisible();
   });
 
   it('supports keyboard step navigation with labelled current state', async () => {

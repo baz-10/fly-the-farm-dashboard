@@ -45,6 +45,7 @@ const SAFETY_PLAN_ACTIONS = new Set([
   'superseded',
   'shared',
   'pdf_generated',
+  'client_copy_exported',
   'draft_deleted',
   'draft_restored',
   'not_required_selected',
@@ -880,6 +881,7 @@ function assertSafetyAuditAction(actor, plan, event) {
     superseded: ['superseded'],
     shared: ['approved'],
     pdf_generated: ['approved'],
+    client_copy_exported: ['approved'],
   }[event.action];
   if (!allowedStatuses?.includes(version.status)) {
     throw createHttpError(409, 'Safety audit action does not match the linked version state.');
@@ -890,6 +892,7 @@ const STANDALONE_SAFETY_AUDIT_ACTIONS = new Set([
   'acknowledged',
   'shared',
   'pdf_generated',
+  'client_copy_exported',
 ]);
 
 function deriveSafetyPlanMutationAudit(stored, incoming, sourceRefreshMetadata) {
@@ -1275,6 +1278,18 @@ function normaliseSafetyAuditEventForPlan(
       );
     }
     assertSafetyAuditAction(actor, plan, event);
+    if (event.action === 'client_copy_exported') {
+      if (actor.role !== 'admin') {
+        throw createHttpError(403, 'Only company administrators can export a client copy.');
+      }
+      if (
+        typeof event.clientId !== 'string'
+        || !event.clientId.trim()
+        || event.clientId.trim().length > 160
+      ) {
+        throw createHttpError(400, 'Client-copy export requires a valid client.');
+      }
+    }
   }
   const action = derivedMutation?.action || event.action;
   const versionId = derivedMutation
@@ -1291,6 +1306,7 @@ function normaliseSafetyAuditEventForPlan(
     actor: safetyPlanActor(actor),
     action,
     occurredAt: now,
+    ...(action === 'client_copy_exported' ? { clientId: event.clientId.trim() } : {}),
     ...(derivedMutation?.before ? { before: derivedMutation.before } : {}),
     ...(derivedMutation?.after ? { after: derivedMutation.after } : {}),
   };

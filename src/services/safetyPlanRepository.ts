@@ -82,6 +82,13 @@ export interface SafetyPlanRepository {
     options?: SharedRequestOptions
   ): Promise<SafetyPlan>;
   appendAuditEvent(event: SafetyPlanAuditEvent, options?: SharedRequestOptions): Promise<void>;
+  recordClientCopyExport(
+    planId: string,
+    versionId: string,
+    clientId: string,
+    actor: SafetyPlanActor,
+    options?: SharedRequestOptions
+  ): Promise<void>;
   deleteDraft(
     planId: string,
     expectedRevision: number,
@@ -98,7 +105,7 @@ export interface SafetyPlanRepository {
 
 type AuditRequest = Pick<
   SafetyPlanAuditEvent,
-  'id' | 'operationId' | 'planId' | 'versionId' | 'action'
+  'id' | 'operationId' | 'planId' | 'versionId' | 'action' | 'clientId'
 >;
 
 export interface SafetyPlanRepositoryDependencies {
@@ -148,6 +155,7 @@ function toAuditRequest(event: SafetyPlanAuditEvent): AuditRequest {
     planId: event.planId,
     ...(event.versionId ? { versionId: event.versionId } : {}),
     action: event.action,
+    ...(event.clientId ? { clientId: event.clientId } : {}),
   };
 }
 
@@ -387,6 +395,33 @@ export function createSafetyPlanRepository(
     },
 
     async appendAuditEvent(event, options) {
+      const args = [
+        PERSISTENCE_KEYS.safetyPlanAudit,
+        event.id,
+        toAuditRequest(event),
+      ] as const;
+      if (options) await deps.writeRecord(...args, options);
+      else await deps.writeRecord(...args);
+    },
+
+    async recordClientCopyExport(planId, versionId, clientId, actor, options) {
+      if (actor.role !== 'admin') {
+        throw new Error('Only company administrators can export a client copy.');
+      }
+      const safeClientId = clientId.trim();
+      if (!safeClientId || safeClientId.length > 160) {
+        throw new Error('A valid client is required for client-copy export.');
+      }
+      const event: SafetyPlanAuditEvent = {
+        id: deps.createId(),
+        tenantId: deps.getTenantId(),
+        planId,
+        versionId,
+        actor,
+        action: 'client_copy_exported',
+        clientId: safeClientId,
+        occurredAt: deps.now(),
+      };
       const args = [
         PERSISTENCE_KEYS.safetyPlanAudit,
         event.id,

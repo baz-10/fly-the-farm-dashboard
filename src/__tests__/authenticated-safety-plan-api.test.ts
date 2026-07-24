@@ -2717,6 +2717,65 @@ describe('Safety Plan persistent store security', () => {
     vi.useRealTimers();
   });
 
+  it('atomically records a client-copy export with server-derived actor and time', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-07-24T06:00:00.000Z'));
+    const version = makeSafetyPlanVersion({
+      status: 'approved',
+      approvedAt: '2026-07-24T05:00:00.000Z',
+      contentDigest: 'digest',
+    });
+    const plan = makeSafetyPlan({
+      tenantId: 'tenant-a',
+      status: 'approved',
+      currentVersionId: version.id,
+      versions: [version],
+    });
+    let postedRows: any[] = [];
+    mockApi({
+      stored: [{
+        tenant_id: 'tenant-a',
+        collection: 'ftf_safety_plans',
+        record_id: plan.id,
+        payload: plan,
+      }],
+      onPost: (rows) => {
+        postedRows = rows;
+      },
+    });
+    const res = createResponse();
+
+    await storeHandler(request('PUT', 'ftf_safety_plan_audit', {
+      collection: 'ftf_safety_plan_audit',
+      recordId: 'audit-client-copy',
+      payload: {
+        id: 'audit-client-copy',
+        planId: plan.id,
+        versionId: version.id,
+        action: 'client_copy_exported',
+        clientId: 'client-9',
+        actor: { userId: 'forged' },
+        occurredAt: '2000-01-01T00:00:00.000Z',
+      },
+    }), res);
+
+    expect(res.statusCode).toBe(200);
+    expect(postedRows[0].payload).toMatchObject({
+      id: 'audit-client-copy',
+      tenantId: 'tenant-a',
+      planId: plan.id,
+      versionId: version.id,
+      action: 'client_copy_exported',
+      clientId: 'client-9',
+      occurredAt: '2026-07-24T06:00:00.000Z',
+      actor: {
+        userId: 'user-a',
+        name: 'User A',
+      },
+    });
+    vi.useRealTimers();
+  });
+
   it.each([
     ['created', 'draft'],
     ['revised', 'draft'],

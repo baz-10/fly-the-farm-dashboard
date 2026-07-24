@@ -65,6 +65,44 @@ import { generateClientReportPdf } from '../utils/clientReportPdf';
 import AssessmentIcon from '@mui/icons-material/Assessment';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import ExpandLessIcon from '@mui/icons-material/ExpandLess';
+import JobSafetyPlanCard from '../components/safety-plan/JobSafetyPlanCard';
+import { useAuth } from '../contexts/AuthContext';
+import { useMission } from '../contexts/MissionContext';
+import { useSafetyPlans } from '../contexts/SafetyPlanContext';
+import { AU_REOC_SAFETY_PLAN_STANDARD } from '../data/safetyPlanStandard';
+import { buildJobSafetyPlan } from '../services/safetyPlanPrefill';
+import { safetyPlanRepository } from '../services/safetyPlanRepository';
+import type { SafetyPlan, SafetyPlanActor, SafetyPlanVersion } from '../types/safetyPlan';
+import {
+  buildSafetyPlanPdf,
+  safetyPlanPdfFilename,
+} from '../utils/safetyPlanPdf';
+
+export function selectJobSafetyPlanForJob(plans: SafetyPlan[], jobId: string): SafetyPlan | undefined {
+  return plans.find((plan) => plan.jobId === jobId);
+}
+
+export function approvedVersionForExport(plan: SafetyPlan): SafetyPlanVersion {
+  const version = plan.versions.find((candidate) => candidate.id === plan.currentVersionId);
+  if (
+    plan.status !== 'approved'
+    || version?.status !== 'approved'
+    || !version.approvedAt
+    || !version.contentDigest
+  ) {
+    throw new Error('An approved immutable Safety Plan version is required.');
+  }
+  return version;
+}
+
+function safetyPlanActor(user: NonNullable<ReturnType<typeof useAuth>['user']>): SafetyPlanActor {
+  return {
+    userId: user.id,
+    name: user.name,
+    role: user.role === 'admin' ? 'admin' : 'contractor',
+    operationalAuthority: user.role === 'admin' || user.safetyPlanAuthority,
+  };
+}
 
 const efficacyLabels: Record<number, string> = {
   1: 'No effect',
@@ -80,6 +118,15 @@ export default function JobDetail() {
   }>();
   const navigate = useNavigate();
   const theme = useTheme();
+  const { user } = useAuth();
+  const { missions } = useMission();
+  const {
+    plans,
+    saveDraft,
+    acceptServerPlan,
+    acknowledgePlan,
+    revisePlan,
+  } = useSafetyPlans();
 
   const [job] = useState(() => getJobById(jobId || ''));
   const field = getFieldById(fieldId || '');
@@ -115,6 +162,97 @@ export default function JobDetail() {
   }
 
   const basePath = `/jobs/client/${clientId}/property/${propertyId}/field/${fieldId}`;
+  const jobSafetyPlan = selectJobSafetyPlanForJob(plans, job.id);
+  const actor = user && user.role !== 'client' ? safetyPlanActor(user) : undefined;
+  const latestSafetyPlan = actor
+    ? buildJobSafetyPlan({
+      tenantId: user?.tenantId || user?.id || '',
+      job,
+      missions,
+      template: AU_REOC_SAFETY_PLAN_STANDARD,
+      actor,
+      now: new Date().toISOString(),
+      company: { id: user?.tenantId || user?.id || '', name: user?.name || 'Operator' },
+      client,
+      property,
+      field,
+    })
+    : undefined;
+  const latestSourceSnapshot = latestSafetyPlan?.versions[0]?.sourceSnapshot;
+
+  const handleCreateSafetyPlan = async () => {
+    if (!actor || !latestSafetyPlan) return;
+    await saveDraft({ plan: latestSafetyPlan, expectedRevision: 0, actor });
+    navigate(`/compliance/safety-plans/${encodeURIComponent(latestSafetyPlan.id)}`, {
+      state: { latestSourceSnapshot },
+    });
+  };
+
+  const handleMarkSafetyPlanNotRequired = async (exactJobId: string, reason: string) => {
+    if (!actor || exactJobId !== job.id) return;
+    const canonical = await safetyPlanRepository.markNotRequired(job.id, reason, actor);
+    acceptServerPlan(canonical);
+  };
+
+  const safetyPlanDocument = async (plan: SafetyPlan, clientCopy = false) => {
+    const version = approvedVersionForExport(plan);
+    return {
+      version,
+      doc: await buildSafetyPlanPdf(plan, version, { name: user?.name || 'Operator' }, { clientCopy }),
+    };
+  };
+
+  const recordPdfGenerated = async (plan: SafetyPlan, version: SafetyPlanVersion) => {
+    if (!actor) return;
+    const id = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+      ? crypto.randomUUID()
+      : `safety_pdf_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+    await safetyPlanRepository.appendAuditEvent({
+      id,
+      tenantId: plan.tenantId,
+      planId: plan.id,
+      versionId: version.id,
+      actor,
+      action: 'pdf_generated',
+      occurredAt: new Date().toISOString(),
+    });
+  };
+
+  const handleExportSafetyPlan = async (plan: SafetyPlan) => {
+    const { version, doc } = await safetyPlanDocument(plan);
+    await recordPdfGenerated(plan, version);
+    doc.save(safetyPlanPdfFilename(version.sourceSnapshot.job.name, version.version));
+  };
+
+  const handlePrintSafetyPlan = async (plan: SafetyPlan) => {
+    const { version, doc } = await safetyPlanDocument(plan);
+    await recordPdfGenerated(plan, version);
+    const url = URL.createObjectURL(doc.output('blob'));
+    const printWindow = window.open(url, '_blank', 'noopener,noreferrer');
+    if (!printWindow) {
+      URL.revokeObjectURL(url);
+      throw new Error('Allow pop-ups to print the Safety Plan.');
+    }
+    printWindow.addEventListener('load', () => {
+      printWindow.print();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
+    }, { once: true });
+  };
+
+  const handleExportClientCopy = async (plan: SafetyPlan) => {
+    if (!actor || actor.role !== 'admin') return;
+    const { version, doc } = await safetyPlanDocument(plan, true);
+    await safetyPlanRepository.recordClientCopyExport(
+      plan.id,
+      version.id,
+      job.clientId,
+      actor
+    );
+    doc.save(safetyPlanPdfFilename(
+      `${version.sourceSnapshot.job.name}_Client_Copy`,
+      version.version
+    ));
+  };
 
   const handleDelete = () => {
     deleteJob(job.id);
@@ -265,6 +403,31 @@ export default function JobDetail() {
       )}
 
       <Stack spacing={3} className="ftf-animate-in-delay-1">
+        {user?.role !== 'client' && (
+          <JobSafetyPlanCard
+            jobId={job.id}
+            jobName={latestSourceSnapshot?.job.name ?? job.weedTarget}
+            plan={jobSafetyPlan}
+            isAdmin={user?.role === 'admin'}
+            latestSourceSnapshot={latestSourceSnapshot}
+            onCreate={handleCreateSafetyPlan}
+            onMarkNotRequired={handleMarkSafetyPlanNotRequired}
+            onExport={handleExportSafetyPlan}
+            onPrint={handlePrintSafetyPlan}
+            onExportClientCopy={handleExportClientCopy}
+            onAcknowledge={actor
+              ? (plan) => acknowledgePlan(plan.id, plan.revision, actor)
+              : undefined}
+            onRevise={actor?.operationalAuthority
+              ? async (plan) => {
+                await revisePlan(plan.id, plan.revision, actor);
+                navigate(`/compliance/safety-plans/${encodeURIComponent(plan.id)}`, {
+                  state: { latestSourceSnapshot },
+                });
+              }
+              : undefined}
+          />
+        )}
         {/* Weed & Chemicals */}
         <Card elevation={0} sx={{ border: `1.5px solid ${alpha(theme.palette.primary.main, 0.1)}`, borderRadius: '16px' }}>
           <CardContent sx={{ p: 3 }}>
