@@ -290,3 +290,47 @@ historical baseline manifest was not changed.
 - `node --check api/store.js`: passed.
 - `npm test`: 68 files, 402 tests passed.
 - `git diff --check`: passed.
+
+## Conflict-resolution race review fixes
+
+Conflict-resolution serialization commit:
+`3f9946a7923ac4a43b55bec7c3af01af70defd2a`.
+
+### Regression-first evidence
+
+Two deferred-`getPlan` schedules were added before the controller change. The
+context run reported 2 failed and 32 passed:
+
+- a newer same-plan edit optimistically replaced the draft while
+  `keep_remote` was waiting for its remote snapshot;
+- two concurrent `create_revision` resolutions each issued their own remote
+  lookup.
+
+The inventory then reported 1 failed and 4 passed until the explicit context
+declaration count was updated from 28 to 30. The historical baseline manifest
+was not changed.
+
+### Synchronous per-plan resolution ownership
+
+- `resolveConflict` installs a per-plan reservation before its first `await`.
+- A second resolution for that plan awaits the existing reservation instead
+  of issuing another lookup, revision save, or audit-producing mutation.
+- Public `saveDraft` checks the reservation before optimistic state changes
+  and rejects with typed HTTP-style metadata:
+  `SAFETY_PLAN_CONFLICT_RESOLUTION_ACTIVE`, status 409.
+- Retry and lifecycle operations also respect the same-plan reservation.
+- Resolution invalidates, aborts, and settles only the target plan's timer,
+  active save, queued count, chain, and epoch; other plans remain independent.
+- The reservation is released in `finally`, including lookup failure and
+  abort paths.
+
+### Final verification
+
+- Context suite: 34 tests passed.
+- Focused repository/context/persistence/provider/API command: 5 files,
+  120 tests passed.
+- Inventory command: 1 file, 5 tests passed.
+- `npx tsc --noEmit`: passed.
+- `node --check api/store.js`: passed.
+- `npm test`: 68 files, 404 tests passed.
+- `git diff --check`: passed.
