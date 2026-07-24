@@ -35,7 +35,7 @@
 - Create: `src/utils/safetyPlanRules.ts`
 - Create: `src/utils/__tests__/safetyPlanRules.test.ts`
 - Create: `src/test/safetyPlanFixtures.ts`
-- Modify: `scripts/test-baseline-manifest.json`
+- Modify: `scripts/test-inventory.test.ts`
 
 **Interfaces:**
 - Produces: `SafetyPlanTemplate`, `SafetyPlan`, `SafetyPlanVersion`, `SafetyPlanStatus`, `SafetyPlanSection`, `SafetyPlanAuditEvent`, `SafetyPlanAttachment`, `SafetyPlanActor`, `SafetyPlanSourceLink`.
@@ -170,6 +170,11 @@ Create `src/test/safetyPlanFixtures.ts` with `makeSafetyPlan`,
 React, storage or clock globals; accept ISO timestamps as arguments where
 needed.
 
+Register `src/utils/__tests__/safetyPlanRules.test.ts` as an explicit
+post-baseline supplement in `scripts/test-inventory.test.ts`. Do not modify
+`scripts/test-baseline-manifest.json`; it remains the immutable historical
+manifest.
+
 - [ ] **Step 6: Run focused and type checks**
 
 Run:
@@ -184,7 +189,7 @@ Expected: all focused tests and TypeScript pass.
 - [ ] **Step 7: Commit**
 
 ```bash
-git add src/types/safetyPlan.ts src/data/safetyPlanStandard.ts src/utils/safetyPlanRules.ts src/utils/__tests__/safetyPlanRules.test.ts src/test/safetyPlanFixtures.ts scripts/test-baseline-manifest.json
+git add src/types/safetyPlan.ts src/data/safetyPlanStandard.ts src/utils/safetyPlanRules.ts src/utils/__tests__/safetyPlanRules.test.ts src/test/safetyPlanFixtures.ts scripts/test-inventory.test.ts
 git commit -m "feat: define Safety Plan domain"
 ```
 
@@ -577,7 +582,11 @@ git commit -m "feat: prefill job Safety Plans"
 - Create: `src/pages/SafetyPlanRegister.test.tsx`
 - Create: `src/pages/SafetyPlanTemplateEditor.tsx`
 - Create: `src/pages/SafetyPlanTemplateEditor.test.tsx`
+- Create: `src/components/safety-plan/SafetyPlanAuthorityManager.tsx`
+- Create: `src/components/safety-plan/SafetyPlanAuthorityManager.test.tsx`
 - Create: `src/components/safety-plan/SafetyPlanStatusChip.tsx`
+- Modify: `api/auth.js`
+- Modify: `server/session.js`
 - Modify: `src/pages/ComplianceMenu.tsx`
 - Modify: `src/App.tsx`
 - Modify: `src/__tests__/route-manifest.test.tsx`
@@ -642,27 +651,41 @@ publishCompanyMaster()
 Publishing increments the company-master version and freezes that snapshot.
 It never edits previous masters.
 
-- [ ] **Step 5: Add Compliance entry and routes**
+- [ ] **Step 5: Add operational-authority management**
+
+Administrators can search tenant users and set the profile’s
+`safety_plan_authority` flag. The UI must:
+
+```ts
+setSafetyPlanAuthority(userId: string, enabled: boolean): Promise<void>
+```
+
+The server verifies that the actor is an administrator in the same tenant,
+rejects clients as nominees, records the change in the Safety Plan audit
+collection, and never exposes another tenant’s users. Contractors can see the
+name of their current approving authority but cannot change nominations.
+
+- [ ] **Step 6: Add Compliance entry and routes**
 
 Add a “Safety Plans” card to `ComplianceMenu`. Add protected admin/contractor
 register routing, and admin-only rendering inside the template page. Direct
 contractor navigation to the template route returns an access-denied panel.
 
-- [ ] **Step 6: Verify**
+- [ ] **Step 7: Verify**
 
 Run:
 
 ```bash
-npx vitest run src/pages/SafetyPlanRegister.test.tsx src/pages/SafetyPlanTemplateEditor.test.tsx src/__tests__/route-manifest.test.tsx
+npx vitest run src/pages/SafetyPlanRegister.test.tsx src/pages/SafetyPlanTemplateEditor.test.tsx src/components/safety-plan/SafetyPlanAuthorityManager.test.tsx src/__tests__/route-manifest.test.tsx
 npx tsc --noEmit
 ```
 
 Expected: register, template permissions and route manifest pass.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
-git add src/pages/SafetyPlanRegister.tsx src/pages/SafetyPlanRegister.test.tsx src/pages/SafetyPlanTemplateEditor.tsx src/pages/SafetyPlanTemplateEditor.test.tsx src/components/safety-plan/SafetyPlanStatusChip.tsx src/pages/ComplianceMenu.tsx src/App.tsx src/__tests__/route-manifest.test.tsx
+git add src/pages/SafetyPlanRegister.tsx src/pages/SafetyPlanRegister.test.tsx src/pages/SafetyPlanTemplateEditor.tsx src/pages/SafetyPlanTemplateEditor.test.tsx src/components/safety-plan/SafetyPlanAuthorityManager.tsx src/components/safety-plan/SafetyPlanAuthorityManager.test.tsx src/components/safety-plan/SafetyPlanStatusChip.tsx src/pages/ComplianceMenu.tsx src/App.tsx src/__tests__/route-manifest.test.tsx api/auth.js server/session.js
 git commit -m "feat: add Safety Plan compliance register"
 ```
 
@@ -1136,7 +1159,6 @@ git commit -m "feat: link Safety Plans to jobs and PDF"
 - Modify: `server/localApiMiddleware.js`
 - Modify: `server/localApiMiddleware.test.ts`
 - Modify: `scripts/test-inventory.test.ts`
-- Modify: `scripts/test-baseline-manifest.json`
 - Modify: `docs/production-deployment.md`
 - Create: `docs/safety-plans.md`
 
@@ -1248,7 +1270,7 @@ Expected:
 - [ ] **Step 7: Commit**
 
 ```bash
-git add e2e/safety-plan-workflow.spec.ts e2e/fixtures/auth.ts server/localApiMiddleware.js server/localApiMiddleware.test.ts scripts/test-inventory.test.ts scripts/test-baseline-manifest.json docs/production-deployment.md docs/safety-plans.md
+git add e2e/safety-plan-workflow.spec.ts e2e/fixtures/auth.ts server/localApiMiddleware.js server/localApiMiddleware.test.ts scripts/test-inventory.test.ts docs/production-deployment.md docs/safety-plans.md
 git commit -m "test: add Safety Plan release gates"
 ```
 
