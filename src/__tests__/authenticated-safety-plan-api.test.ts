@@ -850,8 +850,18 @@ describe('Safety Plan persistent store security', () => {
       },
       sourceRefreshIntent: {
         kind: 'source_refresh' as const,
-        before: { capturedAt: storedVersion.sourceSnapshot.capturedAt },
-        after: { capturedAt: '2026-07-25T00:00:00.000Z' },
+        before: {
+          capturedAt: storedVersion.sourceSnapshot.capturedAt,
+          sourceItemCount: 0,
+        },
+        after: {
+          capturedAt: '2026-07-25T00:00:00.000Z',
+          sourceItemCount: 0,
+          decisions: [{
+            itemId: 'context:job',
+            action: 'keep_company_value',
+          }],
+        },
       },
     };
     const incoming = {
@@ -882,8 +892,131 @@ describe('Safety Plan persistent store security', () => {
     expect(rpcBody?.p_audit_payload).toMatchObject({
       action: 'source_refreshed',
       actor: { userId: 'user-a' },
+      before: {
+        capturedAt: storedVersion.sourceSnapshot.capturedAt,
+        sourceItemCount: 0,
+      },
+      after: {
+        capturedAt: '2026-07-25T00:00:00.000Z',
+        sourceItemCount: 0,
+        decisions: [{
+          itemId: 'context:job',
+          action: 'keep_company_value',
+        }],
+      },
     });
     expect(rpcBody?.p_audit_payload.occurredAt).toEqual(expect.any(String));
+  });
+
+  it('rejects forged source refresh counts before the atomic write', async () => {
+    const storedVersion = makeSafetyPlanVersion({ revision: 2 });
+    const storedPlan = makeSafetyPlan({
+      tenantId: 'tenant-a',
+      revision: 2,
+      versions: [storedVersion],
+    });
+    const incomingVersion = {
+      ...storedVersion,
+      revision: 3,
+      sourceSnapshot: {
+        ...storedVersion.sourceSnapshot,
+        capturedAt: '2026-07-25T00:00:00.000Z',
+      },
+      sourceRefreshIntent: {
+        kind: 'source_refresh' as const,
+        before: {
+          capturedAt: storedVersion.sourceSnapshot.capturedAt,
+          sourceItemCount: 99,
+        },
+        after: {
+          capturedAt: '2026-07-25T00:00:00.000Z',
+          sourceItemCount: 42,
+          decisions: [],
+        },
+      },
+    };
+    const incoming = {
+      ...storedPlan,
+      revision: 3,
+      versions: [incomingVersion],
+    };
+    let rpcCalls = 0;
+    mockApi({
+      stored: [{ tenant_id: 'tenant-a', record_id: storedPlan.id, payload: storedPlan }],
+      onRpc: () => {
+        rpcCalls += 1;
+        return { succeeded: true };
+      },
+    });
+    const res = createResponse();
+
+    await storeHandler(request('PUT', 'ftf_safety_plans', {
+      collection: 'ftf_safety_plans',
+      recordId: incoming.id,
+      payload: incoming,
+      audit: mutationAudit(incoming, 'field_changed', 'audit-forged-source-metadata'),
+    }), res);
+
+    expect(res.statusCode).toBe(409);
+    expect(res.body.error).toMatch(/source refresh metadata/i);
+    expect(rpcCalls).toBe(0);
+  });
+
+  it('rejects forged source refresh decision IDs and actions before the atomic write', async () => {
+    const storedVersion = makeSafetyPlanVersion({ revision: 2 });
+    const storedPlan = makeSafetyPlan({
+      tenantId: 'tenant-a',
+      revision: 2,
+      versions: [storedVersion],
+    });
+    const incomingVersion = {
+      ...storedVersion,
+      revision: 3,
+      sourceSnapshot: {
+        ...storedVersion.sourceSnapshot,
+        capturedAt: '2026-07-25T00:00:00.000Z',
+      },
+      sourceRefreshIntent: {
+        kind: 'source_refresh' as const,
+        before: {
+          capturedAt: storedVersion.sourceSnapshot.capturedAt,
+          sourceItemCount: 0,
+        },
+        after: {
+          capturedAt: '2026-07-25T00:00:00.000Z',
+          sourceItemCount: 0,
+          decisions: [{
+            itemId: 'context:totally_forged',
+            action: 'approve_everything',
+          }],
+        },
+      },
+    };
+    const incoming = {
+      ...storedPlan,
+      revision: 3,
+      versions: [incomingVersion],
+    };
+    let rpcCalls = 0;
+    mockApi({
+      stored: [{ tenant_id: 'tenant-a', record_id: storedPlan.id, payload: storedPlan }],
+      onRpc: () => {
+        rpcCalls += 1;
+        return { succeeded: true };
+      },
+    });
+    const res = createResponse();
+
+    await storeHandler(request('PUT', 'ftf_safety_plans', {
+      collection: 'ftf_safety_plans',
+      recordId: incoming.id,
+      payload: incoming,
+      audit: mutationAudit(incoming, 'field_changed', 'audit-forged-source-decision'),
+    }), res);
+
+    expect(res.statusCode).toBe(409);
+    expect(res.body.error).toMatch(/invalid decision/i);
+    expect(rpcCalls).toBe(0);
   });
 
   it('derives submitted from the transition when the client forges created', async () => {

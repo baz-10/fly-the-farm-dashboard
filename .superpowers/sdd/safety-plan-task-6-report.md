@@ -52,7 +52,7 @@ handling.
   `npx vitest run src/pages/SafetyPlanEditor.test.tsx src/services/__tests__/safetyPlanRepository.test.ts src/utils/__tests__/safetyPlanSourceSync.test.ts src/__tests__/authenticated-safety-plan-api.test.ts scripts/test-inventory.test.ts`
   — 5 files, 112 tests passed.
 - TypeScript: `npx tsc --noEmit` — passed.
-- Full suite: `npm test` — 76 files, 452 tests passed.
+- Full suite: `npm test` — 76 files, 454 tests passed.
 - Production build: `npm run build` — passed.
 - Patch hygiene: `git diff --check` — passed.
 
@@ -83,3 +83,13 @@ false source-change prompt.
   wired to the provider's serialized conflict recovery.
 - Corrected the phone step selector to the approved vertical layout and added
   a responsive regression assertion.
+- The server now canonicalises source-refresh audit metadata from the stored
+  and incoming source snapshots. Capture timestamps and hazard counts must
+  match exactly; decision entries must be unique, use an approved action and
+  reference a real source item, context category or plan field.
+- Only canonical, sorted `before` and `after` metadata is retained on the
+  atomic `source_refreshed` audit event. Forged counts, unknown decision IDs,
+  invalid actions, duplicate decisions and client actor/time are rejected
+  before the compare-and-swap write.
+- Final authenticated API and inventory verification: 2 files, 80 tests
+  passed. The full suite increased to 454 passing tests.

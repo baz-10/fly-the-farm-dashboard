@@ -641,7 +641,7 @@ const STANDALONE_SAFETY_AUDIT_ACTIONS = new Set([
   'pdf_generated',
 ]);
 
-function deriveSafetyPlanMutationAudit(stored, incoming, sourceRefreshRequested = false) {
+function deriveSafetyPlanMutationAudit(stored, incoming, sourceRefreshMetadata) {
   if (!stored) {
     return incoming.status === 'not_required'
       ? { action: 'not_required_selected' }
@@ -691,10 +691,12 @@ function deriveSafetyPlanMutationAudit(stored, incoming, sourceRefreshRequested 
     }
   }
 
-  if (sourceRefreshRequested) {
+  if (sourceRefreshMetadata) {
     return {
       action: 'source_refreshed',
       versionId: incoming.currentVersionId,
+      before: sourceRefreshMetadata.before,
+      after: sourceRefreshMetadata.after,
     };
   }
 
@@ -704,9 +706,104 @@ function deriveSafetyPlanMutationAudit(stored, incoming, sourceRefreshRequested 
   };
 }
 
+const SOURCE_REFRESH_CONTEXT_CATEGORIES = new Set([
+  'company',
+  'job',
+  'missions',
+  'client',
+  'property',
+  'field',
+  'crew',
+  'assets',
+  'chemicals',
+  'emergencyContacts',
+  'siteMap',
+]);
+const SOURCE_REFRESH_ACTIONS = new Set([
+  'accept_source_value',
+  'keep_company_value',
+  'remove',
+]);
+
+function sourceRefreshDecisionIds(storedVersion, incomingVersion) {
+  const ids = new Set();
+  for (const snapshot of [
+    storedVersion?.sourceSnapshot,
+    incomingVersion?.sourceSnapshot,
+  ]) {
+    for (const hazard of snapshot?.hazards || []) {
+      if (typeof hazard?.id === 'string' && hazard.id.trim()) ids.add(hazard.id);
+    }
+    for (const category of SOURCE_REFRESH_CONTEXT_CATEGORIES) {
+      if (snapshot?.[category] !== undefined) ids.add(`context:${category}`);
+    }
+  }
+  for (const version of [storedVersion, incomingVersion]) {
+    for (const section of version?.sections || []) {
+      for (const field of section?.fields || []) {
+        if (typeof field?.id === 'string' && field.id.trim()) {
+          ids.add(`field:${field.id}`);
+        }
+      }
+    }
+  }
+  return ids;
+}
+
+function canonicalSourceRefreshMetadata(storedVersion, incomingVersion, intent) {
+  const storedSnapshot = storedVersion?.sourceSnapshot;
+  const incomingSnapshot = incomingVersion?.sourceSnapshot;
+  const beforeCount = Array.isArray(storedSnapshot?.hazards)
+    ? storedSnapshot.hazards.length
+    : 0;
+  const afterCount = Array.isArray(incomingSnapshot?.hazards)
+    ? incomingSnapshot.hazards.length
+    : 0;
+  const decisions = intent.after.decisions;
+  if (
+    intent.before.capturedAt !== storedSnapshot?.capturedAt
+    || intent.before.sourceItemCount !== beforeCount
+    || intent.after.capturedAt !== incomingSnapshot?.capturedAt
+    || intent.after.sourceItemCount !== afterCount
+    || !Array.isArray(decisions)
+  ) {
+    throw createHttpError(409, 'Safety Plan source refresh metadata does not match the source snapshots.');
+  }
+  const allowedIds = sourceRefreshDecisionIds(storedVersion, incomingVersion);
+  const seen = new Set();
+  const canonicalDecisions = decisions.map((decision) => {
+    if (
+      !isObject(decision)
+      || typeof decision.itemId !== 'string'
+      || !decision.itemId.trim()
+      || !SOURCE_REFRESH_ACTIONS.has(decision.action)
+      || seen.has(decision.itemId)
+      || !allowedIds.has(decision.itemId)
+    ) {
+      throw createHttpError(409, 'Safety Plan source refresh metadata contains an invalid decision.');
+    }
+    seen.add(decision.itemId);
+    return {
+      itemId: decision.itemId,
+      action: decision.action,
+    };
+  }).sort((left, right) => left.itemId.localeCompare(right.itemId));
+  return {
+    before: {
+      capturedAt: storedSnapshot.capturedAt,
+      sourceItemCount: beforeCount,
+    },
+    after: {
+      capturedAt: incomingSnapshot.capturedAt,
+      sourceItemCount: afterCount,
+      decisions: canonicalDecisions,
+    },
+  };
+}
+
 function consumeSourceRefreshIntent(stored, incoming) {
   if (!stored || !Array.isArray(incoming?.versions)) {
-    return { payload: incoming, requested: false };
+    return { payload: incoming, metadata: null };
   }
   const incomingCurrent = incoming.versions.find(
     (version) => version?.id === incoming.currentVersionId
@@ -719,7 +816,7 @@ function consumeSourceRefreshIntent(stored, incoming) {
     if (versionsWithIntent.length > 0) {
       throw createHttpError(400, 'Safety Plan source refresh intent must target the current version.');
     }
-    return { payload: incoming, requested: false };
+    return { payload: incoming, metadata: null };
   }
   if (
     versionsWithIntent.length !== 1
@@ -745,8 +842,9 @@ function consumeSourceRefreshIntent(stored, incoming) {
   ) {
     throw createHttpError(409, 'Safety Plan source refresh intent does not match the source transition.');
   }
+  const metadata = canonicalSourceRefreshMetadata(storedCurrent, incomingCurrent, intent);
   return {
-    requested: true,
+    metadata,
     payload: {
       ...incoming,
       versions: incoming.versions.map((version) => {
@@ -802,6 +900,8 @@ function normaliseSafetyAuditEventForPlan(
     actor: safetyPlanActor(actor),
     action,
     occurredAt: now,
+    ...(derivedMutation?.before ? { before: derivedMutation.before } : {}),
+    ...(derivedMutation?.after ? { after: derivedMutation.after } : {}),
   };
 }
 
@@ -1298,7 +1398,7 @@ module.exports = async function handler(req, res) {
           body.audit,
           auditRecordId,
           now,
-          deriveSafetyPlanMutationAudit(storedPayload, payload, sourceRefresh.requested)
+          deriveSafetyPlanMutationAudit(storedPayload, payload, sourceRefresh.metadata)
         );
       }
       if (collection === SAFETY_PLAN_AUDIT_COLLECTION) {
