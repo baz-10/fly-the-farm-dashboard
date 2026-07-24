@@ -20,6 +20,18 @@ const ALLOWED_COLLECTIONS = new Set(Object.keys(COLLECTION_POLICIES));
 const SAFETY_PLAN_COLLECTION = 'ftf_safety_plans';
 const SAFETY_PLAN_AUDIT_COLLECTION = 'ftf_safety_plan_audit';
 const SAFETY_PLAN_TEMPLATE_COLLECTION = 'ftf_safety_plan_templates';
+const SAFETY_PLAN_FIELD_TYPES = new Set([
+  'text',
+  'textarea',
+  'date',
+  'date_range',
+  'boolean',
+  'select',
+  'multi_select',
+  'person_list',
+  'asset_list',
+  'attachment_list',
+]);
 const SAFETY_PLAN_ACTIONS = new Set([
   'created',
   'source_refreshed',
@@ -179,6 +191,26 @@ function isSafetyPlanAuthority(user) {
     || (user.role === 'contractor' && user.safetyPlanAuthority === true);
 }
 
+function safetyPlanVersions(plan) {
+  return Array.isArray(plan?.versions) ? plan.versions : [];
+}
+
+function contractorCanAccessSafetyPlan(user, plan) {
+  if (!plan || user.role !== 'contractor') return false;
+  if (isSafetyPlanAuthority(user)) return true;
+  if (plan.notRequiredActor?.userId === user.id) return true;
+  return safetyPlanVersions(plan).some((version) =>
+    version?.createdBy?.userId === user.id
+    || (Array.isArray(version?.sourceSnapshot?.crew)
+      && version.sourceSnapshot.crew.some((person) => person?.id === user.id))
+  );
+}
+
+function canReadSafetyPlan(user, plan) {
+  return user.role === 'admin'
+    || contractorCanAccessSafetyPlan(user, plan);
+}
+
 function isObject(value) {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
@@ -200,6 +232,85 @@ function assertUniqueIds(records, label) {
   if (new Set(ids).size !== ids.length) {
     throw createHttpError(400, `${label} ids must be unique.`);
   }
+}
+
+function requiredString(value, label, maxLength = 5000) {
+  if (typeof value !== 'string') {
+    throw createHttpError(400, `${label} is invalid.`);
+  }
+  const result = value.trim();
+  if (!result || result.length > maxLength) {
+    throw createHttpError(400, `${label} is invalid.`);
+  }
+  return result;
+}
+
+function requiredBoolean(value, label) {
+  if (typeof value !== 'boolean') {
+    throw createHttpError(400, `${label} is invalid.`);
+  }
+  return value;
+}
+
+function normaliseCompanyTemplateContent(payload) {
+  if (!isObject(payload) || payload.isPlatformStandard !== false) {
+    throw createHttpError(400, 'Company Safety Plan master content is invalid.');
+  }
+  const sections = payload.sections;
+  if (!Array.isArray(sections) || sections.length === 0 || sections.length > 100) {
+    throw createHttpError(400, 'Company Safety Plan master sections are invalid.');
+  }
+  assertUniqueIds(sections, 'Safety Plan section');
+  const normalisedSections = sections.map((section) => {
+    if (!isObject(section) || !Array.isArray(section.fields) || section.fields.length === 0) {
+      throw createHttpError(400, 'Each Safety Plan section requires fields.');
+    }
+    assertUniqueIds(section.fields, `Safety Plan field in ${section.id || 'section'}`);
+    return {
+      id: requiredString(section.id, 'Safety Plan section id', 150),
+      title: requiredString(section.title, 'Safety Plan section title', 500),
+      helpText: requiredString(section.helpText, 'Safety Plan section guidance'),
+      required: requiredBoolean(section.required, 'Safety Plan section required flag'),
+      companyEditable: requiredBoolean(
+        section.companyEditable,
+        'Safety Plan section company-editable flag'
+      ),
+      fields: section.fields.map((field) => {
+        if (!isObject(field) || !SAFETY_PLAN_FIELD_TYPES.has(field.type)) {
+          throw createHttpError(400, 'Safety Plan field type is invalid.');
+        }
+        return {
+          id: requiredString(field.id, 'Safety Plan field id', 150),
+          label: requiredString(field.label, 'Safety Plan field label', 500),
+          helpText: requiredString(field.helpText, 'Safety Plan field help text'),
+          type: field.type,
+          required: requiredBoolean(field.required, 'Safety Plan field required flag'),
+          companyEditable: requiredBoolean(
+            field.companyEditable,
+            'Safety Plan field company-editable flag'
+          ),
+        };
+      }),
+    };
+  });
+  const sectionIds = new Set(normalisedSections.map((section) => section.id));
+  const sectionStandardVersions = isObject(payload.sectionStandardVersions)
+    ? Object.fromEntries(Object.entries(payload.sectionStandardVersions).map(([sectionId, version]) => {
+      if (!sectionIds.has(sectionId)) {
+        throw createHttpError(400, 'Safety Plan section provenance references an unknown section.');
+      }
+      return [sectionId, requiredString(version, 'Safety Plan section standard version', 100)];
+    }))
+    : undefined;
+  return {
+    name: requiredString(payload.name, 'Safety Plan template name', 500),
+    jurisdiction: requiredString(payload.jurisdiction, 'Safety Plan jurisdiction', 50),
+    notice: requiredString(payload.notice, 'Safety Plan notice'),
+    standardVersion: requiredString(payload.standardVersion, 'Safety Plan standard version', 100),
+    ...(sectionStandardVersions ? { sectionStandardVersions } : {}),
+    isPlatformStandard: false,
+    sections: normalisedSections,
+  };
 }
 
 function immutableVersionContent(version) {
@@ -865,6 +976,9 @@ module.exports = async function handler(req, res) {
         if (collection === SAFETY_PLAN_COLLECTION && !(user.role === 'admin' && includeDeleted)) {
           records = records.filter((plan) => !plan?.deletedAt);
         }
+        if (collection === SAFETY_PLAN_COLLECTION) {
+          records = records.filter((plan) => canReadSafetyPlan(user, plan));
+        }
         if (recordId) {
           const payload = records.find((record) => record?.id === recordId) || null;
           return res.status(200).json({
@@ -882,10 +996,11 @@ module.exports = async function handler(req, res) {
       if (recordId) {
         const payload = await getRecord(tenantId, collection, recordId);
         const visiblePayload = collection === SAFETY_PLAN_COLLECTION
-          && payload?.deletedAt
-          && !(user.role === 'admin' && includeDeleted)
-          ? null
-          : payload;
+          && (
+            (payload?.deletedAt && !(user.role === 'admin' && includeDeleted))
+            || (payload && !canReadSafetyPlan(user, payload))
+          )
+          ? null : payload;
         return res.status(200).json({
           payload: user.role === 'contractor'
             ? contractorSafePayload(collection, visiblePayload)
@@ -895,6 +1010,9 @@ module.exports = async function handler(req, res) {
       let records = await listCollection(tenantId, collection);
       if (collection === SAFETY_PLAN_COLLECTION && !(user.role === 'admin' && includeDeleted)) {
         records = records.filter((plan) => !plan?.deletedAt);
+      }
+      if (collection === SAFETY_PLAN_COLLECTION) {
+        records = records.filter((plan) => canReadSafetyPlan(user, plan));
       }
       return res.status(200).json({
         records: user.role === 'contractor'
@@ -912,6 +1030,29 @@ module.exports = async function handler(req, res) {
       const collection = validateCollection(body.collection || req.query.collection);
       assertCollectionPermission(user, collection, 'write');
       const now = new Date().toISOString();
+
+      if (
+        collection === SAFETY_PLAN_TEMPLATE_COLLECTION
+        && body.action === 'publish_company_master'
+      ) {
+        const content = normaliseCompanyTemplateContent(body.payload);
+        const auditRecordId = randomUUID();
+        const published = await supabaseRequest(
+          'rest/v1/rpc/ftf_publish_safety_plan_master',
+          {
+            method: 'POST',
+            body: JSON.stringify({
+              p_tenant_id: tenantId,
+              p_actor_user_id: user.id,
+              p_actor_name: user.name,
+              p_template_content: content,
+              p_audit_record_id: auditRecordId,
+            }),
+            publicMessage: 'Company Safety Plan master could not be published.',
+          }
+        );
+        return res.status(200).json({ ok: true, count: 1, payload: published });
+      }
 
       if (collection === SAFETY_PLAN_COLLECTION && body.action === 'restore') {
         if (user.role !== 'admin') {
@@ -999,6 +1140,12 @@ module.exports = async function handler(req, res) {
       }
 
       const recordId = validateRecordId(body.recordId || SINGLETON_RECORD_ID);
+      if (collection === SAFETY_PLAN_TEMPLATE_COLLECTION) {
+        throw createHttpError(
+          400,
+          'Company Safety Plan masters must use controlled publication.'
+        );
+      }
       const needsStoredPayload = user.role === 'contractor'
         || collection === SAFETY_PLAN_COLLECTION
         || collection === SAFETY_PLAN_AUDIT_COLLECTION
@@ -1006,25 +1153,6 @@ module.exports = async function handler(req, res) {
       const storedPayload = needsStoredPayload ? await getRecord(tenantId, collection, recordId) : null;
       let payload = body.payload;
       let safetyAuditEvent = null;
-      if (collection === SAFETY_PLAN_TEMPLATE_COLLECTION) {
-        if (storedPayload) {
-          throw createHttpError(
-            409,
-            'Published company Safety Plan masters are immutable. Publish a new master version.'
-          );
-        }
-        if (
-          !isObject(payload)
-          || payload.id !== recordId
-          || payload.tenantId !== tenantId
-          || payload.isPlatformStandard !== false
-          || !Number.isSafeInteger(payload.masterVersion)
-          || payload.masterVersion < 1
-          || !Array.isArray(payload.sections)
-        ) {
-          throw createHttpError(403, 'Company Safety Plan master identity is invalid.');
-        }
-      }
       if (collection === SAFETY_PLAN_COLLECTION) {
         payload = normaliseSafetyPlanProvenance(user, storedPayload, body.payload, now);
         assertSafetyPlanTransition({

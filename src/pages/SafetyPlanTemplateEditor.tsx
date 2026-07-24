@@ -92,6 +92,10 @@ export default function SafetyPlanTemplateEditor() {
     if (!standard) return;
     setTemplate((current) => current ? {
       ...current,
+      sectionStandardVersions: {
+        ...current.sectionStandardVersions,
+        [sectionId]: AU_REOC_SAFETY_PLAN_STANDARD.version,
+      },
       sections: current.sections.map((section) => section.id === sectionId
         ? { ...standard, fields: standard.fields.map((field) => ({ ...field })) }
         : section),
@@ -118,7 +122,10 @@ export default function SafetyPlanTemplateEditor() {
 
   if (!template) return <Alert severity="error">{error || 'Company template is unavailable.'}</Alert>;
 
-  const hasStandardUpdate = template.standardVersion !== AU_REOC_SAFETY_PLAN_STANDARD.version;
+  const hasStandardUpdate = template.sections.some((section) =>
+    (template.sectionStandardVersions?.[section.id] ?? template.standardVersion)
+      !== AU_REOC_SAFETY_PLAN_STANDARD.version
+  );
 
   return (
     <Box sx={{ p: { xs: 2, md: 3 }, maxWidth: 1200, mx: 'auto' }}>

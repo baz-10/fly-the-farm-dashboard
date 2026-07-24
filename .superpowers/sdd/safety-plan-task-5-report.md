@@ -45,7 +45,7 @@ GREEN verification:
 
 - focused Task 5 and security suites: 7 files, 100 tests;
 - inventory guard: 5 tests;
-- complete suite: 74 files, 432 tests;
+- complete suite after independent-review hardening: 75 files, 437 tests;
 - `npm run build`: passed (`tsc --noEmit && vite build`);
 - Node syntax checks for `api/auth.js`, `api/store.js` and
   `server/session.js`: passed;
@@ -62,3 +62,23 @@ API changes. It creates the service-role-only
 The register links to `/compliance/safety-plans/:planId`, which Task 6 owns and
 will implement as the guided five-step editor. Task 5 deliberately does not
 duplicate that workflow.
+
+## Independent-review hardening
+
+After independent review, Task 5 was further hardened:
+
+- normal contractors now receive only plans they created or plans whose
+  snapshot assigns them as crew; singleton reads return `null` for inaccessible
+  plan IDs so record existence is not disclosed;
+- company administrators and nominated operational authorities retain the
+  tenant-wide review view;
+- remote company-master publication now uses the service-role-only
+  `ftf_publish_safety_plan_master` RPC;
+- the database serialises publication per tenant with a transaction advisory
+  lock and derives the next record ID, master version, display version,
+  publisher, publication time and audit event atomically;
+- the API validates and canonicalises the full editable template schema before
+  calling the RPC and strips all client-supplied publication provenance;
+- each company master preserves the standard version from which its content was
+  sourced, with per-section standard-version provenance updated only when an
+  administrator deliberately restores that platform section.

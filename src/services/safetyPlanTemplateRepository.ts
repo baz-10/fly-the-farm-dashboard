@@ -2,6 +2,7 @@ import { AU_REOC_SAFETY_PLAN_STANDARD } from '../data/safetyPlanStandard';
 import type { CompanySafetyPlanTemplate, SafetyPlanTemplate } from '../types/safetyPlan';
 import {
   PERSISTENCE_KEYS,
+  getPersistenceMode,
   readSharedCollection,
   writeSharedRecord,
 } from './persistence';
@@ -44,15 +45,14 @@ export async function loadCompanySafetyPlanTemplate(
     id: templateId(actor.tenantId, 1),
     tenantId: actor.tenantId,
     standardVersion: AU_REOC_SAFETY_PLAN_STANDARD.version,
+    sectionStandardVersions: Object.fromEntries(
+      standard.sections.map((section) => [section.id, AU_REOC_SAFETY_PLAN_STANDARD.version])
+    ),
     masterVersion: 1,
     version: '1.0',
     isPlatformStandard: false,
   };
-  return writeSharedRecord(
-    PERSISTENCE_KEYS.safetyPlanTemplates,
-    firstMaster.id,
-    firstMaster,
-  );
+  return firstMaster;
 }
 
 export async function publishCompanySafetyPlanTemplate(
@@ -62,12 +62,30 @@ export async function publishCompanySafetyPlanTemplate(
   if (draft.tenantId !== actor.tenantId) {
     throw new Error('The company template belongs to another account.');
   }
+  if (getPersistenceMode() === 'remote') {
+    const response = await fetch('/api/store', {
+      method: 'PUT',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        collection: PERSISTENCE_KEYS.safetyPlanTemplates,
+        action: 'publish_company_master',
+        payload: draft,
+      }),
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(result.error || 'Company Safety Plan master could not be published.');
+    }
+    return result.payload;
+  }
   const nextMasterVersion = draft.masterVersion + 1;
   const published: CompanySafetyPlanTemplate = {
     ...cloneTemplate(draft),
     id: templateId(actor.tenantId, nextMasterVersion),
     tenantId: actor.tenantId,
-    standardVersion: AU_REOC_SAFETY_PLAN_STANDARD.version,
+    standardVersion: draft.standardVersion,
+    sectionStandardVersions: draft.sectionStandardVersions,
     masterVersion: nextMasterVersion,
     version: `${nextMasterVersion}.0`,
     publishedAt: new Date().toISOString(),

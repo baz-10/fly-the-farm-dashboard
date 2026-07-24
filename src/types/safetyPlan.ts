@@ -162,6 +162,7 @@ export interface SafetyPlanTemplate {
 export interface CompanySafetyPlanTemplate extends SafetyPlanTemplate {
   tenantId: string;
   standardVersion: string;
+  sectionStandardVersions?: Record<string, string>;
   masterVersion: number;
   publishedAt?: string;
   publishedBy?: Pick<SafetyPlanActor, 'userId' | 'name'>;

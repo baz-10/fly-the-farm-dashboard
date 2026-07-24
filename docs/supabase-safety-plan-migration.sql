@@ -76,6 +76,126 @@ grant execute on function public.ftf_set_safety_plan_authority(
   uuid, uuid, boolean, text, jsonb
 ) to service_role;
 
+drop function if exists public.ftf_publish_safety_plan_master(
+  uuid, uuid, text, jsonb, text
+);
+
+create or replace function public.ftf_publish_safety_plan_master(
+  p_tenant_id uuid,
+  p_actor_user_id uuid,
+  p_actor_name text,
+  p_template_content jsonb,
+  p_audit_record_id text
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = pg_catalog
+as $function$
+declare
+  v_next_version integer;
+  v_record_id text;
+  v_published_at timestamptz := pg_catalog.now();
+  v_payload jsonb;
+  v_audit jsonb;
+begin
+  if p_template_content is null or p_audit_record_id is null then
+    raise exception 'Company master content and audit identity are required.';
+  end if;
+
+  perform pg_catalog.pg_advisory_xact_lock(
+    pg_catalog.hashtextextended('ftf_safety_plan_master:' || p_tenant_id::text, 0)
+  );
+
+  select pg_catalog.coalesce(
+    pg_catalog.max((stored.payload ->> 'masterVersion')::integer),
+    0
+  ) + 1
+  into v_next_version
+  from public.ftf_store as stored
+  where stored.tenant_id = p_tenant_id
+    and stored.collection = 'ftf_safety_plan_templates';
+
+  v_record_id := 'safety-plan-master-' || p_tenant_id::text || '-' || v_next_version::text;
+  v_payload := p_template_content || pg_catalog.jsonb_build_object(
+    'id', v_record_id,
+    'tenantId', p_tenant_id::text,
+    'masterVersion', v_next_version,
+    'version', v_next_version::text || '.0',
+    'publishedAt', v_published_at,
+    'publishedBy', pg_catalog.jsonb_build_object(
+      'userId', p_actor_user_id::text,
+      'name', p_actor_name
+    ),
+    'isPlatformStandard', false
+  );
+
+  insert into public.ftf_store (
+    tenant_id,
+    collection,
+    record_id,
+    payload,
+    updated_at
+  )
+  values (
+    p_tenant_id,
+    'ftf_safety_plan_templates',
+    v_record_id,
+    v_payload,
+    v_published_at
+  );
+
+  v_audit := pg_catalog.jsonb_build_object(
+    'id', p_audit_record_id,
+    'tenantId', p_tenant_id::text,
+    'planId', 'template:' || v_record_id,
+    'actor', pg_catalog.jsonb_build_object(
+      'userId', p_actor_user_id::text,
+      'name', p_actor_name,
+      'role', 'admin',
+      'operationalAuthority', true
+    ),
+    'action', 'company_master_published',
+    'occurredAt', v_published_at,
+    'after', pg_catalog.jsonb_build_object(
+      'templateId', v_record_id,
+      'masterVersion', v_next_version,
+      'standardVersion', p_template_content ->> 'standardVersion'
+    )
+  );
+
+  insert into public.ftf_store (
+    tenant_id,
+    collection,
+    record_id,
+    payload,
+    updated_at
+  )
+  values (
+    p_tenant_id,
+    'ftf_safety_plan_audit',
+    p_audit_record_id,
+    v_audit,
+    v_published_at
+  );
+
+  return v_payload;
+end;
+$function$;
+
+revoke all on function public.ftf_publish_safety_plan_master(
+  uuid, uuid, text, jsonb, text
+) from public;
+revoke all on function public.ftf_publish_safety_plan_master(
+  uuid, uuid, text, jsonb, text
+) from anon;
+revoke all on function public.ftf_publish_safety_plan_master(
+  uuid, uuid, text, jsonb, text
+) from authenticated;
+grant execute on function public.ftf_publish_safety_plan_master(
+  uuid, uuid, text, jsonb, text
+) to service_role;
+
 drop function if exists public.ftf_compare_and_swap_store_payload(
   uuid, text, text, bigint, jsonb
 );

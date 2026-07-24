@@ -1,6 +1,7 @@
 import { vi } from 'vitest';
 import { makeSafetyPlan, makeSafetyPlanVersion } from '../test/safetyPlanFixtures';
 import type { SafetyPlan, SafetyPlanAuditEvent } from '../types/safetyPlan';
+import { AU_REOC_SAFETY_PLAN_STANDARD } from '../data/safetyPlanStandard';
 
 let storeHandler: any;
 
@@ -93,6 +94,7 @@ function mockApi({
   onPost,
   onRpc,
   onInsertRpc,
+  onMasterRpc,
 }: {
   role?: 'admin' | 'contractor' | 'client';
   safetyPlanAuthority?: boolean;
@@ -113,6 +115,11 @@ function mockApi({
     url: string,
     options: RequestInit
   ) => { succeeded: boolean; new_payload?: any };
+  onMasterRpc?: (
+    body: Record<string, unknown>,
+    url: string,
+    options: RequestInit
+  ) => any;
 } = {}) {
   global.fetch = vi.fn(async (url: string, options: RequestInit = {}) => {
     if (url.endsWith('/auth/v1/user')) {
@@ -139,6 +146,10 @@ function mockApi({
       const result = onInsertRpc?.(body, url, options)
         ?? { succeeded: true, new_payload: body.p_plan_payload };
       return response(200, [result]);
+    }
+    if (url.includes('/rest/v1/rpc/ftf_publish_safety_plan_master')) {
+      const body = JSON.parse(String(options.body));
+      return response(200, onMasterRpc?.(body, url, options) ?? null);
     }
     if (url.includes('/rest/v1/ftf_store') && options.method === 'POST') {
       onPost?.(JSON.parse(String(options.body)), url, options);
@@ -2014,8 +2025,8 @@ describe('Safety Plan persistent store security', () => {
       payload: { ...master, version: 'rewritten' },
     }), res);
 
-    expect(res.statusCode).toBe(409);
-    expect(res.body.error).toMatch(/immutable|new master/i);
+    expect(res.statusCode).toBe(400);
+    expect(res.body.error).toMatch(/controlled publication/i);
   });
 
   it('rejects a company master carrying a forged tenant identity', async () => {
@@ -2031,11 +2042,189 @@ describe('Safety Plan persistent store security', () => {
         masterVersion: 1,
         version: '1.0',
         isPlatformStandard: false,
-        sections: [],
+        sections: AU_REOC_SAFETY_PLAN_STANDARD.sections,
       },
     }), res);
 
-    expect(res.statusCode).toBe(403);
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('shows a normal contractor only Safety Plans they created or are assigned to', async () => {
+    const own = makeSafetyPlan({
+      id: 'own-plan',
+      tenantId: 'tenant-a',
+      versions: [makeSafetyPlanVersion({
+        id: 'own-version',
+        planId: 'own-plan',
+        createdBy: {
+          userId: 'user-a',
+          name: 'User A',
+          role: 'contractor',
+          operationalAuthority: false,
+        },
+      })],
+      currentVersionId: 'own-version',
+    });
+    const assigned = makeSafetyPlan({
+      id: 'assigned-plan',
+      tenantId: 'tenant-a',
+      versions: [makeSafetyPlanVersion({
+        id: 'assigned-version',
+        planId: 'assigned-plan',
+        createdBy: {
+          userId: 'user-b',
+          name: 'User B',
+          role: 'contractor',
+          operationalAuthority: false,
+        },
+        sourceSnapshot: {
+          capturedAt: '2026-07-24T00:00:00.000Z',
+          job: { id: 'job-assigned', name: 'Assigned job' },
+          missions: [],
+          crew: [{ id: 'user-a', name: 'User A', role: 'PIC' }],
+          sourceLinks: [],
+        },
+      })],
+      currentVersionId: 'assigned-version',
+    });
+    const other = makeSafetyPlan({
+      id: 'other-plan',
+      tenantId: 'tenant-a',
+      versions: [makeSafetyPlanVersion({
+        id: 'other-version',
+        planId: 'other-plan',
+        createdBy: {
+          userId: 'user-b',
+          name: 'User B',
+          role: 'contractor',
+          operationalAuthority: false,
+        },
+      })],
+      currentVersionId: 'other-version',
+    });
+    mockApi({
+      role: 'contractor',
+      stored: [own, assigned, other].map((payload) => ({
+        tenant_id: 'tenant-a',
+        collection: 'ftf_safety_plans',
+        record_id: payload.id,
+        payload,
+      })),
+    });
+    const listResponse = createResponse();
+    const singletonResponse = createResponse();
+
+    await storeHandler(request('GET', 'ftf_safety_plans'), listResponse);
+    await storeHandler(request('GET', 'ftf_safety_plans', undefined, other.id), singletonResponse);
+
+    expect(listResponse.body.records.map((plan: SafetyPlan) => plan.id).sort())
+      .toEqual(['assigned-plan', 'own-plan']);
+    expect(singletonResponse.body).toEqual({ payload: null });
+  });
+
+  it('allows a nominated operational authority to review all tenant Safety Plans', async () => {
+    const other = makeSafetyPlan({
+      id: 'other-plan',
+      tenantId: 'tenant-a',
+      versions: [makeSafetyPlanVersion({
+        createdBy: {
+          userId: 'user-b',
+          name: 'User B',
+          role: 'contractor',
+          operationalAuthority: false,
+        },
+      })],
+    });
+    mockApi({
+      role: 'contractor',
+      safetyPlanAuthority: true,
+      stored: [{
+        tenant_id: 'tenant-a',
+        collection: 'ftf_safety_plans',
+        record_id: other.id,
+        payload: other,
+      }],
+    });
+    const res = createResponse();
+
+    await storeHandler(request('GET', 'ftf_safety_plans'), res);
+
+    expect(res.body.records).toHaveLength(1);
+    expect(res.body.records[0].id).toBe(other.id);
+  });
+
+  it('publishes company masters with server-controlled identity and provenance', async () => {
+    let rpcBody: Record<string, unknown> | undefined;
+    mockApi({
+      onMasterRpc: (body) => {
+        rpcBody = body;
+        return {
+          id: 'safety-plan-master-tenant-a-3',
+          tenantId: 'tenant-a',
+          masterVersion: 3,
+          version: '3.0',
+          standardVersion: 'AU-REOC-0.9',
+          publishedAt: '2026-07-24T01:00:00.000Z',
+          publishedBy: { userId: 'user-a', name: 'User A' },
+          isPlatformStandard: false,
+          sections: [],
+        };
+      },
+    });
+    const res = createResponse();
+
+    await storeHandler(request('PUT', 'ftf_safety_plan_templates', {
+      collection: 'ftf_safety_plan_templates',
+      action: 'publish_company_master',
+      payload: {
+        id: 'forged-id',
+        tenantId: 'tenant-b',
+        masterVersion: 99,
+        version: '99.0',
+        standardVersion: 'AU-REOC-0.9',
+        publishedAt: '2000-01-01T00:00:00.000Z',
+        publishedBy: { userId: 'attacker', name: 'Attacker' },
+        name: 'Company Safety Plan',
+        jurisdiction: 'AU',
+        notice: 'CASA/ReOC aligned.',
+        isPlatformStandard: false,
+        sections: AU_REOC_SAFETY_PLAN_STANDARD.sections,
+      },
+    }), res);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body.payload).toMatchObject({
+      id: 'safety-plan-master-tenant-a-3',
+      tenantId: 'tenant-a',
+      masterVersion: 3,
+      publishedBy: { userId: 'user-a' },
+    });
+    expect(rpcBody).toBeDefined();
+    const content = rpcBody?.p_template_content as Record<string, unknown>;
+    expect(content).not.toHaveProperty('id');
+    expect(content).not.toHaveProperty('tenantId');
+    expect(content).not.toHaveProperty('masterVersion');
+    expect(content).not.toHaveProperty('publishedAt');
+    expect(content).not.toHaveProperty('publishedBy');
+  });
+
+  it('rejects malformed company-master content before publication', async () => {
+    let called = false;
+    mockApi({ onMasterRpc: () => { called = true; return null; } });
+    const res = createResponse();
+
+    await storeHandler(request('PUT', 'ftf_safety_plan_templates', {
+      collection: 'ftf_safety_plan_templates',
+      action: 'publish_company_master',
+      payload: {
+        name: 'Broken',
+        standardVersion: 'AU-REOC-1.0',
+        sections: [{ id: 'duplicate', fields: [] }, { id: 'duplicate', fields: [] }],
+      },
+    }), res);
+
+    expect(res.statusCode).toBe(400);
+    expect(called).toBe(false);
   });
 });
 
