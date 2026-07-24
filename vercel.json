@@ -1,8 +1,8 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "buildCommand": "CI=false npm run build",
-  "outputDirectory": "build",
-  "framework": "create-react-app",
+  "buildCommand": "npm run build",
+  "outputDirectory": "dist",
+  "framework": "vite",
   "functions": {
     "api/auth.js": {
       "maxDuration": 15

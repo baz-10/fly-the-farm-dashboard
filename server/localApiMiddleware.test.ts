@@ -84,9 +84,9 @@ function registeredRoutes(): Map<string, LocalMiddleware> {
   return routes;
 }
 
-async function invokePlugin(url: string) {
+async function invokePlugin(url: string, hook: 'configureServer' | 'configurePreviewServer' = 'configureServer') {
   const layers: RegisteredMiddleware[] = [];
-  localApiPlugin().configureServer({
+  localApiPlugin()[hook]({
     middlewares: {
       use(path: string, middleware: LocalMiddleware) {
         layers.push({ path, middleware });
@@ -277,5 +277,17 @@ describe('local Vercel API middleware', () => {
     expect(response.headers['content-type']).not.toContain('text/html');
     expect(JSON.parse(response.body)).toEqual({ error: 'API route not found.' });
     expect(spaFallbacks).toBe(0);
+  });
+
+  it('registers the same API boundary in built Vite previews', async () => {
+    const development = await invokePlugin('/api/not-real', 'configureServer');
+    const preview = await invokePlugin('/api/not-real', 'configurePreviewServer');
+
+    expect(preview.layers.map(({ path }) => path)).toEqual(
+      development.layers.map(({ path }) => path)
+    );
+    expect(preview.response.statusCode).toBe(404);
+    expect(preview.response.headers['content-type']).toContain('application/json');
+    expect(preview.spaFallbacks).toBe(0);
   });
 });
