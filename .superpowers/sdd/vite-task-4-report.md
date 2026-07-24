@@ -129,4 +129,4 @@ bundle chunk warning. Neither was introduced by this test-runner migration.
 
 ## Commit
 
-Pending at report creation; populated after commit.
+`e1a9d90 test: migrate utility and service suites to Vitest`
