@@ -76,3 +76,70 @@ revoke all on function public.ftf_compare_and_swap_store_payload(
 grant execute on function public.ftf_compare_and_swap_store_payload(
   uuid, text, text, bigint, jsonb, text, jsonb
 ) to service_role;
+
+drop function if exists public.ftf_insert_safety_plan_with_audit(
+  uuid, text, jsonb, text, jsonb
+);
+
+create or replace function public.ftf_insert_safety_plan_with_audit(
+  p_tenant_id uuid,
+  p_plan_record_id text,
+  p_plan_payload jsonb,
+  p_audit_record_id text,
+  p_audit_payload jsonb
+)
+returns table (succeeded boolean, new_payload jsonb)
+language plpgsql
+security definer
+set search_path = pg_catalog
+as $function$
+begin
+  insert into public.ftf_store (
+    tenant_id,
+    collection,
+    record_id,
+    payload,
+    updated_at
+  )
+  values (
+    p_tenant_id,
+    'ftf_safety_plans',
+    p_plan_record_id,
+    p_plan_payload,
+    pg_catalog.now()
+  );
+
+  insert into public.ftf_store (
+    tenant_id,
+    collection,
+    record_id,
+    payload,
+    updated_at
+  )
+  values (
+    p_tenant_id,
+    'ftf_safety_plan_audit',
+    p_audit_record_id,
+    p_audit_payload,
+    pg_catalog.now()
+  );
+
+  return query select true, p_plan_payload;
+exception
+  when unique_violation then
+    return query select false, null::jsonb;
+end;
+$function$;
+
+revoke all on function public.ftf_insert_safety_plan_with_audit(
+  uuid, text, jsonb, text, jsonb
+) from public;
+revoke all on function public.ftf_insert_safety_plan_with_audit(
+  uuid, text, jsonb, text, jsonb
+) from anon;
+revoke all on function public.ftf_insert_safety_plan_with_audit(
+  uuid, text, jsonb, text, jsonb
+) from authenticated;
+grant execute on function public.ftf_insert_safety_plan_with_audit(
+  uuid, text, jsonb, text, jsonb
+) to service_role;

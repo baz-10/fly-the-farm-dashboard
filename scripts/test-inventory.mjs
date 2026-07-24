@@ -11,6 +11,10 @@ const POST_BASELINE_TEST_FILES = new Set([
   'src/config/environment.build.test.ts',
   'src/config/environment.test.ts',
   'src/__tests__/authenticated-safety-plan-api.test.ts',
+  'src/App.safetyPlanProvider.test.tsx',
+  'src/contexts/__tests__/SafetyPlanContext.test.tsx',
+  'src/services/__tests__/persistence.safetyPlan.test.ts',
+  'src/services/__tests__/safetyPlanRepository.test.ts',
   'src/utils/__tests__/safetyPlanPermissions.test.ts',
   'src/utils/__tests__/safetyPlanRules.test.ts',
 ]);

@@ -419,6 +419,13 @@ function assertSubmittedCurrentBoundary(stored, incoming) {
   }
 }
 
+function safetyPlanConflict(currentRevision, message = 'Safety Plan changed in another session. Refresh and try again.') {
+  const error = createHttpError(409, message);
+  error.code = 'SAFETY_PLAN_CONFLICT';
+  if (Number.isSafeInteger(currentRevision)) error.currentRevision = currentRevision;
+  return error;
+}
+
 function assertSafetyPlanTransition({ actor, stored, incoming, recordId }) {
   assertIncomingPlanShape(actor, incoming, recordId);
 
@@ -447,7 +454,7 @@ function assertSafetyPlanTransition({ actor, stored, incoming, recordId }) {
     throw createHttpError(403, 'Safety Plan creation provenance cannot be changed.');
   }
   if (!Number.isSafeInteger(stored.revision) || incoming.revision !== stored.revision + 1) {
-    throw createHttpError(409, 'Safety Plan record revision is stale.');
+    throw safetyPlanConflict(stored.revision, 'Safety Plan record revision is stale.');
   }
   assertSubmittedCurrentBoundary(stored, incoming);
 
@@ -511,25 +518,38 @@ function assertSafetyAuditAction(actor, plan, event) {
   }
 }
 
-async function normaliseSafetyAuditEvent(actor, event, recordId, now) {
+function normaliseSafetyAuditEventForPlan(actor, plan, event, recordId, now) {
   if (!isObject(event) || event.id !== recordId) {
     throw createHttpError(400, 'Safety audit event id must match its record id.');
   }
   if (typeof event.planId !== 'string' || !event.planId.trim()) {
     throw createHttpError(400, 'Safety audit event requires a linked plan.');
   }
-  const plan = await getRecord(actor.tenantId, SAFETY_PLAN_COLLECTION, event.planId);
-  if (!plan) throw createHttpError(409, 'Safety audit event linked plan was not found.');
+  if (event.planId !== plan.id) {
+    throw createHttpError(409, 'Safety audit event linked plan does not match the saved plan.');
+  }
   if (plan.deletedAt) {
     throw createHttpError(409, 'Deleted Safety Plans accept only server-managed audit events.');
   }
   assertSafetyAuditAction(actor, plan, event);
   return {
-    ...event,
+    id: event.id,
     tenantId: actor.tenantId,
+    planId: plan.id,
+    ...(event.versionId ? { versionId: event.versionId } : {}),
     actor: safetyPlanActor(actor),
+    action: event.action,
     occurredAt: now,
   };
+}
+
+async function normaliseSafetyAuditEvent(actor, event, recordId, now) {
+  if (!isObject(event) || typeof event.planId !== 'string' || !event.planId.trim()) {
+    throw createHttpError(400, 'Safety audit event requires a linked plan.');
+  }
+  const plan = await getRecord(actor.tenantId, SAFETY_PLAN_COLLECTION, event.planId);
+  if (!plan) throw createHttpError(409, 'Safety audit event linked plan was not found.');
+  return normaliseSafetyAuditEventForPlan(actor, plan, event, recordId, now);
 }
 
 function validateRecordId(value) {
@@ -538,6 +558,14 @@ function validateRecordId(value) {
     throw createHttpError(400, 'Invalid record id.');
   }
   return recordId;
+}
+
+function validateExpectedRevision(value) {
+  const revision = typeof value === 'number' ? value : Number(value);
+  if (!Number.isSafeInteger(revision) || revision < 1) {
+    throw createHttpError(400, 'A valid expected Safety Plan revision is required.');
+  }
+  return revision;
 }
 
 function assertSameOrigin(req) {
@@ -644,6 +672,31 @@ async function insertSafetyPlanRecords(rows) {
   });
 }
 
+async function insertSafetyPlanWithAudit(
+  tenantId,
+  recordId,
+  payload,
+  auditEvent
+) {
+  const rows = await supabaseRequest('rest/v1/rpc/ftf_insert_safety_plan_with_audit', {
+    method: 'POST',
+    body: JSON.stringify({
+      p_tenant_id: tenantId,
+      p_plan_record_id: recordId,
+      p_plan_payload: payload,
+      p_audit_record_id: auditEvent.id,
+      p_audit_payload: auditEvent,
+    }),
+    publicMessage: 'Safety Plan creation conflicted with an existing record.',
+  });
+  const outcome = Array.isArray(rows) ? rows[0] : rows;
+  if (outcome?.succeeded !== true) {
+    const current = await getRecord(tenantId, SAFETY_PLAN_COLLECTION, recordId);
+    throw safetyPlanConflict(current?.revision);
+  }
+  return outcome.new_payload || payload;
+}
+
 async function compareAndSwapSafetyPlan(
   tenantId,
   recordId,
@@ -670,7 +723,8 @@ async function compareAndSwapSafetyPlan(
   });
   const outcome = Array.isArray(rows) ? rows[0] : rows;
   if (outcome?.succeeded !== true) {
-    throw createHttpError(409, 'Safety Plan changed in another session. Refresh and try again.');
+    const current = await getRecord(tenantId, SAFETY_PLAN_COLLECTION, recordId);
+    throw safetyPlanConflict(current?.revision);
   }
   return outcome.new_payload || payload;
 }
@@ -783,6 +837,10 @@ module.exports = async function handler(req, res) {
         }
         const recordId = validateRecordId(body.recordId);
         const stored = await getRecord(tenantId, collection, recordId);
+        const expectedRevision = validateExpectedRevision(body.expectedRevision);
+        if (stored && stored.revision !== expectedRevision) {
+          throw safetyPlanConflict(stored.revision);
+        }
         if (!stored?.deletedAt || stored.status !== 'draft') {
           throw createHttpError(409, 'Only a deleted draft Safety Plan can be restored.');
         }
@@ -805,7 +863,7 @@ module.exports = async function handler(req, res) {
         const saved = await compareAndSwapSafetyPlan(
           tenantId,
           recordId,
-          stored.revision,
+          expectedRevision,
           restored,
           auditEvent
         );
@@ -816,25 +874,14 @@ module.exports = async function handler(req, res) {
         if (body.records.length > MAX_RECORDS_PER_WRITE) {
           throw createHttpError(413, `Store at most ${MAX_RECORDS_PER_WRITE} records in one request.`);
         }
-        if (collection === SAFETY_PLAN_COLLECTION && body.records.length > 1) {
+        if (collection === SAFETY_PLAN_COLLECTION) {
           throw createHttpError(
             400,
-            'Safety Plans must be saved one record at a time to preserve atomic revisions.'
+            'Safety Plans must use a singleton record write with audit linkage.'
           );
         }
         let records = body.records;
-        let safetyPlanWrites = [];
-        if (collection === SAFETY_PLAN_COLLECTION) {
-          assertUniqueIds(records, 'Safety Plan record');
-          safetyPlanWrites = await Promise.all(records.map(async (record, index) => {
-            const recordId = validateRecordId(record?.id || `record_${index}`);
-            const stored = await getRecord(tenantId, collection, recordId);
-            const incoming = normaliseSafetyPlanProvenance(user, stored, record, now);
-            assertSafetyPlanTransition({ actor: user, stored, incoming, recordId });
-            return { recordId, stored, incoming };
-          }));
-          records = safetyPlanWrites.map(({ incoming }) => incoming);
-        } else if (collection === SAFETY_PLAN_AUDIT_COLLECTION) {
+        if (collection === SAFETY_PLAN_AUDIT_COLLECTION) {
           assertUniqueIds(records, 'Safety audit event');
           records = await Promise.all(records.map(async (record, index) => {
             const recordId = validateRecordId(record?.id || `record_${index}`);
@@ -849,22 +896,7 @@ module.exports = async function handler(req, res) {
           const storedById = new Map(storedRecords.map((record) => [record?.id, record]));
           records = records.map((record) => contractorWritePayload(collection, record, storedById.get(record?.id)));
         }
-        if (collection === SAFETY_PLAN_COLLECTION) {
-          for (const write of safetyPlanWrites) {
-            if (write.stored) {
-              await compareAndSwapSafetyPlan(
-                tenantId,
-                write.recordId,
-                write.stored.revision,
-                write.incoming
-              );
-            } else {
-              await insertSafetyPlanRecords([
-                buildRecord(tenantId, collection, write.recordId, write.incoming),
-              ]);
-            }
-          }
-        } else if (collection === SAFETY_PLAN_AUDIT_COLLECTION) {
+        if (collection === SAFETY_PLAN_AUDIT_COLLECTION) {
           const rows = records.map((record, index) => buildRecord(
             tenantId,
             collection,
@@ -884,6 +916,7 @@ module.exports = async function handler(req, res) {
         || collection === SAFETY_PLAN_AUDIT_COLLECTION;
       const storedPayload = needsStoredPayload ? await getRecord(tenantId, collection, recordId) : null;
       let payload = body.payload;
+      let safetyAuditEvent = null;
       if (collection === SAFETY_PLAN_COLLECTION) {
         payload = normaliseSafetyPlanProvenance(user, storedPayload, body.payload, now);
         assertSafetyPlanTransition({
@@ -892,6 +925,17 @@ module.exports = async function handler(req, res) {
           incoming: payload,
           recordId,
         });
+        if (body.audit === undefined) {
+          throw createHttpError(400, 'Safety Plan writes require audit action and linkage metadata.');
+        }
+        const auditRecordId = validateRecordId(body.audit?.id);
+        safetyAuditEvent = normaliseSafetyAuditEventForPlan(
+          user,
+          payload,
+          body.audit,
+          auditRecordId,
+          now
+        );
       }
       if (collection === SAFETY_PLAN_AUDIT_COLLECTION) {
         payload = await normaliseSafetyAuditEvent(user, body.payload, recordId, now);
@@ -905,16 +949,33 @@ module.exports = async function handler(req, res) {
       if (collection === SAFETY_PLAN_AUDIT_COLLECTION) {
         await appendRecords([row]);
       } else if (collection === SAFETY_PLAN_COLLECTION) {
+        let saved;
         if (storedPayload) {
-          await compareAndSwapSafetyPlan(
+          saved = await compareAndSwapSafetyPlan(
             tenantId,
             recordId,
             storedPayload.revision,
-            payload
+            payload,
+            safetyAuditEvent
+          );
+        } else if (safetyAuditEvent) {
+          saved = await insertSafetyPlanWithAudit(
+            tenantId,
+            recordId,
+            payload,
+            safetyAuditEvent
           );
         } else {
-          await insertSafetyPlanRecords([row]);
+          try {
+            await insertSafetyPlanRecords([row]);
+            saved = payload;
+          } catch (insertError) {
+            if (insertError?.statusCode !== 409) throw insertError;
+            const current = await getRecord(tenantId, SAFETY_PLAN_COLLECTION, recordId);
+            throw safetyPlanConflict(current?.revision);
+          }
         }
+        return res.status(200).json({ ok: true, count: 1, payload: saved });
       } else {
         await upsertRecords([row]);
       }
@@ -936,6 +997,10 @@ module.exports = async function handler(req, res) {
           throw createHttpError(403, 'Only administrators may delete draft Safety Plans.');
         }
         const stored = await getRecord(tenantId, collection, recordId);
+        const expectedRevision = validateExpectedRevision(req.query.expectedRevision);
+        if (stored && stored.revision !== expectedRevision) {
+          throw safetyPlanConflict(stored.revision);
+        }
         if (!stored || stored.deletedAt || stored.status !== 'draft' || (stored.versions || []).some((version) =>
           ['approved', 'superseded'].includes(version?.status)
         )) {
@@ -953,7 +1018,7 @@ module.exports = async function handler(req, res) {
         const saved = await compareAndSwapSafetyPlan(
           tenantId,
           recordId,
-          stored.revision,
+          expectedRevision,
           deleted,
           auditEvent
         );
@@ -972,6 +1037,12 @@ module.exports = async function handler(req, res) {
   } catch (error) {
     const status = error.statusCode || 500;
     console.error('Persistent store error:', error);
-    return res.status(status).json({ error: error.publicMessage || 'Persistent storage request failed.' });
+    return res.status(status).json({
+      error: error.publicMessage || 'Persistent storage request failed.',
+      ...(error.code ? { code: error.code } : {}),
+      ...(Number.isSafeInteger(error.currentRevision)
+        ? { currentRevision: error.currentRevision }
+        : {}),
+    });
   }
 };

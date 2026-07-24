@@ -48,6 +48,7 @@ import { AircraftProvider } from './contexts/AircraftContext';
 import { MissionProvider } from './contexts/MissionContext';
 import { WorkPackProvider } from './contexts/WorkPackContext';
 import { MaintenanceProvider } from './contexts/MaintenanceContext';
+import { SafetyPlanProvider } from './contexts/SafetyPlanContext';
 import FleetWorkPacks from './pages/FleetWorkPacks';
 import MaintenanceCommand from './pages/MaintenanceCommand';
 import { useAuth } from './contexts/AuthContext';
@@ -57,15 +58,17 @@ function WorkflowProviders({ children }: { children: React.ReactNode }) {
   if (user?.role !== 'admin' && user?.role !== 'contractor') return <>{children}</>;
 
   return (
-    <UserLicenseProvider>
-      <AircraftProvider>
-        <WorkPackProvider>
-          <MaintenanceProvider>
-            <MissionProvider>{children}</MissionProvider>
-          </MaintenanceProvider>
-        </WorkPackProvider>
-      </AircraftProvider>
-    </UserLicenseProvider>
+    <SafetyPlanProvider>
+      <UserLicenseProvider>
+        <AircraftProvider>
+          <WorkPackProvider>
+            <MaintenanceProvider>
+              <MissionProvider>{children}</MissionProvider>
+            </MaintenanceProvider>
+          </WorkPackProvider>
+        </AircraftProvider>
+      </UserLicenseProvider>
+    </SafetyPlanProvider>
   );
 }
 
