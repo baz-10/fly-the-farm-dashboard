@@ -1,0 +1,215 @@
+import type {
+  IncomingMessage,
+  ServerResponse,
+} from 'http';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+const { Readable } = require('stream');
+const {
+  registerLocalApiMiddleware,
+} = require('./localApiMiddleware');
+
+type LocalMiddleware = (
+  req: IncomingMessage,
+  res: ServerResponse,
+  next: (error?: unknown) => void
+) => Promise<unknown> | void;
+
+interface MockResponse {
+  statusCode: number;
+  headers: Record<string, string | string[]>;
+  body: string;
+  setHeader: (name: string, value: string | string[]) => void;
+  getHeader: (name: string) => string | string[] | undefined;
+  end: (body?: string) => MockResponse;
+}
+
+function upstreamResponse(status: number, body: unknown) {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    text: async () => body === null ? '' : JSON.stringify(body),
+  };
+}
+
+function createRequest({
+  method = 'GET',
+  url = '/',
+  headers = {},
+  body = '',
+}: {
+  method?: string;
+  url?: string;
+  headers?: Record<string, string>;
+  body?: string;
+} = {}): IncomingMessage {
+  return Object.assign(Readable.from(body ? [Buffer.from(body)] : []), {
+    method,
+    url,
+    headers,
+  }) as IncomingMessage;
+}
+
+function createResponse(): MockResponse {
+  return {
+    statusCode: 200,
+    headers: {},
+    body: '',
+    setHeader(name, value) {
+      this.headers[name.toLowerCase()] = value;
+    },
+    getHeader(name) {
+      return this.headers[name.toLowerCase()];
+    },
+    end(body = '') {
+      this.body = body;
+      return this;
+    },
+  };
+}
+
+function registeredRoutes(): Map<string, LocalMiddleware> {
+  const routes = new Map<string, LocalMiddleware>();
+  registerLocalApiMiddleware({
+    use(path: string, middleware: LocalMiddleware) {
+      routes.set(path, middleware);
+    },
+  });
+  return routes;
+}
+
+async function invoke(
+  route: string,
+  req: IncomingMessage
+): Promise<{ response: MockResponse; spaFallbacks: number }> {
+  const middleware = registeredRoutes().get(route);
+  if (!middleware) throw new Error(`Missing local route ${route}`);
+
+  const response = createResponse();
+  let spaFallbacks = 0;
+  await middleware(req, response as unknown as ServerResponse, (error) => {
+    if (error) throw error;
+    spaFallbacks += 1;
+    response.setHeader('Content-Type', 'text/html');
+    response.end('<!doctype html><div id="root"></div>');
+  });
+
+  return { response, spaFallbacks };
+}
+
+describe('local Vercel API middleware', () => {
+  const originalEnvironment = process.env;
+
+  afterEach(() => {
+    process.env = originalEnvironment;
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it('registers every production API path before SPA fallback', () => {
+    const routes: string[] = [];
+    registerLocalApiMiddleware({
+      use(path: string) {
+        routes.push(path);
+      },
+    } as never);
+
+    expect(routes).toEqual([
+      '/api/auth',
+      '/api/store',
+      '/api/geocode',
+      '/api/pmav',
+      '/api/identify-weed',
+    ]);
+  });
+
+  it('delivers JSON PUT bodies and original cookie headers to the store handler', async () => {
+    process.env = {
+      ...originalEnvironment,
+      SUPABASE_URL: 'https://example.supabase.co',
+      SUPABASE_ANON_KEY: 'anon-key',
+      SUPABASE_SERVICE_ROLE_KEY: 'service-key',
+    };
+    const upstreamRequests: Array<{
+      url: string;
+      options: RequestInit;
+    }> = [];
+    vi.stubGlobal('fetch', vi.fn(async (url: string, options: RequestInit = {}) => {
+      upstreamRequests.push({ url, options });
+      if (url.endsWith('/auth/v1/user')) {
+        return upstreamResponse(200, {
+          id: 'user-a',
+          email: 'pilot@example.com',
+          user_metadata: {},
+        });
+      }
+      if (url.includes('/rest/v1/ftf_profiles')) {
+        return upstreamResponse(200, [{
+          user_id: 'user-a',
+          tenant_id: 'tenant-a',
+          role: 'contractor',
+          name: 'Pilot',
+          tier: 'free',
+        }]);
+      }
+      if (url.includes('/rest/v1/ftf_store') && options.method !== 'POST') {
+        return upstreamResponse(200, []);
+      }
+      if (url.includes('/rest/v1/ftf_store') && options.method === 'POST') {
+        return upstreamResponse(204, null);
+      }
+      return upstreamResponse(500, { error: 'unexpected request' });
+    }));
+
+    const payload = {
+      collection: 'ftf_missions',
+      records: [{ id: 'mission-a', status: 'Approved' }],
+    };
+    const { response, spaFallbacks } = await invoke(
+      '/api/store',
+      createRequest({
+        method: 'PUT',
+        url: '/api/store?collection=ftf_missions',
+        headers: {
+          'content-type': 'application/json',
+          cookie: 'ftf_access_token=token-a',
+          origin: 'http://localhost:5173',
+          host: 'localhost:5173',
+        },
+        body: JSON.stringify(payload),
+      })
+    );
+
+    expect(response.statusCode).toBe(200);
+    expect(JSON.parse(response.body)).toEqual({ ok: true, count: 1 });
+    const authenticationRequest = upstreamRequests.find(({ url }) => url.endsWith('/auth/v1/user'));
+    expect(authenticationRequest?.options.headers).toMatchObject({
+      Authorization: 'Bearer token-a',
+    });
+    const writeRequest = upstreamRequests.find(({ options }) => options.method === 'POST');
+    expect(JSON.parse(String(writeRequest?.options.body))).toEqual([
+      expect.objectContaining({
+        tenant_id: 'tenant-a',
+        collection: 'ftf_missions',
+        record_id: 'mission-a',
+        payload: { id: 'mission-a', status: 'Approved' },
+      }),
+    ]);
+    expect(spaFallbacks).toBe(0);
+  });
+
+  it('keeps API error responses as JSON instead of falling through to the SPA', async () => {
+    const { response, spaFallbacks } = await invoke(
+      '/api/geocode',
+      createRequest({ url: '/api/geocode?q=x' })
+    );
+
+    expect(response.statusCode).toBe(400);
+    expect(response.headers['content-type']).toContain('application/json');
+    expect(JSON.parse(response.body)).toEqual({
+      error: 'Enter an Australian address between 3 and 160 characters.',
+    });
+    expect(response.body).not.toContain('<!doctype html>');
+    expect(spaFallbacks).toBe(0);
+  });
+});

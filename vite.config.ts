@@ -1,5 +1,6 @@
 import react from '@vitejs/plugin-react';
 import { defineConfig, loadEnv } from 'vite';
+import { localApiPlugin } from './server/localApiMiddleware';
 
 function normalisePublicBaseUrl(value: string | undefined): string {
   const path = value?.trim().replace(/^\/+|\/+$/g, '');
@@ -15,7 +16,7 @@ export default defineConfig(({ mode }) => {
   );
 
   return {
-    plugins: [react()],
+    plugins: [react(), localApiPlugin()],
     base: publicBaseUrl,
     envPrefix: '__FTF_NO_AUTOMATIC_CLIENT_ENV__',
     define: {
