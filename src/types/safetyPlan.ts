@@ -159,6 +159,14 @@ export interface SafetyPlanTemplate {
   isPlatformStandard: boolean;
 }
 
+export interface CompanySafetyPlanTemplate extends SafetyPlanTemplate {
+  tenantId: string;
+  standardVersion: string;
+  masterVersion: number;
+  publishedAt?: string;
+  publishedBy?: Pick<SafetyPlanActor, 'userId' | 'name'>;
+}
+
 export interface SafetyPlanAttachment {
   id: string;
   tenantId: string;
@@ -205,7 +213,10 @@ export interface SafetyPlanAuditEvent {
     | 'pdf_generated'
     | 'draft_deleted'
     | 'draft_restored'
-    | 'not_required_selected';
+    | 'not_required_selected'
+    | 'authority_nominated'
+    | 'authority_removed'
+    | 'company_master_published';
   occurredAt: string;
   before?: Record<string, unknown>;
   after?: Record<string, unknown>;

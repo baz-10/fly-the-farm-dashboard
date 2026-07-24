@@ -46,6 +46,8 @@ it.each([
   '/maintenance',
   '/compliance',
   '/compliance/safety',
+  '/compliance/safety-plans',
+  '/compliance/safety-plans/template',
 ])('declares and renders route %s without a router module error', async (path) => {
   renderApplicationAt(path);
 

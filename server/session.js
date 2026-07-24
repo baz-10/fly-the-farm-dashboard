@@ -52,6 +52,14 @@ async function loadProfile(userId) {
   return Array.isArray(rows) && rows[0] ? rows[0] : null;
 }
 
+async function loadTenantProfiles(tenantId) {
+  const rows = await supabaseRequest(
+    `rest/v1/ftf_profiles?tenant_id=eq.${encodeURIComponent(tenantId)}&select=user_id,tenant_id,role,name,safety_plan_authority&order=name.asc`,
+    { publicMessage: 'Company users could not be loaded.' }
+  );
+  return Array.isArray(rows) ? rows : [];
+}
+
 function toPublicUser(authUser, profile) {
   return {
     id: authUser.id,
@@ -125,6 +133,7 @@ module.exports = {
   authenticateRequest,
   clearSessionCookies,
   loadProfile,
+  loadTenantProfiles,
   setSessionCookies,
   toPublicUser,
 };

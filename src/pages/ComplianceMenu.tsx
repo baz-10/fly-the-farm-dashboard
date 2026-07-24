@@ -19,6 +19,7 @@ import DocumentScannerIcon from '@mui/icons-material/DocumentScanner';
 import ShieldIcon from '@mui/icons-material/Shield';
 import FlightTakeoffIcon from '@mui/icons-material/FlightTakeoff';
 import ForestIcon from '@mui/icons-material/Forest';
+import HealthAndSafetyIcon from '@mui/icons-material/HealthAndSafety';
 import ArrowForwardIcon from '@mui/icons-material/ArrowForward';
 
 interface ComplianceArea {
@@ -32,6 +33,15 @@ interface ComplianceArea {
 }
 
 const COMPLIANCE_AREAS: ComplianceArea[] = [
+  {
+    id: 'safety-plans',
+    title: 'Job Safety Plans',
+    description: 'Optional job-level Safety Plans with controlled company templates, approvals and crew acknowledgement.',
+    icon: <HealthAndSafetyIcon />,
+    route: '/compliance/safety-plans',
+    status: 'available',
+    priority: 'high',
+  },
   {
     id: 'chemical',
     title: 'Chemical Compliance & Recording',

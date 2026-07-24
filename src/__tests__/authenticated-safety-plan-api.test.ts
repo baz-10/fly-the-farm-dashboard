@@ -1988,6 +1988,55 @@ describe('Safety Plan persistent store security', () => {
     expect(recordResponse.statusCode).toBe(403);
     expect(collectionResponse.statusCode).toBe(403);
   });
+
+  it('freezes an existing published company Safety Plan master', async () => {
+    const master = {
+      id: 'master-tenant-a-2',
+      tenantId: 'tenant-a',
+      masterVersion: 2,
+      version: '2.0',
+      isPlatformStandard: false,
+      sections: [],
+    };
+    mockApi({
+      stored: [{
+        tenant_id: 'tenant-a',
+        collection: 'ftf_safety_plan_templates',
+        record_id: master.id,
+        payload: master,
+      }],
+    });
+    const res = createResponse();
+
+    await storeHandler(request('PUT', 'ftf_safety_plan_templates', {
+      collection: 'ftf_safety_plan_templates',
+      recordId: master.id,
+      payload: { ...master, version: 'rewritten' },
+    }), res);
+
+    expect(res.statusCode).toBe(409);
+    expect(res.body.error).toMatch(/immutable|new master/i);
+  });
+
+  it('rejects a company master carrying a forged tenant identity', async () => {
+    mockApi();
+    const res = createResponse();
+
+    await storeHandler(request('PUT', 'ftf_safety_plan_templates', {
+      collection: 'ftf_safety_plan_templates',
+      recordId: 'master-tenant-b-1',
+      payload: {
+        id: 'master-tenant-b-1',
+        tenantId: 'tenant-b',
+        masterVersion: 1,
+        version: '1.0',
+        isPlatformStandard: false,
+        sections: [],
+      },
+    }), res);
+
+    expect(res.statusCode).toBe(403);
+  });
 });
 
 export {};

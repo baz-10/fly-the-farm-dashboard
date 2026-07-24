@@ -19,6 +19,7 @@ const COLLECTION_POLICIES = {
 const ALLOWED_COLLECTIONS = new Set(Object.keys(COLLECTION_POLICIES));
 const SAFETY_PLAN_COLLECTION = 'ftf_safety_plans';
 const SAFETY_PLAN_AUDIT_COLLECTION = 'ftf_safety_plan_audit';
+const SAFETY_PLAN_TEMPLATE_COLLECTION = 'ftf_safety_plan_templates';
 const SAFETY_PLAN_ACTIONS = new Set([
   'created',
   'source_refreshed',
@@ -961,6 +962,12 @@ module.exports = async function handler(req, res) {
             'Safety Plans must use a singleton record write with audit linkage.'
           );
         }
+        if (collection === SAFETY_PLAN_TEMPLATE_COLLECTION) {
+          throw createHttpError(
+            400,
+            'Company Safety Plan masters must be published one immutable version at a time.'
+          );
+        }
         let records = body.records;
         if (collection === SAFETY_PLAN_AUDIT_COLLECTION) {
           assertUniqueIds(records, 'Safety audit event');
@@ -994,10 +1001,30 @@ module.exports = async function handler(req, res) {
       const recordId = validateRecordId(body.recordId || SINGLETON_RECORD_ID);
       const needsStoredPayload = user.role === 'contractor'
         || collection === SAFETY_PLAN_COLLECTION
-        || collection === SAFETY_PLAN_AUDIT_COLLECTION;
+        || collection === SAFETY_PLAN_AUDIT_COLLECTION
+        || collection === SAFETY_PLAN_TEMPLATE_COLLECTION;
       const storedPayload = needsStoredPayload ? await getRecord(tenantId, collection, recordId) : null;
       let payload = body.payload;
       let safetyAuditEvent = null;
+      if (collection === SAFETY_PLAN_TEMPLATE_COLLECTION) {
+        if (storedPayload) {
+          throw createHttpError(
+            409,
+            'Published company Safety Plan masters are immutable. Publish a new master version.'
+          );
+        }
+        if (
+          !isObject(payload)
+          || payload.id !== recordId
+          || payload.tenantId !== tenantId
+          || payload.isPlatformStandard !== false
+          || !Number.isSafeInteger(payload.masterVersion)
+          || payload.masterVersion < 1
+          || !Array.isArray(payload.sections)
+        ) {
+          throw createHttpError(403, 'Company Safety Plan master identity is invalid.');
+        }
+      }
       if (collection === SAFETY_PLAN_COLLECTION) {
         payload = normaliseSafetyPlanProvenance(user, storedPayload, body.payload, now);
         assertSafetyPlanTransition({

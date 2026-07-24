@@ -1,5 +1,12 @@
 const crypto = require('crypto');
-const { authenticateRequest, clearSessionCookies, loadProfile, setSessionCookies, toPublicUser } = require('../server/session');
+const {
+  authenticateRequest,
+  clearSessionCookies,
+  loadProfile,
+  loadTenantProfiles,
+  setSessionCookies,
+  toPublicUser,
+} = require('../server/session');
 const { createHttpError, supabaseRequest } = require('../server/supabase');
 
 function getJsonBody(req) {
@@ -116,6 +123,93 @@ async function registerUser(body) {
   };
 }
 
+function authorityPublicUser(profile, includeEmail = false) {
+  return {
+    id: profile.user_id,
+    name: profile.name || 'Company user',
+    ...(includeEmail && profile.email ? { email: profile.email } : {}),
+    role: profile.role,
+    safetyPlanAuthority: profile.role === 'admin' || profile.safety_plan_authority === true,
+  };
+}
+
+async function listSafetyPlanAuthorities(req, res) {
+  const actor = await authenticateRequest(req, res);
+  if (!['admin', 'contractor'].includes(actor.role)) {
+    throw createHttpError(403, 'This account cannot view Safety Plan authorities.');
+  }
+  const profiles = await loadTenantProfiles(actor.tenantId);
+  const visible = actor.role === 'admin'
+    ? profiles.filter((profile) => ['admin', 'contractor'].includes(profile.role))
+    : profiles.filter((profile) =>
+      profile.role === 'admin'
+      || (profile.role === 'contractor' && profile.safety_plan_authority === true)
+    );
+  return visible.map((profile) => authorityPublicUser(profile));
+}
+
+function buildAuthorityAudit(actor, target, enabled) {
+  const id = crypto.randomUUID();
+  const now = new Date().toISOString();
+  return {
+    id,
+    tenantId: actor.tenantId,
+    planId: `authority:${target.user_id}`,
+    actor: {
+      userId: actor.id,
+      name: actor.name,
+      role: actor.role,
+      operationalAuthority: true,
+    },
+    action: enabled ? 'authority_nominated' : 'authority_removed',
+    occurredAt: now,
+    after: {
+      userId: target.user_id,
+      name: target.name,
+      safetyPlanAuthority: enabled,
+    },
+  };
+}
+
+async function updateAuthorityAtomically(actor, target, enabled) {
+  const audit = buildAuthorityAudit(actor, target, enabled);
+  const result = await supabaseRequest('rest/v1/rpc/ftf_set_safety_plan_authority', {
+    method: 'POST',
+    body: JSON.stringify({
+      p_tenant_id: actor.tenantId,
+      p_user_id: target.user_id,
+      p_enabled: enabled,
+      p_audit_record_id: audit.id,
+      p_audit_payload: audit,
+    }),
+    publicMessage: 'Safety Plan authority could not be updated.',
+  });
+  return result;
+}
+
+async function changeSafetyPlanAuthority(req, res, body) {
+  const actor = await authenticateRequest(req, res);
+  if (actor.role !== 'admin') {
+    throw createHttpError(403, 'Only company administrators can nominate Safety Plan authorities.');
+  }
+  const userId = String(body.userId || '').trim();
+  if (!userId) throw createHttpError(400, 'A company user is required.');
+  const target = await loadProfile(userId);
+  if (!target || target.tenant_id !== actor.tenantId) {
+    throw createHttpError(403, 'Safety Plan authorities must belong to the same company.');
+  }
+  if (target.role === 'client') {
+    throw createHttpError(403, 'Clients cannot be nominated as Safety Plan authorities.');
+  }
+  if (target.role !== 'contractor') {
+    throw createHttpError(400, 'Administrators already hold Safety Plan approval authority.');
+  }
+  const enabled = body.enabled === true;
+  const updated = await updateAuthorityAtomically(actor, target, enabled);
+  if (!updated) throw createHttpError(409, 'Safety Plan authority was not updated.');
+  return authorityPublicUser(updated);
+}
+
 module.exports = async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store');
 
@@ -160,6 +254,16 @@ module.exports = async function handler(req, res) {
       return res.status(201).json({
         user: registration.session ? toPublicUser(registration.authUser, registration.profile) : null,
         requiresEmailConfirmation: registration.requiresEmailConfirmation,
+      });
+    }
+
+    if (body.action === 'listSafetyPlanAuthorities') {
+      return res.status(200).json({ users: await listSafetyPlanAuthorities(req, res) });
+    }
+
+    if (body.action === 'setSafetyPlanAuthority') {
+      return res.status(200).json({
+        user: await changeSafetyPlanAuthority(req, res, body),
       });
     }
 
