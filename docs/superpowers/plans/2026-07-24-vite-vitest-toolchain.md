@@ -228,6 +228,8 @@ Set `target: 'ES2022'`, root `index.html`, Vite React plugin and output `dist`. 
 
 Do not use bare `import.meta.env` or Vite/CRA namespace exposure. Configure Vite with an inert automatic environment prefix and exact `define` replacements for only `process.env.REACT_APP_PERSISTENCE_MODE`, `process.env.NODE_ENV` and `process.env.PUBLIC_URL`. Prefer `VITE_PERSISTENCE_MODE`/`VITE_PUBLIC_URL` over their legacy names while resolving those definitions. Replace all other browser-side environment reads with the adapter.
 
+Normalise the selected public base URL to exactly one leading and trailing slash, preserving `/` for root deployments. A build regression must verify public HTML assets, generated JavaScript/CSS paths and the compiled `PUBLIC_URL` for a `/dashboard` deployment.
+
 - [ ] **Step 5: Verify adapter and production build**
 
 Run:

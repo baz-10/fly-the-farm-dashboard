@@ -1,11 +1,18 @@
 import react from '@vitejs/plugin-react';
 import { defineConfig, loadEnv } from 'vite';
 
+function normalisePublicBaseUrl(value: string | undefined): string {
+  const path = value?.trim().replace(/^\/+|\/+$/g, '');
+  return path ? `/${path}/` : '/';
+}
+
 export default defineConfig(({ mode }) => {
   const environment = loadEnv(mode, process.cwd(), '');
   const persistenceMode =
     environment.VITE_PERSISTENCE_MODE ?? environment.REACT_APP_PERSISTENCE_MODE ?? 'local';
-  const publicBaseUrl = environment.VITE_PUBLIC_URL ?? environment.PUBLIC_URL ?? '/';
+  const publicBaseUrl = normalisePublicBaseUrl(
+    environment.VITE_PUBLIC_URL ?? environment.PUBLIC_URL
+  );
 
   return {
     plugins: [react()],

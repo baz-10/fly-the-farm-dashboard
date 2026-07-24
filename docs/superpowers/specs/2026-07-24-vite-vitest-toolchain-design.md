@@ -73,6 +73,8 @@ Application code reads configuration through the adapter. While CRA and Vite coe
 
 Vite does not expose the `VITE_*` or `REACT_APP_*` namespaces to browser code. A production-transform regression injects synthetic service-role values under both prefixes and proves neither value appears in emitted HTML, CSS or JavaScript. Server secrets remain available only to Vercel functions and local server middleware.
 
+The public base URL is normalised to exactly one leading and trailing slash (`/` remains `/`) before it is supplied to Vite or compiled as `process.env.PUBLIC_URL`, so public and generated assets remain valid on non-root deployments.
+
 ### 4.3 Build scripts
 
 The package scripts become:
