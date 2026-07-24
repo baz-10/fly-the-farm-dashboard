@@ -18,7 +18,7 @@ export function readNavigationExpansion(userId: string): NavigationGroupId[] {
 
 export function writeNavigationExpansion(userId: string, groupIds: NavigationGroupId[]): void {
   try {
-    localStorage.setItem(`${prefix}:${userId}`, JSON.stringify([...new Set(groupIds)]));
+    localStorage.setItem(`${prefix}:${userId}`, JSON.stringify(Array.from(new Set(groupIds))));
   } catch {
     // Preferences are non-critical; navigation remains usable.
   }
