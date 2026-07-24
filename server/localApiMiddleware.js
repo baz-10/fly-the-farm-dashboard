@@ -1,13 +1,16 @@
 const authHandler = require('../api/auth');
 const storeHandler = require('../api/store');
+const safetyAttachmentsHandler = require('../api/safety-attachments');
 const geocodeHandler = require('../api/geocode');
 const pmavHandler = require('../api/pmav');
 const identifyWeedHandler = require('../api/identify-weed');
 
 const BODY_METHODS = new Set(['POST', 'PUT', 'PATCH']);
+const RAW_BODY_HANDLERS = new Set([safetyAttachmentsHandler]);
 const LOCAL_API_HANDLERS = [
   ['/api/auth', authHandler],
   ['/api/store', storeHandler],
+  ['/api/safety-attachments', safetyAttachmentsHandler],
   ['/api/geocode', geocodeHandler],
   ['/api/pmav', pmavHandler],
   ['/api/identify-weed', identifyWeedHandler],
@@ -136,7 +139,7 @@ function createLocalApiMiddleware(handler) {
       });
     }
 
-    if (BODY_METHODS.has(req.method)) {
+    if (BODY_METHODS.has(req.method) && !RAW_BODY_HANDLERS.has(handler)) {
       try {
         req.body = await readJsonBody(req);
       } catch {

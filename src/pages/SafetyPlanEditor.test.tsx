@@ -84,6 +84,9 @@ describe('SafetyPlanEditor', () => {
     await user.click(screen.getByRole('button', { name: /next: people and assets/i }));
     expect(screen.getByRole('heading', { name: /people and assets/i })).toBeVisible();
     expect(screen.getByRole('button', { name: /next: hazards and controls/i })).toBeVisible();
+
+    await user.click(screen.getByRole('button', { name: /review & submit/i }));
+    expect(screen.getByRole('heading', { name: 'Supporting evidence' })).toBeVisible();
   });
 
   it('restores the last visited step from the draft field rather than browser storage', () => {

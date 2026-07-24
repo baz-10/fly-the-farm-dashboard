@@ -169,6 +169,7 @@ describe('local Vercel API middleware', () => {
     expect(routes).toEqual([
       '/api/auth',
       '/api/store',
+      '/api/safety-attachments',
       '/api/geocode',
       '/api/pmav',
       '/api/identify-weed',
@@ -271,6 +272,7 @@ describe('local Vercel API middleware', () => {
     expect(layers.map(({ path }) => path)).toEqual([
       '/api/auth',
       '/api/store',
+      '/api/safety-attachments',
       '/api/geocode',
       '/api/pmav',
       '/api/identify-weed',

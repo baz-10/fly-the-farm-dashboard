@@ -520,3 +520,18 @@ revoke all on function public.ftf_insert_safety_plan_with_audit(
 grant execute on function public.ftf_insert_safety_plan_with_audit(
   uuid, text, jsonb, text, jsonb
 ) to service_role;
+-- Safety Plan evidence is private and can only be accessed through the
+-- authenticated server gateway using the service role. Intentionally do not
+-- create anonymous or authenticated-user storage policies for this bucket.
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values (
+  'ftf-safety-attachments',
+  'ftf-safety-attachments',
+  false,
+  3145728,
+  array['application/pdf', 'image/jpeg', 'image/png']
+)
+on conflict (id) do update set
+  public = false,
+  file_size_limit = excluded.file_size_limit,
+  allowed_mime_types = excluded.allowed_mime_types;

@@ -19,6 +19,7 @@ import JobDetailsStep from '../components/safety-plan/JobDetailsStep';
 import PeopleAssetsStep from '../components/safety-plan/PeopleAssetsStep';
 import ReviewSubmitStep from '../components/safety-plan/ReviewSubmitStep';
 import SafetyPlanReadiness from '../components/safety-plan/SafetyPlanReadiness';
+import { SafetyPlanAttachments } from '../components/safety-plan/SafetyPlanAttachments';
 import SafetyPlanStepper, { type SafetyPlanStep } from '../components/safety-plan/SafetyPlanStepper';
 import SaveIndicator from '../components/safety-plan/SaveIndicator';
 import SourceRefreshDialog from '../components/safety-plan/SourceRefreshDialog';
@@ -302,23 +303,45 @@ export default function SafetyPlanEditor({
     })).filter(({ complete }) => complete).map(({ index }) => index)
   );
 
+  const updateAttachments = (attachments: typeof version.attachments) => {
+    void persist({
+      ...draft,
+      updatedAt: new Date().toISOString(),
+      versions: draft.versions.map((candidate) => candidate.id === version.id
+        ? { ...candidate, attachments, updatedAt: new Date().toISOString() }
+        : candidate),
+    });
+  };
+
   const stepContent = [
     <JobDetailsStep sections={groups[0]} onFieldChange={updateField} />,
     <PeopleAssetsStep sections={groups[1]} sourceSnapshot={version.sourceSnapshot} onFieldChange={updateField} />,
     <HazardsControlsStep sections={groups[2]} sourceSnapshot={version.sourceSnapshot} onFieldChange={updateField} />,
     <EmergencyPlanningStep sections={groups[3]} sourceSnapshot={version.sourceSnapshot} onFieldChange={updateField} />,
-    <ReviewSubmitStep
-      plan={draft}
-      user={user}
-      sections={groups[4]}
-      onFieldChange={updateField}
-      sourceChanged={sourceChanged}
-      busy={effectiveSaveState === 'saving'}
-      onSubmit={() => void submitPlan(draft.id, draft.revision, actorFor(user)).catch(() => undefined)}
-      onApprove={() => void approvePlan(draft.id, draft.revision, actorFor(user)).catch(() => undefined)}
-      onAcknowledge={() => void acknowledgePlan(draft.id, draft.revision, actorFor(user)).catch(() => undefined)}
-      onRevise={() => void revisePlan(draft.id, draft.revision, actorFor(user)).catch(() => undefined)}
-    />,
+    <Stack spacing={2}>
+      <ReviewSubmitStep
+        plan={draft}
+        user={user}
+        sections={groups[4]}
+        onFieldChange={updateField}
+        sourceChanged={sourceChanged}
+        busy={effectiveSaveState === 'saving'}
+        onSubmit={() => void submitPlan(draft.id, draft.revision, actorFor(user)).catch(() => undefined)}
+        onApprove={() => void approvePlan(draft.id, draft.revision, actorFor(user)).catch(() => undefined)}
+        onAcknowledge={() => void acknowledgePlan(draft.id, draft.revision, actorFor(user)).catch(() => undefined)}
+        onRevise={() => void revisePlan(draft.id, draft.revision, actorFor(user)).catch(() => undefined)}
+      />
+      <Card variant="outlined" sx={{ p: { xs: 2, sm: 2.5 }, borderRadius: 3 }}>
+        <SafetyPlanAttachments
+          planId={draft.id}
+          versionId={version.id}
+          versionLabel={version.version}
+          attachments={version.attachments}
+          editable={draft.status === 'draft' && version.status === 'draft'}
+          onAttachmentsChange={updateAttachments}
+        />
+      </Card>
+    </Stack>,
   ][activeStep];
 
   const applyRefresh = () => {

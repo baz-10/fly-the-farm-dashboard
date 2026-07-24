@@ -68,8 +68,34 @@ async function supabaseRequest(path, options = {}) {
   return readResponse(response);
 }
 
+async function supabaseRawRequest(path, options = {}) {
+  const { supabaseUrl, serviceRoleKey } = getSupabaseConfig();
+  const {
+    publicMessage = 'Supabase Storage request failed.',
+    headers = {},
+    ...fetchOptions
+  } = options;
+  const requestHeaders = {
+    apikey: serviceRoleKey,
+    ...headers,
+  };
+  if (serviceRoleKey.split('.').length === 3) {
+    requestHeaders.Authorization = `Bearer ${serviceRoleKey}`;
+  }
+  const response = await fetch(`${supabaseUrl}/${path}`, {
+    ...fetchOptions,
+    headers: requestHeaders,
+  });
+  if (!response.ok) {
+    const body = await response.text();
+    throw createHttpError(response.status, publicMessage, `${response.status} ${body}`);
+  }
+  return response;
+}
+
 module.exports = {
   createHttpError,
   getSupabaseConfig,
+  supabaseRawRequest,
   supabaseRequest,
 };
