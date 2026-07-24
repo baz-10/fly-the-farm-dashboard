@@ -47,7 +47,7 @@ Each failure was then driven to GREEN with the minimum implementation.
 
 - Focused Task 4 tests:
   `npx vitest run src/services/__tests__/safetyPlanPrefill.test.ts src/utils/__tests__/safetyPlanSourceSync.test.ts`
-  — 2 files, 12 tests passed.
+  — 2 files, 15 tests passed.
 - Inventory:
   `npx vitest run scripts/test-inventory.test.ts`
   — 1 file, 5 tests passed.
@@ -56,7 +56,7 @@ Each failure was then driven to GREEN with the minimum implementation.
   — passed.
 - Complete suite:
   `npm test`
-  — 70 files, 416 tests passed.
+  — 70 files, 419 tests passed.
 - Patch hygiene:
   `git diff --check`
   — passed.
@@ -100,4 +100,35 @@ Final review-fix verification:
 - inventory: 5 passed;
 - TypeScript: passed;
 - complete suite: 416 passed;
+- patch hygiene: passed.
+
+## Independent re-review fixes
+
+- Snapshot-category decisions and editable plan-field decisions are now
+  separate. Accepting new Job source data does not implicitly overwrite an
+  edited plan scope, site-access procedure or other source-backed field.
+- Every added, changed or removed source-backed field has an explicit refresh
+  decision. Hazard aggregate summaries are recomputed only when their
+  individual field decisions accept the source; company-authored aggregate
+  controls remain untouched when kept.
+- Hazards and links belonging to a newly discovered mission are excluded when
+  the user keeps the current linked-mission set.
+- The returned `sourceRefreshIntent` contains only mutation kind and
+  before/after decision metadata. A separate static contract maps that kind to
+  the audit action the repository/server must derive; the payload cannot
+  assert an action, actor or timestamp.
+
+Re-review RED evidence:
+
+- hazard aggregate fields stayed stale after accepting a changed hazard;
+- a broad Job decision overwrote edited scope and site controls;
+- keeping current missions still imported a rejected mission’s hazard;
+- the refresh result lacked a server-authority intent contract.
+
+Final verification after re-review:
+
+- focused Task 4 suites: 15 passed;
+- inventory: 5 passed;
+- TypeScript: passed;
+- complete suite: 419 passed;
 - patch hygiene: passed.

@@ -234,8 +234,8 @@ export interface SafetyPlanVersion {
    * Mutation intent for the repository. The authenticated server derives
    * actor identity and occurrence time when it appends the audit event.
    */
-  sourceRefreshAudit?: {
-    action: 'source_refreshed';
+  sourceRefreshIntent?: {
+    kind: 'source_refresh';
     before?: Record<string, unknown>;
     after?: Record<string, unknown>;
   };

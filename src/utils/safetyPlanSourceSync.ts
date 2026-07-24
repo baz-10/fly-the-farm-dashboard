@@ -1,9 +1,13 @@
 import { safetyPlanFieldValue } from '../services/safetyPlanPrefill';
 import type {
+  SafetyPlanFieldValue,
   SafetyPlanSourceItem,
   SafetyPlanSourceSnapshot,
   SafetyPlanVersion,
 } from '../types/safetyPlan';
+
+/** Non-payload contract: the authenticated server derives this from the intent kind. */
+export const SOURCE_REFRESH_SERVER_AUDIT_ACTION = 'source_refreshed' as const;
 
 export interface SafetyPlanChangedSource {
   current: SafetyPlanSourceItem;
@@ -33,6 +37,28 @@ export interface SafetyPlanContextChange {
   latest?: unknown;
 }
 
+const SOURCE_BACKED_FIELDS = [
+  'plan_reference',
+  'plan_scope',
+  'job_details',
+  'client_property_location',
+  'operating_dates',
+  'assigned_crew',
+  'operational_assets',
+  'chemicals_payloads',
+  'site_access_controls',
+  'hazards_and_risk_scores',
+  'mitigations_and_controls',
+  'emergency_response',
+] as const;
+
+export interface SafetyPlanFieldSourceChange {
+  itemId: `field:${string}`;
+  fieldId: string;
+  current?: SafetyPlanFieldValue;
+  latest?: SafetyPlanFieldValue;
+}
+
 export interface SafetyPlanSourceDiff {
   currentSnapshot: SafetyPlanSourceSnapshot;
   latestSnapshot: SafetyPlanSourceSnapshot;
@@ -44,6 +70,53 @@ export interface SafetyPlanSourceDiff {
   contextChanged: SafetyPlanContextChange[];
   contextRemoved: SafetyPlanContextChange[];
   contextUnchanged: SafetyPlanContextChange[];
+  fieldAdded: SafetyPlanFieldSourceChange[];
+  fieldChanged: SafetyPlanFieldSourceChange[];
+  fieldRemoved: SafetyPlanFieldSourceChange[];
+  fieldUnchanged: SafetyPlanFieldSourceChange[];
+}
+
+function isEmptySourceField(value: SafetyPlanFieldValue | undefined): boolean {
+  return value == null
+    || value === ''
+    || (Array.isArray(value) && value.length === 0);
+}
+
+function fieldDiff(
+  current: SafetyPlanSourceSnapshot,
+  latest: SafetyPlanSourceSnapshot
+): Pick<
+  SafetyPlanSourceDiff,
+  'fieldAdded' | 'fieldChanged' | 'fieldRemoved' | 'fieldUnchanged'
+> {
+  const result = {
+    fieldAdded: [] as SafetyPlanFieldSourceChange[],
+    fieldChanged: [] as SafetyPlanFieldSourceChange[],
+    fieldRemoved: [] as SafetyPlanFieldSourceChange[],
+    fieldUnchanged: [] as SafetyPlanFieldSourceChange[],
+  };
+  for (const fieldId of SOURCE_BACKED_FIELDS) {
+    const currentValue = safetyPlanFieldValue(fieldId, current);
+    const latestValue = safetyPlanFieldValue(fieldId, latest);
+    const change: SafetyPlanFieldSourceChange = {
+      itemId: `field:${fieldId}`,
+      fieldId,
+      current: currentValue,
+      latest: latestValue,
+    };
+    if (isEmptySourceField(currentValue) && isEmptySourceField(latestValue)) continue;
+    if (isEmptySourceField(currentValue)) result.fieldAdded.push(change);
+    else if (isEmptySourceField(latestValue)) result.fieldRemoved.push(change);
+    else if (stableSerialise(currentValue) === stableSerialise(latestValue)) {
+      result.fieldUnchanged.push(change);
+    } else {
+      result.fieldChanged.push(change);
+    }
+  }
+  for (const changes of Object.values(result)) {
+    changes.sort((left, right) => left.itemId.localeCompare(right.itemId));
+  }
+  return result;
 }
 
 export type SourceRefreshAction =
@@ -158,6 +231,7 @@ export function diffSafetyPlanSources(
     removed: sortItems(removed),
     unchanged: sortItems(unchanged),
     ...contextDiff(current, latest),
+    ...fieldDiff(current, latest),
   };
 }
 
@@ -170,6 +244,9 @@ function decisionsByItem(
     ...diff.removed.map(({ id }) => id),
     ...diff.contextChanged.map(({ itemId }) => itemId),
     ...diff.contextRemoved.map(({ itemId }) => itemId),
+    ...diff.fieldAdded.map(({ itemId }) => itemId),
+    ...diff.fieldChanged.map(({ itemId }) => itemId),
+    ...diff.fieldRemoved.map(({ itemId }) => itemId),
   ];
   const decisionMap = new Map<string, SourceRefreshAction>();
   for (const decision of decisions) {
@@ -303,17 +380,6 @@ function refreshSourceFields(
   }));
 }
 
-const FIELDS_BY_CONTEXT: Partial<Record<SafetyPlanContextCategory, string[]>> = {
-  job: ['plan_reference', 'plan_scope', 'job_details', 'operating_dates', 'site_access_controls'],
-  client: ['client_property_location'],
-  property: ['client_property_location'],
-  field: ['client_property_location'],
-  crew: ['assigned_crew'],
-  assets: ['operational_assets'],
-  chemicals: ['chemicals_payloads'],
-  emergencyContacts: ['emergency_response'],
-};
-
 function sourceLinksForResolvedSnapshot(
   resolved: SafetyPlanSourceSnapshot,
   hazards: SafetyPlanSourceItem[],
@@ -343,26 +409,36 @@ function sourceLinksForResolvedSnapshot(
   ));
 }
 
-function refreshAcceptedContextFields(
+function refreshAcceptedSourceFields(
   sections: SafetyPlanVersion['sections'],
   snapshot: SafetyPlanSourceSnapshot,
   diff: SafetyPlanSourceDiff,
   decisions: Map<string, SourceRefreshAction>
 ): SafetyPlanVersion['sections'] {
-  const accepted = new Set<SafetyPlanContextCategory>(
-    diff.contextAdded.map(({ category }) => category)
-  );
-  for (const change of [...diff.contextChanged, ...diff.contextRemoved]) {
-    if (decisions.get(change.itemId) !== 'keep_company_value') accepted.add(change.category);
-  }
-  const fieldIds = new Set(
-    [...accepted].flatMap((category) => FIELDS_BY_CONTEXT[category] ?? [])
+  const changes = new Map(
+    [
+      ...diff.fieldAdded,
+      ...diff.fieldChanged,
+      ...diff.fieldRemoved,
+    ].map((change) => [change.fieldId, change])
   );
   return sections.map((section) => ({
     ...section,
-    fields: section.fields.map((field) => fieldIds.has(field.id)
-      ? { ...field, value: safetyPlanFieldValue(field.id, snapshot) }
-      : field),
+    fields: section.fields.map((field) => {
+      const change = changes.get(field.id);
+      if (!change) return field;
+      const targetValue = safetyPlanFieldValue(field.id, snapshot);
+      if (
+        diff.fieldAdded.includes(change)
+        && stableSerialise(targetValue) === stableSerialise(change.current)
+      ) {
+        return field;
+      }
+      const action = decisions.get(change.itemId);
+      if (action === 'keep_company_value') return field;
+      if (action === 'remove') return { ...field, value: undefined };
+      return { ...field, value: targetValue };
+    }),
   }));
 }
 
@@ -375,9 +451,17 @@ export function applySourceRefresh(
     throw new Error('Approved and superseded Safety Plan versions are immutable');
   }
   const decisionMap = decisionsByItem(diff, decisions);
-  const hazards = refreshedItems(version, diff, decisionMap);
+  const context = resolvedContext(diff, decisionMap);
+  const acceptedMissionIds = new Set(context.missions.map(({ id }) => id));
+  const rejectedMissionIds = new Set(
+    diff.latestSnapshot.missions
+      .map(({ id }) => id)
+      .filter((id) => !acceptedMissionIds.has(id))
+  );
+  const hazards = refreshedItems(version, diff, decisionMap)
+    .filter(({ sourceId }) => !rejectedMissionIds.has(sourceId));
   const sourceSnapshot: SafetyPlanSourceSnapshot = {
-    ...resolvedContext(diff, decisionMap),
+    ...context,
     hazards,
   };
   sourceSnapshot.sourceLinks = sourceLinksForResolvedSnapshot(
@@ -390,7 +474,7 @@ export function applySourceRefresh(
 
   return {
     ...version,
-    sections: refreshAcceptedContextFields(
+    sections: refreshAcceptedSourceFields(
       sourceSections,
       sourceSnapshot,
       diff,
@@ -398,8 +482,8 @@ export function applySourceRefresh(
     ),
     sourceSnapshot,
     revision: version.revision + 1,
-    sourceRefreshAudit: {
-      action: 'source_refreshed',
+    sourceRefreshIntent: {
+      kind: 'source_refresh',
       before: {
         capturedAt: diff.currentSnapshot.capturedAt,
         sourceItemCount: diff.currentSnapshot.hazards?.length ?? 0,

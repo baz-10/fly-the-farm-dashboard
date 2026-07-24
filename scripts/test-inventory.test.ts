@@ -112,7 +112,7 @@ describe('test inventory', () => {
       'src/services/__tests__/safetyPlanPrefill.test.ts': 4,
       'src/utils/__tests__/safetyPlanPermissions.test.ts': 5,
       'src/utils/__tests__/safetyPlanRules.test.ts': 10,
-      'src/utils/__tests__/safetyPlanSourceSync.test.ts': 8,
+      'src/utils/__tests__/safetyPlanSourceSync.test.ts': 11,
     };
     const supplementaryCounts = Object.fromEntries(
       await Promise.all(
