@@ -104,7 +104,7 @@ describe('test inventory', () => {
     );
     const explicitPostBaselineSupplements: Record<string, number> = {
       ...supplements,
-      'src/utils/__tests__/safetyPlanRules.test.ts': 5,
+      'src/utils/__tests__/safetyPlanRules.test.ts': 10,
     };
     const supplementaryCounts = Object.fromEntries(
       await Promise.all(

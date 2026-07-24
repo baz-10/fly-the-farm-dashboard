@@ -123,7 +123,8 @@ export interface SafetyPlanAuditEvent {
     | 'superseded'
     | 'shared'
     | 'pdf_generated'
-    | 'draft_deleted';
+    | 'draft_deleted'
+    | 'not_required_selected';
   occurredAt: string;
   before?: Record<string, unknown>;
   after?: Record<string, unknown>;
@@ -157,6 +158,8 @@ export interface SafetyPlan {
   currentVersionId?: string;
   versions: SafetyPlanVersion[];
   notRequiredReason?: string;
+  notRequiredActor?: SafetyPlanActor;
+  notRequiredSelectedAt?: string;
   createdAt: string;
   updatedAt: string;
 }

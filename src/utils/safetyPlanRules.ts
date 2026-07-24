@@ -6,7 +6,7 @@ import type {
   SafetyPlanVersion,
 } from '../types/safetyPlan';
 
-type PlanRuleSubject = Pick<SafetyPlanVersion, 'sections' | 'acknowledgements'>;
+export type SafetyPlanRuleInput = SafetyPlan;
 
 export interface SafetyPlanAttention {
   code: 'safety_plan_absent' | 'crew_acknowledgement';
@@ -17,16 +17,19 @@ export interface SafetyPlanAttention {
 export interface PlanSubmissionResult {
   ok: boolean;
   missing: string[];
+  reason?: 'current_version_missing';
 }
 
-function currentVersion(plan: SafetyPlan): SafetyPlanVersion | undefined {
-  return plan.versions.find((version) => version.id === plan.currentVersionId) ?? plan.versions.at(-1);
+const CANONICAL_UTC_ISO_TIMESTAMP =
+  /^\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])T(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d\.\d{3}Z$/;
+
+function currentVersion(plan: SafetyPlanRuleInput): SafetyPlanVersion | undefined {
+  if (!plan.currentVersionId) return undefined;
+  return plan.versions.find((version) => version.id === plan.currentVersionId);
 }
 
-function asRuleSubject(plan: (SafetyPlan & Partial<PlanRuleSubject>) | SafetyPlanVersion): PlanRuleSubject | undefined {
-  if ('sections' in plan && Array.isArray(plan.sections)) return plan as PlanRuleSubject;
-  if ('versions' in plan) return currentVersion(plan);
-  return plan;
+function isCurrentAcknowledgement(acknowledgement: SafetyPlanAcknowledgement): boolean {
+  return !acknowledgement.withdrawnAt && !acknowledgement.replacementAcknowledgementId;
 }
 
 function isEmptyValue(value: SafetyPlanField['value']): boolean {
@@ -40,7 +43,7 @@ function sectionIsComplete(section: SafetyPlanSection): boolean {
 
 /** Attention informs a plan workflow only; none of these items can block a mission. */
 export function getPlanAttention(
-  plan?: (SafetyPlan & Partial<PlanRuleSubject>) | SafetyPlanVersion
+  plan?: SafetyPlanRuleInput
 ): SafetyPlanAttention[] {
   if (!plan) {
     return [{
@@ -50,8 +53,8 @@ export function getPlanAttention(
     }];
   }
 
-  const subject = asRuleSubject(plan);
-  if (!subject || subject.acknowledgements.length > 0) return [];
+  const version = currentVersion(plan);
+  if (!version || version.acknowledgements.some(isCurrentAcknowledgement)) return [];
   return [{
     code: 'crew_acknowledgement',
     blocking: false,
@@ -61,10 +64,17 @@ export function getPlanAttention(
 
 /** Validates only a Safety Plan submission, never linked mission authorisation. */
 export function canSubmitPlan(
-  plan: (SafetyPlan & Partial<PlanRuleSubject>) | SafetyPlanVersion
+  plan: SafetyPlanRuleInput
 ): PlanSubmissionResult {
-  const subject = asRuleSubject(plan);
-  const missing = (subject?.sections ?? [])
+  const version = currentVersion(plan);
+  if (!version) {
+    return {
+      ok: false,
+      missing: ['current_version'],
+      reason: 'current_version_missing',
+    };
+  }
+  const missing = version.sections
     .filter((section) => section.required && !sectionIsComplete(section))
     .map((section) => section.id);
   return { ok: missing.length === 0, missing };
@@ -72,15 +82,25 @@ export function canSubmitPlan(
 
 /** Calculates the minimum seven-year retention date from an approval timestamp. */
 export function getRetentionUntil(approvedAt: string): string {
+  if (!CANONICAL_UTC_ISO_TIMESTAMP.test(approvedAt)) {
+    throw new Error('approvedAt must be a canonical UTC ISO timestamp');
+  }
   const retentionDate = new Date(approvedAt);
-  if (Number.isNaN(retentionDate.getTime())) throw new Error('approvedAt must be a valid ISO timestamp');
+  if (Number.isNaN(retentionDate.getTime()) || retentionDate.toISOString() !== approvedAt) {
+    throw new Error('approvedAt must be a valid canonical UTC ISO timestamp');
+  }
   retentionDate.setUTCFullYear(retentionDate.getUTCFullYear() + 7);
   return retentionDate.toISOString();
 }
 
 /** Moves a controlled major.minor version forward by one minor revision. */
 export function nextPlanVersion(current: string): string {
-  const match = /^(\d+)\.(\d+)$/.exec(current);
+  const match = /^(0|[1-9]\d*)\.(0|[1-9]\d*)$/.exec(current);
   if (!match) throw new Error('current version must use major.minor format');
-  return `${match[1]}.${Number(match[2]) + 1}`;
+  const major = Number(match[1]);
+  const minor = Number(match[2]);
+  if (!Number.isSafeInteger(major) || !Number.isSafeInteger(minor) || minor >= Number.MAX_SAFE_INTEGER) {
+    throw new Error('current version components must be non-negative safe integers');
+  }
+  return `${major}.${minor + 1}`;
 }

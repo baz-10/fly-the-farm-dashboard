@@ -1,13 +1,9 @@
 import { AU_REOC_SAFETY_PLAN_STANDARD } from '../data/safetyPlanStandard';
 import type {
   SafetyPlan,
-  SafetyPlanAcknowledgement,
-  SafetyPlanSection,
   SafetyPlanTemplate,
   SafetyPlanVersion,
 } from '../types/safetyPlan';
-
-type RuleSafetyPlan = SafetyPlan & Pick<SafetyPlanVersion, 'sections' | 'acknowledgements'>;
 
 export function makeSafetyPlanTemplate(
   overrides: Partial<SafetyPlanTemplate> = {}
@@ -55,12 +51,9 @@ export function makeSafetyPlanVersion(
 }
 
 export function makeSafetyPlan(
-  overrides: Partial<RuleSafetyPlan> = {}
-): RuleSafetyPlan {
+  overrides: Partial<SafetyPlan> = {}
+): SafetyPlan {
   const currentVersion = makeSafetyPlanVersion();
-  const sections: SafetyPlanSection[] = overrides.sections ?? currentVersion.sections;
-  const acknowledgements: SafetyPlanAcknowledgement[] =
-    overrides.acknowledgements ?? currentVersion.acknowledgements;
 
   return {
     id: 'safety-plan-1',
@@ -68,11 +61,9 @@ export function makeSafetyPlan(
     tenantId: 'tenant-1',
     status: 'draft',
     currentVersionId: currentVersion.id,
-    versions: [{ ...currentVersion, sections, acknowledgements }],
+    versions: [currentVersion],
     createdAt: '2026-07-24T00:00:00.000Z',
     updatedAt: '2026-07-24T00:00:00.000Z',
-    sections,
-    acknowledgements,
     ...overrides,
   };
 }
