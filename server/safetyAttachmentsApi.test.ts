@@ -424,6 +424,67 @@ describe('/api/safety-attachments security boundary', () => {
     expect(deps.deleteObject).not.toHaveBeenCalledWith(winnerPath);
   });
 
+  it('retries stale loser cleanup on the next POST after discovering the canonical winner early', async () => {
+    const body = Buffer.from('%PDF-original');
+    const winnerPath = 'tenant-a/plan-a/v1/a1/winner.pdf';
+    const loserPath = 'tenant-a/plan-a/v1/a1/loser.pdf';
+    const winnerReceipt = {
+      status: 'stored',
+      objectPath: winnerPath,
+      attachment: {
+        id: 'a1',
+        tenantId: 'tenant-a',
+        versionId: 'v1',
+        fileName: 'winner.pdf',
+        contentType: 'application/pdf',
+        sizeBytes: body.length,
+        contentDigest: 'different-digest',
+        source: 'upload',
+      },
+    };
+    const deps = dependencies({
+      loadReceipt: vi.fn()
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(winnerReceipt)
+        .mockResolvedValueOnce(winnerReceipt),
+      createReceipt: vi.fn().mockRejectedValue(Object.assign(new Error('race'), {
+        statusCode: 409,
+      })),
+      deleteObject: vi.fn()
+        .mockRejectedValueOnce(Object.assign(new Error('storage unavailable'), {
+          statusCode: 503,
+        }))
+        .mockResolvedValueOnce(undefined),
+    });
+    const makeRequest = () => {
+      const req = request('POST', {
+        'content-type': 'application/pdf',
+        'content-length': String(body.length),
+        'x-safety-plan-id': 'plan-a',
+        'x-safety-plan-version-id': 'v1',
+        'x-attachment-id': 'a1',
+        'x-file-name': 'loser.pdf',
+      });
+      req[Symbol.asyncIterator] = async function* () { yield body; };
+      return req;
+    };
+    const handler = createSafetyAttachmentHandler(deps);
+    const first = response();
+    const retry = response();
+
+    await handler(makeRequest(), first);
+    await handler(makeRequest(), retry);
+
+    expect(first.statusCode).toBe(503);
+    expect(retry.statusCode).toBe(409);
+    expect(deps.putObject).toHaveBeenCalledOnce();
+    expect(deps.createReceipt).toHaveBeenCalledOnce();
+    expect(deps.deleteObject).toHaveBeenCalledTimes(2);
+    expect(deps.deleteObject).toHaveBeenNthCalledWith(1, loserPath);
+    expect(deps.deleteObject).toHaveBeenNthCalledWith(2, loserPath);
+    expect(deps.deleteObject).not.toHaveBeenCalledWith(winnerPath);
+  });
+
   it('fails closed when storage returns a plan from another tenant', async () => {
     const deps = dependencies({ loadPlan: vi.fn().mockResolvedValue(plan('tenant-b')) });
     const res = response();

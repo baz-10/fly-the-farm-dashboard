@@ -84,7 +84,9 @@ PDF, JPEG and PNG evidence up to 3 MiB.
   canonical object path, the gateway deletes only its own losing path before
   returning conflict. It never deletes the canonical path or cleans up when
   receipt state is unknown; transient loser cleanup failures return a
-  retryable service-unavailable response.
+  retryable service-unavailable response. A repeated POST that discovers the
+  canonical receipt before upload retries the stale noncanonical-path cleanup,
+  treating an already-missing loser as success.
 - The editor awaits server-plan acceptance before replacing its local draft.
   If an operator edits the plan while evidence deletion is outstanding, a
   rejected acceptance leaves that local work visible and retryable.
@@ -99,8 +101,8 @@ before their implementations were added.
 ## Verification
 
 - Focused receipt-reconciliation/editor-race/inventory tests: 3 files,
-  43 tests passed.
-- Full suite: 82 files, 537 tests passed.
+  44 tests passed.
+- Full suite: 82 files, 538 tests passed.
 - `npx tsc --noEmit`: passed.
 - `npm run build`: passed.
 - Node syntax checks for all modified/new server JavaScript: passed.

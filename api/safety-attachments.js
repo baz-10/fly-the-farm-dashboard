@@ -120,6 +120,20 @@ function attachmentIdentityMatches(left, right) {
     );
 }
 
+async function removeNoncanonicalRequestPath(deps, canonicalPath, requestPath) {
+  if (typeof canonicalPath !== 'string' || canonicalPath === requestPath) return;
+  try {
+    await deps.deleteObject(requestPath);
+  } catch (cleanupError) {
+    if (cleanupError?.statusCode !== 404) {
+      throw createHttpError(
+        503,
+        'Attachment upload could not be finalised and cleanup must be retried.',
+      );
+    }
+  }
+}
+
 async function readRawBody(req, declaredLength) {
   if (Buffer.isBuffer(req.body) || req.body instanceof Uint8Array || typeof req.body === 'string') {
     const body = Buffer.isBuffer(req.body) ? req.body : Buffer.from(req.body);
@@ -358,6 +372,7 @@ function createSafetyAttachmentHandler(overrides = {}) {
             existingReceipt.status !== 'stored'
             || !attachmentIdentityMatches(existingReceipt.attachment, candidate)
           ) {
+            await removeNoncanonicalRequestPath(deps, existingReceipt.objectPath, path);
             throw createHttpError(409, 'Attachment id is already used by different evidence.');
           }
           return res.status(200).json({ attachment: existingReceipt.attachment });
@@ -404,21 +419,7 @@ function createSafetyAttachmentHandler(overrides = {}) {
                   attachment: confirmedReceipt.attachment,
                 });
               }
-              if (
-                typeof confirmedReceipt.objectPath === 'string'
-                && confirmedReceipt.objectPath !== path
-              ) {
-                try {
-                  await deps.deleteObject(path);
-                } catch (cleanupError) {
-                  if (cleanupError?.statusCode !== 404) {
-                    throw createHttpError(
-                      503,
-                      'Attachment upload could not be finalised and cleanup must be retried.',
-                    );
-                  }
-                }
-              }
+              await removeNoncanonicalRequestPath(deps, confirmedReceipt.objectPath, path);
               throw createHttpError(409, 'Attachment id is already used by different evidence.');
             }
             try {
