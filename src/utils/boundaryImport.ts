@@ -1,5 +1,6 @@
 import turfArea from '@turf/area';
-import { polygon } from '@turf/helpers';
+import turfBuffer from '@turf/buffer';
+import { multiLineString, polygon } from '@turf/helpers';
 import { LatLng } from '../types/fieldManagement';
 
 type Position = number[];
@@ -92,17 +93,29 @@ function parseCoordinateText(value: string): LatLng[] {
   return normaliseRing(positions);
 }
 
+function collectKmlLineStrings(document: Document): LatLng[][] {
+  return Array.from(document.getElementsByTagNameNS('*', 'LineString'))
+    .map((line) => firstDescendant(line, 'coordinates')?.textContent || '')
+    .map(parseCoordinateText)
+    .filter((coords) => coords.length >= 2);
+}
+
 function firstDescendant(element: Element, localName: string): Element | null {
   return element.getElementsByTagNameNS('*', localName)[0]
     || element.getElementsByTagName(localName)[0]
     || null;
 }
 
-export function parseKmlBoundary(kmlText: string): BoundaryImportResult {
+function parseKmlDocument(kmlText: string): Document {
   const document = new DOMParser().parseFromString(kmlText, 'application/xml');
   if (document.getElementsByTagName('parsererror').length > 0) {
     throw new Error('The KML file is not valid XML.');
   }
+  return document;
+}
+
+export function parseKmlBoundary(kmlText: string): BoundaryImportResult {
+  const document = parseKmlDocument(kmlText);
 
   const polygons = Array.from(document.getElementsByTagNameNS('*', 'Polygon'));
   const rings: LatLng[][] = [];
@@ -121,7 +134,54 @@ export function parseKmlBoundary(kmlText: string): BoundaryImportResult {
     });
   }
 
+  if (
+    rings.length === 0
+    && document.getElementsByTagNameNS('*', 'LineString').length > 0
+  ) {
+    throw new Error(
+      'This KML contains linework but no closed boundary polygon. Use Railway corridor to create a buffered spray boundary.'
+    );
+  }
+
   return buildBoundaryResult(rings);
+}
+
+export function parseRailwayCorridorKml(
+  kmlText: string,
+  bufferMetresEachSide: number
+): BoundaryImportResult {
+  if (
+    !Number.isFinite(bufferMetresEachSide)
+    || bufferMetresEachSide <= 0
+    || bufferMetresEachSide > 100
+  ) {
+    throw new Error('Buffer each side must be greater than 0 m and no more than 100 m.');
+  }
+
+  const document = parseKmlDocument(kmlText);
+  const lines = collectKmlLineStrings(document);
+  if (lines.length === 0) {
+    if (document.getElementsByTagNameNS('*', 'Polygon').length > 0) {
+      throw new Error('This file contains a polygon but no railway centre line. Use Boundary file instead.');
+    }
+    throw new Error('No valid railway centre line was found in this KML.');
+  }
+
+  const linework = multiLineString(lines.map((line) => (
+    line.map(([lat, lng]) => [lng, lat])
+  )));
+  const buffered = turfBuffer(linework, bufferMetresEachSide, {
+    units: 'meters',
+    steps: 16,
+  });
+  if (!buffered) {
+    throw new Error('The railway centre line could not be converted into a corridor boundary.');
+  }
+
+  return {
+    ...boundaryFromGeoJson(buffered),
+    warning: `Railway corridor created with ${bufferMetresEachSide} m each side (${bufferMetresEachSide * 2} m total width).`,
+  };
 }
 
 function collectGeometryRings(geometry: GeoJsonGeometry | null | undefined, rings: LatLng[][]) {
