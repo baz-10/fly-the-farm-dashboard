@@ -64,12 +64,14 @@
   },
   "approvedDeclarationDeltas": {
     "src/__tests__/authenticated-store-api.test.ts": 2,
-    "src/pages/MissionRegister.test.tsx": 2
+    "src/pages/MissionRegister.test.tsx": 2,
+    "src/utils/__tests__/boundaryImport.test.ts": 7
   },
   "supplementaryTestsByFile": {
     "src/__tests__/route-manifest.test.tsx": 3,
     "src/config/environment.build.test.ts": 3,
     "src/config/environment.test.ts": 4,
-    "src/utils/__tests__/missionPackPdf.test.ts": 3
+    "src/utils/__tests__/missionPackPdf.test.ts": 3,
+    "src/components/__tests__/FieldBoundaryEditor.imports.test.tsx": 2
   }
 }

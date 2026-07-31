@@ -33,6 +33,7 @@ const POST_BASELINE_TEST_FILES = new Set([
   'src/utils/__tests__/safetyPlanSourceSync.test.ts',
   'src/utils/__tests__/safetyPlanPdf.test.ts',
   'src/utils/__tests__/missionPackPdf.test.ts',
+  'src/components/__tests__/FieldBoundaryEditor.imports.test.tsx',
 ]);
 
 async function findTestFiles(directory) {

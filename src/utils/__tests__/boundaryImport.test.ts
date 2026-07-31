@@ -1,11 +1,30 @@
 import { describe, expect, test } from 'vitest';
 
+import { strToU8, zipSync } from 'fflate';
 import {
   boundaryFromGeoJson,
   calculateBoundaryAreaHectares,
+  parseKmzBoundary,
   parseKmlBoundary,
+  parseRailwayCorridorKml,
+  parseRailwayCorridorKmz,
   toClosedGeoJsonRing,
 } from '../boundaryImport';
+
+const POLYGON_KML = `<kml><Placemark><Polygon><outerBoundaryIs><LinearRing><coordinates>
+  151,-27 151.001,-27 151.001,-27.001 151,-27.001 151,-27
+</coordinates></LinearRing></outerBoundaryIs></Polygon></Placemark></kml>`;
+
+const LINE_KML = `<kml><Placemark><LineString><coordinates>
+  151,-27 151.01,-27
+</coordinates></LineString></Placemark></kml>`;
+
+function kmzFile(entries: Record<string, string>, name = 'boundary.kmz'): File {
+  const zipped = zipSync(Object.fromEntries(
+    Object.entries(entries).map(([path, value]) => [path, strToU8(value)])
+  ));
+  return new File([zipped], name, { type: 'application/vnd.google-earth.kmz' });
+}
 
 describe('boundary imports', () => {
   test('closes GeoJSON rings without duplicating an existing closing point', () => {
@@ -49,6 +68,100 @@ describe('boundary imports', () => {
     expect(result.polygonCount).toBe(2);
     expect(result.polygons).toHaveLength(2);
     expect(result.areaHa).toBeGreaterThan(100);
+  });
+
+  test('directs line-only KML to the explicit railway corridor importer', () => {
+    const kml = `<kml xmlns="http://www.opengis.net/kml/2.2"><Document>
+      <Placemark><LineString><coordinates>
+        151.2668,-27.8748,0 151.2672,-27.8749,0 151.2676,-27.8750,0
+      </coordinates></LineString></Placemark>
+    </Document></kml>`;
+
+    expect(() => parseKmlBoundary(kml)).toThrow(
+      'This KML contains linework but no closed boundary polygon. Use Railway corridor to create a buffered spray boundary.'
+    );
+  });
+
+  test('buffers railway centre lines by the configured distance on each side', () => {
+    const kml = `<kml xmlns="http://www.opengis.net/kml/2.2"><Document>
+      <Placemark><MultiGeometry><LineString><coordinates>
+        151.0000,-27.0000,0 151.0100,-27.0000,0
+      </coordinates></LineString></MultiGeometry></Placemark>
+    </Document></kml>`;
+
+    const result = parseRailwayCorridorKml(kml, 3.5);
+
+    expect(result.polygonCount).toBeGreaterThan(0);
+    expect(result.polygons[0].length).toBeGreaterThan(3);
+    expect(result.areaHa).toBeGreaterThan(0.65);
+    expect(result.areaHa).toBeLessThan(0.8);
+    expect(result.warning).toContain('3.5 m each side');
+  });
+
+  test('validates railway buffers and requires linework', () => {
+    const lineKml = `<kml><Placemark><LineString><coordinates>
+      151,-27 151.001,-27
+    </coordinates></LineString></Placemark></kml>`;
+    const polygonKml = `<kml><Placemark><Polygon><outerBoundaryIs><LinearRing><coordinates>
+      151,-27 151.001,-27 151.001,-27.001 151,-27
+    </coordinates></LinearRing></outerBoundaryIs></Polygon></Placemark></kml>`;
+
+    expect(() => parseRailwayCorridorKml(lineKml, 0)).toThrow(
+      'Buffer each side must be greater than 0 m and no more than 100 m.'
+    );
+    expect(() => parseRailwayCorridorKml(lineKml, 101)).toThrow(
+      'Buffer each side must be greater than 0 m and no more than 100 m.'
+    );
+    expect(() => parseRailwayCorridorKml(polygonKml, 3.5)).toThrow(
+      'This file contains a polygon but no railway centre line. Use Boundary file instead.'
+    );
+  });
+
+  test('does not double-count duplicate railway line segments', () => {
+    const single = `<kml><Placemark><LineString><coordinates>
+      151,-27 151.01,-27
+    </coordinates></LineString></Placemark></kml>`;
+    const duplicate = `<kml><Document>
+      <Placemark><LineString><coordinates>151,-27 151.01,-27</coordinates></LineString></Placemark>
+      <Placemark><LineString><coordinates>151,-27 151.01,-27</coordinates></LineString></Placemark>
+    </Document></kml>`;
+
+    const singleResult = parseRailwayCorridorKml(single, 3.5);
+    const duplicateResult = parseRailwayCorridorKml(duplicate, 3.5);
+
+    expect(duplicateResult.areaHa).toBeCloseTo(singleResult.areaHa, 6);
+  });
+
+  test('imports polygon and railway KMZ files and prefers doc.kml', async () => {
+    const polygon = await parseKmzBoundary(kmzFile({
+      'z-fallback.kml': LINE_KML,
+      'doc.kml': POLYGON_KML,
+    }));
+    const railway = await parseRailwayCorridorKmz(kmzFile({
+      'folder/railway.kml': LINE_KML,
+    }), 3.5);
+
+    expect(polygon.polygonCount).toBe(1);
+    expect(railway.areaHa).toBeGreaterThan(0.65);
+    expect(railway.warning).toContain('3.5 m each side');
+  });
+
+  test('selects the first stable KML fallback inside a KMZ', async () => {
+    const result = await parseKmzBoundary(kmzFile({
+      'z-line.kml': LINE_KML,
+      'a-polygon.kml': POLYGON_KML,
+    }));
+
+    expect(result.polygonCount).toBe(1);
+  });
+
+  test('rejects corrupt and KML-free KMZ archives with actionable errors', async () => {
+    await expect(parseKmzBoundary(kmzFile({
+      'readme.txt': 'No spatial data',
+    }))).rejects.toThrow('This KMZ does not contain a KML document.');
+    await expect(parseKmzBoundary(
+      new File([strToU8('not a zip')], 'broken.kmz')
+    )).rejects.toThrow('The KMZ archive is corrupt or unsupported.');
   });
 
   test('extracts every polygon from shapefile GeoJSON output', () => {
