@@ -4,6 +4,10 @@ import {
   Box,
   Button,
   CircularProgress,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
   Typography,
   Stack,
   Chip,
@@ -33,8 +37,12 @@ import { moveMapFeatureVertex as moveStoredFeatureVertex, upsertMapFeature } fro
 import { MAP_FEATURE_COLORS, MAP_FEATURE_LABELS } from './MissionMapLegend';
 import MissionMapFeatureRegister from './MissionMapFeatureRegister';
 import {
+  BoundaryImportResult,
   calculateBoundaryAreaHectares,
+  parseKmzBoundary,
   parseKmlBoundary,
+  parseRailwayCorridorKml,
+  parseRailwayCorridorKmz,
   parseShapefileBoundary,
 } from '../utils/boundaryImport';
 import { appendDraftVertex, canFinishDrawing, DrawingMode, finishDrawing } from '../utils/missionMapDrawing';
@@ -55,6 +63,7 @@ const TILE_LAYERS = {
     labels: 'https://services.arcgisonline.com/ArcGIS/rest/services/Reference/World_Transportation/MapServer/tile/{z}/{y}/{x}',
   },
 };
+const MAX_SPATIAL_FILE_BYTES = 25 * 1024 * 1024;
 
 // Fix Leaflet marker icons
 delete (L.Icon.Default.prototype as any)._getIconUrl;
@@ -185,6 +194,9 @@ export default function FieldBoundaryEditor({
   const [addressLoading, setAddressLoading] = useState(false);
   const [addressError, setAddressError] = useState('');
   const [importNotice, setImportNotice] = useState<{ severity: 'success' | 'warning' | 'error'; message: string } | null>(null);
+  const [railwayFile, setRailwayFile] = useState<File | null>(null);
+  const [railwayBuffer, setRailwayBuffer] = useState('3.5');
+  const [railwayImporting, setRailwayImporting] = useState(false);
   const [pinPos, setPinPos] = useState<{ lat: number; lng: number } | null>(
     propertyLat && propertyLng ? { lat: propertyLat, lng: propertyLng } : null
   );
@@ -288,7 +300,52 @@ export default function FieldBoundaryEditor({
     onBoundaryFile?.(null);
   };
 
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const applyImportedBoundary = async (
+    result: BoundaryImportResult,
+    files: File[],
+    primaryFile: File,
+    fileType: BoundaryFileRef['fileType'],
+    boundaryName: (index: number) => string,
+  ) => {
+    onCoordsChange(result.coords);
+    onPolygonsChange?.(result.polygons);
+    const sourceFileId = `import-${Date.now()}`;
+    const importedBoundaries = normaliseBoundaryPolygons(result.polygons);
+    onBoundaryMetadataChange?.(importedBoundaries.map((boundary, index) => ({
+      id: boundary.id,
+      sourceFileId,
+      name: boundaryName(index),
+      notes: '',
+    })));
+    const importedCoords = result.polygons.flat();
+    onBoundaryFile?.({
+      fileName: files.length === 1 ? primaryFile.name : files.map((file) => file.name).join(', '),
+      fileType,
+      sizeBytes: files.reduce((total, file) => total + file.size, 0),
+      dataUrl: await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result));
+        reader.onerror = () => reject(new Error('Could not read the selected boundary file.'));
+        reader.readAsDataURL(primaryFile);
+      }),
+      boundingBox: {
+        north: Math.max(...importedCoords.map((coord) => coord[0])),
+        south: Math.min(...importedCoords.map((coord) => coord[0])),
+        east: Math.max(...importedCoords.map((coord) => coord[1])),
+        west: Math.min(...importedCoords.map((coord) => coord[1])),
+      },
+      uploadedAt: new Date().toISOString(),
+    });
+    const importedLabel = result.polygonCount === 1
+      ? (fileType === 'shp' ? 'paddock' : 'boundary')
+      : (fileType === 'shp' ? 'paddocks' : 'boundaries');
+    setImportNotice({
+      severity: result.warning ? 'warning' : 'success',
+      message: `${result.areaHa.toFixed(1)} ha imported across ${result.polygonCount} ${importedLabel}. ${result.warning || ''}`.trim(),
+    });
+  };
+
+  const handleBoundaryFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []);
     e.target.value = '';
     if (files.length === 0) return;
@@ -296,44 +353,63 @@ export default function FieldBoundaryEditor({
     try {
       setImportNotice(null);
       const kml = files.find((file) => file.name.toLowerCase().endsWith('.kml'));
+      const kmz = files.find((file) => file.name.toLowerCase().endsWith('.kmz'));
+      const primaryFile = kml || kmz || files.find((file) => file.name.toLowerCase().endsWith('.zip')) || files[0];
+      if (primaryFile.size > MAX_SPATIAL_FILE_BYTES) {
+        throw new Error('Boundary files must be 25 MB or smaller.');
+      }
+      const fileType: BoundaryFileRef['fileType'] = kml ? 'kml' : kmz ? 'kmz' : 'shp';
       const result = kml
         ? parseKmlBoundary(await kml.text())
-        : await parseShapefileBoundary(files);
-      const primaryFile = kml || files.find((file) => file.name.toLowerCase().endsWith('.zip')) || files[0];
-
-      onCoordsChange(result.coords);
-      onPolygonsChange?.(result.polygons);
-      const sourceFileId = `import-${Date.now()}`;
-      const importedBoundaries = normaliseBoundaryPolygons(result.polygons);
-      onBoundaryMetadataChange?.(importedBoundaries.map((boundary, index) => ({ id: boundary.id, sourceFileId, name: `Boundary ${index + 1}`, notes: '' })));
-      const importedCoords = result.polygons.flat();
-      onBoundaryFile?.({
-        fileName: files.length === 1 ? primaryFile.name : files.map((file) => file.name).join(', '),
-        fileType: kml ? 'kml' : 'shp',
-        sizeBytes: files.reduce((total, file) => total + file.size, 0),
-        dataUrl: await new Promise<string>((resolve, reject) => {
-          const reader = new FileReader();
-          reader.onload = () => resolve(String(reader.result));
-          reader.onerror = () => reject(new Error('Could not read the selected boundary file.'));
-          reader.readAsDataURL(primaryFile);
-        }),
-        boundingBox: {
-          north: Math.max(...importedCoords.map((coord) => coord[0])),
-          south: Math.min(...importedCoords.map((coord) => coord[0])),
-          east: Math.max(...importedCoords.map((coord) => coord[1])),
-          west: Math.min(...importedCoords.map((coord) => coord[1])),
-        },
-        uploadedAt: new Date().toISOString(),
-      });
-      setImportNotice({
-        severity: result.warning ? 'warning' : 'success',
-        message: `${result.areaHa.toFixed(1)} ha imported across ${result.polygonCount} paddock${result.polygonCount === 1 ? '' : 's'}. ${result.warning || ''}`.trim(),
-      });
+        : kmz
+          ? await parseKmzBoundary(kmz)
+          : await parseShapefileBoundary(files);
+      await applyImportedBoundary(result, files, primaryFile, fileType, (index) => `Boundary ${index + 1}`);
     } catch (error) {
       setImportNotice({
         severity: 'error',
         message: error instanceof Error ? error.message : 'The selected boundary could not be imported.',
       });
+    }
+  };
+
+  const handleRailwayFileSelection = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0] || null;
+    e.target.value = '';
+    if (!file) return;
+    if (file.size > MAX_SPATIAL_FILE_BYTES) {
+      setImportNotice({ severity: 'error', message: 'Railway corridor files must be 25 MB or smaller.' });
+      return;
+    }
+    setImportNotice(null);
+    setRailwayBuffer('3.5');
+    setRailwayFile(file);
+  };
+
+  const confirmRailwayImport = async () => {
+    if (!railwayFile) return;
+    const bufferMetres = Number(railwayBuffer);
+    setRailwayImporting(true);
+    try {
+      const isKmz = railwayFile.name.toLowerCase().endsWith('.kmz');
+      const result = isKmz
+        ? await parseRailwayCorridorKmz(railwayFile, bufferMetres)
+        : parseRailwayCorridorKml(await railwayFile.text(), bufferMetres);
+      await applyImportedBoundary(
+        result,
+        [railwayFile],
+        railwayFile,
+        isKmz ? 'kmz' : 'kml',
+        (index) => `Railway corridor${result.polygonCount > 1 ? ` ${index + 1}` : ''} - ${bufferMetres} m each side`,
+      );
+      setRailwayFile(null);
+    } catch (error) {
+      setImportNotice({
+        severity: 'error',
+        message: error instanceof Error ? error.message : 'The railway corridor could not be imported.',
+      });
+    } finally {
+      setRailwayImporting(false);
     }
   };
 
@@ -461,16 +537,28 @@ export default function FieldBoundaryEditor({
           </ToggleButtonGroup>
 
           {mode === 'upload' && (
-            <Button
-              variant="outlined"
-              component="label"
-              size="small"
-              startIcon={<UploadFileIcon />}
-              sx={{ borderRadius: '8px', fontWeight: 600, fontSize: '0.75rem' }}
-            >
-              KML / SHP / ZIP
-              <input type="file" hidden multiple accept=".kml,.zip,.shp,.dbf,.prj,.cpg" onChange={handleFileUpload} />
-            </Button>
+            <>
+              <Button
+                variant="outlined"
+                component="label"
+                size="small"
+                startIcon={<UploadFileIcon />}
+                sx={{ borderRadius: '8px', fontWeight: 600, fontSize: '0.75rem' }}
+              >
+                Boundary file
+                <input type="file" hidden multiple accept=".kml,.kmz,.zip,.shp,.shx,.dbf,.prj,.cpg" onChange={handleBoundaryFileUpload} />
+              </Button>
+              <Button
+                variant="outlined"
+                component="label"
+                size="small"
+                startIcon={<PolylineIcon />}
+                sx={{ borderRadius: '8px', fontWeight: 600, fontSize: '0.75rem' }}
+              >
+                Railway corridor
+                <input type="file" hidden accept=".kml,.kmz" onChange={handleRailwayFileSelection} />
+              </Button>
+            </>
           )}
 
           {mode === 'draw' && (
@@ -526,6 +614,35 @@ export default function FieldBoundaryEditor({
           {importNotice.message}
         </Alert>
       )}
+
+      <Dialog open={Boolean(railwayFile)} onClose={() => !railwayImporting && setRailwayFile(null)} fullWidth maxWidth="xs">
+        <DialogTitle>Import railway corridor</DialogTitle>
+        <DialogContent>
+          <Stack spacing={2} sx={{ pt: 1 }}>
+            <Typography variant="body2" color="text.secondary">
+              {railwayFile?.name}
+            </Typography>
+            <TextField
+              label="Buffer each side (m)"
+              type="number"
+              value={railwayBuffer}
+              onChange={(event) => setRailwayBuffer(event.target.value)}
+              inputProps={{ min: 0.1, max: 100, step: 0.1 }}
+              helperText={`${Number(railwayBuffer) > 0 ? Number(railwayBuffer) * 2 : 0} m total corridor width`}
+              fullWidth
+            />
+            <Alert severity="info">
+              The centre line will be converted into the mission spray boundary. This is only for railway corridor jobs.
+            </Alert>
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setRailwayFile(null)} disabled={railwayImporting}>Cancel</Button>
+          <Button variant="contained" onClick={() => void confirmRailwayImport()} disabled={railwayImporting}>
+            {railwayImporting ? 'Creating...' : 'Create corridor boundary'}
+          </Button>
+        </DialogActions>
+      </Dialog>
 
       {/* Drawing instructions */}
       {!readOnly && mode === 'draw' && drawing && (

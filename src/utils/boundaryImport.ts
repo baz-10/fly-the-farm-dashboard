@@ -322,7 +322,7 @@ export async function parseShapefileBoundary(files: File[]): Promise<BoundaryImp
     const parts: Record<string, ArrayBuffer> = {};
     await Promise.all(files.map(async (file) => {
       const extension = file.name.split('.').pop()?.toLowerCase();
-      if (extension && ['shp', 'dbf', 'prj', 'cpg'].includes(extension)) {
+      if (extension && ['shp', 'shx', 'dbf', 'prj', 'cpg'].includes(extension)) {
         parts[extension] = await file.arrayBuffer();
       }
     }));
