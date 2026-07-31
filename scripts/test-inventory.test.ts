@@ -172,7 +172,7 @@ describe('test inventory', () => {
     expect(inventory.files).toEqual(Object.keys(baseline).sort());
     expect(inventory.supplementaryFiles).toEqual(Object.keys(explicitPostBaselineSupplements).sort());
     expect(supplementaryCounts).toEqual(explicitPostBaselineSupplements);
-    expect(inventory.files.length + inventory.supplementaryFiles.length).toBe(81);
+    expect(inventory.files.length + inventory.supplementaryFiles.length).toBe(82);
   });
 
   it('contains no Jest runtime API in migrated React tests', async () => {
