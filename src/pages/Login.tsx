@@ -125,8 +125,17 @@ export default function Login() {
               required
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              sx={{ mb: 3 }}
+              sx={{ mb: 1 }}
             />
+            <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: 2.5 }}>
+              <Link
+                component={RouterLink}
+                to="/forgot-password"
+                sx={{ fontWeight: 700, color: 'primary.main', textDecoration: 'none', '&:hover': { textDecoration: 'underline' } }}
+              >
+                Forgot password?
+              </Link>
+            </Box>
             <Button
               type="submit"
               variant="contained"
