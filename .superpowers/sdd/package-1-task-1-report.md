@@ -1,0 +1,47 @@
+# Package 1 Task 1 report
+
+## Files changed
+
+- `supabase/migrations/20260801000000_production_beta_foundation.sql`
+- `supabase/README.md`
+- `src/__tests__/productionSchemaMigration.test.js`
+
+## TDD red tests
+
+1. `CI=true npm test -- --runInBand src/__tests__/productionSchemaMigration.test.js`
+   initially failed with `ENOENT` for the missing repository-controlled migration.
+2. The authenticated-role grant test then failed because no grant statements
+   existed for `public.organisations` (and the other mutable tenant tables).
+
+Both failures were expected: they named the missing schema artifact and the
+missing application-role access contract before the corresponding SQL was added.
+
+## Green verification
+
+- `CI=true npm test -- --runInBand src/__tests__/productionSchemaMigration.test.js`
+  — 1 suite, 5 tests passed.
+- `CI=true npm test -- --runInBand` — 35 suites, 158 tests passed.
+- `npm run build` — exit 0. Existing unrelated ESLint/Browserslist warnings remain.
+- `git diff --check` — exit 0.
+
+## Self-review
+
+- Added UUID keys, timestamps, archive markers, and optimistic row versions to
+  mutable organisation-scoped records.
+- Enforced the operational relationship chain with composite
+  `(organisation_id, id)` foreign keys, and indexed each foreign-key/listing
+  path.
+- Enabled and forced RLS on all new tenant tables. Access derives from
+  `auth.uid()` through active internal-user and membership records; no policy
+  accepts a browser-supplied organisation entitlement.
+- Protected audit and outbox rows with insert/select-only authenticated grants,
+  insert-only RLS policies, and mutation-rejecting triggers.
+- Kept `ftf_profiles` and `ftf_store` unchanged and did not touch frontend code.
+
+## Concerns
+
+- This workspace has no local PostgreSQL client, Docker daemon, or Supabase CLI,
+  so the executable migration contract validates the SQL schema contract
+  structurally rather than applying it to a live PostgreSQL instance. Apply the
+  migration to a Supabase staging project before production rollout to validate
+  database execution and live RLS behaviour.
