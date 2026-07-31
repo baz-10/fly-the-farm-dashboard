@@ -369,22 +369,42 @@ export function buildMissionPackPdf(
   text(`Environmental clearance: ${yesNo(mission.complianceChecks?.environmentalClearance)}`);
   text(`Insurance coverage: ${yesNo(mission.complianceChecks?.insuranceCoverage)}`);
   const approvalEntries = [
-    ['Planning approval', mission.approvals?.planningApproval, 'approvedBy', 'approvedAt'],
-    ['Flying authorisation', mission.approvals?.flyingAuthorization, 'authorizedBy', 'authorizedAt'],
-    ['Completion approval', mission.approvals?.completionApproval, 'approvedBy', 'approvedAt'],
-    ['Final approval', mission.approvals?.finalApproval, 'approvedBy', 'approvedAt'],
-  ] as const;
-  for (const [label, approval, actorKey, dateKey] of approvalEntries) {
-    text(label, { bold: true });
-    if (!approval) {
+    {
+      label: 'Planning approval',
+      approval: mission.approvals?.planningApproval,
+      actor: mission.approvals?.planningApproval?.approvedBy,
+      date: mission.approvals?.planningApproval?.approvedAt,
+    },
+    {
+      label: 'Flying authorisation',
+      approval: mission.approvals?.flyingAuthorization,
+      actor: mission.approvals?.flyingAuthorization?.authorizedBy,
+      date: mission.approvals?.flyingAuthorization?.authorizedAt,
+    },
+    {
+      label: 'Completion approval',
+      approval: mission.approvals?.completionApproval,
+      actor: mission.approvals?.completionApproval?.approvedBy,
+      date: mission.approvals?.completionApproval?.approvedAt,
+    },
+    {
+      label: 'Final approval',
+      approval: mission.approvals?.finalApproval,
+      actor: mission.approvals?.finalApproval?.approvedBy,
+      date: mission.approvals?.finalApproval?.approvedAt,
+    },
+  ];
+  for (const entry of approvalEntries) {
+    text(entry.label, { bold: true });
+    if (!entry.approval) {
       text(NOT_RECORDED, { indent: 4 });
       continue;
     }
-    text(`By: ${recorded(approval[actorKey])}`, { indent: 4 });
-    text(`At: ${formatDate(approval[dateKey])}`, { indent: 4 });
-    text(`Signature: ${recorded(approval.digitalSignature)}`, { indent: 4 });
-    if ('conditions' in approval) text(`Conditions: ${listText(approval.conditions)}`, { indent: 4 });
-    text(`Comments: ${recorded(approval.comments)}`, { indent: 4 });
+    text(`By: ${recorded(entry.actor)}`, { indent: 4 });
+    text(`At: ${formatDate(entry.date)}`, { indent: 4 });
+    text(`Signature: ${recorded(entry.approval.digitalSignature)}`, { indent: 4 });
+    if ('conditions' in entry.approval) text(`Conditions: ${listText(entry.approval.conditions)}`, { indent: 4 });
+    text(`Comments: ${recorded(entry.approval.comments)}`, { indent: 4 });
   }
 
   heading('Audit and execution');
