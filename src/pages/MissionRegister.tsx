@@ -2,6 +2,7 @@ import React from 'react';
 import { alpha } from '@mui/material/styles';
 import { Alert, Box, Button, Chip, CircularProgress, Collapse, InputAdornment, Paper, Stack, TextField, Typography } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
+import DownloadIcon from '@mui/icons-material/Download';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import FlightTakeoffIcon from '@mui/icons-material/FlightTakeoff';
 import OpenInNewIcon from '@mui/icons-material/OpenInNew';
@@ -9,6 +10,7 @@ import SearchIcon from '@mui/icons-material/Search';
 import { useNavigate } from 'react-router-dom';
 import { useMission } from '../contexts/MissionContext';
 import { MissionRecord } from '../types/mission';
+import { downloadMissionPackPdf } from '../utils/missionPackPdf';
 import { getMissionNextAction, groupMissionsForRegister, MissionRegisterSectionDefinition } from '../utils/missionRegister';
 
 interface MissionSectionProps extends MissionRegisterSectionDefinition {
@@ -16,9 +18,20 @@ interface MissionSectionProps extends MissionRegisterSectionDefinition {
   collapsed?: boolean;
   onToggle?: () => void;
   onOpenMission: (missionId: string) => void;
+  onExportMission: (mission: MissionRecord) => void;
 }
 
-function MissionCard({ mission, color, onOpen }: { mission: MissionRecord; color: string; onOpen: () => void }) {
+function MissionCard({
+  mission,
+  color,
+  onOpen,
+  onExport,
+}: {
+  mission: MissionRecord;
+  color: string;
+  onOpen: () => void;
+  onExport: () => void;
+}) {
   const aircraftLabel = mission.aircraftConfiguration?.aircraftId || 'Aircraft not assigned';
   return (
     <Paper variant="outlined" sx={{ p: { xs: 1.5, md: 2 }, borderRadius: 2, borderLeft: `5px solid ${color}`, transition: 'box-shadow 150ms ease, transform 150ms ease', '&:hover': { boxShadow: `0 8px 24px ${alpha(color, 0.12)}`, transform: 'translateY(-1px)' } }}>
@@ -33,13 +46,23 @@ function MissionCard({ mission, color, onOpen }: { mission: MissionRecord; color
           </Typography>
           <Typography sx={{ mt: 0.75, color, fontSize: '0.76rem', fontWeight: 800 }}>{getMissionNextAction(mission)}</Typography>
         </Box>
-        <Button variant="outlined" endIcon={<OpenInNewIcon />} aria-label={`Open ${mission.missionName}`} onClick={onOpen}>Open</Button>
+        <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
+          <Button
+            variant="outlined"
+            startIcon={<DownloadIcon />}
+            aria-label={`Export Mission Pack for ${mission.missionName}`}
+            onClick={onExport}
+          >
+            Mission Pack
+          </Button>
+          <Button variant="outlined" endIcon={<OpenInNewIcon />} aria-label={`Open ${mission.missionName}`} onClick={onOpen}>Open</Button>
+        </Stack>
       </Stack>
     </Paper>
   );
 }
 
-function MissionSection({ label, description, color, missions, collapsed = false, onToggle, onOpenMission }: MissionSectionProps) {
+function MissionSection({ label, description, color, missions, collapsed = false, onToggle, onOpenMission, onExportMission }: MissionSectionProps) {
   const countLabel = `${missions.length} mission${missions.length === 1 ? '' : 's'}`;
   const header = (
     <Stack direction="row" alignItems="center" justifyContent="space-between" spacing={2} sx={{ width: '100%', textAlign: 'left' }}>
@@ -66,7 +89,15 @@ function MissionSection({ label, description, color, missions, collapsed = false
             <Box sx={{ py: 2, px: 1.5, borderRadius: 1.5, bgcolor: 'background.paper', border: '1px dashed', borderColor: 'divider' }}>
               <Typography sx={{ fontSize: '0.78rem', color: 'text.secondary' }}>No missions in this stage.</Typography>
             </Box>
-          ) : missions.map((mission) => <MissionCard key={mission.id} mission={mission} color={color} onOpen={() => onOpenMission(mission.id)} />)}
+          ) : missions.map((mission) => (
+            <MissionCard
+              key={mission.id}
+              mission={mission}
+              color={color}
+              onOpen={() => onOpenMission(mission.id)}
+              onExport={() => onExportMission(mission)}
+            />
+          ))}
         </Stack>
       </Collapse>
     </Paper>
@@ -78,7 +109,17 @@ export default function MissionRegister() {
   const { missions, isLoading, error } = useMission();
   const [search, setSearch] = React.useState('');
   const [completedCollapsed, setCompletedCollapsed] = React.useState(true);
+  const [exportError, setExportError] = React.useState('');
   const sections = React.useMemo(() => groupMissionsForRegister(missions, search), [missions, search]);
+  const exportMission = (mission: MissionRecord) => {
+    setExportError('');
+    try {
+      downloadMissionPackPdf(mission);
+    } catch (caught) {
+      const message = caught instanceof Error ? caught.message : 'Unknown export error';
+      setExportError(`Mission Pack could not be exported: ${message}`);
+    }
+  };
 
   return (
     <Box sx={{ maxWidth: 1440, mx: 'auto', px: { xs: 2, md: 3.5 }, py: { xs: 2.5, md: 4 } }}>
@@ -95,9 +136,19 @@ export default function MissionRegister() {
       </Paper>
 
       {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
+      {exportError && <Alert severity="error" onClose={() => setExportError('')} sx={{ mb: 2 }}>{exportError}</Alert>}
       {isLoading ? <Stack alignItems="center" sx={{ py: 8 }}><CircularProgress size={32} /></Stack> : (
         <Stack spacing={2}>
-          {sections.map(({ key, ...section }) => <MissionSection key={key} {...section} collapsed={key === 'completed' ? completedCollapsed : false} onToggle={key === 'completed' ? () => setCompletedCollapsed((current) => !current) : undefined} onOpenMission={(missionId) => navigate(`/missions/${encodeURIComponent(missionId)}`)} />)}
+          {sections.map(({ key, ...section }) => (
+            <MissionSection
+              key={key}
+              {...section}
+              collapsed={key === 'completed' ? completedCollapsed : false}
+              onToggle={key === 'completed' ? () => setCompletedCollapsed((current) => !current) : undefined}
+              onOpenMission={(missionId) => navigate(`/missions/${encodeURIComponent(missionId)}`)}
+              onExportMission={exportMission}
+            />
+          ))}
         </Stack>
       )}
     </Box>

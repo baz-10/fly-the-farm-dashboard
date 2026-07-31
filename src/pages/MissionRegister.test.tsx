@@ -4,6 +4,9 @@ import userEvent from '@testing-library/user-event';
 import MissionRegister from './MissionRegister';
 
 const mockNavigate = vi.fn();
+const { mockDownloadMissionPackPdf } = vi.hoisted(() => ({
+  mockDownloadMissionPackPdf: vi.fn(),
+}));
 
 vi.mock('react-router-dom', () => ({
   useNavigate: () => mockNavigate,
@@ -22,8 +25,15 @@ vi.mock('../contexts/MissionContext', () => ({
   }),
 }));
 
+vi.mock('../utils/missionPackPdf', () => ({
+  downloadMissionPackPdf: mockDownloadMissionPackPdf,
+}));
+
 describe('MissionRegister', () => {
-  beforeEach(() => mockNavigate.mockReset());
+  beforeEach(() => {
+    mockNavigate.mockReset();
+    mockDownloadMissionPackPdf.mockReset();
+  });
 
   test('shows four distinct sections in operational order with counts', () => {
     render(<MissionRegister />);
@@ -60,5 +70,36 @@ describe('MissionRegister', () => {
 
     await user.click(screen.getByRole('button', { name: 'Open North block spray' }));
     expect(mockNavigate).toHaveBeenCalledWith('/missions/planning-1');
+  });
+
+  test('exports the selected mission pack without navigating away', async () => {
+    const user = userEvent.setup();
+    render(<MissionRegister />);
+
+    await user.click(screen.getByRole('button', {
+      name: 'Export Mission Pack for North block spray',
+    }));
+
+    expect(mockDownloadMissionPackPdf).toHaveBeenCalledWith(expect.objectContaining({
+      id: 'planning-1',
+      missionName: 'North block spray',
+    }));
+    expect(mockNavigate).not.toHaveBeenCalled();
+  });
+
+  test('shows an actionable error when mission pack generation fails', async () => {
+    const user = userEvent.setup();
+    mockDownloadMissionPackPdf.mockImplementationOnce(() => {
+      throw new Error('PDF engine unavailable');
+    });
+    render(<MissionRegister />);
+
+    await user.click(screen.getByRole('button', {
+      name: 'Export Mission Pack for North block spray',
+    }));
+
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      'Mission Pack could not be exported: PDF engine unavailable'
+    );
   });
 });
