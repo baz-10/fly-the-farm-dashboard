@@ -91,6 +91,7 @@ VITE_PERSISTENCE_MODE=remote
 SUPABASE_URL=https://YOUR_PROJECT.supabase.co
 SUPABASE_ANON_KEY=YOUR_ANON_OR_PUBLISHABLE_KEY
 SUPABASE_SERVICE_ROLE_KEY=YOUR_SERVICE_ROLE_OR_SECRET_KEY
+APP_URL=https://fly-the-farm-dashboard-sable.vercel.app
 ```
 
 Only the exact `VITE_PERSISTENCE_MODE` value is allowlisted into the browser
@@ -104,13 +105,28 @@ Supabase enables email confirmation by default. With confirmation enabled, a
 new user is sent to sign in after confirming their email. For a controlled beta,
 confirmation can be disabled in **Authentication > Sign In / Providers > Email**.
 
+### Password recovery redirect
+
+Self-service password recovery uses `APP_URL` to construct the secure return
+address. In Supabase, open **Authentication > URL Configuration** and add this
+exact value under **Redirect URLs**:
+
+```text
+https://fly-the-farm-dashboard-sable.vercel.app/reset-password
+```
+
+Add a Vercel preview reset URL separately only when recovery emails need to be
+tested on that protected preview. Recovery links are short-lived and the app
+removes their token fragment from the address bar as soon as the reset page
+loads.
+
 ## Local Development
 
 Leave `VITE_PERSISTENCE_MODE=local`. Local mode retains the seeded demo
 admin account and browser storage, so normal local development does not need a
 Supabase project.
 
-To exercise remote mode locally, place all four remote variables in
+To exercise remote mode locally, place all five remote variables in
 `.env.local`, restart `npm start`, and use a Supabase Auth account with an
 `ftf_profiles` row.
 
