@@ -1,5 +1,6 @@
 import turfArea from '@turf/area';
 import turfBuffer from '@turf/buffer';
+import { strFromU8, unzip } from 'fflate';
 import { multiLineString, polygon } from '@turf/helpers';
 import { LatLng } from '../types/fieldManagement';
 
@@ -26,6 +27,9 @@ export interface BoundaryImportResult {
   polygonCount: number;
   warning?: string;
 }
+
+const MAX_SPATIAL_FILE_BYTES = 25 * 1024 * 1024;
+const MAX_KMZ_ENTRIES = 250;
 
 export function toClosedGeoJsonRing(coords: LatLng[]): number[][] {
   const ring = coords.map(([lat, lng]) => [lng, lat]);
@@ -182,6 +186,83 @@ export function parseRailwayCorridorKml(
     ...boundaryFromGeoJson(buffered),
     warning: `Railway corridor created with ${bufferMetresEachSide} m each side (${bufferMetresEachSide * 2} m total width).`,
   };
+}
+
+async function extractKmlFromKmz(file: File): Promise<string> {
+  if (file.size > MAX_SPATIAL_FILE_BYTES) {
+    throw new Error('KMZ files must be 25 MB or smaller.');
+  }
+
+  const input = new Uint8Array(await file.arrayBuffer());
+  let entryCount = 0;
+  let unzipped: Record<string, Uint8Array>;
+  try {
+    unzipped = await new Promise<Record<string, Uint8Array>>((resolve, reject) => {
+      unzip(input, {
+        filter: (entry) => {
+          entryCount += 1;
+          if (entryCount > MAX_KMZ_ENTRIES) {
+            throw new Error('The KMZ contains more than 250 archive entries.');
+          }
+          if (
+            entry.name.startsWith('/')
+            || entry.name.split(/[\\/]/).includes('..')
+          ) {
+            throw new Error('The KMZ contains an unsafe archive path.');
+          }
+          const isKml = entry.name.toLowerCase().endsWith('.kml');
+          if (isKml && entry.originalSize > MAX_SPATIAL_FILE_BYTES) {
+            throw new Error('The KML document inside this KMZ is larger than 25 MB.');
+          }
+          return isKml;
+        },
+      }, (error, data) => {
+        if (error) reject(error);
+        else resolve(data);
+      });
+    });
+  } catch (error) {
+    if (
+      error instanceof Error
+      && (
+        error.message.includes('250 archive entries')
+        || error.message.includes('unsafe archive path')
+        || error.message.includes('larger than 25 MB')
+      )
+    ) {
+      throw error;
+    }
+    throw new Error('The KMZ archive is corrupt or unsupported.');
+  }
+
+  const kmlNames = Object.keys(unzipped)
+    .filter((name) => name.toLowerCase().endsWith('.kml'))
+    .sort((first, second) => first.localeCompare(second));
+  if (kmlNames.length === 0) {
+    throw new Error('This KMZ does not contain a KML document.');
+  }
+  const selected = kmlNames.find((name) => (
+    name.split(/[\\/]/).pop()?.toLowerCase() === 'doc.kml'
+  )) || kmlNames[0];
+  const bytes = unzipped[selected];
+  if (bytes.byteLength > MAX_SPATIAL_FILE_BYTES) {
+    throw new Error('The KML document inside this KMZ is larger than 25 MB.');
+  }
+  return strFromU8(bytes);
+}
+
+export async function parseKmzBoundary(file: File): Promise<BoundaryImportResult> {
+  return parseKmlBoundary(await extractKmlFromKmz(file));
+}
+
+export async function parseRailwayCorridorKmz(
+  file: File,
+  bufferMetresEachSide: number
+): Promise<BoundaryImportResult> {
+  return parseRailwayCorridorKml(
+    await extractKmlFromKmz(file),
+    bufferMetresEachSide
+  );
 }
 
 function collectGeometryRings(geometry: GeoJsonGeometry | null | undefined, rings: LatLng[][]) {

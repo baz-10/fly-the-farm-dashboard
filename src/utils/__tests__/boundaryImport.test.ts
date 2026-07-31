@@ -1,12 +1,30 @@
 import { describe, expect, test } from 'vitest';
 
+import { strToU8, zipSync } from 'fflate';
 import {
   boundaryFromGeoJson,
   calculateBoundaryAreaHectares,
+  parseKmzBoundary,
   parseKmlBoundary,
   parseRailwayCorridorKml,
+  parseRailwayCorridorKmz,
   toClosedGeoJsonRing,
 } from '../boundaryImport';
+
+const POLYGON_KML = `<kml><Placemark><Polygon><outerBoundaryIs><LinearRing><coordinates>
+  151,-27 151.001,-27 151.001,-27.001 151,-27.001 151,-27
+</coordinates></LinearRing></outerBoundaryIs></Polygon></Placemark></kml>`;
+
+const LINE_KML = `<kml><Placemark><LineString><coordinates>
+  151,-27 151.01,-27
+</coordinates></LineString></Placemark></kml>`;
+
+function kmzFile(entries: Record<string, string>, name = 'boundary.kmz'): File {
+  const zipped = zipSync(Object.fromEntries(
+    Object.entries(entries).map(([path, value]) => [path, strToU8(value)])
+  ));
+  return new File([zipped], name, { type: 'application/vnd.google-earth.kmz' });
+}
 
 describe('boundary imports', () => {
   test('closes GeoJSON rings without duplicating an existing closing point', () => {
@@ -112,6 +130,38 @@ describe('boundary imports', () => {
     const duplicateResult = parseRailwayCorridorKml(duplicate, 3.5);
 
     expect(duplicateResult.areaHa).toBeCloseTo(singleResult.areaHa, 6);
+  });
+
+  test('imports polygon and railway KMZ files and prefers doc.kml', async () => {
+    const polygon = await parseKmzBoundary(kmzFile({
+      'z-fallback.kml': LINE_KML,
+      'doc.kml': POLYGON_KML,
+    }));
+    const railway = await parseRailwayCorridorKmz(kmzFile({
+      'folder/railway.kml': LINE_KML,
+    }), 3.5);
+
+    expect(polygon.polygonCount).toBe(1);
+    expect(railway.areaHa).toBeGreaterThan(0.65);
+    expect(railway.warning).toContain('3.5 m each side');
+  });
+
+  test('selects the first stable KML fallback inside a KMZ', async () => {
+    const result = await parseKmzBoundary(kmzFile({
+      'z-line.kml': LINE_KML,
+      'a-polygon.kml': POLYGON_KML,
+    }));
+
+    expect(result.polygonCount).toBe(1);
+  });
+
+  test('rejects corrupt and KML-free KMZ archives with actionable errors', async () => {
+    await expect(parseKmzBoundary(kmzFile({
+      'readme.txt': 'No spatial data',
+    }))).rejects.toThrow('This KMZ does not contain a KML document.');
+    await expect(parseKmzBoundary(
+      new File([strToU8('not a zip')], 'broken.kmz')
+    )).rejects.toThrow('The KMZ archive is corrupt or unsupported.');
   });
 
   test('extracts every polygon from shapefile GeoJSON output', () => {
