@@ -19,6 +19,20 @@ function normalizeEmail(value) {
   return String(value || '').trim().toLowerCase();
 }
 
+function getRecoveryRedirect(req) {
+  const configuredUrl = String(process.env.APP_URL || '').trim();
+  if (configuredUrl) return `${configuredUrl.replace(/\/+$/, '')}/reset-password`;
+
+  const origin = String(req.headers?.origin || '').trim();
+  if (origin) return `${origin.replace(/\/+$/, '')}/reset-password`;
+
+  const host = String(req.headers?.['x-forwarded-host'] || req.headers?.host || '').trim();
+  if (!host) throw createHttpError(500, 'Password recovery is not configured.');
+  const protocol = String(req.headers?.['x-forwarded-proto'] || '').trim()
+    || (host.startsWith('localhost') || host.startsWith('127.0.0.1') ? 'http' : 'https');
+  return `${protocol}://${host}/reset-password`;
+}
+
 function generateInviteCode() {
   return crypto.randomBytes(6).toString('hex').toUpperCase();
 }
@@ -246,6 +260,42 @@ module.exports = async function handler(req, res) {
       if (!profile) throw createHttpError(403, 'Your account is not configured for Fly the Farm.');
       setSessionCookies(req, res, session);
       return res.status(200).json({ user: toPublicUser(session.user, profile) });
+    }
+
+    if (body.action === 'request-password-reset') {
+      const email = normalizeEmail(body.email);
+      if (!email || !email.includes('@')) {
+        throw createHttpError(400, 'Enter a valid email address.');
+      }
+      await supabaseRequest(
+        `auth/v1/recover?redirect_to=${encodeURIComponent(getRecoveryRedirect(req))}`,
+        {
+          method: 'POST',
+          keyType: 'anon',
+          body: JSON.stringify({ email }),
+          publicMessage: 'Password recovery email could not be sent.',
+        }
+      );
+      return res.status(200).json({ ok: true });
+    }
+
+    if (body.action === 'update-password') {
+      const accessToken = String(body.accessToken || '').trim();
+      const password = String(body.password || '');
+      if (!accessToken) {
+        throw createHttpError(400, 'This password recovery link is invalid or has expired.');
+      }
+      if (password.length < 6) {
+        throw createHttpError(400, 'Password must be at least 6 characters.');
+      }
+      await supabaseRequest('auth/v1/user', {
+        method: 'PUT',
+        keyType: 'anon',
+        accessToken,
+        body: JSON.stringify({ password }),
+        publicMessage: 'This password recovery link is invalid or has expired.',
+      });
+      return res.status(200).json({ ok: true });
     }
 
     if (body.action === 'register') {

@@ -46,6 +46,8 @@ interface AuthContextType {
   isLoading: boolean;
   login: (email: string, password: string) => Promise<LoginResult>;
   register: (email: string, name: string, password: string, role: UserRole, contractorCode?: string) => Promise<RegistrationResult>;
+  requestPasswordReset: (email: string) => Promise<LoginResult>;
+  updatePassword: (accessToken: string, password: string) => Promise<LoginResult>;
   logout: () => void;
   updateUser: (updates: Partial<User>) => void;
 }
@@ -334,6 +336,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (remoteMode) void requestRemoteAuth({ action: 'logout' });
   }, [remoteMode]);
 
+  const requestPasswordReset = useCallback(async (email: string): Promise<LoginResult> => {
+    try {
+      await requestRemoteAuth({ action: 'request-password-reset', email });
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Password recovery failed.' };
+    }
+  }, []);
+
+  const updatePassword = useCallback(async (accessToken: string, password: string): Promise<LoginResult> => {
+    try {
+      await requestRemoteAuth({ action: 'update-password', accessToken, password });
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Password update failed.' };
+    }
+  }, []);
+
   const updateUser = useCallback((updates: Partial<User>) => {
     setUser((previous) => {
       if (!previous) return null;
@@ -344,7 +364,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [remoteMode]);
 
   return (
-    <AuthContext.Provider value={{ user, isAuthenticated: Boolean(user), isLoading, login, register, logout, updateUser }}>
+    <AuthContext.Provider value={{
+      user,
+      isAuthenticated: Boolean(user),
+      isLoading,
+      login,
+      register,
+      requestPasswordReset,
+      updatePassword,
+      logout,
+      updateUser,
+    }}>
       {children}
     </AuthContext.Provider>
   );

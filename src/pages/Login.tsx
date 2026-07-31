@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useNavigate, Link as RouterLink } from 'react-router-dom';
+import { useLocation, useNavigate, Link as RouterLink } from 'react-router-dom';
 import {
   Box,
   Card,
@@ -22,7 +22,9 @@ export default function Login() {
   const [loading, setLoading] = useState(false);
   const { login } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
   const theme = useTheme();
+  const passwordReset = Boolean((location.state as { passwordReset?: boolean } | null)?.passwordReset);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -106,6 +108,11 @@ export default function Login() {
             </Typography>
           </Box>
 
+          {passwordReset && (
+            <Alert severity="success" sx={{ mb: 2.5 }}>
+              Your password has been updated. Sign in with your new password.
+            </Alert>
+          )}
           {error && <Alert severity="error" sx={{ mb: 2.5 }}>{error}</Alert>}
 
           <Box component="form" onSubmit={handleSubmit}>
@@ -125,8 +132,17 @@ export default function Login() {
               required
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              sx={{ mb: 3 }}
+              sx={{ mb: 1 }}
             />
+            <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: 2.5 }}>
+              <Link
+                component={RouterLink}
+                to="/forgot-password"
+                sx={{ fontWeight: 700, color: 'primary.main', textDecoration: 'none', '&:hover': { textDecoration: 'underline' } }}
+              >
+                Forgot password?
+              </Link>
+            </Box>
             <Button
               type="submit"
               variant="contained"

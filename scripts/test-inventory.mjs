@@ -34,6 +34,10 @@ const POST_BASELINE_TEST_FILES = new Set([
   'src/utils/__tests__/safetyPlanPdf.test.ts',
   'src/utils/__tests__/missionPackPdf.test.ts',
   'src/components/__tests__/FieldBoundaryEditor.imports.test.tsx',
+  'src/contexts/__tests__/AuthContext.passwordRecovery.test.tsx',
+  'src/pages/ForgotPassword.test.tsx',
+  'src/pages/ResetPassword.test.tsx',
+  'src/utils/__tests__/passwordRecovery.test.ts',
 ]);
 
 async function findTestFiles(directory) {

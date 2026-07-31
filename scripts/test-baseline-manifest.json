@@ -63,6 +63,8 @@
     "src/utils/__tests__/workPackTemplates.test.ts": 2
   },
   "approvedDeclarationDeltas": {
+    "src/App.test.tsx": 1,
+    "src/__tests__/authenticated-auth-api.test.ts": 4,
     "src/__tests__/authenticated-store-api.test.ts": 2,
     "src/pages/MissionRegister.test.tsx": 2,
     "src/utils/__tests__/boundaryImport.test.ts": 7
@@ -72,6 +74,10 @@
     "src/config/environment.build.test.ts": 3,
     "src/config/environment.test.ts": 4,
     "src/utils/__tests__/missionPackPdf.test.ts": 3,
-    "src/components/__tests__/FieldBoundaryEditor.imports.test.tsx": 2
+    "src/components/__tests__/FieldBoundaryEditor.imports.test.tsx": 2,
+    "src/contexts/__tests__/AuthContext.passwordRecovery.test.tsx": 2,
+    "src/pages/ForgotPassword.test.tsx": 2,
+    "src/pages/ResetPassword.test.tsx": 4,
+    "src/utils/__tests__/passwordRecovery.test.ts": 4
   }
 }
