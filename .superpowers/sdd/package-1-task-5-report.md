@@ -48,3 +48,27 @@ Complete for the approved `/api/v1` job, operating-location and field-boundary-v
 ## Requirement coverage
 
 RET-003, RET-004, RET-005, RET-006, RET-007, IMP-003, IMP-004, IMP-005, NEW-001, NEW-003, NEW-005, NEW-006, NEW-007, NEW-008, REP-003, REP-004.
+
+## Review fix round 1
+
+### Commit
+
+- `4f2923f` — `fix: harden authoritative job and boundary screens`
+
+### Findings addressed
+
+- Job archive responses now use an archive-safe confirmation mapper. A successful DELETE no longer fails strict list-record validation when the response omits the joined `fieldIds`; the store can remove the archived job and the screen can navigate normally.
+- Field Detail now maintains explicit authoritative boundary `loading`, `ready`, `error`, `unauthorised` and `not-found` states. It does not present “No boundary set” until a successful authoritative empty response, and failed loads are no longer caught and discarded.
+- Remote Job Create scans every value on every chemical row, including product, active ingredient, rate per hectare, treatment ID and future row fields. Any entered unsupported chemical value blocks the save; local-mode behavior is unchanged.
+- Remote Job Create now renders operational loading, unavailable and unauthorised states before evaluating the route parent chain, preventing transient or failed loads from appearing as missing parents.
+- The boundary-load callback dependency warning and its focused-test React state-update warning were resolved without changing the production behavior described above.
+
+### Regression and verification evidence
+
+- Archive mapper RED reproduced `MALFORMED_RESPONSE` for a server-confirmed job archive without `fieldIds`; the new archive confirmation test passes after the mapper split.
+- Boundary state RED covered a delayed request plus network, 403 and 404 failures; all cases now render distinct states and never claim an unconfirmed empty boundary.
+- Job Create RED covered unsupported Product / Brand, Active Ingredient and Rate per hectare values, plus operational loading, unavailable and unauthorised states; all regressions now pass.
+- Focused verification: `npm test -- --runInBand src/pages/OperationalWorkflow.test.tsx src/services/__tests__/operationalApi.test.ts src/services/__tests__/operationalDataStore.test.ts src/contexts/__tests__/OperationalDataContext.test.tsx src/App.test.tsx` — 5 suites, 69 tests passed, 0 failures.
+- Full verification: `CI=true npm test -- --runInBand --watchAll=false` — 50 suites, 276 tests passed, 0 failures. The only console output is intentional logging exercised by existing security-fix tests.
+- Production build: `npm run build` — exit 0. It compiled with existing repository-wide ESLint and bundle-size warnings; the earlier Task 5 boundary-hook dependency warning is no longer present.
+- `git diff --check` — clean before the fix commit.
