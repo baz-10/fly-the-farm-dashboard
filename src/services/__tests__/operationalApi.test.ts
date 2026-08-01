@@ -3,6 +3,9 @@ import {
   createOperationalApi,
   mapApiClient,
   mapApiField,
+  mapApiFieldBoundaryVersion,
+  mapApiJob,
+  mapApiOperatingLocation,
   mapApiProperty,
 } from '../operationalApi';
 
@@ -58,6 +61,57 @@ describe('operational API adapter', () => {
     expect(fetchMock).toHaveBeenCalledWith('/api/v1/properties', expect.objectContaining({
       body: JSON.stringify({ clientId: 'client-1', name: 'Home Block', address: '1 Farm Rd', state: 'QLD' }),
     }));
+  });
+
+  test('maps the complete supported job, location and boundary contracts', () => {
+    expect(mapApiOperatingLocation({
+      id: 'location-1', name: 'Brisbane Base', address: '1 Airfield Rd', timezone: 'Australia/Brisbane',
+      row_version: 2, created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-02T00:00:00Z',
+    })).toEqual(expect.objectContaining({ id: 'location-1', name: 'Brisbane Base', timezone: 'Australia/Brisbane', rowVersion: 2 }));
+    expect(mapApiJob({
+      id: 'job-1', client_id: 'client-1', property_id: 'property-1', field_ids: ['field-1', 'field-2'],
+      reference: 'JOB-42', scope: 'Spray lantana', status: 'scheduled', notes: 'Morning access',
+      requested_date: '2026-08-08', scheduled_date: '2026-08-10', row_version: 3,
+      created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-02T00:00:00Z',
+    })).toEqual(expect.objectContaining({
+      id: 'job-1', fieldIds: ['field-1', 'field-2'], reference: 'JOB-42', scope: 'Spray lantana',
+      status: 'scheduled', notes: 'Morning access', requestedDate: '2026-08-08', scheduledDate: '2026-08-10', rowVersion: 3,
+    }));
+    expect(mapApiFieldBoundaryVersion({
+      id: 'boundary-1', field_id: 'field-1', property_id: 'property-1', version_number: 2,
+      boundary_geojson: { type: 'Polygon', coordinates: [[[153, -27], [154, -27], [154, -28], [153, -27]]] },
+      field_version: 5, row_version: 1, created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z',
+    })).toEqual(expect.objectContaining({ id: 'boundary-1', fieldId: 'field-1', versionNumber: 2, fieldVersion: 5 }));
+  });
+
+  test('sends every supported job value and boundary geometry to the trusted commands', async () => {
+    const fetchMock = jest.spyOn(global, 'fetch')
+      .mockImplementationOnce(() => jsonResponse(201, { data: {
+        id: 'job-1', clientId: 'client-1', propertyId: 'property-1', fieldIds: ['field-1'], reference: 'JOB-42',
+        scope: 'Spray lantana', status: 'scheduled', notes: 'Morning access', requestedDate: '2026-08-08', scheduledDate: '2026-08-10',
+        rowVersion: 1, createdAt: '2026-08-01T00:00:00Z', updatedAt: '2026-08-01T00:00:00Z',
+      } }))
+      .mockImplementationOnce(() => jsonResponse(201, { data: {
+        id: 'boundary-1', fieldId: 'field-1', propertyId: 'property-1', versionNumber: 1,
+        boundaryGeojson: { type: 'Polygon', coordinates: [[[153, -27], [154, -27], [154, -28], [153, -27]]] },
+        fieldVersion: 4, rowVersion: 1, createdAt: '2026-08-01T00:00:00Z', updatedAt: '2026-08-01T00:00:00Z',
+      } }));
+    const api = createOperationalApi();
+    await api.jobs.create({
+      clientId: 'client-1', propertyId: 'property-1', fieldIds: ['field-1'], reference: 'JOB-42', scope: 'Spray lantana',
+      status: 'scheduled', notes: 'Morning access', requestedDate: '2026-08-08', scheduledDate: '2026-08-10',
+    });
+    await api.fieldBoundaryVersions.create({
+      fieldId: 'field-1', propertyId: 'property-1', expectedFieldVersion: 3,
+      boundaryGeojson: { type: 'Polygon', coordinates: [[[153, -27], [154, -27], [154, -28], [153, -27]]] },
+    });
+    expect(fetchMock.mock.calls[0][1]).toEqual(expect.objectContaining({ body: JSON.stringify({
+      clientId: 'client-1', propertyId: 'property-1', fieldIds: ['field-1'], reference: 'JOB-42', scope: 'Spray lantana',
+      status: 'scheduled', notes: 'Morning access', requestedDate: '2026-08-08', scheduledDate: '2026-08-10',
+    }) }));
+    expect(fetchMock.mock.calls[1]).toEqual(['/api/v1/field-boundary-versions', expect.objectContaining({
+      method: 'POST', body: expect.stringContaining('"expectedFieldVersion":3'),
+    })]);
   });
 
   test.each([

@@ -1,5 +1,7 @@
 import { Client, Field, Property } from '../types/fieldManagement';
 import {
+  FieldBoundaryVersionCreateInput, OperationalFieldBoundaryVersion, OperationalJob, OperationalJobCreateInput,
+  OperationalJobUpdateInput, OperationalOperatingLocation,
   ClientCreateInput, ClientUpdateInput, FieldCreateInput, FieldUpdateInput,
   PropertyCreateInput, PropertyUpdateInput,
 } from './operationalApi';
@@ -19,10 +21,13 @@ export interface OperationalDataState {
   clients: Client[];
   properties: Property[];
   fields: Field[];
+  operatingLocations: OperationalOperatingLocation[];
+  jobs: OperationalJob[];
+  fieldBoundaryVersions: OperationalFieldBoundaryVersion[];
   status: OperationalLoadStatus;
   saving: boolean;
   savedAt: string | null;
-  lastSaved: { resource: 'client' | 'property' | 'field'; recordId: string; at: string } | null;
+  lastSaved: { resource: 'client' | 'property' | 'field' | 'job' | 'boundary'; recordId: string; at: string } | null;
   error: OperationalDataError | null;
 }
 
@@ -32,6 +37,9 @@ export interface OperationalDataGateway {
   listClients(): Promise<Client[]>;
   listProperties(): Promise<Property[]>;
   listFields(): Promise<Field[]>;
+  listOperatingLocations(): Promise<OperationalOperatingLocation[]>;
+  listJobs(): Promise<OperationalJob[]>;
+  listFieldBoundaryVersions(fieldId: string): Promise<OperationalFieldBoundaryVersion[]>;
   createClient(input: ClientCreateInput): Promise<Client>;
   updateClient(id: string, input: ClientUpdateInput, expectedVersion: number): Promise<Client>;
   archiveClient(id: string, expectedVersion: number): Promise<unknown>;
@@ -41,10 +49,15 @@ export interface OperationalDataGateway {
   createField(input: FieldCreateInput): Promise<Field>;
   updateField(id: string, input: FieldUpdateInput, expectedVersion: number): Promise<Field>;
   archiveField(id: string, expectedVersion: number): Promise<unknown>;
+  createJob(input: OperationalJobCreateInput): Promise<OperationalJob>;
+  updateJob(id: string, input: OperationalJobUpdateInput, expectedVersion: number): Promise<OperationalJob>;
+  archiveJob(id: string, expectedVersion: number): Promise<unknown>;
+  createFieldBoundaryVersion(input: FieldBoundaryVersionCreateInput): Promise<OperationalFieldBoundaryVersion>;
 }
 
 const emptyState = (): OperationalDataState => ({
-  clients: [], properties: [], fields: [], status: 'idle', saving: false, savedAt: null, lastSaved: null, error: null,
+  clients: [], properties: [], fields: [], operatingLocations: [], jobs: [], fieldBoundaryVersions: [],
+  status: 'idle', saving: false, savedAt: null, lastSaved: null, error: null,
 });
 
 function operationalError(error: unknown): OperationalDataError {
@@ -86,6 +99,11 @@ export interface OperationalDataStore {
   createField(input: FieldCreateInput): Promise<Field>;
   updateField(id: string, input: FieldUpdateInput): Promise<Field>;
   archiveField(id: string): Promise<void>;
+  createJob(input: OperationalJobCreateInput): Promise<OperationalJob>;
+  updateJob(id: string, input: OperationalJobUpdateInput): Promise<OperationalJob>;
+  archiveJob(id: string): Promise<void>;
+  refreshFieldBoundary(fieldId: string): Promise<OperationalFieldBoundaryVersion | null>;
+  createFieldBoundaryVersion(fieldId: string, coordinates: Array<[number, number]>): Promise<OperationalFieldBoundaryVersion>;
 }
 
 export function createOperationalDataStore(gateway: OperationalDataGateway): OperationalDataStore {
@@ -128,11 +146,25 @@ export function createOperationalDataStore(gateway: OperationalDataGateway): Ope
       if (activeGeneration !== generation || userId !== nextUserId) return;
       if (!resolvedOrganisation) throw Object.assign(new Error('No active organisation is available.'), { code: 'FORBIDDEN', status: 403 });
       organisationId = resolvedOrganisation;
-      const [clients, properties, fields] = await Promise.all([
+      const [clients, properties, fields, operatingLocations, jobs] = await Promise.all([
         gateway.listClients(), gateway.listProperties(), gateway.listFields(),
+        gateway.listOperatingLocations(), gateway.listJobs(),
       ]);
       if (activeGeneration !== generation || userId !== nextUserId || organisationId !== resolvedOrganisation) return;
-      emit({ clients, properties, fields, status: 'ready', saving: false, savedAt: null, lastSaved: null, error: null });
+      const clientIds = new Set(clients.map((record) => record.id));
+      const propertiesById = new Map(properties.map((record) => [record.id, record]));
+      const fieldsById = new Map(fields.map((record) => [record.id, record]));
+      const invalidProperty = properties.some((record) => !clientIds.has(record.clientId));
+      const invalidField = fields.some((record) => !propertiesById.has(record.propertyId));
+      const invalidJob = jobs.some((record) => {
+        const parent = propertiesById.get(record.propertyId);
+        return !clientIds.has(record.clientId) || !parent || parent.clientId !== record.clientId
+          || record.fieldIds.some((fieldId) => fieldsById.get(fieldId)?.propertyId !== record.propertyId);
+      });
+      if (invalidProperty || invalidField || invalidJob) {
+        throw Object.assign(new Error('The operational API returned records outside the active parent chain.'), { code: 'MALFORMED_RESPONSE' });
+      }
+      emit({ clients, properties, fields, operatingLocations, jobs, fieldBoundaryVersions: [], status: 'ready', saving: false, savedAt: null, lastSaved: null, error: null });
     } catch (error) {
       if (activeGeneration !== generation) return;
       organisationId = null;
@@ -151,7 +183,7 @@ export function createOperationalDataStore(gateway: OperationalDataGateway): Ope
   }
 
   async function mutate<T extends { id?: string }>(
-    resource: 'client' | 'property' | 'field',
+    resource: 'client' | 'property' | 'field' | 'job' | 'boundary',
     recordId: string | null,
     request: () => Promise<T>,
     confirm: (record: T) => void,
@@ -225,6 +257,61 @@ export function createOperationalDataStore(gateway: OperationalDataGateway): Ope
     },
     async archiveField(id) {
       await mutate('field', id, () => gateway.archiveField(id, expectedVersion(state.fields, id)) as Promise<{ id?: string }>, () => patch({ fields: state.fields.filter((record) => record.id !== id) }));
+    },
+    createJob(input) {
+      return mutate('job', null, () => gateway.createJob(input), (record) => patch({ jobs: [...state.jobs, record as OperationalJob] }));
+    },
+    updateJob(id, input) {
+      return mutate('job', id, () => gateway.updateJob(id, input, expectedVersion(state.jobs, id)), (record) => patch({ jobs: replace(state.jobs, record as OperationalJob) }));
+    },
+    async archiveJob(id) {
+      await mutate('job', id, () => gateway.archiveJob(id, expectedVersion(state.jobs, id)) as Promise<{ id?: string }>, () => patch({ jobs: state.jobs.filter((record) => record.id !== id) }));
+    },
+    async refreshFieldBoundary(fieldId) {
+      const activeGeneration = generation;
+      const field = state.fields.find((record) => record.id === fieldId);
+      if (!field) throw Object.assign(new Error('Field not found.'), { code: 'NOT_FOUND', status: 404 });
+      try {
+        const records = await gateway.listFieldBoundaryVersions(fieldId);
+        if (activeGeneration !== generation) throw Object.assign(new Error('The authenticated organisation changed before the load completed.'), { code: 'STALE_SCOPE' });
+        if (records.some((record) => record.fieldId !== field.id || record.propertyId !== field.propertyId)) {
+          throw Object.assign(new Error('The boundary response does not match the active field.'), { code: 'MALFORMED_RESPONSE' });
+        }
+        const current = records.find((record) => record.id === field.fieldBoundaryVersionId)
+          || [...records].sort((a, b) => b.versionNumber - a.versionNumber)[0] || null;
+        patch({
+          fieldBoundaryVersions: [...state.fieldBoundaryVersions.filter((record) => record.fieldId !== fieldId), ...records],
+          fields: current ? state.fields.map((record) => record.id === fieldId ? { ...record, boundaryCoords: current.boundaryCoords } : record) : state.fields,
+          error: null,
+        });
+        return current;
+      } catch (error) {
+        if (activeGeneration === generation) patch({ error: operationalError(error) });
+        throw error;
+      }
+    },
+    createFieldBoundaryVersion(fieldId, coordinates) {
+      const field = state.fields.find((record) => record.id === fieldId);
+      if (!field) return Promise.reject(Object.assign(new Error('Field not found.'), { code: 'NOT_FOUND', status: 404 }));
+      if (coordinates.length < 3 || coordinates.some(([lat, lng]) => !Number.isFinite(lat) || !Number.isFinite(lng)
+        || lat < -90 || lat > 90 || lng < -180 || lng > 180)) {
+        return Promise.reject(Object.assign(new Error('Boundary geometry must contain at least three valid points.'), { code: 'VALIDATION_ERROR', status: 400 }));
+      }
+      const ring = coordinates.map(([lat, lng]) => [lng, lat]);
+      ring.push([...ring[0]]);
+      return mutate('boundary', fieldId, () => gateway.createFieldBoundaryVersion({
+        fieldId, propertyId: field.propertyId, expectedFieldVersion: field.rowVersion || 1,
+        boundaryGeojson: { type: 'Polygon', coordinates: [ring] },
+      }), (record) => {
+        const boundary = record as OperationalFieldBoundaryVersion;
+        if (!boundary.fieldVersion) throw Object.assign(new Error('The boundary response did not include the updated field version.'), { code: 'MALFORMED_RESPONSE' });
+        patch({
+          fieldBoundaryVersions: [...state.fieldBoundaryVersions.filter((item) => item.id !== boundary.id), boundary],
+          fields: state.fields.map((item) => item.id === fieldId ? {
+            ...item, rowVersion: boundary.fieldVersion, fieldBoundaryVersionId: boundary.id, boundaryCoords: boundary.boundaryCoords,
+          } : item),
+        });
+      });
     },
   };
 }

@@ -6,18 +6,66 @@ type ApiRecord = Record<string, unknown>;
 export interface OperationalSession {
   user: { id: string; email: string | null; name: string };
   organisation: { id: string; name: string };
+  roles: string[];
+  permissions: string[];
+  operatingLocationIds: string[];
+}
+
+export interface OperationalOperatingLocation {
+  id: string;
+  name: string;
+  address: string;
+  timezone: string;
+  rowVersion: number;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface OperationalJob {
   id: string;
   clientId: string;
   propertyId: string;
+  fieldIds: string[];
   reference: string;
+  scope: string;
   status: string;
+  notes: string;
+  requestedDate?: string;
+  scheduledDate?: string;
   rowVersion: number;
   createdAt: string;
   updatedAt: string;
 }
+
+export interface OperationalBoundaryGeoJson {
+  type: 'Polygon' | 'MultiPolygon';
+  coordinates: number[][][] | number[][][][];
+}
+
+export interface OperationalFieldBoundaryVersion {
+  id: string;
+  fieldId: string;
+  propertyId: string;
+  versionNumber: number;
+  boundaryGeojson: OperationalBoundaryGeoJson;
+  boundaryCoords: LatLng[];
+  capturedAt?: string;
+  rowVersion?: number;
+  fieldVersion?: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface FieldBoundaryVersionCreateInput {
+  fieldId: string;
+  propertyId: string;
+  expectedFieldVersion: number;
+  boundaryGeojson: OperationalBoundaryGeoJson;
+  capturedAt?: string;
+}
+
+export type OperationalJobCreateInput = Omit<OperationalJob, 'id' | 'rowVersion' | 'createdAt' | 'updatedAt'>;
+export type OperationalJobUpdateInput = Partial<Pick<OperationalJob, 'fieldIds' | 'reference' | 'scope' | 'status' | 'notes' | 'requestedDate' | 'scheduledDate'>>;
 
 export interface OperationalMission {
   id: string;
@@ -85,6 +133,29 @@ function timestamp(record: ApiRecord, camel: string, snake: string): string {
   const candidate = requiredText(record, camel, snake);
   if (Number.isNaN(Date.parse(candidate))) return malformed(camel);
   return candidate;
+}
+
+function optionalDate(record: ApiRecord, camel: string, snake: string): string | undefined {
+  const candidate = optionalText(record, camel, snake) || undefined;
+  if (!candidate) return undefined;
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(candidate);
+  if (!match || Number(match[2]) < 1 || Number(match[2]) > 12 || Number(match[3]) < 1
+    || Number(match[3]) > new Date(Date.UTC(Number(match[1]), Number(match[2]), 0)).getUTCDate()) return malformed(camel);
+  return candidate;
+}
+
+function stringArray(record: ApiRecord, camel: string, snake = camel, allowEmpty = true): string[] {
+  const candidate = value(record, camel, snake);
+  if (!Array.isArray(candidate) || (!allowEmpty && candidate.length === 0)
+    || candidate.some((entry) => typeof entry !== 'string' || entry.trim() === '')) return malformed(camel);
+  if (new Set(candidate).size !== candidate.length) return malformed(camel);
+  return candidate;
+}
+
+function positiveInteger(record: ApiRecord, camel: string, snake = camel): number {
+  const candidate = value(record, camel, snake);
+  if (!Number.isInteger(candidate) || Number(candidate) < 1) return malformed(camel);
+  return Number(candidate);
 }
 
 function propertyState(record: ApiRecord): AustralianState {
@@ -161,11 +232,65 @@ export function mapApiField(record: ApiRecord): Field {
   };
 }
 
-function mapJob(record: ApiRecord): OperationalJob {
+export function mapApiOperatingLocation(record: ApiRecord): OperationalOperatingLocation {
+  return {
+    id: requiredText(record, 'id'), name: requiredText(record, 'name'),
+    address: optionalText(record, 'address'), timezone: optionalText(record, 'timezone'),
+    rowVersion: versionValue(record), createdAt: timestamp(record, 'createdAt', 'created_at'),
+    updatedAt: timestamp(record, 'updatedAt', 'updated_at'),
+  };
+}
+
+export function mapApiJob(record: ApiRecord): OperationalJob {
   return {
     id: requiredText(record, 'id'), clientId: requiredText(record, 'clientId', 'client_id'),
-    propertyId: requiredText(record, 'propertyId', 'property_id'), reference: requiredText(record, 'reference'),
-    status: requiredText(record, 'status'), rowVersion: versionValue(record),
+    propertyId: requiredText(record, 'propertyId', 'property_id'),
+    fieldIds: stringArray(record, 'fieldIds', 'field_ids', false), reference: requiredText(record, 'reference'),
+    scope: optionalText(record, 'scope'), status: requiredText(record, 'status'), notes: optionalText(record, 'notes'),
+    requestedDate: optionalDate(record, 'requestedDate', 'requested_date'),
+    scheduledDate: optionalDate(record, 'scheduledDate', 'scheduled_date'), rowVersion: versionValue(record),
+    createdAt: timestamp(record, 'createdAt', 'created_at'), updatedAt: timestamp(record, 'updatedAt', 'updated_at'),
+  };
+}
+
+function boundaryGeojson(record: ApiRecord): OperationalBoundaryGeoJson {
+  const candidate = value(record, 'boundaryGeojson', 'boundary_geojson') as any;
+  if (!candidate || typeof candidate !== 'object' || !['Polygon', 'MultiPolygon'].includes(candidate.type) || !Array.isArray(candidate.coordinates)) {
+    return malformed('boundaryGeojson');
+  }
+  const polygons = candidate.type === 'Polygon' ? [candidate.coordinates] : candidate.coordinates;
+  if (polygons.length === 0) return malformed('boundaryGeojson');
+  for (const polygon of polygons) {
+    if (!Array.isArray(polygon) || polygon.length === 0) return malformed('boundaryGeojson');
+    for (const ring of polygon) {
+      if (!Array.isArray(ring) || ring.length < 4) return malformed('boundaryGeojson');
+      for (const point of ring) {
+        if (!Array.isArray(point) || point.length !== 2 || !point.every(Number.isFinite)
+          || point[0] < -180 || point[0] > 180 || point[1] < -90 || point[1] > 90) return malformed('boundaryGeojson');
+      }
+      if (ring[0][0] !== ring[ring.length - 1][0] || ring[0][1] !== ring[ring.length - 1][1]) return malformed('boundaryGeojson');
+    }
+  }
+  return candidate as OperationalBoundaryGeoJson;
+}
+
+export function mapApiFieldBoundaryVersion(record: ApiRecord): OperationalFieldBoundaryVersion {
+  const geojson = boundaryGeojson(record);
+  const polygon = geojson.type === 'Polygon' ? geojson.coordinates as number[][][] : (geojson.coordinates as number[][][][])[0];
+  const outerRing = polygon[0];
+  const boundaryCoords = outerRing.slice(0, -1).map((point) => [point[1], point[0]] as LatLng);
+  const capturedAt = optionalText(record, 'capturedAt', 'captured_at') || undefined;
+  if (capturedAt && Number.isNaN(Date.parse(capturedAt))) return malformed('capturedAt');
+  const rowVersionRaw = value(record, 'rowVersion', 'row_version');
+  const fieldVersionRaw = value(record, 'fieldVersion', 'field_version');
+  if (rowVersionRaw !== undefined && (!Number.isInteger(rowVersionRaw) || Number(rowVersionRaw) < 1)) return malformed('rowVersion');
+  if (fieldVersionRaw !== undefined && (!Number.isInteger(fieldVersionRaw) || Number(fieldVersionRaw) < 1)) return malformed('fieldVersion');
+  return {
+    id: requiredText(record, 'id'), fieldId: requiredText(record, 'fieldId', 'field_id'),
+    propertyId: requiredText(record, 'propertyId', 'property_id'), versionNumber: positiveInteger(record, 'versionNumber', 'version_number'),
+    boundaryGeojson: geojson, boundaryCoords, capturedAt,
+    rowVersion: rowVersionRaw === undefined ? undefined : Number(rowVersionRaw),
+    fieldVersion: fieldVersionRaw === undefined ? undefined : Number(fieldVersionRaw),
     createdAt: timestamp(record, 'createdAt', 'created_at'), updatedAt: timestamp(record, 'updatedAt', 'updated_at'),
   };
 }
@@ -194,10 +319,16 @@ interface ResourceAdapter<T, TCreate, TUpdate> {
 
 export interface OperationalApi {
   session(): Promise<OperationalSession>;
+  operatingLocations: ResourceAdapter<OperationalOperatingLocation, Pick<OperationalOperatingLocation, 'name' | 'address' | 'timezone'>, Partial<Pick<OperationalOperatingLocation, 'name' | 'address' | 'timezone'>>>;
   clients: ResourceAdapter<Client, ClientCreateInput, ClientUpdateInput>;
   properties: ResourceAdapter<Property, PropertyCreateInput, PropertyUpdateInput>;
   fields: ResourceAdapter<Field, FieldCreateInput, FieldUpdateInput>;
-  jobs: ResourceAdapter<OperationalJob, Omit<OperationalJob, 'id' | 'rowVersion' | 'createdAt' | 'updatedAt'>, Partial<Pick<OperationalJob, 'reference' | 'status'>>>;
+  jobs: ResourceAdapter<OperationalJob, OperationalJobCreateInput, OperationalJobUpdateInput>;
+  fieldBoundaryVersions: {
+    list(fieldId: string, page?: number, pageSize?: number): Promise<ApiList<OperationalFieldBoundaryVersion>>;
+    get(id: string): Promise<OperationalFieldBoundaryVersion>;
+    create(input: FieldBoundaryVersionCreateInput): Promise<OperationalFieldBoundaryVersion>;
+  };
   missions: ResourceAdapter<OperationalMission, Omit<OperationalMission, 'id' | 'rowVersion' | 'createdAt' | 'updatedAt'>, Partial<Pick<OperationalMission, 'missionNumber' | 'status' | 'scheduledStartAt'>>>;
 }
 
@@ -310,11 +441,16 @@ export function createOperationalApi(options: ApiOptions = {}): OperationalApi {
     return payload;
   };
 
-  const jobWritable = (input: any): ApiRecord => ({
-    ...(input.clientId !== undefined ? { clientId: input.clientId } : {}),
-    ...(input.propertyId !== undefined ? { propertyId: input.propertyId } : {}),
+  const jobWritable = (input: OperationalJobCreateInput | OperationalJobUpdateInput): ApiRecord => ({
+    ...('clientId' in input && input.clientId !== undefined ? { clientId: input.clientId } : {}),
+    ...('propertyId' in input && input.propertyId !== undefined ? { propertyId: input.propertyId } : {}),
+    ...(input.fieldIds !== undefined ? { fieldIds: input.fieldIds } : {}),
     ...(input.reference !== undefined ? { reference: input.reference } : {}),
+    ...(input.scope !== undefined ? { scope: input.scope } : {}),
     ...(input.status !== undefined ? { status: input.status } : {}),
+    ...(input.notes !== undefined ? { notes: input.notes } : {}),
+    ...(input.requestedDate !== undefined ? { requestedDate: input.requestedDate } : {}),
+    ...(input.scheduledDate !== undefined ? { scheduledDate: input.scheduledDate } : {}),
   });
   const missionWritable = (input: any): ApiRecord => ({
     ...(input.jobId !== undefined ? { jobId: input.jobId } : {}),
@@ -328,6 +464,9 @@ export function createOperationalApi(options: ApiOptions = {}): OperationalApi {
     async session() {
       const data = (await request('/api/v1/session')).data;
       if (!data || typeof data !== 'object' || Array.isArray(data)) return malformed('session');
+      const roles = stringArray(data, 'roles');
+      const permissions = stringArray(data, 'permissions');
+      const operatingLocationIds = stringArray(data, 'operatingLocationIds');
       return {
         user: {
           id: requiredText(data.user || {}, 'id'),
@@ -338,12 +477,40 @@ export function createOperationalApi(options: ApiOptions = {}): OperationalApi {
           id: requiredText(data.organisation || {}, 'id'),
           name: requiredText(data.organisation || {}, 'name'),
         },
+        roles,
+        permissions,
+        operatingLocationIds,
       };
     },
+    operatingLocations: resource('operating-locations', mapApiOperatingLocation, (input: any) => ({
+      ...(input.name !== undefined ? { name: input.name } : {}),
+      ...(input.address !== undefined ? { address: input.address } : {}),
+      ...(input.timezone !== undefined ? { timezone: input.timezone } : {}),
+    })),
     clients: resource('clients', mapApiClient, clientWritable),
     properties: resource('properties', mapApiProperty, propertyWritable),
     fields: resource('fields', mapApiField, fieldWritable),
-    jobs: resource('jobs', mapJob, jobWritable),
+    jobs: resource('jobs', mapApiJob, jobWritable),
+    fieldBoundaryVersions: (() => {
+      const base = '/api/v1/field-boundary-versions';
+      const responseRecord = async (promise: Promise<any>) => {
+        const envelope = await promise;
+        if (!envelope?.data || typeof envelope.data !== 'object' || Array.isArray(envelope.data)) return malformed('boundary record');
+        return mapApiFieldBoundaryVersion(envelope.data);
+      };
+      return {
+        async list(fieldId: string, page = 1, pageSize = 100) {
+          const envelope = await request(`${base}?fieldId=${encodeURIComponent(fieldId)}&page=${page}&pageSize=${pageSize}`);
+          if (!Array.isArray(envelope?.data) || !Number.isInteger(envelope?.pagination?.page)
+            || !Number.isInteger(envelope?.pagination?.pageSize)) return malformed('boundary list');
+          return { records: envelope.data.map(mapApiFieldBoundaryVersion), page: envelope.pagination.page, pageSize: envelope.pagination.pageSize };
+        },
+        get(id: string) { return responseRecord(request(`${base}?id=${encodeURIComponent(id)}`)); },
+        create(input: FieldBoundaryVersionCreateInput) {
+          return responseRecord(request(base, { method: 'POST', body: JSON.stringify(input) }));
+        },
+      };
+    })(),
     missions: resource('missions', mapMission, missionWritable),
   };
 }

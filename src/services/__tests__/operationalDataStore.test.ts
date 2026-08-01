@@ -1,4 +1,5 @@
 import { createOperationalDataStore, describeOperationalError, OperationalDataGateway, SAVED_CONFIRMATION_MS } from '../operationalDataStore';
+import { OperationalJob } from '../operationalApi';
 import { Client, Field, Property } from '../../types/fieldManagement';
 
 const client = (id: string, name = id): Client => ({
@@ -12,6 +13,10 @@ const property = (id: string, clientId: string): Property => ({
 const field = (id: string, propertyId: string): Field => ({
   id, propertyId, name: id, sizeHa: 1, boundary: null, notes: '', rowVersion: 1,
   createdAt: '2026-08-01T00:00:00Z', updatedAt: '2026-08-01T00:00:00Z',
+});
+const job = (id: string, fieldIds = ['field-1']): OperationalJob => ({
+  id, clientId: 'client-1', propertyId: 'property-1', fieldIds, reference: id, scope: 'Spray weeds', status: 'draft',
+  notes: '', rowVersion: 1, createdAt: '2026-08-01T00:00:00Z', updatedAt: '2026-08-01T00:00:00Z',
 });
 
 function deferred<T>() {
@@ -27,9 +32,14 @@ function gateway(overrides: Partial<OperationalDataGateway> = {}): OperationalDa
     listClients: jest.fn().mockResolvedValue([]),
     listProperties: jest.fn().mockResolvedValue([]),
     listFields: jest.fn().mockResolvedValue([]),
+    listOperatingLocations: jest.fn().mockResolvedValue([]),
+    listJobs: jest.fn().mockResolvedValue([]),
+    listFieldBoundaryVersions: jest.fn().mockResolvedValue([]),
     createClient: jest.fn(), updateClient: jest.fn(), archiveClient: jest.fn(),
     createProperty: jest.fn(), updateProperty: jest.fn(), archiveProperty: jest.fn(),
     createField: jest.fn(), updateField: jest.fn(), archiveField: jest.fn(),
+    createJob: jest.fn(), updateJob: jest.fn(), archiveJob: jest.fn(),
+    createFieldBoundaryVersion: jest.fn(),
     ...overrides,
   };
 }
@@ -247,5 +257,52 @@ describe('operational data store', () => {
     await store.setAuthenticatedUser('user-1');
     await store.setAuthenticatedUser(null);
     expect(store.getSnapshot()).toEqual(expect.objectContaining({ status: 'idle', clients: [], properties: [], fields: [] }));
+  });
+
+  test('loads authoritative jobs with their parent and field mappings and clears them on tenant reset', async () => {
+    const data = gateway({
+      listClients: jest.fn().mockResolvedValue([client('client-1')]),
+      listProperties: jest.fn().mockResolvedValue([property('property-1', 'client-1')]),
+      listFields: jest.fn().mockResolvedValue([field('field-1', 'property-1')]),
+      listJobs: jest.fn().mockResolvedValue([job('job-1')]),
+    });
+    const store = createOperationalDataStore(data);
+    await store.setAuthenticatedUser('user-1');
+    expect(store.getSnapshot().jobs).toEqual([expect.objectContaining({ id: 'job-1', fieldIds: ['field-1'] })]);
+
+    const resetting = store.setAuthenticatedUser('user-2');
+    expect(store.getSnapshot()).toEqual(expect.objectContaining({ jobs: [], operatingLocations: [], fieldBoundaryVersions: [] }));
+    await resetting;
+  });
+
+  test('rejects a job whose server response does not match the loaded authoritative parent chain', async () => {
+    const store = createOperationalDataStore(gateway({
+      listClients: jest.fn().mockResolvedValue([client('client-1')]),
+      listProperties: jest.fn().mockResolvedValue([property('property-1', 'client-1')]),
+      listFields: jest.fn().mockResolvedValue([field('field-1', 'other-property')]),
+      listJobs: jest.fn().mockResolvedValue([job('job-1')]),
+    }));
+    await store.setAuthenticatedUser('user-1');
+    expect(store.getSnapshot()).toEqual(expect.objectContaining({ status: 'error', jobs: [], error: expect.objectContaining({ code: 'MALFORMED_RESPONSE' }) }));
+  });
+
+  test('publishes boundary geometry and the advanced field version only after server confirmation', async () => {
+    const data = gateway({
+      listClients: jest.fn().mockResolvedValue([client('client-1')]),
+      listProperties: jest.fn().mockResolvedValue([property('property-1', 'client-1')]),
+      listFields: jest.fn().mockResolvedValue([field('field-1', 'property-1')]),
+      createFieldBoundaryVersion: jest.fn().mockResolvedValue({
+        id: 'boundary-1', fieldId: 'field-1', propertyId: 'property-1', versionNumber: 1,
+        boundaryGeojson: { type: 'Polygon', coordinates: [[[153, -27], [154, -27], [154, -28], [153, -27]]] },
+        boundaryCoords: [[-27, 153], [-27, 154], [-28, 154]], fieldVersion: 2, rowVersion: 1,
+        createdAt: '2026-08-01T00:00:00Z', updatedAt: '2026-08-01T00:00:00Z',
+      }),
+    });
+    const store = createOperationalDataStore(data);
+    await store.setAuthenticatedUser('user-1');
+    await store.createFieldBoundaryVersion('field-1', [[-27, 153], [-27, 154], [-28, 154]]);
+    expect(store.getSnapshot().fields[0]).toEqual(expect.objectContaining({
+      rowVersion: 2, fieldBoundaryVersionId: 'boundary-1', boundaryCoords: [[-27, 153], [-27, 154], [-28, 154]],
+    }));
   });
 });

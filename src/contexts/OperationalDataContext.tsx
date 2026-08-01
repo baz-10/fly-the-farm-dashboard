@@ -19,6 +19,9 @@ function createRemoteGateway(api: OperationalApi): OperationalDataGateway {
     listClients: () => listAll((page, pageSize) => api.clients.list(page, pageSize)),
     listProperties: () => listAll((page, pageSize) => api.properties.list(page, pageSize)),
     listFields: () => listAll((page, pageSize) => api.fields.list(page, pageSize)),
+    listOperatingLocations: () => listAll((page, pageSize) => api.operatingLocations.list(page, pageSize)),
+    listJobs: () => listAll((page, pageSize) => api.jobs.list(page, pageSize)),
+    listFieldBoundaryVersions: (fieldId) => listAll((page, pageSize) => api.fieldBoundaryVersions.list(fieldId, page, pageSize)),
     createClient: (input) => api.clients.create(input),
     updateClient: (id, input, expectedVersion) => api.clients.update(id, input, expectedVersion),
     archiveClient: (id, expectedVersion) => api.clients.archive(id, expectedVersion),
@@ -28,6 +31,10 @@ function createRemoteGateway(api: OperationalApi): OperationalDataGateway {
     createField: (input) => api.fields.create(input),
     updateField: (id, input, expectedVersion) => api.fields.update(id, input, expectedVersion),
     archiveField: (id, expectedVersion) => api.fields.archive(id, expectedVersion),
+    createJob: (input) => api.jobs.create(input),
+    updateJob: (id, input, expectedVersion) => api.jobs.update(id, input, expectedVersion),
+    archiveJob: (id, expectedVersion) => api.jobs.archive(id, expectedVersion),
+    createFieldBoundaryVersion: (input) => api.fieldBoundaryVersions.create(input),
   };
 }
 
@@ -37,6 +44,9 @@ function createLocalGateway(): OperationalDataGateway {
     listClients: async () => getClients(),
     listProperties: async () => getProperties(),
     listFields: async () => getFields(),
+    listOperatingLocations: async () => [],
+    listJobs: async () => [],
+    listFieldBoundaryVersions: async () => [],
     createClient: async (input) => saveClient(input),
     updateClient: async (id, input) => updateClient(id, input),
     archiveClient: async (id) => deleteClient(id),
@@ -46,6 +56,10 @@ function createLocalGateway(): OperationalDataGateway {
     createField: async (input) => saveField(input),
     updateField: async (id, input) => updateField(id, input),
     archiveField: async (id) => deleteField(id),
+    createJob: async () => { throw new Error('Authoritative job commands are unavailable in local mode.'); },
+    updateJob: async () => { throw new Error('Authoritative job commands are unavailable in local mode.'); },
+    archiveJob: async () => { throw new Error('Authoritative job commands are unavailable in local mode.'); },
+    createFieldBoundaryVersion: async () => { throw new Error('Authoritative boundary commands are unavailable in local mode.'); },
   };
 }
 
