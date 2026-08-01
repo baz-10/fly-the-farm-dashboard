@@ -62,11 +62,13 @@ function baseOperational(overrides: Record<string, unknown> = {}) {
   return {
     mode: 'remote', status: 'ready', clients: [client], properties: [property], fields: [field], jobs: [job],
     operatingLocations: [], fieldBoundaryVersions: [],
+    missions: [],
     saving: false, savedAt: null, lastSaved: null, error: null, refresh: jest.fn(),
     createClient: jest.fn(), updateClient: jest.fn(), archiveClient: jest.fn().mockResolvedValue(undefined),
     createProperty: jest.fn(), updateProperty: jest.fn(), archiveProperty: jest.fn().mockResolvedValue(undefined),
     createField: jest.fn(), updateField: jest.fn(), archiveField: jest.fn().mockResolvedValue(undefined),
     createJob: jest.fn().mockResolvedValue(job), updateJob: jest.fn(), archiveJob: jest.fn().mockResolvedValue(undefined),
+    createMission: jest.fn(), updateMission: jest.fn(), archiveMission: jest.fn(),
     refreshFieldBoundary: jest.fn().mockResolvedValue(null), createFieldBoundaryVersion: jest.fn().mockResolvedValue(undefined),
     ...overrides,
   };
@@ -239,6 +241,12 @@ describe('authoritative client/property/field workflow screens', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Archive job' }));
     fireEvent.click(screen.getByRole('button', { name: 'Archive' }));
     await waitFor(() => expect(mockOperational.archiveJob).toHaveBeenCalledWith('job-1'));
+  });
+
+  test('starts an authoritative mission under the current job through a bookmark-safe route', () => {
+    route('/jobs/client/client-1/property/property-1/field/field-1/job/job-1', <JobDetail />);
+    fireEvent.click(screen.getByRole('button', { name: 'Create Mission' }));
+    expect(mockNavigate).toHaveBeenCalledWith('/jobs/client/client-1/property/property-1/field/field-1/job/job-1/new-mission');
   });
 
   test('job history lists authoritative jobs and distinguishes failed load from empty', () => {

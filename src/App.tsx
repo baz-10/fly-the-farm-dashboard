@@ -103,6 +103,7 @@ function App() {
           <Route path="/jobs/client/:clientId/property/:propertyId/field/:fieldId" element={<FieldDetail />} />
           <Route path="/jobs/client/:clientId/property/:propertyId/field/:fieldId/new-job" element={<JobCreate />} />
           <Route path="/jobs/client/:clientId/property/:propertyId/field/:fieldId/job/:jobId" element={<JobDetail />} />
+          <Route path="/jobs/client/:clientId/property/:propertyId/field/:fieldId/job/:jobId/new-mission" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><MissionPlanning /></ProtectedRoute>} />
           <Route path="/quotes" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><QuoteList /></ProtectedRoute>} />
           <Route path="/quotes/new" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><QuoteCreate /></ProtectedRoute>} />
           <Route path="/quotes/settings" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><QuoteSettings /></ProtectedRoute>} />

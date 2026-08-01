@@ -8,6 +8,7 @@ import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 import SearchIcon from '@mui/icons-material/Search';
 import { useNavigate } from 'react-router-dom';
 import { useMission } from '../contexts/MissionContext';
+import { useOperationalData } from '../contexts/OperationalDataContext';
 import { MissionRecord } from '../types/mission';
 import { getMissionNextAction, groupMissionsForRegister, MissionRegisterSectionDefinition } from '../utils/missionRegister';
 
@@ -74,6 +75,80 @@ function MissionSection({ label, description, color, missions, collapsed = false
 }
 
 export default function MissionRegister() {
+  const operational = useOperationalData();
+  return operational.mode === 'remote' ? <AuthoritativeMissionRegister /> : <LocalMissionRegister />;
+}
+
+function AuthoritativeMissionRegister() {
+  const navigate = useNavigate();
+  const operational = useOperationalData();
+  const [search, setSearch] = React.useState('');
+  const normalizedSearch = search.trim().toLowerCase();
+  const missions = operational.missions.filter((mission) => !normalizedSearch || [
+    mission.title, mission.missionNumber, mission.description,
+    operational.jobs.find((job) => job.id === mission.jobId)?.reference || '',
+    operational.operatingLocations.find((location) => location.id === mission.operatingLocationId)?.name || '',
+  ].some((value) => value.toLowerCase().includes(normalizedSearch)));
+
+  const content = () => {
+    if (operational.status === 'idle' || operational.status === 'loading') {
+      return <Stack alignItems="center" spacing={1.5} sx={{ py: 8 }}><CircularProgress size={32} /><Typography color="text.secondary">Loading authoritative missions…</Typography></Stack>;
+    }
+    if (operational.status === 'unauthorised') {
+      return <Alert severity="error">You are not authorised to view missions for this operational session.</Alert>;
+    }
+    if (operational.status === 'error') {
+      return <Alert severity="error">Authoritative mission register is unavailable. No browser mission records have been substituted.</Alert>;
+    }
+    if (missions.length === 0) {
+      return <Paper variant="outlined" sx={{ p: 5, textAlign: 'center', borderRadius: 2.5 }}><Typography sx={{ fontWeight: 800 }}>No Planning missions</Typography><Typography color="text.secondary">The authoritative mission register returned no active Planning missions.</Typography></Paper>;
+    }
+    return (
+      <Stack spacing={1.25}>
+        {missions.map((mission) => {
+          const job = operational.jobs.find((record) => record.id === mission.jobId);
+          const location = operational.operatingLocations.find((record) => record.id === mission.operatingLocationId);
+          return (
+            <Paper key={mission.id} variant="outlined" sx={{ p: { xs: 1.5, md: 2 }, borderRadius: 2, borderLeft: '5px solid', borderLeftColor: 'warning.main' }}>
+              <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} alignItems={{ md: 'center' }}>
+                <Box sx={{ flex: 1 }}>
+                  <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap" alignItems="center">
+                    <Typography sx={{ fontWeight: 900 }}>{mission.title}</Typography>
+                    <Chip size="small" label={mission.missionNumber} sx={{ fontWeight: 800 }} />
+                    <Chip size="small" color="warning" variant="outlined" label="Planning · Not ready for operations" />
+                  </Stack>
+                  <Typography variant="body2" color="text.secondary" sx={{ mt: 0.75 }}>
+                    {job?.reference || 'Job unavailable'} · {location?.name || 'Operating location unavailable'} · {mission.scheduledStartAt ? new Date(mission.scheduledStartAt).toLocaleString('en-AU') : 'Start not scheduled'}
+                  </Typography>
+                </Box>
+                <Button variant="outlined" endIcon={<OpenInNewIcon />} aria-label={`Open ${mission.title}`} onClick={() => navigate(`/missions/${encodeURIComponent(mission.id)}`)}>Open</Button>
+              </Stack>
+            </Paper>
+          );
+        })}
+      </Stack>
+    );
+  };
+
+  return (
+    <Box sx={{ maxWidth: 1440, mx: 'auto', px: { xs: 2, md: 3.5 }, py: { xs: 2.5, md: 4 } }}>
+      <Stack direction={{ xs: 'column', sm: 'row' }} justifyContent="space-between" gap={2} sx={{ mb: 3 }}>
+        <Box>
+          <Stack direction="row" spacing={1.25} alignItems="center"><FlightTakeoffIcon color="primary" /><Typography variant="h4" sx={{ fontWeight: 900, letterSpacing: '-0.035em' }}>Missions</Typography></Stack>
+          <Typography color="text.secondary" sx={{ mt: 0.5 }}>Authoritative Planning missions. Operational readiness and authorisation are not connected.</Typography>
+        </Box>
+        <Button variant="contained" startIcon={<AddIcon />} onClick={() => navigate('/missions/new')} sx={{ alignSelf: { xs: 'stretch', sm: 'center' } }}>New Mission</Button>
+      </Stack>
+      <Alert severity="warning" sx={{ mb: 2 }}>Remote missions remain Planning and not ready for operations until aircraft, crew, compliance and authorisation dependencies are connected.</Alert>
+      <Paper variant="outlined" sx={{ p: { xs: 1.5, md: 2 }, mb: 2, borderRadius: 2 }}>
+        <TextField fullWidth size="small" label="Search missions" value={search} onChange={(event) => setSearch(event.target.value)} InputProps={{ startAdornment: <InputAdornment position="start"><SearchIcon fontSize="small" /></InputAdornment> }} />
+      </Paper>
+      {content()}
+    </Box>
+  );
+}
+
+function LocalMissionRegister() {
   const navigate = useNavigate();
   const { missions, isLoading, error } = useMission();
   const [search, setSearch] = React.useState('');

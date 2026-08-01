@@ -1,5 +1,5 @@
 import React from 'react';
-import { useParams, useSearchParams } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import {
   Alert,
   Box,
@@ -53,6 +53,7 @@ import MissionDeploymentWorkPack from '../components/mission/MissionDeploymentWo
 import { useAircraft } from '../contexts/AircraftContext';
 import { useAuth } from '../contexts/AuthContext';
 import { useMission } from '../contexts/MissionContext';
+import { useOperationalData } from '../contexts/OperationalDataContext';
 import { useWorkPacks } from '../contexts/WorkPackContext';
 import { getLatestVegetationCheckForLotPlan, getSavedVegetationChecks, loadSavedVegetationChecks } from '../services/pmavCheckStore';
 import {
@@ -86,6 +87,7 @@ import {
   MissionType,
 } from '../types/mission';
 import { MissionWorkPackDraft } from '../types/workPack';
+import { describeOperationalError } from '../services/operationalDataStore';
 
 type MissionPayload = Omit<
   MissionRecord,
@@ -341,6 +343,230 @@ function StatusPill({ label, tone = 'success' }: { label: string; tone?: 'succes
 }
 
 export default function MissionPlanning() {
+  const operational = useOperationalData();
+  return operational.mode === 'remote' ? <AuthoritativeMissionPlanning /> : <LocalMissionPlanning />;
+}
+
+function AuthoritativeMissionPlanning() {
+  const operational = useOperationalData();
+  const navigate = useNavigate();
+  const params = useParams<{ missionId: string; clientId: string; propertyId: string; fieldId: string; jobId: string }>();
+  const [searchParams] = useSearchParams();
+  const requestedMissionId = params.missionId || '';
+  const requestedJobId = params.jobId || searchParams.get('jobId') || '';
+  const selectedMission = requestedMissionId
+    ? operational.missions.find((record) => record.id === requestedMissionId)
+    : undefined;
+  const routeJob = requestedJobId ? operational.jobs.find((record) => record.id === requestedJobId
+    && (!params.clientId || record.clientId === params.clientId)
+    && (!params.propertyId || record.propertyId === params.propertyId)
+    && (!params.fieldId || record.fieldIds.includes(params.fieldId))) : undefined;
+  const editing = Boolean(requestedMissionId);
+  const [jobId, setJobId] = React.useState('');
+  const [operatingLocationId, setOperatingLocationId] = React.useState('');
+  const [missionNumber, setMissionNumber] = React.useState('');
+  const [title, setTitle] = React.useState('');
+  const [description, setDescription] = React.useState('');
+  const [scheduledStart, setScheduledStart] = React.useState(defaultScheduledDateInput);
+  const [unsupportedAircraft, setUnsupportedAircraft] = React.useState('');
+  const [actionError, setActionError] = React.useState('');
+  const [archiveOpen, setArchiveOpen] = React.useState(false);
+
+  React.useEffect(() => {
+    if (editing && selectedMission) {
+      setJobId(selectedMission.jobId);
+      setOperatingLocationId(selectedMission.operatingLocationId);
+      setMissionNumber(selectedMission.missionNumber);
+      setTitle(selectedMission.title);
+      setDescription(selectedMission.description);
+      setScheduledStart(selectedMission.scheduledStartAt
+        ? formatDateTimeInput(new Date(selectedMission.scheduledStartAt)) : defaultScheduledDateInput());
+      setUnsupportedAircraft('');
+      setActionError('');
+      return;
+    }
+    if (!editing) {
+      setJobId(routeJob?.id || '');
+      setOperatingLocationId((current) => operational.operatingLocations.some((record) => record.id === current)
+        ? current : operational.operatingLocations[0]?.id || '');
+      if (routeJob?.scheduledDate) {
+        setScheduledStart(`${routeJob.scheduledDate}T09:00`);
+      }
+    }
+  }, [editing, operational.operatingLocations, routeJob, selectedMission]);
+
+  if (operational.status === 'idle' || operational.status === 'loading') {
+    return <Alert severity="info">Loading authoritative mission…</Alert>;
+  }
+  if (operational.status === 'unauthorised') {
+    return <Alert severity="error">You are not authorised to view this mission.</Alert>;
+  }
+  if (operational.status === 'error') {
+    return <Alert severity="error">Authoritative mission planning is unavailable. No browser mission record has been substituted.</Alert>;
+  }
+  if (editing && !selectedMission) {
+    return <Alert severity="error">The authoritative mission was not found. It may be archived, outside this tenant, or unavailable to this session.</Alert>;
+  }
+  if (requestedJobId && !routeJob && !editing) {
+    return <Alert severity="error">The authoritative job was not found for this route.</Alert>;
+  }
+
+  const selectedJob = operational.jobs.find((record) => record.id === jobId);
+  const selectedLocation = operational.operatingLocations.find((record) => record.id === operatingLocationId);
+  const selectedClient = selectedJob && operational.clients.find((record) => record.id === selectedJob.clientId);
+  const selectedProperty = selectedJob && operational.properties.find((record) => record.id === selectedJob.propertyId);
+  const selectedFields = selectedJob ? operational.fields.filter((record) => selectedJob.fieldIds.includes(record.id)) : [];
+  const hasActiveLocation = operational.operatingLocations.length > 0;
+  const hasUnsupportedValues = Boolean(unsupportedAircraft.trim());
+  const canSave = Boolean(selectedJob && selectedLocation && missionNumber.trim() && title.trim()) && !operational.saving;
+
+  const save = async () => {
+    setActionError('');
+    if (hasUnsupportedValues) {
+      setActionError('Unsupported operational values were entered and were not saved. Clear them before saving the connected Planning fields.');
+      return;
+    }
+    if (!selectedJob || !selectedLocation || !missionNumber.trim() || !title.trim()) {
+      setActionError('Mission number, title, authoritative job and active operating location are required.');
+      return;
+    }
+    const payload = {
+      jobId: selectedJob.id,
+      operatingLocationId: selectedLocation.id,
+      missionNumber: missionNumber.trim(),
+      title: title.trim(),
+      description: description.trim(),
+      scheduledStartAt: toIsoFromInput(scheduledStart),
+      status: 'Planning' as const,
+    };
+    try {
+      if (selectedMission) {
+        await operational.updateMission(selectedMission.id, payload);
+      } else {
+        const confirmed = await operational.createMission(payload);
+        navigate(`/missions/${encodeURIComponent(confirmed.id)}`);
+      }
+    } catch (error) {
+      setActionError(describeOperationalError(error));
+    }
+  };
+
+  const archive = async () => {
+    if (!selectedMission) return;
+    setActionError('');
+    try {
+      await operational.archiveMission(selectedMission.id);
+      navigate('/missions');
+    } catch (error) {
+      setArchiveOpen(false);
+      setActionError(describeOperationalError(error));
+    }
+  };
+
+  const unavailableSections = [
+    'Aircraft', 'Equipment', 'Personnel', 'Chemicals', 'Maps', 'Weather', 'JSA',
+    'Risk controls', 'Authorisation', 'Completion', 'Pack', 'Financials',
+  ];
+
+  return (
+    <Box sx={{ maxWidth: 1320, mx: 'auto' }}>
+      <Stack direction={{ xs: 'column', md: 'row' }} justifyContent="space-between" alignItems={{ md: 'center' }} spacing={2} sx={{ mb: 3 }}>
+        <Box>
+          <Typography component="h1" variant="h4" sx={{ fontWeight: 900, color: 'primary.dark' }}>{selectedMission ? title : 'New Mission'}</Typography>
+          <Typography color="text.secondary">Connected Planning details for the authoritative job and operating location.</Typography>
+        </Box>
+        <Stack direction="row" spacing={1} alignItems="center">
+          <Chip color="warning" variant="outlined" label="Planning only · Not ready for operations" />
+          {selectedMission && <Button color="error" variant="outlined" startIcon={<DeleteOutlineIcon />} onClick={() => setArchiveOpen(true)}>Archive Mission</Button>}
+        </Stack>
+      </Stack>
+
+      <Alert severity="warning" sx={{ mb: 2 }}>
+        This remote slice cannot authorise a mission or mark it ready/compliant. It persists Planning metadata only.
+      </Alert>
+      {!hasActiveLocation && <Alert severity="error" sx={{ mb: 2 }}>No active authorised operating location is available for this session.</Alert>}
+      {actionError && <Alert severity="error" sx={{ mb: 2 }}>{actionError}</Alert>}
+      {operational.lastSaved?.resource === 'mission' && operational.lastSaved.recordId === selectedMission?.id && !actionError && <Alert severity="success" sx={{ mb: 2 }}>Saved.</Alert>}
+
+      <Grid container spacing={2}>
+        <Grid size={{ xs: 12, lg: 8 }}>
+          <Stack spacing={2}>
+            <Card variant="outlined" sx={{ borderRadius: 2.5 }}>
+              <CardContent>
+                <Typography variant="h6" sx={{ fontWeight: 800, mb: 2 }}>Mission details</Typography>
+                <Grid container spacing={2}>
+                  <Grid size={{ xs: 12, md: 6 }}>
+                    <TextField select fullWidth label="Job" value={jobId} onChange={(event) => setJobId(event.target.value)} disabled={Boolean(routeJob)}>
+                      {operational.jobs.map((record) => <MenuItem key={record.id} value={record.id}>{record.reference} — {record.scope || 'No scope'}</MenuItem>)}
+                    </TextField>
+                  </Grid>
+                  <Grid size={{ xs: 12, md: 6 }}>
+                    <TextField select fullWidth label="Operating location" value={operatingLocationId} onChange={(event) => setOperatingLocationId(event.target.value)} disabled={!hasActiveLocation}>
+                      {operational.operatingLocations.map((record) => <MenuItem key={record.id} value={record.id}>{record.name}</MenuItem>)}
+                    </TextField>
+                  </Grid>
+                  <Grid size={{ xs: 12, md: 6 }}><TextField required fullWidth label="Mission number" value={missionNumber} onChange={(event) => setMissionNumber(event.target.value)} /></Grid>
+                  <Grid size={{ xs: 12, md: 6 }}><TextField required fullWidth label="Mission title" value={title} onChange={(event) => setTitle(event.target.value)} /></Grid>
+                  <Grid size={{ xs: 12, md: 6 }}><TextField fullWidth type="datetime-local" label="Scheduled start" value={scheduledStart} onChange={(event) => setScheduledStart(event.target.value)} InputLabelProps={{ shrink: true }} /></Grid>
+                  <Grid size={{ xs: 12 }}><TextField fullWidth multiline minRows={3} label="Description" value={description} onChange={(event) => setDescription(event.target.value)} /></Grid>
+                </Grid>
+              </CardContent>
+            </Card>
+
+            <Card variant="outlined" sx={{ borderRadius: 2.5 }}>
+              <CardContent>
+                <Typography variant="h6" sx={{ fontWeight: 800 }}>Operational planning</Typography>
+                <Alert severity="info" sx={{ my: 2 }}>Aircraft, equipment, personnel, chemicals, maps, weather, JSA, risk controls, authorisation, completion, pack and financials are unavailable and are not persisted in this remote Planning slice.</Alert>
+                <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap" sx={{ mb: 2 }}>
+                  {unavailableSections.map((section) => <Chip key={section} size="small" variant="outlined" label={`${section} — unavailable`} />)}
+                </Stack>
+                <TextField
+                  fullWidth
+                  label="Aircraft planning (not connected)"
+                  value={unsupportedAircraft}
+                  onChange={(event) => setUnsupportedAircraft(event.target.value)}
+                  helperText="Any value here blocks save because aircraft planning is not connected or persisted."
+                />
+              </CardContent>
+            </Card>
+          </Stack>
+        </Grid>
+
+        <Grid size={{ xs: 12, lg: 4 }}>
+          <Stack spacing={2}>
+            <Card variant="outlined" sx={{ borderRadius: 2.5 }}>
+              <CardContent>
+                <Typography variant="h6" sx={{ fontWeight: 800, mb: 1.5 }}>Authoritative parent chain</Typography>
+                <Stack spacing={1}>
+                  <Typography variant="body2"><strong>Client:</strong> {selectedClient?.name || 'Select a job'}</Typography>
+                  <Typography variant="body2"><strong>Property:</strong> {selectedProperty?.name || 'Select a job'}</Typography>
+                  <Typography variant="body2"><strong>Fields:</strong> {selectedFields.map((record) => record.name).join(', ') || 'None'}</Typography>
+                  <Typography variant="body2"><strong>Base:</strong> {selectedLocation?.name || 'Select an active location'}</Typography>
+                  <Typography variant="body2"><strong>Status:</strong> Planning</Typography>
+                </Stack>
+              </CardContent>
+            </Card>
+            <Button variant="contained" startIcon={<SaveIcon />} onClick={() => void save()} disabled={!canSave}>
+              {selectedMission ? 'Update Mission' : 'Save Mission'}
+            </Button>
+            <Button variant="text" onClick={() => navigate('/missions')}>Back to Missions</Button>
+          </Stack>
+        </Grid>
+      </Grid>
+
+      <Dialog open={archiveOpen} onClose={() => setArchiveOpen(false)}>
+        <DialogTitle>Archive Mission?</DialogTitle>
+        <DialogContent><Typography>This removes the Planning mission from the active register after server confirmation.</Typography></DialogContent>
+        <DialogActions>
+          <Button onClick={() => setArchiveOpen(false)}>Cancel</Button>
+          <Button color="error" variant="contained" disabled={operational.saving} onClick={() => void archive()}>Archive</Button>
+        </DialogActions>
+      </Dialog>
+    </Box>
+  );
+}
+
+function LocalMissionPlanning() {
   const { user } = useAuth();
   const theme = useTheme();
   const { missionId: requestedMissionId = '' } = useParams<{ missionId: string }>();

@@ -21,6 +21,9 @@ jest.mock('../contexts/MissionContext', () => ({
     error: null,
   }),
 }));
+jest.mock('../contexts/OperationalDataContext', () => ({
+  useOperationalData: () => ({ mode: 'local' }),
+}));
 
 describe('MissionRegister', () => {
   beforeEach(() => mockNavigate.mockReset());

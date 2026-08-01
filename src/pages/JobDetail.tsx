@@ -127,7 +127,16 @@ function AuthoritativeJobDetail() {
           <Typography variant="h4" sx={{ fontWeight: 800, color: 'primary.dark', fontSize: { xs: '1.4rem', md: '1.75rem' } }}>Spray Job — {job.reference}</Typography>
           <Typography variant="body2" color="text.secondary">{client.name} &bull; {property.name} &bull; {field.name}</Typography>
         </Box>
-        <IconButton aria-label="Archive job" size="small" onClick={() => setArchiveConfirm(true)} sx={{ color: 'error.main' }}><DeleteIcon fontSize="small" /></IconButton>
+        <Stack direction="row" spacing={1}>
+          <Button
+            variant="contained"
+            startIcon={<AddIcon />}
+            onClick={() => navigate(`${basePath}/job/${job.id}/new-mission`)}
+          >
+            Create Mission
+          </Button>
+          <IconButton aria-label="Archive job" size="small" onClick={() => setArchiveConfirm(true)} sx={{ color: 'error.main' }}><DeleteIcon fontSize="small" /></IconButton>
+        </Stack>
       </Box>
       <Stack spacing={3}>
         <Card elevation={0} sx={{ border: `1.5px solid ${alpha(theme.palette.primary.main, 0.1)}`, borderRadius: '16px' }}>
