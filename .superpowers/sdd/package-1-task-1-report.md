@@ -45,3 +45,48 @@ missing application-role access contract before the corresponding SQL was added.
   structurally rather than applying it to a live PostgreSQL instance. Apply the
   migration to a Supabase staging project before production rollout to validate
   database execution and live RLS behaviour.
+
+## Review remediation (round 1)
+
+### Files changed
+
+- `supabase/migrations/20260801000000_production_beta_foundation.sql`
+- `supabase/README.md`
+- `src/__tests__/productionSchemaMigration.test.js`
+- `.superpowers/sdd/package-1-task-1-report.md`
+
+### TDD red tests
+
+`CI=true npm test -- --runInBand src/__tests__/productionSchemaMigration.test.js`
+first failed because the migration lacked the property/client and
+property/boundary composite consistency constraints, archive-actor composite
+foreign keys, and authenticated-role revocations for authorization tables. A
+second red run failed because the `anon` role had not been explicitly revoked
+from those authorization tables.
+
+### Green verification
+
+- `CI=true npm test -- --runInBand src/__tests__/productionSchemaMigration.test.js`
+  — 1 suite, 6 tests passed.
+- `CI=true npm test -- --runInBand` — 35 suites, 159 tests passed.
+- `npm run build` — exit 0 with existing unrelated ESLint/Browserslist warnings.
+- `git diff --check` — run before commit.
+
+### Self-review
+
+- Authorization tables now revoke all `anon` and `authenticated` privileges,
+  provide select-only RLS policies, and grant CRUD only to `service_role` for
+  trusted server-side administration.
+- Every mutable table's archive actor uses a composite tenant foreign key to
+  `internal_users`, with a supporting index.
+- Jobs now require the property to belong to their client, and fields require
+  the boundary version to belong to their property.
+- Repository migration deployment via the trusted pipeline is the documented
+  production path; the SQL Editor is explicitly excluded.
+
+### Cutover gate
+
+Staging live-database validation remains mandatory before production cutover:
+apply the repository migration in staging and exercise cross-tenant foreign-key
+rejection, authorization-table write denial for browser roles, archive actor
+tenant rejection, relationship mismatch rejection, and live RLS behavior.

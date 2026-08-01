@@ -30,6 +30,18 @@ const mutableTables = tenantTables.filter(
   (table) => !['audit_events', 'transactional_outbox'].includes(table)
 );
 
+const authorisationTables = [
+  'internal_users',
+  'memberships',
+  'roles',
+  'permissions',
+  'role_permissions',
+];
+
+const browserCrudTables = mutableTables.filter(
+  (table) => !authorisationTables.includes(table)
+);
+
 const tenantRelationships = [
   ['memberships', 'internal_users'],
   ['memberships', 'roles'],
@@ -38,9 +50,7 @@ const tenantRelationships = [
   ['properties', 'clients'],
   ['field_boundary_versions', 'properties'],
   ['fields', 'properties'],
-  ['fields', 'field_boundary_versions'],
   ['jobs', 'clients'],
-  ['jobs', 'properties'],
   ['job_fields', 'jobs'],
   ['job_fields', 'fields'],
   ['missions', 'jobs'],
@@ -114,6 +124,26 @@ describe('production beta database migration contract', () => {
         'foreign key (organisation_id) references public.organisations (id)'
       );
     });
+
+    expect(tableDefinition(migration, 'properties')).toContain(
+      'unique (organisation_id, client_id, id)'
+    );
+    expect(tableDefinition(migration, 'jobs')).toContain(
+      'foreign key (organisation_id, client_id, property_id) references public.properties (organisation_id, client_id, id)'
+    );
+    expect(tableDefinition(migration, 'field_boundary_versions')).toContain(
+      'unique (organisation_id, property_id, id)'
+    );
+    expect(tableDefinition(migration, 'fields')).toContain(
+      'foreign key (organisation_id, property_id, field_boundary_version_id) references public.field_boundary_versions (organisation_id, property_id, id)'
+    );
+
+    mutableTables.forEach((table) => {
+      expect(tableDefinition(migration, table)).toMatch(/archived_by_internal_user_id uuid/);
+      expect(migration).toContain(
+        `alter table public.${table} add constraint ${table}_archived_by_internal_user_fk foreign key (organisation_id, archived_by_internal_user_id) references public.internal_users (organisation_id, id)`
+      );
+    });
   });
 
   test('derives tenant access from active membership for auth.uid rather than request organisation input', () => {
@@ -129,9 +159,28 @@ describe('production beta database migration contract', () => {
   });
 
   test('grants authenticated applications access only through the tenant RLS boundary', () => {
-    mutableTables.forEach((table) => {
+    browserCrudTables.forEach((table) => {
       expect(migration).toContain(
         `grant select, insert, update, delete on table public.${table} to authenticated`
+      );
+    });
+  });
+
+  test('reserves authorisation administration for trusted server-side roles', () => {
+    authorisationTables.forEach((table) => {
+      expect(migration).toContain(`revoke all on table public.${table} from authenticated`);
+      expect(migration).toContain(`revoke all on table public.${table} from anon`);
+      expect(migration).toContain(
+        `grant select, insert, update, delete on table public.${table} to service_role`
+      );
+      expect(migration).not.toContain(
+        `grant select, insert, update, delete on table public.${table} to authenticated`
+      );
+      expect(migration).toContain(
+        `create policy ${table}_tenant_access on public.${table} for select to authenticated`
+      );
+      expect(migration).not.toContain(
+        `create policy ${table}_tenant_access on public.${table} for all to authenticated`
       );
     });
   });
