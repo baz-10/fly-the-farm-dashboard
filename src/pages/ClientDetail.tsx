@@ -121,7 +121,7 @@ export default function ClientDetail() {
   const handleSaveProperty = async () => {
     if (!propForm.name.trim()) return;
     if (operational.mode === 'remote' && (propForm.locality.trim() || propForm.lotPlan.trim() || propForm.notes.trim() || propForm.lat !== undefined || propForm.lng !== undefined)) {
-      setActionError('Production Beta currently saves the property name and address only. Remove town, lot/plan, notes, and map-pin details before saving.');
+      setActionError('Production Beta currently saves the property name, address, and state only. Remove town, lot/plan, notes, and map-pin details before saving.');
       return;
     }
     try {
@@ -146,7 +146,7 @@ export default function ClientDetail() {
       </Button>
 
       {actionError && <Alert severity="error" sx={{ mb: 2 }}>{actionError}</Alert>}
-      {operational.savedAt && !actionError && <Alert severity="success" sx={{ mb: 2 }}>Saved.</Alert>}
+      {operational.lastSaved?.resource === 'client' && operational.lastSaved.recordId === client.id && !actionError && <Alert severity="success" sx={{ mb: 2 }}>Saved.</Alert>}
 
       {/* Client Info */}
       <Card elevation={0} sx={{ mb: 4, border: `1.5px solid ${alpha(theme.palette.primary.main, 0.1)}`, borderRadius: '16px' }} className="ftf-animate-in">

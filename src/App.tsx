@@ -47,6 +47,7 @@ import { MissionProvider } from './contexts/MissionContext';
 import { WorkPackProvider } from './contexts/WorkPackContext';
 import FleetWorkPacks from './pages/FleetWorkPacks';
 import { useAuth } from './contexts/AuthContext';
+import OperationalFeatureGate from './components/OperationalFeatureGate';
 
 function WorkflowProviders({ children }: { children: React.ReactNode }) {
   const { user } = useAuth();
@@ -95,8 +96,8 @@ function App() {
           <Route path="/treatment/:id" element={<TreatmentDetail />} />
           <Route path="/calculator" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><Calculator /></ProtectedRoute>} />
           <Route path="/jobs" element={<ClientList />} />
-          <Route path="/jobs/import" element={<SprayRecImport />} />
-          <Route path="/jobs/history" element={<JobHistory />} />
+          <Route path="/jobs/import" element={<OperationalFeatureGate feature="Import Spray Rec"><SprayRecImport /></OperationalFeatureGate>} />
+          <Route path="/jobs/history" element={<OperationalFeatureGate feature="Job History"><JobHistory /></OperationalFeatureGate>} />
           <Route path="/jobs/client/:clientId" element={<ClientDetail />} />
           <Route path="/jobs/client/:clientId/property/:propertyId" element={<PropertyDetail />} />
           <Route path="/jobs/client/:clientId/property/:propertyId/field/:fieldId" element={<FieldDetail />} />

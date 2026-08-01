@@ -24,6 +24,10 @@ const operationalLockProtocolMigrationPath = resolve(
   scriptDirectory,
   '../supabase/migrations/20260801004000_trusted_operational_lock_protocol.sql'
 );
+const propertyStateMigrationPath = resolve(
+  scriptDirectory,
+  '../supabase/migrations/20260801005000_property_state.sql'
+);
 
 async function expectRejected(db, label, sql) {
   try {
@@ -39,6 +43,7 @@ const operationalWriteMigration = await readFile(operationalWriteMigrationPath, 
 const operationalCorrectionMigration = await readFile(operationalCorrectionMigrationPath, 'utf8');
 const operationalParentGuardMigration = await readFile(operationalParentGuardMigrationPath, 'utf8');
 const operationalLockProtocolMigration = await readFile(operationalLockProtocolMigrationPath, 'utf8');
+const propertyStateMigration = await readFile(propertyStateMigrationPath, 'utf8');
 const db = new PGlite();
 
 try {
@@ -55,6 +60,7 @@ try {
   await db.exec(operationalCorrectionMigration);
   await db.exec(operationalParentGuardMigration);
   await db.exec(operationalLockProtocolMigration);
+  await db.exec(propertyStateMigration);
 
   await db.exec(`
     insert into auth.users (id) values
@@ -90,6 +96,23 @@ try {
     insert into public.jobs (id, organisation_id, client_id, property_id, reference) values
       ('00000000-0000-0000-0000-000000000701', '00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000301', '00000000-0000-0000-0000-000000000401', 'JOB-001');
   `);
+
+  const propertyStateWrite = await db.query(
+    `select public.ftf_write_operational_resource(
+      '00000000-0000-0000-0000-000000000001',
+      '00000000-0000-0000-0000-000000000101',
+      'properties', 'create', null, null,
+      '{"client_id":"00000000-0000-0000-0000-000000000302","name":"Queensland block","state":"QLD"}'::jsonb
+    ) as result;`
+  );
+  if (propertyStateWrite.rows[0]?.result?.record?.state !== 'QLD') {
+    throw new Error('trusted property write did not preserve Queensland state');
+  }
+  await expectRejected(
+    db,
+    'invalid Australian property state',
+    `insert into public.properties (organisation_id, client_id, name, state) values ('00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000302', 'Invalid state', 'XX');`
+  );
 
   await expectRejected(
     db,
@@ -193,7 +216,7 @@ try {
     `select public.ftf_write_operational_resource(
       '00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000101',
       'properties', 'create', null, null,
-      '{"client_id":"00000000-0000-0000-0000-000000000301","name":"Orphan property"}'::jsonb
+      '{"client_id":"00000000-0000-0000-0000-000000000301","name":"Orphan property","state":"NSW"}'::jsonb
     ) as result;`
   );
   if (archivedClientProperty.rows[0]?.result?.relationship_conflict !== true) {

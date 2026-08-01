@@ -5,10 +5,11 @@ const { OperationalRepository } = require('./operational-repository');
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const MAX_BODY_BYTES = 64 * 1024;
 const MAX_PAGE_SIZE = 100;
+const AUSTRALIAN_STATES = new Set(['NSW', 'VIC', 'QLD', 'SA', 'WA', 'TAS', 'NT', 'ACT']);
 
 const SCHEMAS = {
   clients: { required: ['name'], fields: { name: 'name', contactName: 'contact_name', contactEmail: 'contact_email', contactPhone: 'contact_phone' } },
-  properties: { required: ['clientId', 'name'], fields: { clientId: 'client_id', name: 'name', address: 'address' } },
+  properties: { required: ['clientId', 'name', 'state'], fields: { clientId: 'client_id', name: 'name', address: 'address', state: 'state' } },
   fields: { required: ['propertyId', 'name'], fields: { propertyId: 'property_id', fieldBoundaryVersionId: 'field_boundary_version_id', name: 'name', areaHectares: 'area_hectares' } },
   jobs: { required: ['clientId', 'propertyId', 'reference'], fields: { clientId: 'client_id', propertyId: 'property_id', reference: 'reference', status: 'status' } },
   missions: { required: ['jobId', 'operatingLocationId', 'missionNumber'], fields: { jobId: 'job_id', operatingLocationId: 'operating_location_id', missionNumber: 'mission_number', status: 'status', scheduledStartAt: 'scheduled_start_at' } },
@@ -89,13 +90,16 @@ function mapInput(resource, body, existing) {
       throw apiError(400, 'VALIDATION_ERROR', `${field} is required.`);
     }
   });
-  ['contactName', 'contactEmail', 'contactPhone', 'address', 'status', 'scheduledStartAt'].forEach((field) => {
+  ['contactName', 'contactEmail', 'contactPhone', 'address', 'state', 'status', 'scheduledStartAt'].forEach((field) => {
     if (merged[field] !== undefined && merged[field] !== null && typeof merged[field] !== 'string') {
       throw apiError(400, 'VALIDATION_ERROR', `${field} must be a string.`);
     }
   });
   if (merged.contactEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(merged.contactEmail)) {
     throw apiError(400, 'VALIDATION_ERROR', 'contactEmail must be a valid email address.');
+  }
+  if (resource === 'properties' && !AUSTRALIAN_STATES.has(merged.state)) {
+    throw apiError(400, 'VALIDATION_ERROR', 'state must be an Australian state or territory code.');
   }
   if (merged.areaHectares !== undefined && merged.areaHectares !== null && (!Number.isFinite(Number(merged.areaHectares)) || Number(merged.areaHectares) < 0)) {
     throw apiError(400, 'VALIDATION_ERROR', 'areaHectares must be a non-negative number.');

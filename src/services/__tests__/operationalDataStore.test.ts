@@ -61,6 +61,22 @@ describe('operational data store', () => {
     expect(store.getSnapshot().clients.map((record) => record.id)).toEqual(['two']);
   });
 
+  test('clears before reloading when the same user changes authoritative tenant identity', async () => {
+    const secondLoad = deferred<Client[]>();
+    const data = gateway({
+      resolveOrganisation: jest.fn().mockResolvedValueOnce('org-1').mockResolvedValueOnce('org-2'),
+      listClients: jest.fn().mockResolvedValueOnce([client('one')]).mockReturnValueOnce(secondLoad.promise),
+    });
+    const store = createOperationalDataStore(data);
+    await store.setAuthenticatedUser('user-1', 'tenant-1');
+
+    const loading = store.setAuthenticatedUser('user-1', 'tenant-2');
+    expect(store.getSnapshot()).toEqual(expect.objectContaining({ clients: [], status: 'loading' }));
+    secondLoad.resolve([client('two')]);
+    await loading;
+    expect(store.getSnapshot().clients.map((record) => record.id)).toEqual(['two']);
+  });
+
   test('distinguishes a failed load from a valid empty result', async () => {
     const store = createOperationalDataStore(gateway({ listClients: jest.fn().mockRejectedValue(Object.assign(new Error('Offline'), { code: 'NETWORK_ERROR' })) }));
     await store.setAuthenticatedUser('user-1');
@@ -82,6 +98,33 @@ describe('operational data store', () => {
     await pending;
     expect(store.getSnapshot()).toEqual(expect.objectContaining({ clients: [expect.objectContaining({ id: 'confirmed' })], saving: false }));
     expect(store.getSnapshot().savedAt).not.toBeNull();
+  });
+
+  test('keeps saving true until every overlapping mutation settles', async () => {
+    const first = deferred<Client>();
+    const second = deferred<Client>();
+    const store = createOperationalDataStore(gateway({
+      createClient: jest.fn().mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise),
+    }));
+    await store.setAuthenticatedUser('user-1');
+
+    const firstPending = store.createClient({ name: 'First', phone: '', email: '', notes: '', contractorUserId: '' });
+    const secondPending = store.createClient({ name: 'Second', phone: '', email: '', notes: '', contractorUserId: '' });
+    first.resolve(client('first'));
+    await firstPending;
+    expect(store.getSnapshot().saving).toBe(true);
+    second.resolve(client('second'));
+    await secondPending;
+    expect(store.getSnapshot().saving).toBe(false);
+  });
+
+  test('scopes saved confirmation to the confirmed resource and record', async () => {
+    const store = createOperationalDataStore(gateway({ createClient: jest.fn().mockResolvedValue(client('confirmed')) }));
+    await store.setAuthenticatedUser('user-1');
+    await store.createClient({ name: 'Confirmed', phone: '', email: '', notes: '', contractorUserId: '' });
+    expect(store.getSnapshot().lastSaved).toEqual({
+      resource: 'client', recordId: 'confirmed', at: expect.any(String),
+    });
   });
 
   test('discards an in-flight mutation when authentication changes before confirmation', async () => {

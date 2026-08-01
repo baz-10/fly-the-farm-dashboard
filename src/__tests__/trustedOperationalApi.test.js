@@ -179,6 +179,7 @@ describe('trusted organisation operational API', () => {
     await handlerFor('properties', repository, context({ permissions: ['properties.create'] }))(request('POST', {
       clientId: '33333333-3333-4333-8333-333333333333',
       name: 'Race-safe property',
+      state: 'NSW',
     }), res);
 
     expect(res.statusCode).toBe(409);
@@ -233,6 +234,31 @@ describe('trusted organisation operational API', () => {
     expect(res.statusCode).toBe(400);
     expect(res.body.error.code).toBe('VALIDATION_ERROR');
     expect(repository.create).not.toHaveBeenCalled();
+  });
+
+  test('maps and validates Australian property state at the trusted API boundary', async () => {
+    const repository = {
+      relationshipExists: jest.fn().mockResolvedValue(true),
+      create: jest.fn().mockResolvedValue({ record: {
+        id: '44444444-4444-4444-8444-444444444444',
+        client_id: '33333333-3333-4333-8333-333333333333', name: 'Home Block', state: 'QLD',
+        row_version: 1, created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z',
+      } }),
+    };
+    const validResponse = createResponse();
+    await handlerFor('properties', repository, context({ permissions: ['properties.create'] }))(request('POST', {
+      clientId: '33333333-3333-4333-8333-333333333333', name: 'Home Block', state: 'QLD',
+    }), validResponse);
+    expect(validResponse.statusCode).toBe(201);
+    expect(validResponse.body.data.state).toBe('QLD');
+    expect(repository.create).toHaveBeenCalledWith('properties', expect.anything(), expect.objectContaining({ state: 'QLD' }));
+
+    const invalidResponse = createResponse();
+    await handlerFor('properties', repository, context({ permissions: ['properties.create'] }))(request('POST', {
+      clientId: '33333333-3333-4333-8333-333333333333', name: 'Home Block', state: 'XX',
+    }), invalidResponse);
+    expect(invalidResponse.statusCode).toBe(400);
+    expect(invalidResponse.body.error.code).toBe('VALIDATION_ERROR');
   });
 
   test('rejects a client archive while active properties remain', async () => {

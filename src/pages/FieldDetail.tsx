@@ -213,7 +213,7 @@ export default function FieldDetail() {
       </Button>
 
       {actionError && <Alert severity="error" sx={{ mb: 2 }}>{actionError}</Alert>}
-      {operational.savedAt && !actionError && <Alert severity="success" sx={{ mb: 2 }}>Saved.</Alert>}
+      {operational.lastSaved?.resource === 'field' && operational.lastSaved.recordId === field.id && !actionError && <Alert severity="success" sx={{ mb: 2 }}>Saved.</Alert>}
 
       {/* Field Info */}
       <Card elevation={0} sx={{ mb: 4, border: `1.5px solid ${alpha(theme.palette.primary.main, 0.1)}`, borderRadius: '16px' }} className="ftf-animate-in">

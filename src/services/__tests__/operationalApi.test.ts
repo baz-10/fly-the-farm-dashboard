@@ -27,10 +27,11 @@ describe('operational API adapter', () => {
     });
     expect(mapApiProperty({
       id: 'property-1', client_id: 'client-1', name: 'Home Block', address: '1 Farm Rd',
+      state: 'QLD',
       row_version: 2, created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-02T00:00:00Z',
     })).toEqual(expect.objectContaining({
       id: 'property-1', clientId: 'client-1', name: 'Home Block', address: '1 Farm Rd',
-      state: 'NSW', locality: '', lotPlan: '', notes: '', rowVersion: 2,
+      state: 'QLD', locality: '', lotPlan: '', notes: '', rowVersion: 2,
     }));
     expect(mapApiField({
       id: 'field-1', property_id: 'property-1', name: 'North Paddock', area_hectares: '12.5',
@@ -42,9 +43,57 @@ describe('operational API adapter', () => {
     }));
   });
 
+  test('preserves Australian property state in trusted create payloads and responses', async () => {
+    const fetchMock = jest.spyOn(global, 'fetch').mockImplementation(() => jsonResponse(201, {
+      data: {
+        id: 'property-1', clientId: 'client-1', name: 'Home Block', address: '1 Farm Rd', state: 'QLD',
+        rowVersion: 1, createdAt: '2026-08-01T00:00:00Z', updatedAt: '2026-08-01T00:00:00Z',
+      },
+    }));
+    const property = await createOperationalApi().properties.create({
+      clientId: 'client-1', name: 'Home Block', address: '1 Farm Rd', state: 'QLD',
+      locality: '', lotPlan: '', notes: '',
+    });
+    expect(property.state).toBe('QLD');
+    expect(fetchMock).toHaveBeenCalledWith('/api/v1/properties', expect.objectContaining({
+      body: JSON.stringify({ clientId: 'client-1', name: 'Home Block', address: '1 Farm Rd', state: 'QLD' }),
+    }));
+  });
+
+  test.each([
+    ['clients', { id: '', name: 'Farm', rowVersion: 1, createdAt: '2026-08-01T00:00:00Z', updatedAt: '2026-08-01T00:00:00Z' }],
+    ['properties', { id: 'property-1', clientId: '', name: 'Farm', state: 'QLD', rowVersion: 1, createdAt: '2026-08-01T00:00:00Z', updatedAt: '2026-08-01T00:00:00Z' }],
+    ['fields', { id: 'field-1', propertyId: 'property-1', name: '', rowVersion: 1, createdAt: '2026-08-01T00:00:00Z', updatedAt: '2026-08-01T00:00:00Z' }],
+    ['jobs', { id: 'job-1', clientId: 'client-1', propertyId: 'property-1', reference: 'J-1', rowVersion: 0, createdAt: '2026-08-01T00:00:00Z', updatedAt: '2026-08-01T00:00:00Z' }],
+    ['missions', { id: 'mission-1', jobId: 'job-1', operatingLocationId: 'location-1', missionNumber: 'M-1', rowVersion: 1, createdAt: 'not-a-date', updatedAt: '2026-08-01T00:00:00Z' }],
+  ])('rejects a malformed %s record inside a successful list', async (resource, record) => {
+    jest.spyOn(global, 'fetch').mockImplementation(() => jsonResponse(200, {
+      data: [record], pagination: { page: 1, pageSize: 100 },
+    }));
+    await expect((createOperationalApi() as any)[resource].list()).rejects.toEqual(expect.objectContaining({
+      code: 'MALFORMED_RESPONSE',
+    }));
+  });
+
+  test('rejects malformed detail and session envelopes instead of normalising empty identity', async () => {
+    const fetchMock = jest.spyOn(global, 'fetch')
+      .mockImplementationOnce(() => jsonResponse(200, { data: {
+        id: 'client-1', name: 'Farm', rowVersion: 1,
+        createdAt: '', updatedAt: '2026-08-01T00:00:00Z',
+      } }))
+      .mockImplementationOnce(() => jsonResponse(200, { data: { user: { id: 'user-1' }, organisation: { id: '' } } }));
+    const api = createOperationalApi();
+    await expect(api.clients.get('client-1')).rejects.toEqual(expect.objectContaining({ code: 'MALFORMED_RESPONSE' }));
+    await expect(api.session()).rejects.toEqual(expect.objectContaining({ code: 'MALFORMED_RESPONSE' }));
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   test('uses same-origin credentials and only sends writable resource fields', async () => {
     const fetchMock = jest.spyOn(global, 'fetch').mockImplementation(() => jsonResponse(201, {
-      data: { id: 'client-1', name: 'North Farm', contactEmail: 'ops@example.com', contactPhone: '0400000000', rowVersion: 1 },
+      data: {
+        id: 'client-1', name: 'North Farm', contactEmail: 'ops@example.com', contactPhone: '0400000000', rowVersion: 1,
+        createdAt: '2026-08-01T00:00:00Z', updatedAt: '2026-08-01T00:00:00Z',
+      },
     }));
     const api = createOperationalApi({ timeoutMs: 1000 });
 

@@ -111,3 +111,61 @@ modified.
 Requirement references: RET-002, RET-003, RET-004, RET-005, RET-006, IMP-002,
 IMP-003, IMP-004, NEW-001, NEW-003, NEW-005, NEW-006, NEW-007, NEW-008,
 REP-003, REP-004.
+
+## Fix round 1 — review findings
+
+### Changes
+
+- Preserved the Job History and Import Spray Rec routes and Client List buttons,
+  but wrapped both routes in an explicit Production Beta unavailable state.
+  Direct remote URLs cannot mount the legacy pages, so they cannot read or save
+  browser-authoritative job data; local development behavior remains available.
+- Added forward migration `20260801005000_property_state.sql`. It adds a
+  constrained Australian-code `properties.state` column without a guessed
+  default, carries state through the trusted write RPC, and preserves QLD (and
+  the other seven state/territory codes) through the server and frontend API.
+- Expanded authenticated store scope from user ID alone to user plus tenant
+  identity, while continuing to resolve the authoritative organisation through
+  `/api/v1/session`. Same-user tenant switches synchronously clear old records
+  before the new organisation reload starts.
+- Replaced the single save toggle with a generation-aware pending-mutation
+  counter. Overlapping writes keep `saving` true until all current-scope writes
+  settle, and prior-scope completions cannot affect the new scope.
+- Added strict record decoders for every list/detail/write response. Missing or
+  invalid IDs, parent IDs, names/references, timestamps, Australian property
+  state, row versions, and pagination reject the whole response as
+  `MALFORMED_RESPONSE`; malformed values are never converted to blank records or
+  row-version defaults.
+- Scoped save confirmation to resource plus record ID. Client, property, and
+  field detail screens no longer display an unrelated prior `Saved` result.
+
+### TDD evidence
+
+The first focused red run recorded intended failures for direct route gates,
+QLD response/payload preservation, missing property-state migration, trusted
+state validation, same-user tenant switching, overlapping mutation state,
+resource-scoped Saved state, and malformed list/detail/session records. The
+PGlite harness initially rejected a legacy property fixture after the new
+required trusted-write contract; that fixture was updated with an explicit real
+state and the harness now verifies both QLD persistence and invalid-code
+rejection.
+
+### Verification
+
+- Focused: 8 suites, 58 tests passed, 0 failed.
+- Full: 46 suites, 220 tests passed, 0 failed.
+- `npm run build`: exit 0, compiled with the repository's existing warnings.
+- `git diff --check`: exit 0 before staging.
+
+### Remaining concern
+
+Existing deployed property rows cannot be assigned a truthful jurisdiction from
+the current data, so the forward migration deliberately leaves their new state
+nullable instead of defaulting them to NSW or QLD. A trusted deployment backfill
+must supply each legacy property's real Australian state before those rows can
+be decoded by the strict Production Beta client. New and updated trusted API
+writes require a valid state code immediately.
+
+Fix-round requirement references: RET-002, RET-003, RET-004, RET-005, RET-006,
+IMP-002, IMP-003, IMP-004, NEW-001, NEW-003, NEW-005, NEW-006, NEW-007, NEW-008,
+REP-003, REP-004.

@@ -1,4 +1,5 @@
 import { Client, Field, LatLng, Property } from '../types/fieldManagement';
+import { ALL_STATES, AustralianState } from '../types/chemical';
 
 type ApiRecord = Record<string, unknown>;
 
@@ -57,18 +58,39 @@ function value(record: ApiRecord, camel: string, snake: string): unknown {
   return record[camel] !== undefined ? record[camel] : record[snake];
 }
 
-function textValue(record: ApiRecord, camel: string, snake: string, fallback = ''): string {
+function malformed(field: string): never {
+  throw new OperationalApiError(0, 'MALFORMED_RESPONSE', `The operational API returned an invalid ${field}.`);
+}
+
+function requiredText(record: ApiRecord, camel: string, snake = camel): string {
   const candidate = value(record, camel, snake);
-  return typeof candidate === 'string' ? candidate : fallback;
+  if (typeof candidate !== 'string' || candidate.trim() === '') return malformed(camel);
+  return candidate;
+}
+
+function optionalText(record: ApiRecord, camel: string, snake = camel): string {
+  const candidate = value(record, camel, snake);
+  if (candidate === undefined || candidate === null) return '';
+  if (typeof candidate !== 'string') return malformed(camel);
+  return candidate;
 }
 
 function versionValue(record: ApiRecord): number {
-  const candidate = Number(value(record, 'rowVersion', 'row_version'));
-  return Number.isInteger(candidate) && candidate > 0 ? candidate : 1;
+  const candidate = value(record, 'rowVersion', 'row_version');
+  if (typeof candidate !== 'number' || !Number.isInteger(candidate) || candidate < 1) return malformed('rowVersion');
+  return candidate;
 }
 
 function timestamp(record: ApiRecord, camel: string, snake: string): string {
-  return textValue(record, camel, snake);
+  const candidate = requiredText(record, camel, snake);
+  if (Number.isNaN(Date.parse(candidate))) return malformed(camel);
+  return candidate;
+}
+
+function propertyState(record: ApiRecord): AustralianState {
+  const candidate = requiredText(record, 'state');
+  if (!ALL_STATES.includes(candidate as AustralianState)) return malformed('state');
+  return candidate as AustralianState;
 }
 
 function boundaryCoordinates(record: ApiRecord): LatLng[] | undefined {
@@ -91,11 +113,11 @@ function boundaryCoordinates(record: ApiRecord): LatLng[] | undefined {
 
 export function mapApiClient(record: ApiRecord): Client {
   return {
-    id: textValue(record, 'id', 'id'),
+    id: requiredText(record, 'id'),
     contractorUserId: '',
-    name: textValue(record, 'name', 'name'),
-    phone: textValue(record, 'contactPhone', 'contact_phone'),
-    email: textValue(record, 'contactEmail', 'contact_email'),
+    name: requiredText(record, 'name'),
+    phone: optionalText(record, 'contactPhone', 'contact_phone'),
+    email: optionalText(record, 'contactEmail', 'contact_email'),
     notes: '',
     createdAt: timestamp(record, 'createdAt', 'created_at'),
     updatedAt: timestamp(record, 'updatedAt', 'updated_at'),
@@ -105,11 +127,11 @@ export function mapApiClient(record: ApiRecord): Client {
 
 export function mapApiProperty(record: ApiRecord): Property {
   return {
-    id: textValue(record, 'id', 'id'),
-    clientId: textValue(record, 'clientId', 'client_id'),
-    name: textValue(record, 'name', 'name'),
-    address: textValue(record, 'address', 'address'),
-    state: 'NSW',
+    id: requiredText(record, 'id'),
+    clientId: requiredText(record, 'clientId', 'client_id'),
+    name: requiredText(record, 'name'),
+    address: optionalText(record, 'address'),
+    state: propertyState(record),
     locality: '',
     lotPlan: '',
     notes: '',
@@ -120,13 +142,15 @@ export function mapApiProperty(record: ApiRecord): Property {
 }
 
 export function mapApiField(record: ApiRecord): Field {
-  const area = Number(value(record, 'areaHectares', 'area_hectares'));
-  const fieldBoundaryVersionId = textValue(record, 'fieldBoundaryVersionId', 'field_boundary_version_id') || undefined;
+  const rawArea = value(record, 'areaHectares', 'area_hectares');
+  const area = rawArea === undefined || rawArea === null ? 0 : Number(rawArea);
+  if (!Number.isFinite(area) || area < 0) return malformed('areaHectares');
+  const fieldBoundaryVersionId = optionalText(record, 'fieldBoundaryVersionId', 'field_boundary_version_id') || undefined;
   return {
-    id: textValue(record, 'id', 'id'),
-    propertyId: textValue(record, 'propertyId', 'property_id'),
-    name: textValue(record, 'name', 'name'),
-    sizeHa: Number.isFinite(area) ? area : 0,
+    id: requiredText(record, 'id'),
+    propertyId: requiredText(record, 'propertyId', 'property_id'),
+    name: requiredText(record, 'name'),
+    sizeHa: area,
     boundary: null,
     boundaryCoords: boundaryCoordinates(record),
     notes: '',
@@ -139,19 +163,20 @@ export function mapApiField(record: ApiRecord): Field {
 
 function mapJob(record: ApiRecord): OperationalJob {
   return {
-    id: textValue(record, 'id', 'id'), clientId: textValue(record, 'clientId', 'client_id'),
-    propertyId: textValue(record, 'propertyId', 'property_id'), reference: textValue(record, 'reference', 'reference'),
-    status: textValue(record, 'status', 'status'), rowVersion: versionValue(record),
+    id: requiredText(record, 'id'), clientId: requiredText(record, 'clientId', 'client_id'),
+    propertyId: requiredText(record, 'propertyId', 'property_id'), reference: requiredText(record, 'reference'),
+    status: requiredText(record, 'status'), rowVersion: versionValue(record),
     createdAt: timestamp(record, 'createdAt', 'created_at'), updatedAt: timestamp(record, 'updatedAt', 'updated_at'),
   };
 }
 
 function mapMission(record: ApiRecord): OperationalMission {
-  const scheduledStartAt = textValue(record, 'scheduledStartAt', 'scheduled_start_at') || undefined;
+  const scheduledStartAt = optionalText(record, 'scheduledStartAt', 'scheduled_start_at') || undefined;
+  if (scheduledStartAt && Number.isNaN(Date.parse(scheduledStartAt))) return malformed('scheduledStartAt');
   return {
-    id: textValue(record, 'id', 'id'), jobId: textValue(record, 'jobId', 'job_id'),
-    operatingLocationId: textValue(record, 'operatingLocationId', 'operating_location_id'),
-    missionNumber: textValue(record, 'missionNumber', 'mission_number'), status: textValue(record, 'status', 'status'),
+    id: requiredText(record, 'id'), jobId: requiredText(record, 'jobId', 'job_id'),
+    operatingLocationId: requiredText(record, 'operatingLocationId', 'operating_location_id'),
+    missionNumber: requiredText(record, 'missionNumber', 'mission_number'), status: requiredText(record, 'status'),
     scheduledStartAt, rowVersion: versionValue(record), createdAt: timestamp(record, 'createdAt', 'created_at'),
     updatedAt: timestamp(record, 'updatedAt', 'updated_at'),
   };
@@ -222,7 +247,7 @@ export function createOperationalApi(options: ApiOptions = {}): OperationalApi {
   ): ResourceAdapter<T, TCreate, TUpdate> {
     const base = `/api/v1/${name}`;
     const responseRecord = (envelope: any): T => {
-      if (!envelope?.data || typeof envelope.data !== 'object' || typeof envelope.data.id !== 'string') {
+      if (!envelope?.data || typeof envelope.data !== 'object' || Array.isArray(envelope.data)) {
         throw new OperationalApiError(0, 'MALFORMED_RESPONSE', 'The operational API returned an invalid record.');
       }
       return map(envelope.data);
@@ -233,10 +258,15 @@ export function createOperationalApi(options: ApiOptions = {}): OperationalApi {
         if (!Array.isArray(envelope?.data)) {
           throw new OperationalApiError(0, 'MALFORMED_RESPONSE', 'The operational API returned an invalid list.');
         }
+        const responsePage = envelope?.pagination?.page;
+        const responsePageSize = envelope?.pagination?.pageSize;
+        if (!Number.isInteger(responsePage) || responsePage < 1 || !Number.isInteger(responsePageSize) || responsePageSize < 1) {
+          throw new OperationalApiError(0, 'MALFORMED_RESPONSE', 'The operational API returned invalid pagination.');
+        }
         return {
           records: envelope.data.map(map),
-          page: Number(envelope.pagination?.page || page),
-          pageSize: Number(envelope.pagination?.pageSize || pageSize),
+          page: responsePage,
+          pageSize: responsePageSize,
         };
       },
       async get(id) { return responseRecord(await request(`${base}?id=${encodeURIComponent(id)}`)); },
@@ -268,6 +298,7 @@ export function createOperationalApi(options: ApiOptions = {}): OperationalApi {
     if ('clientId' in input && input.clientId !== undefined) payload.clientId = input.clientId;
     if (input.name !== undefined) payload.name = input.name;
     if (input.address !== undefined) payload.address = input.address;
+    if (input.state !== undefined) payload.state = input.state;
     return payload;
   };
   const fieldWritable = (input: FieldCreateInput | FieldUpdateInput): ApiRecord => {
@@ -295,10 +326,18 @@ export function createOperationalApi(options: ApiOptions = {}): OperationalApi {
 
   return {
     async session() {
-      const data = (await request('/api/v1/session')).data || {};
+      const data = (await request('/api/v1/session')).data;
+      if (!data || typeof data !== 'object' || Array.isArray(data)) return malformed('session');
       return {
-        user: { id: String(data.user?.id || ''), email: typeof data.user?.email === 'string' ? data.user.email : null, name: String(data.user?.name || '') },
-        organisation: { id: String(data.organisation?.id || ''), name: String(data.organisation?.name || '') },
+        user: {
+          id: requiredText(data.user || {}, 'id'),
+          email: data.user?.email === null || data.user?.email === undefined ? null : optionalText(data.user, 'email'),
+          name: requiredText(data.user || {}, 'name'),
+        },
+        organisation: {
+          id: requiredText(data.organisation || {}, 'id'),
+          name: requiredText(data.organisation || {}, 'name'),
+        },
       };
     },
     clients: resource('clients', mapApiClient, clientWritable),

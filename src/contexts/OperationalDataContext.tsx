@@ -57,6 +57,7 @@ export function OperationalDataProvider({ children }: { children: React.ReactNod
   const userRole = user?.role;
   const contractorId = user?.contractorId;
   const clientRecordId = user?.clientRecordId;
+  const tenantIdentity = user?.tenantId;
   const mode = getPersistenceMode();
   const store = useMemo(
     () => createOperationalDataStore(mode === 'remote' ? createRemoteGateway() : createLocalGateway()),
@@ -73,8 +74,8 @@ export function OperationalDataProvider({ children }: { children: React.ReactNod
         clientRecordId,
       } : null);
     }
-    void store.setAuthenticatedUser(userId || null);
-  }, [clientRecordId, contractorId, mode, store, userId, userRole]);
+    void store.setAuthenticatedUser(userId || null, tenantIdentity || null);
+  }, [clientRecordId, contractorId, mode, store, tenantIdentity, userId, userRole]);
 
   const value = useMemo<OperationalDataContextValue>(() => ({ ...state, ...store, mode }), [mode, state, store]);
   return <OperationalDataContext.Provider value={value}>{children}</OperationalDataContext.Provider>;

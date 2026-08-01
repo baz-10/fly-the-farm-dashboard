@@ -44,7 +44,7 @@ jest.mock('../services/fieldManagementStore', () => ({
 function baseOperational(overrides: Record<string, unknown> = {}) {
   return {
     mode: 'remote', status: 'ready', clients: [client], properties: [property], fields: [field],
-    saving: false, savedAt: null, error: null, refresh: jest.fn(),
+    saving: false, savedAt: null, lastSaved: null, error: null, refresh: jest.fn(),
     createClient: jest.fn(), updateClient: jest.fn(), archiveClient: jest.fn().mockResolvedValue(undefined),
     createProperty: jest.fn(), updateProperty: jest.fn(), archiveProperty: jest.fn().mockResolvedValue(undefined),
     createField: jest.fn(), updateField: jest.fn(), archiveField: jest.fn().mockResolvedValue(undefined),
@@ -69,6 +69,23 @@ describe('authoritative client/property/field workflow screens', () => {
     route('/jobs', <ClientList />);
     expect(screen.getByText(/operational data is unavailable/i)).toBeInTheDocument();
     expect(screen.queryByText('No clients yet')).not.toBeInTheDocument();
+  });
+
+  test('preserves navigation buttons for the explicitly gated remote job workflows', () => {
+    route('/jobs', <ClientList />);
+    fireEvent.click(screen.getByRole('button', { name: 'Import Spray Rec' }));
+    expect(mockNavigate).toHaveBeenCalledWith('/jobs/import');
+    fireEvent.click(screen.getByRole('button', { name: 'Job History' }));
+    expect(mockNavigate).toHaveBeenCalledWith('/jobs/history');
+  });
+
+  test('does not show a saved confirmation from an unrelated resource', () => {
+    mockOperational = baseOperational({
+      savedAt: '2026-08-01T01:00:00Z',
+      lastSaved: { resource: 'property', recordId: 'property-1', at: '2026-08-01T01:00:00Z' },
+    });
+    route('/jobs/client/client-1', <ClientDetail />);
+    expect(screen.queryByText('Saved.')).not.toBeInTheDocument();
   });
 
   test('does not silently discard legacy-only client fields in remote mode', async () => {

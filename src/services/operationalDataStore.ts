@@ -21,6 +21,7 @@ export interface OperationalDataState {
   status: OperationalLoadStatus;
   saving: boolean;
   savedAt: string | null;
+  lastSaved: { resource: 'client' | 'property' | 'field'; recordId: string; at: string } | null;
   error: OperationalDataError | null;
 }
 
@@ -41,7 +42,7 @@ export interface OperationalDataGateway {
 }
 
 const emptyState = (): OperationalDataState => ({
-  clients: [], properties: [], fields: [], status: 'idle', saving: false, savedAt: null, error: null,
+  clients: [], properties: [], fields: [], status: 'idle', saving: false, savedAt: null, lastSaved: null, error: null,
 });
 
 function operationalError(error: unknown): OperationalDataError {
@@ -71,7 +72,7 @@ export function describeOperationalError(error: unknown): string {
 export interface OperationalDataStore {
   getSnapshot(): OperationalDataState;
   subscribe(listener: () => void): () => void;
-  setAuthenticatedUser(userId: string | null): Promise<void>;
+  setAuthenticatedUser(userId: string | null, tenantIdentity?: string | null): Promise<void>;
   refresh(): Promise<void>;
   createClient(input: ClientCreateInput): Promise<Client>;
   updateClient(id: string, input: ClientUpdateInput): Promise<Client>;
@@ -87,8 +88,10 @@ export interface OperationalDataStore {
 export function createOperationalDataStore(gateway: OperationalDataGateway): OperationalDataStore {
   let state = emptyState();
   let userId: string | null = null;
+  let authenticatedScope: string | null = null;
   let organisationId: string | null = null;
   let generation = 0;
+  let pendingMutations = 0;
   const listeners = new Set<() => void>();
 
   const emit = (next: OperationalDataState) => {
@@ -111,7 +114,7 @@ export function createOperationalDataStore(gateway: OperationalDataGateway): Ope
         gateway.listClients(), gateway.listProperties(), gateway.listFields(),
       ]);
       if (activeGeneration !== generation || !userId || organisationId !== resolvedOrganisation) return;
-      emit({ clients, properties, fields, status: 'ready', saving: false, savedAt: null, error: null });
+      emit({ clients, properties, fields, status: 'ready', saving: false, savedAt: null, lastSaved: null, error: null });
     } catch (error) {
       if (activeGeneration !== generation) return;
       organisationId = null;
@@ -124,20 +127,32 @@ export function createOperationalDataStore(gateway: OperationalDataGateway): Ope
     return collection.find((record) => record.id === id)?.rowVersion || 1;
   }
 
-  async function mutate<T>(request: () => Promise<T>, confirm: (record: T) => void): Promise<T> {
+  async function mutate<T extends { id?: string }>(
+    resource: 'client' | 'property' | 'field',
+    recordId: string | null,
+    request: () => Promise<T>,
+    confirm: (record: T) => void,
+  ): Promise<T> {
     const activeGeneration = generation;
-    patch({ saving: true, savedAt: null, error: null });
+    pendingMutations += 1;
+    patch({ saving: true, savedAt: null, lastSaved: null, error: null });
     try {
       const record = await request();
       if (activeGeneration !== generation || !userId) {
         throw Object.assign(new Error('The authenticated organisation changed before the save completed.'), { code: 'STALE_SCOPE' });
       }
       confirm(record);
-      patch({ saving: false, savedAt: new Date().toISOString(), error: null });
+      const at = new Date().toISOString();
+      patch({ savedAt: at, lastSaved: { resource, recordId: recordId || record.id || '', at }, error: null });
       return record;
     } catch (error) {
-      if (activeGeneration === generation) patch({ saving: false, savedAt: null, error: operationalError(error) });
+      if (activeGeneration === generation) patch({ savedAt: null, lastSaved: null, error: operationalError(error) });
       throw error;
+    } finally {
+      if (activeGeneration === generation) {
+        pendingMutations = Math.max(0, pendingMutations - 1);
+        patch({ saving: pendingMutations > 0 });
+      }
     }
   }
 
@@ -146,41 +161,44 @@ export function createOperationalDataStore(gateway: OperationalDataGateway): Ope
   return {
     getSnapshot: () => state,
     subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
-    async setAuthenticatedUser(nextUserId) {
-      if (nextUserId === userId && nextUserId !== null) return;
+    async setAuthenticatedUser(nextUserId, tenantIdentity = null) {
+      const nextScope = nextUserId ? `${nextUserId}:${tenantIdentity || ''}` : null;
+      if (nextScope === authenticatedScope && nextUserId !== null) return;
       userId = nextUserId;
+      authenticatedScope = nextScope;
       organisationId = null;
       generation += 1;
+      pendingMutations = 0;
       if (!nextUserId) { clear('idle'); return; }
       await load();
     },
     refresh: load,
     createClient(input) {
-      return mutate(() => gateway.createClient(input), (record) => patch({ clients: [...state.clients, record as Client] }));
+      return mutate('client', null, () => gateway.createClient(input), (record) => patch({ clients: [...state.clients, record as Client] }));
     },
     updateClient(id, input) {
-      return mutate(() => gateway.updateClient(id, input, expectedVersion(state.clients, id)), (record) => patch({ clients: replace(state.clients, record as Client) }));
+      return mutate('client', id, () => gateway.updateClient(id, input, expectedVersion(state.clients, id)), (record) => patch({ clients: replace(state.clients, record as Client) }));
     },
     async archiveClient(id) {
-      await mutate(() => gateway.archiveClient(id, expectedVersion(state.clients, id)), () => patch({ clients: state.clients.filter((record) => record.id !== id) }));
+      await mutate('client', id, () => gateway.archiveClient(id, expectedVersion(state.clients, id)) as Promise<{ id?: string }>, () => patch({ clients: state.clients.filter((record) => record.id !== id) }));
     },
     createProperty(input) {
-      return mutate(() => gateway.createProperty(input), (record) => patch({ properties: [...state.properties, record as Property] }));
+      return mutate('property', null, () => gateway.createProperty(input), (record) => patch({ properties: [...state.properties, record as Property] }));
     },
     updateProperty(id, input) {
-      return mutate(() => gateway.updateProperty(id, input, expectedVersion(state.properties, id)), (record) => patch({ properties: replace(state.properties, record as Property) }));
+      return mutate('property', id, () => gateway.updateProperty(id, input, expectedVersion(state.properties, id)), (record) => patch({ properties: replace(state.properties, record as Property) }));
     },
     async archiveProperty(id) {
-      await mutate(() => gateway.archiveProperty(id, expectedVersion(state.properties, id)), () => patch({ properties: state.properties.filter((record) => record.id !== id) }));
+      await mutate('property', id, () => gateway.archiveProperty(id, expectedVersion(state.properties, id)) as Promise<{ id?: string }>, () => patch({ properties: state.properties.filter((record) => record.id !== id) }));
     },
     createField(input) {
-      return mutate(() => gateway.createField(input), (record) => patch({ fields: [...state.fields, record as Field] }));
+      return mutate('field', null, () => gateway.createField(input), (record) => patch({ fields: [...state.fields, record as Field] }));
     },
     updateField(id, input) {
-      return mutate(() => gateway.updateField(id, input, expectedVersion(state.fields, id)), (record) => patch({ fields: replace(state.fields, record as Field) }));
+      return mutate('field', id, () => gateway.updateField(id, input, expectedVersion(state.fields, id)), (record) => patch({ fields: replace(state.fields, record as Field) }));
     },
     async archiveField(id) {
-      await mutate(() => gateway.archiveField(id, expectedVersion(state.fields, id)), () => patch({ fields: state.fields.filter((record) => record.id !== id) }));
+      await mutate('field', id, () => gateway.archiveField(id, expectedVersion(state.fields, id)) as Promise<{ id?: string }>, () => patch({ fields: state.fields.filter((record) => record.id !== id) }));
     },
   };
 }
