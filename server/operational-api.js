@@ -154,6 +154,14 @@ function assertMissionLocationAccess(context, operatingLocationId) {
   throw apiError(403, 'LOCATION_FORBIDDEN', 'This mission operating location is not assigned to your membership.');
 }
 
+function hasAssignedLocationReadAccess(resource, context, record) {
+  if (!['missions', 'operating_locations'].includes(resource)) return true;
+  const operatingLocationId = resource === 'operating_locations'
+    ? record?.id : record?.operating_location_id ?? record?.operatingLocationId;
+  return typeof operatingLocationId === 'string'
+    && (context.operatingLocationIds || []).includes(operatingLocationId);
+}
+
 async function assertRelationships(repository, resource, context, values) {
   const required = [];
   if (resource === 'properties') required.push(['clients', values.clientId]);
@@ -269,12 +277,15 @@ function createOperationalHandler(resource, dependencies = {}) {
         if (id) {
           assertUuid(id, 'id');
           const record = await repository.get(resource, context, id);
-          if (!record || record.archived_at) throw apiError(404, 'NOT_FOUND', 'Operational record not found.');
+          if (!record || record.archived_at || !hasAssignedLocationReadAccess(resource, context, record)) {
+            throw apiError(404, 'NOT_FOUND', 'Operational record not found.');
+          }
           return res.status(200).json({ data: mapDatabaseRecord(resource, record) });
         }
         const bounds = pagination(req.query);
         const records = await repository.list(resource, context, bounds);
-        return res.status(200).json({ data: (records || []).map((record) => mapDatabaseRecord(resource, record)), pagination: bounds });
+        const scopedRecords = (records || []).filter((record) => hasAssignedLocationReadAccess(resource, context, record));
+        return res.status(200).json({ data: scopedRecords.map((record) => mapDatabaseRecord(resource, record)), pagination: bounds });
       }
       if (!['POST', 'PATCH', 'DELETE'].includes(req.method)) {
         res.setHeader('Allow', 'GET,POST,PATCH,DELETE,OPTIONS');

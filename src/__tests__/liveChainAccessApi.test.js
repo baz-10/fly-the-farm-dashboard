@@ -29,7 +29,7 @@ function context(overrides = {}) {
     organisation: { id: '11111111-1111-4111-8111-111111111111', name: 'Farm A' },
     internalUser: { id: '22222222-2222-4222-8222-222222222222', name: 'A' },
     roles: ['operator'],
-    permissions: ['operating_locations.read', 'operating_locations.create', 'missions.create'],
+    permissions: ['operating_locations.read', 'operating_locations.create', 'missions.read', 'missions.create'],
     operatingLocationIds: ['33333333-3333-4333-8333-333333333333'],
     entitlement: { tier: 'beta', seatActive: true, seatStatus: 'active' },
     ...overrides,
@@ -136,6 +136,43 @@ describe('live-chain access prerequisites', () => {
     expect(res.body.error.code).toBe('LOCATION_FORBIDDEN');
     expect(repository.relationshipExists).not.toHaveBeenCalled();
     expect(repository.create).not.toHaveBeenCalled();
+  });
+
+  test.each([
+    ['operating_locations',
+      [{ id: '33333333-3333-4333-8333-333333333333', name: 'Assigned' }, { id: '99999999-9999-4999-8999-999999999999', name: 'Other' }]],
+    ['missions', [
+      { id: '77777777-7777-4777-8777-777777777777', operating_location_id: '33333333-3333-4333-8333-333333333333' },
+      { id: '88888888-8888-4888-8888-888888888888', operating_location_id: '99999999-9999-4999-8999-999999999999' },
+    ]],
+  ])('filters %s list reads to assigned operating locations', async (resource, records) => {
+    const repository = { list: jest.fn().mockResolvedValue(records) };
+    const handler = createOperationalHandler(resource, {
+      resolveContext: jest.fn().mockResolvedValue(context()), repository,
+    });
+    const res = createResponse();
+
+    await handler(request('GET'), res);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body.data).toHaveLength(1);
+    expect(res.body.data[0].id).toBe(records[0].id);
+  });
+
+  test.each([
+    ['operating_locations', { id: '99999999-9999-4999-8999-999999999999', name: 'Other' }],
+    ['missions', { id: '88888888-8888-4888-8888-888888888888', operating_location_id: '99999999-9999-4999-8999-999999999999' }],
+  ])('returns 404 for a cross-location %s detail read', async (resource, record) => {
+    const repository = { get: jest.fn().mockResolvedValue(record) };
+    const handler = createOperationalHandler(resource, {
+      resolveContext: jest.fn().mockResolvedValue(context()), repository,
+    });
+    const res = createResponse();
+
+    await handler(request('GET', {}, { id: record.id }), res);
+
+    expect(res.statusCode).toBe(404);
+    expect(res.body.error.code).toBe('NOT_FOUND');
   });
 
   test('keeps seat-denied errors distinct in API envelopes', async () => {

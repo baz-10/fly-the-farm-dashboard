@@ -76,13 +76,15 @@ export interface OperationalMission {
   title: string;
   description: string;
   status: 'Planning';
-  scheduledStartAt?: string;
+  scheduledStartAt: string | null;
   rowVersion: number;
   createdAt: string;
   updatedAt: string;
 }
 
-export type OperationalMissionCreateInput = Omit<OperationalMission, 'id' | 'rowVersion' | 'createdAt' | 'updatedAt'>;
+export type OperationalMissionCreateInput = Omit<OperationalMission, 'id' | 'rowVersion' | 'createdAt' | 'updatedAt' | 'scheduledStartAt'> & {
+  scheduledStartAt?: string | null;
+};
 export type OperationalMissionUpdateInput = Partial<Pick<OperationalMission,
   'jobId' | 'operatingLocationId' | 'missionNumber' | 'title' | 'description' | 'status' | 'scheduledStartAt'>>;
 
@@ -310,7 +312,10 @@ export function mapApiFieldBoundaryVersion(record: ApiRecord): OperationalFieldB
 }
 
 export function mapApiMission(record: ApiRecord): OperationalMission {
-  const scheduledStartAt = optionalText(record, 'scheduledStartAt', 'scheduled_start_at') || undefined;
+  const rawScheduledStartAt = value(record, 'scheduledStartAt', 'scheduled_start_at');
+  const scheduledStartAt = rawScheduledStartAt === undefined || rawScheduledStartAt === null
+    ? null : optionalText(record, 'scheduledStartAt', 'scheduled_start_at');
+  if (scheduledStartAt === '') return malformed('scheduledStartAt');
   if (scheduledStartAt && Number.isNaN(Date.parse(scheduledStartAt))) return malformed('scheduledStartAt');
   const status = requiredText(record, 'status');
   if (status.toLowerCase() !== 'planning') return malformed('status');

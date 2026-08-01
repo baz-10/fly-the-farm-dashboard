@@ -380,7 +380,7 @@ function AuthoritativeMissionPlanning() {
       setTitle(selectedMission.title);
       setDescription(selectedMission.description);
       setScheduledStart(selectedMission.scheduledStartAt
-        ? formatDateTimeInput(new Date(selectedMission.scheduledStartAt)) : defaultScheduledDateInput());
+        ? formatDateTimeInput(new Date(selectedMission.scheduledStartAt)) : '');
       setUnsupportedAircraft('');
       setActionError('');
       return;
@@ -436,7 +436,7 @@ function AuthoritativeMissionPlanning() {
       missionNumber: missionNumber.trim(),
       title: title.trim(),
       description: description.trim(),
-      scheduledStartAt: toIsoFromInput(scheduledStart),
+      scheduledStartAt: scheduledStart ? toIsoFromInput(scheduledStart) : null,
       status: 'Planning' as const,
     };
     try {

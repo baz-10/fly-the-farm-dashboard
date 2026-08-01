@@ -101,6 +101,9 @@ function AuthoritativeMissionRegister() {
       return <Alert severity="error">Authoritative mission register is unavailable. No browser mission records have been substituted.</Alert>;
     }
     if (missions.length === 0) {
+      if (normalizedSearch && operational.missions.length > 0) {
+        return <Paper variant="outlined" sx={{ p: 5, textAlign: 'center', borderRadius: 2.5 }}><Typography sx={{ fontWeight: 800 }}>No missions match your search</Typography><Typography color="text.secondary">Clear or change the search to see authoritative Planning missions.</Typography></Paper>;
+      }
       return <Paper variant="outlined" sx={{ p: 5, textAlign: 'center', borderRadius: 2.5 }}><Typography sx={{ fontWeight: 800 }}>No Planning missions</Typography><Typography color="text.secondary">The authoritative mission register returned no active Planning missions.</Typography></Paper>;
     }
     return (

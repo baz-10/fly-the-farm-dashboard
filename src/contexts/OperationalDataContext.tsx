@@ -105,7 +105,10 @@ export function OperationalDataProvider({ children }: { children: React.ReactNod
         if (session.user.id !== userId) {
           throw new OperationalApiError(401, 'UNAUTHENTICATED', 'The authenticated session changed. Sign in again.');
         }
-        return session.organisation.id;
+        return {
+          organisationId: session.organisation.id,
+          operatingLocationIds: session.operatingLocationIds,
+        };
       });
     } else {
       void store.setAuthenticatedUser(userId, 'local-development');

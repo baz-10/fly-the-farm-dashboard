@@ -26,6 +26,14 @@ function activeFilter() {
   return 'archived_at=is.null';
 }
 
+function assignedLocationFilter(resource, context) {
+  const column = resource === 'operating_locations' ? 'id' : resource === 'missions' ? 'operating_location_id' : null;
+  if (!column) return null;
+  const ids = Array.isArray(context.operatingLocationIds) ? context.operatingLocationIds.filter(Boolean) : [];
+  if (ids.length === 0) return false;
+  return `${column}=in.(${ids.map(encodeURIComponent).join(',')})`;
+}
+
 class OperationalRepository {
   async attachJobFieldIds(context, records) {
     if (!Array.isArray(records) || records.length === 0) return records;
@@ -40,15 +48,19 @@ class OperationalRepository {
   }
 
   async list(resource, context, { page = 1, pageSize = 25 } = {}) {
+    const locationFilter = assignedLocationFilter(resource, context);
+    if (locationFilter === false) return [];
     const offset = (page - 1) * pageSize;
-    const records = await supabaseRequest(`rest/v1/${tableFor(resource)}?${tenantFilter(context)}&${activeFilter()}&select=*&order=updated_at.desc&offset=${offset}&limit=${pageSize}`, {
+    const records = await supabaseRequest(`rest/v1/${tableFor(resource)}?${tenantFilter(context)}&${activeFilter()}${locationFilter ? `&${locationFilter}` : ''}&select=*&order=updated_at.desc&offset=${offset}&limit=${pageSize}`, {
       publicMessage: 'Operational records could not be loaded.',
     });
     return resource === 'jobs' ? this.attachJobFieldIds(context, records) : records;
   }
 
   async get(resource, context, id) {
-    const rows = await supabaseRequest(`rest/v1/${tableFor(resource)}?${tenantFilter(context)}&id=eq.${encodeURIComponent(id)}&${activeFilter()}&select=*&limit=1`, {
+    const locationFilter = assignedLocationFilter(resource, context);
+    if (locationFilter === false) return null;
+    const rows = await supabaseRequest(`rest/v1/${tableFor(resource)}?${tenantFilter(context)}&id=eq.${encodeURIComponent(id)}&${activeFilter()}${locationFilter ? `&${locationFilter}` : ''}&select=*&limit=1`, {
       publicMessage: 'Operational record could not be loaded.',
     });
     if (!Array.isArray(rows) || !rows[0]) return null;

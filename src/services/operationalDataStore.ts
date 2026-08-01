@@ -23,6 +23,7 @@ export interface OperationalDataState {
   properties: Property[];
   fields: Field[];
   operatingLocations: OperationalOperatingLocation[];
+  operatingLocationIds: string[];
   jobs: OperationalJob[];
   missions: OperationalMission[];
   fieldBoundaryVersions: OperationalFieldBoundaryVersion[];
@@ -62,7 +63,7 @@ export interface OperationalDataGateway {
 }
 
 const emptyState = (): OperationalDataState => ({
-  clients: [], properties: [], fields: [], operatingLocations: [], jobs: [], missions: [], fieldBoundaryVersions: [],
+  clients: [], properties: [], fields: [], operatingLocations: [], operatingLocationIds: [], jobs: [], missions: [], fieldBoundaryVersions: [],
   status: 'idle', saving: false, savedAt: null, lastSaved: null, error: null,
 });
 
@@ -94,7 +95,7 @@ export interface OperationalDataStore {
   getSnapshot(): OperationalDataState;
   subscribe(listener: () => void): () => void;
   setAuthenticatedUser(userId: string | null, organisationId?: string | null): Promise<void>;
-  authenticate(userId: string, resolveOrganisation: () => Promise<string>): Promise<void>;
+  authenticate(userId: string, resolveOrganisation: () => Promise<string | OperationalSessionScope>): Promise<void>;
   refresh(): Promise<void>;
   createClient(input: ClientCreateInput): Promise<Client>;
   updateClient(id: string, input: ClientUpdateInput): Promise<Client>;
@@ -115,11 +116,16 @@ export interface OperationalDataStore {
   createFieldBoundaryVersion(fieldId: string, coordinates: Array<[number, number]>): Promise<OperationalFieldBoundaryVersion>;
 }
 
+export interface OperationalSessionScope {
+  organisationId: string;
+  operatingLocationIds: string[];
+}
+
 export function createOperationalDataStore(gateway: OperationalDataGateway): OperationalDataStore {
   let state = emptyState();
   let userId: string | null = null;
   let organisationId: string | null = null;
-  let scopeResolver: (() => Promise<string>) | null = null;
+  let scopeResolver: (() => Promise<string | OperationalSessionScope>) | null = null;
   let generation = 0;
   let pendingMutations = 0;
   let savedConfirmationTimer: ReturnType<typeof setTimeout> | null = null;
@@ -137,7 +143,7 @@ export function createOperationalDataStore(gateway: OperationalDataGateway): Ope
     savedConfirmationTimer = null;
   }
 
-  function beginScope(nextUserId: string | null, resolver: (() => Promise<string>) | null): number {
+  function beginScope(nextUserId: string | null, resolver: (() => Promise<string | OperationalSessionScope>) | null): number {
     generation += 1;
     pendingMutations = 0;
     clearSavedConfirmationTimer();
@@ -148,18 +154,24 @@ export function createOperationalDataStore(gateway: OperationalDataGateway): Ope
     return generation;
   }
 
-  async function authenticate(nextUserId: string, resolveOrganisation: () => Promise<string>): Promise<void> {
+  async function authenticate(nextUserId: string, resolveOrganisation: () => Promise<string | OperationalSessionScope>): Promise<void> {
     const activeGeneration = beginScope(nextUserId, resolveOrganisation);
     try {
-      const resolvedOrganisation = await resolveOrganisation();
+      const resolvedScope = await resolveOrganisation();
+      const resolvedOrganisation = typeof resolvedScope === 'string' ? resolvedScope : resolvedScope.organisationId;
+      const assignedLocationIds = typeof resolvedScope === 'string' ? null : resolvedScope.operatingLocationIds;
       if (activeGeneration !== generation || userId !== nextUserId) return;
       if (!resolvedOrganisation) throw Object.assign(new Error('No active organisation is available.'), { code: 'FORBIDDEN', status: 403 });
       organisationId = resolvedOrganisation;
-      const [clients, properties, fields, operatingLocations, jobs, missions] = await Promise.all([
+      const [clients, properties, fields, loadedOperatingLocations, jobs, loadedMissions] = await Promise.all([
         gateway.listClients(), gateway.listProperties(), gateway.listFields(),
         gateway.listOperatingLocations(), gateway.listJobs(), gateway.listMissions(),
       ]);
       if (activeGeneration !== generation || userId !== nextUserId || organisationId !== resolvedOrganisation) return;
+      const scopedOperatingLocationIds = assignedLocationIds || loadedOperatingLocations.map((record) => record.id);
+      const assignedOperatingLocationIds = new Set(scopedOperatingLocationIds);
+      const operatingLocations = loadedOperatingLocations.filter((record) => assignedOperatingLocationIds.has(record.id));
+      const missions = loadedMissions.filter((record) => assignedOperatingLocationIds.has(record.operatingLocationId));
       const clientIds = new Set(clients.map((record) => record.id));
       const propertiesById = new Map(properties.map((record) => [record.id, record]));
       const fieldsById = new Map(fields.map((record) => [record.id, record]));
@@ -177,7 +189,7 @@ export function createOperationalDataStore(gateway: OperationalDataGateway): Ope
       if (invalidProperty || invalidField || invalidJob || invalidMission) {
         throw Object.assign(new Error('The operational API returned records outside the active parent chain.'), { code: 'MALFORMED_RESPONSE' });
       }
-      emit({ clients, properties, fields, operatingLocations, jobs, missions, fieldBoundaryVersions: [], status: 'ready', saving: false, savedAt: null, lastSaved: null, error: null });
+      emit({ clients, properties, fields, operatingLocations, operatingLocationIds: scopedOperatingLocationIds, jobs, missions, fieldBoundaryVersions: [], status: 'ready', saving: false, savedAt: null, lastSaved: null, error: null });
     } catch (error) {
       if (activeGeneration !== generation) return;
       organisationId = null;
@@ -235,6 +247,10 @@ export function createOperationalDataStore(gateway: OperationalDataGateway): Ope
     code: 'VALIDATION_ERROR', status: 400,
   });
 
+  const missionConfirmationError = (message: string) => Object.assign(new Error(message), {
+    code: 'MALFORMED_RESPONSE', status: 0,
+  });
+
   function validateMissionInput(input: OperationalMissionCreateInput | OperationalMissionUpdateInput, current?: OperationalMission) {
     const status = input.status ?? current?.status;
     const jobId = input.jobId ?? current?.jobId;
@@ -243,8 +259,25 @@ export function createOperationalDataStore(gateway: OperationalDataGateway): Ope
     if (!jobId || !state.jobs.some((record) => record.id === jobId)) {
       throw missionValidationError('Select an authoritative job before saving the mission.');
     }
-    if (!operatingLocationId || !state.operatingLocations.some((record) => record.id === operatingLocationId)) {
+    if (!operatingLocationId || !state.operatingLocationIds.includes(operatingLocationId)
+      || !state.operatingLocations.some((record) => record.id === operatingLocationId)) {
       throw missionValidationError('Select an active authoritative operating location before saving the mission.');
+    }
+  }
+
+  function validateMissionConfirmation(record: OperationalMission, expectedId?: string) {
+    if (!record || typeof record.id !== 'string' || !record.id || (expectedId && record.id !== expectedId)) {
+      throw missionConfirmationError('The mission confirmation did not match the saved mission.');
+    }
+    if (record.status !== 'Planning') {
+      throw missionConfirmationError('The mission confirmation returned an unsupported lifecycle state.');
+    }
+    if (!state.jobs.some((job) => job.id === record.jobId)) {
+      throw missionConfirmationError('The mission confirmation returned an inactive or unavailable job.');
+    }
+    if (!state.operatingLocationIds.includes(record.operatingLocationId)
+      || !state.operatingLocations.some((location) => location.id === record.operatingLocationId)) {
+      throw missionConfirmationError('The mission confirmation returned an unassigned operating location.');
     }
   }
 
@@ -299,13 +332,19 @@ export function createOperationalDataStore(gateway: OperationalDataGateway): Ope
     },
     createMission(input) {
       try { validateMissionInput(input); } catch (error) { return Promise.reject(error); }
-      return mutate('mission', null, () => gateway.createMission(input), (record) => patch({ missions: [...state.missions, record as OperationalMission] }));
+      return mutate('mission', null, () => gateway.createMission(input), (record) => {
+        validateMissionConfirmation(record as OperationalMission);
+        patch({ missions: [...state.missions, record as OperationalMission] });
+      });
     },
     updateMission(id, input) {
       const current = state.missions.find((record) => record.id === id);
       if (!current) return Promise.reject(Object.assign(new Error('Mission not found.'), { code: 'NOT_FOUND', status: 404 }));
       try { validateMissionInput(input, current); } catch (error) { return Promise.reject(error); }
-      return mutate('mission', id, () => gateway.updateMission(id, input, expectedVersion(state.missions, id)), (record) => patch({ missions: replace(state.missions, record as OperationalMission) }));
+      return mutate('mission', id, () => gateway.updateMission(id, input, expectedVersion(state.missions, id)), (record) => {
+        validateMissionConfirmation(record as OperationalMission, id);
+        patch({ missions: replace(state.missions, record as OperationalMission) });
+      });
     },
     async archiveMission(id) {
       const current = state.missions.find((record) => record.id === id);

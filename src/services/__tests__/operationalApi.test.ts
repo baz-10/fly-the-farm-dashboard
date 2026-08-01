@@ -175,6 +175,27 @@ describe('operational API adapter', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  test('preserves an unscheduled mission as null and sends null when the optional schedule is cleared', async () => {
+    const fetchMock = jest.spyOn(global, 'fetch')
+      .mockImplementationOnce(() => jsonResponse(200, { data: {
+        id: 'mission-1', jobId: 'job-1', operatingLocationId: 'location-1', missionNumber: 'MSN-001',
+        title: 'Unscheduled mission', description: '', status: 'planning', scheduledStartAt: null,
+        rowVersion: 2, createdAt: '2026-08-01T00:00:00Z', updatedAt: '2026-08-01T00:00:00Z',
+      } }))
+      .mockImplementationOnce(() => jsonResponse(200, { data: {
+        id: 'mission-1', jobId: 'job-1', operatingLocationId: 'location-1', missionNumber: 'MSN-001',
+        title: 'Unscheduled mission', description: '', status: 'planning', scheduledStartAt: null,
+        rowVersion: 3, createdAt: '2026-08-01T00:00:00Z', updatedAt: '2026-08-02T00:00:00Z',
+      } }));
+    const api = createOperationalApi();
+
+    await expect(api.missions.get('mission-1')).resolves.toEqual(expect.objectContaining({ scheduledStartAt: null }));
+    await api.missions.update('mission-1', { scheduledStartAt: null }, 2);
+    expect(fetchMock.mock.calls[1][1]).toEqual(expect.objectContaining({
+      body: JSON.stringify({ scheduledStartAt: null, expectedVersion: 2 }),
+    }));
+  });
+
   test.each([
     ['clients', { id: '', name: 'Farm', rowVersion: 1, createdAt: '2026-08-01T00:00:00Z', updatedAt: '2026-08-01T00:00:00Z' }],
     ['properties', { id: 'property-1', clientId: '', name: 'Farm', state: 'QLD', rowVersion: 1, createdAt: '2026-08-01T00:00:00Z', updatedAt: '2026-08-01T00:00:00Z' }],

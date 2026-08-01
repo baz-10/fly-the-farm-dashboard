@@ -87,6 +87,13 @@ describe('remote authoritative mission workflow', () => {
     expect(screen.getByText(/No Planning missions/i)).toBeInTheDocument();
   });
 
+  test('distinguishes a search with no matches from an authoritative empty register', () => {
+    render(<MissionRegister />);
+    fireEvent.change(screen.getByRole('textbox', { name: 'Search missions' }), { target: { value: 'no-such-mission' } });
+    expect(screen.getByText(/No missions match your search/i)).toBeInTheDocument();
+    expect(screen.queryByText(/No Planning missions/i)).not.toBeInTheDocument();
+  });
+
   test('loads bookmarked mission detail from authoritative state and suppresses operational claims', () => {
     mockParams = { missionId: 'mission-1' };
     render(<MissionPlanning />);
@@ -137,6 +144,20 @@ describe('remote authoritative mission workflow', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Update Mission' }));
     expect(await screen.findByText(/record changed on the server/i)).toBeInTheDocument();
     expect(mockOperational.updateMission).toHaveBeenCalledWith('mission-1', expect.objectContaining({ title: 'Lost edit', status: 'Planning' }));
+  });
+
+  test('keeps an unscheduled existing mission blank and persists an explicitly cleared schedule as null', async () => {
+    mockOperational = operational({
+      missions: [{ ...mission, scheduledStartAt: null }],
+      updateMission: jest.fn().mockResolvedValue({ ...mission, scheduledStartAt: null, rowVersion: 4 }),
+    });
+    mockParams = { missionId: 'mission-1' };
+    render(<MissionPlanning />);
+    expect(screen.getByLabelText('Scheduled start')).toHaveValue('');
+    fireEvent.click(screen.getByRole('button', { name: 'Update Mission' }));
+    await waitFor(() => expect(mockOperational.updateMission).toHaveBeenCalledWith(
+      'mission-1', expect.objectContaining({ scheduledStartAt: null }),
+    ));
   });
 
   test('archives a Planning mission only after controlled confirmation', async () => {

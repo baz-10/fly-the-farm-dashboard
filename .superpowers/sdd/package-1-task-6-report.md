@@ -51,3 +51,22 @@ Complete for the approved remote Planning mission slice. Local mission behavior 
 ## Requirement coverage
 
 RET-006, RET-007, RET-008, IMP-004, IMP-005, IMP-006, NEW-001, NEW-003, NEW-005, NEW-006, NEW-007, NEW-008, REP-003, REP-004.
+
+## Review fix round 1
+
+### Delivered
+
+- Preserves trusted `session.operatingLocationIds` through `OperationalDataProvider` and the operational store, including synchronous clearing on session changes.
+- Filters loaded operating locations and missions to the active session assignments. Create/update rejects any location that is not both assigned and active.
+- Scopes mission and operating-location list/get reads by assigned location in repository queries before pagination, with handler-level filtering as defense in depth. Cross-location detail reads return 404 and list reads omit inaccessible records.
+- Preserves an absent mission schedule as `null`; existing unscheduled missions render a blank date-time input and clearing a schedule sends `scheduledStartAt: null`. Only new mission forms receive an explicit default.
+- Validates create/update confirmations before publication: ID presence, same ID on update, Planning status, authoritative active job and assigned active location. Invalid confirmation rejects with `MALFORMED_RESPONSE`, preserves prior confirmed state and never displays Saved.
+- Distinguishes an authoritative empty register from a non-empty authoritative register with no search matches.
+
+### TDD and verification evidence
+
+- Fix-round RED: 5 suites ran with 68 passing and 16 expected failures covering discarded session assignment IDs, unfiltered reads/state, unassigned writes, null schedule coercion, unvalidated confirmations and ambiguous search results.
+- Focused GREEN: `npm test -- --runInBand src/__tests__/liveChainAccessApi.test.js src/services/__tests__/operationalApi.test.ts src/services/__tests__/operationalDataStore.test.ts src/contexts/__tests__/OperationalDataContext.test.tsx src/pages/MissionRemoteWorkflow.test.tsx` — 5 suites, 84 tests passed.
+- Backend integration: `npm test -- --runInBand src/__tests__/trustedOperationalApi.test.js src/__tests__/liveChainAccessApi.test.js src/__tests__/liveChainWorkflowApi.test.js src/__tests__/liveChainFixRoundApi.test.js src/__tests__/liveChainBackendPglite.test.js` — 5 suites, 47 tests passed.
+- Full non-watch suite: `CI=true npm test -- --runInBand --watchAll=false` — 51 suites, 312 tests passed, 0 failures.
+- Production build: `npm run build` — exit 0, compiled successfully with the same pre-existing lint, Browserslist and bundle-size warnings recorded above.
