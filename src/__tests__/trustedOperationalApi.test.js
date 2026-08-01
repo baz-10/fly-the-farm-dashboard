@@ -1,0 +1,244 @@
+const { createHttpError } = require('../../server/supabase');
+const {
+  createOperationalHandler,
+  mapDatabaseRecord,
+} = require('../../server/operational-api');
+const { resolveRequestContext } = require('../../server/request-context');
+const { OperationalRepository } = require('../../server/operational-repository');
+
+function createResponse() {
+  return {
+    statusCode: 200,
+    body: undefined,
+    headers: {},
+    status(statusCode) { this.statusCode = statusCode; return this; },
+    json(body) { this.body = body; return this; },
+    end() { return this; },
+    setHeader(name, value) { this.headers[name.toLowerCase()] = value; },
+  };
+}
+
+function request(method, body = {}, query = {}) {
+  return {
+    method,
+    body,
+    query,
+    headers: { host: 'localhost:3001', origin: 'http://localhost:3001' },
+  };
+}
+
+function context(overrides = {}) {
+  return {
+    user: { id: 'auth-user-a', email: 'a@example.test', name: 'A' },
+    organisation: { id: '11111111-1111-4111-8111-111111111111', name: 'Farm A' },
+    internalUser: { id: '22222222-2222-4222-8222-222222222222', name: 'A' },
+    roles: ['operator'],
+    permissions: ['clients.read', 'clients.create', 'clients.update', 'clients.archive', 'missions.create'],
+    operatingLocationIds: [],
+    entitlement: { tier: 'beta', seatActive: true },
+    ...overrides,
+  };
+}
+
+function handlerFor(resource, repository, resolvedContext = context()) {
+  return createOperationalHandler(resource, {
+    resolveContext: jest.fn().mockResolvedValue(resolvedContext),
+    repository,
+  });
+}
+
+describe('trusted organisation operational API', () => {
+  test('returns a no-store unauthenticated envelope before any resource access', async () => {
+    const repository = { list: jest.fn() };
+    const handler = createOperationalHandler('clients', {
+      resolveContext: jest.fn().mockRejectedValue(createHttpError(401, 'Authentication is required.')),
+      repository,
+    });
+    const res = createResponse();
+
+    await handler(request('GET'), res);
+
+    expect(res.statusCode).toBe(401);
+    expect(res.headers['cache-control']).toBe('no-store');
+    expect(res.body).toEqual({ error: { code: 'UNAUTHENTICATED', message: 'Authentication is required.' } });
+    expect(repository.list).not.toHaveBeenCalled();
+  });
+
+  test('derives the organisation context from trusted membership records, not request input', async () => {
+    const originalFetch = global.fetch;
+    process.env.SUPABASE_URL = 'https://example.supabase.co';
+    process.env.SUPABASE_ANON_KEY = 'anon-key';
+    process.env.SUPABASE_SERVICE_ROLE_KEY = 'service-key';
+    global.fetch = jest.fn(async (url) => ({
+      ok: true,
+      status: 200,
+      text: async () => {
+        if (url.endsWith('/auth/v1/user')) return JSON.stringify({ id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', email: 'a@example.test' });
+        if (url.includes('/internal_users')) return JSON.stringify([{ id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', organisation_id: '11111111-1111-4111-8111-111111111111', display_name: 'A' }]);
+        if (url.includes('/memberships')) return JSON.stringify([{ role_id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc' }]);
+        if (url.includes('/roles')) return JSON.stringify([{ code: 'operator' }]);
+        if (url.includes('/role_permissions')) return JSON.stringify([]);
+        if (url.includes('/operating_locations')) return JSON.stringify([]);
+        if (url.includes('/organisations')) return JSON.stringify([{ id: '11111111-1111-4111-8111-111111111111', name: 'Farm A' }]);
+        if (url.includes('/ftf_profiles')) return JSON.stringify([{ tier: 'beta' }]);
+        return JSON.stringify([]);
+      },
+    }));
+
+    const resolved = await resolveRequestContext({
+      headers: { cookie: 'ftf_access_token=trusted-token' },
+      query: { organisationId: '99999999-9999-4999-8999-999999999999' },
+      body: { organisationId: '99999999-9999-4999-8999-999999999999', role: 'admin' },
+    });
+
+    expect(resolved.organisation.id).toBe('11111111-1111-4111-8111-111111111111');
+    expect(resolved.roles).toEqual(['operator']);
+    expect(global.fetch.mock.calls.some(([url]) => String(url).includes('99999999-9999-4999-8999-999999999999'))).toBe(false);
+    global.fetch = originalFetch;
+  });
+
+  test('selects an internal-user organisation only when that organisation has an active membership', async () => {
+    const originalFetch = global.fetch;
+    process.env.SUPABASE_URL = 'https://example.supabase.co';
+    process.env.SUPABASE_ANON_KEY = 'anon-key';
+    process.env.SUPABASE_SERVICE_ROLE_KEY = 'service-key';
+    global.fetch = jest.fn(async (url) => ({
+      ok: true,
+      status: 200,
+      text: async () => {
+        if (url.endsWith('/auth/v1/user')) return JSON.stringify({ id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' });
+        if (url.includes('/internal_users')) return JSON.stringify([
+          { id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', organisation_id: '11111111-1111-4111-8111-111111111111', display_name: 'No membership' },
+          { id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc', organisation_id: '22222222-2222-4222-8222-222222222222', display_name: 'Active member' },
+        ]);
+        if (url.includes('/memberships') && url.includes('11111111-1111-4111-8111-111111111111')) return JSON.stringify([]);
+        if (url.includes('/memberships')) return JSON.stringify([{ role_id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd' }]);
+        if (url.includes('/roles')) return JSON.stringify([{ code: 'operator' }]);
+        if (url.includes('/role_permissions')) return JSON.stringify([]);
+        if (url.includes('/organisations')) return JSON.stringify([{ id: '22222222-2222-4222-8222-222222222222', name: 'Farm B' }]);
+        return JSON.stringify([]);
+      },
+    }));
+
+    const resolved = await resolveRequestContext({ headers: { cookie: 'ftf_access_token=trusted-token' } });
+
+    expect(resolved.organisation).toEqual({ id: '22222222-2222-4222-8222-222222222222', name: 'Farm B' });
+    global.fetch = originalFetch;
+  });
+
+  test('rejects a cross-tenant property assignment before creating a job', async () => {
+    const repository = {
+      relationshipExists: jest.fn().mockResolvedValue(false),
+      create: jest.fn(),
+    };
+    const res = createResponse();
+
+    await handlerFor('jobs', repository, context({ permissions: ['jobs.create'] }))(request('POST', {
+      clientId: '33333333-3333-4333-8333-333333333333',
+      propertyId: '44444444-4444-4444-8444-444444444444',
+      reference: 'JOB-1',
+    }), res);
+
+    expect(res.statusCode).toBe(409);
+    expect(res.body.error.code).toBe('RELATIONSHIP_CONFLICT');
+    expect(repository.create).not.toHaveBeenCalled();
+  });
+
+  test('returns the current version when an update loses the optimistic concurrency race', async () => {
+    const repository = { get: jest.fn().mockResolvedValue({ id: '33333333-3333-4333-8333-333333333333', name: 'Old', row_version: 4 }), update: jest.fn().mockResolvedValue({ conflict: true, currentVersion: 5 }) };
+    const res = createResponse();
+
+    await handlerFor('clients', repository)(request('PATCH', {
+      expectedVersion: 4,
+      name: 'New',
+    }, { id: '33333333-3333-4333-8333-333333333333' }), res);
+
+    expect(res.statusCode).toBe(409);
+    expect(res.body).toEqual({ error: { code: 'VERSION_CONFLICT', message: 'This record changed before your update.', meta: { currentVersion: 5 } } });
+  });
+
+  test('rejects a client archive while active properties remain', async () => {
+    const repository = { hasActiveDependencies: jest.fn().mockResolvedValue(true), archive: jest.fn() };
+    const res = createResponse();
+
+    await handlerFor('clients', repository)(request('DELETE', { expectedVersion: 2 }, { id: '33333333-3333-4333-8333-333333333333' }), res);
+
+    expect(res.statusCode).toBe(409);
+    expect(res.body.error.code).toBe('ARCHIVE_CONFLICT');
+    expect(repository.archive).not.toHaveBeenCalled();
+  });
+
+  test('rejects authorised mission lifecycle states during planning writes', async () => {
+    const repository = { create: jest.fn() };
+    const res = createResponse();
+
+    await handlerFor('missions', repository)(request('POST', {
+      jobId: '33333333-3333-4333-8333-333333333333',
+      operatingLocationId: '44444444-4444-4444-8444-444444444444',
+      missionNumber: 'M-1',
+      status: 'Approved',
+    }), res);
+
+    expect(res.statusCode).toBe(400);
+    expect(res.body.error.code).toBe('VALIDATION_ERROR');
+    expect(repository.create).not.toHaveBeenCalled();
+  });
+
+  test('does not expose arbitrary financial JSON and denies unauthorised financial fields', async () => {
+    const repository = { create: jest.fn() };
+    const res = createResponse();
+
+    await handlerFor('clients', repository)(request('POST', { name: 'Client A', financialPayload: { margin: 50 } }), res);
+
+    expect(res.statusCode).toBe(403);
+    expect(res.body.error.code).toBe('FORBIDDEN_FIELD');
+    expect(repository.create).not.toHaveBeenCalled();
+    expect(mapDatabaseRecord('missions', {
+      id: '33333333-3333-4333-8333-333333333333',
+      mission_number: 'M-1',
+      status: 'planning',
+      financial_payload: { margin: 50 },
+      row_version: 1,
+    })).toEqual({ id: '33333333-3333-4333-8333-333333333333', missionNumber: 'M-1', status: 'planning', rowVersion: 1 });
+  });
+
+  test('returns a validation envelope for malformed JSON request bodies', async () => {
+    const repository = { create: jest.fn() };
+    const res = createResponse();
+
+    await handlerFor('clients', repository)(request('POST', '{bad json'), res);
+
+    expect(res.statusCode).toBe(400);
+    expect(res.body).toEqual({ error: { code: 'VALIDATION_ERROR', message: 'Request body must be valid JSON.' } });
+    expect(repository.create).not.toHaveBeenCalled();
+  });
+
+  test('repository query paths always include the authenticated organisation filter', async () => {
+    const originalFetch = global.fetch;
+    process.env.SUPABASE_URL = 'https://example.supabase.co';
+    process.env.SUPABASE_ANON_KEY = 'anon-key';
+    process.env.SUPABASE_SERVICE_ROLE_KEY = 'service-key';
+    global.fetch = jest.fn(async () => ({ ok: true, status: 200, text: async () => '[]' }));
+    const repository = new OperationalRepository();
+
+    await repository.list('clients', context());
+
+    expect(global.fetch.mock.calls[0][0]).toContain('organisation_id=eq.11111111-1111-4111-8111-111111111111');
+    global.fetch = originalFetch;
+  });
+
+  test('uses tenant-filtered repository lookups for mission operating locations and field boundary versions', async () => {
+    const originalFetch = global.fetch;
+    process.env.SUPABASE_URL = 'https://example.supabase.co';
+    process.env.SUPABASE_ANON_KEY = 'anon-key';
+    process.env.SUPABASE_SERVICE_ROLE_KEY = 'service-key';
+    global.fetch = jest.fn(async () => ({ ok: true, status: 200, text: async () => '[]' }));
+    const repository = new OperationalRepository();
+
+    await repository.relationshipExists('operating_locations', context(), '33333333-3333-4333-8333-333333333333');
+    await repository.relationshipExists('field_boundary_versions', context(), '44444444-4444-4444-8444-444444444444');
+
+    expect(global.fetch.mock.calls.every(([url]) => String(url).includes('organisation_id=eq.11111111-1111-4111-8111-111111111111'))).toBe(true);
+    global.fetch = originalFetch;
+  });
+});
