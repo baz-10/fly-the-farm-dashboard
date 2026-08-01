@@ -7,6 +7,9 @@ const mockApi = {
   clients: { list: jest.fn().mockResolvedValue({ records: [], page: 1, pageSize: 100 }), create: jest.fn(), update: jest.fn(), archive: jest.fn() },
   properties: { list: jest.fn().mockResolvedValue({ records: [], page: 1, pageSize: 100 }), create: jest.fn(), update: jest.fn(), archive: jest.fn() },
   fields: { list: jest.fn().mockResolvedValue({ records: [], page: 1, pageSize: 100 }), create: jest.fn(), update: jest.fn(), archive: jest.fn() },
+  operatingLocations: { list: jest.fn().mockResolvedValue({ records: [], page: 1, pageSize: 100 }), create: jest.fn(), update: jest.fn(), archive: jest.fn() },
+  jobs: { list: jest.fn().mockResolvedValue({ records: [], page: 1, pageSize: 100 }), create: jest.fn(), update: jest.fn(), archive: jest.fn() },
+  fieldBoundaryVersions: { list: jest.fn(), get: jest.fn(), create: jest.fn() },
 };
 let mockMode = 'remote';
 let mockUser: any = { id: 'user-1', role: 'contractor', tenantId: 'profile-tenant-that-is-not-the-operational-org' };
@@ -40,6 +43,8 @@ describe('OperationalDataProvider', () => {
     mockApi.clients.list.mockResolvedValue({ records: [], page: 1, pageSize: 100 });
     mockApi.properties.list.mockResolvedValue({ records: [], page: 1, pageSize: 100 });
     mockApi.fields.list.mockResolvedValue({ records: [], page: 1, pageSize: 100 });
+    mockApi.operatingLocations.list.mockResolvedValue({ records: [], page: 1, pageSize: 100 });
+    mockApi.jobs.list.mockResolvedValue({ records: [], page: 1, pageSize: 100 });
   });
 
   test('clears immediately during a session switch and ignores a stale session response', async () => {
@@ -76,6 +81,8 @@ describe('OperationalDataProvider', () => {
     expect(mockApi.clients.list).toHaveBeenCalledWith(1, 100);
     expect(mockApi.properties.list).toHaveBeenCalledWith(1, 100);
     expect(mockApi.fields.list).toHaveBeenCalledWith(1, 100);
+    expect(mockApi.operatingLocations.list).toHaveBeenCalledWith(1, 100);
+    expect(mockApi.jobs.list).toHaveBeenCalledWith(1, 100);
   });
 
   test('surfaces an authoritative session failure without falling back to browser data', async () => {

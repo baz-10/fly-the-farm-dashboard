@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   Typography,
@@ -50,13 +50,20 @@ export default function FieldDetail() {
   const field = operational.fields.find((record) => record.id === fieldId && record.propertyId === propertyId);
   const property = operational.properties.find((record) => record.id === propertyId && record.clientId === clientId);
   const client = operational.clients.find((record) => record.id === clientId);
-  const [jobs] = useState<JobRecord[]>(() => operational.mode === 'local' ? getJobsByField(fieldId || '') : []);
+  const [localJobs] = useState<JobRecord[]>(() => operational.mode === 'local' ? getJobsByField(fieldId || '') : []);
+  const remoteJobs = operational.jobs.filter((job) => job.fieldIds.includes(fieldId || ''));
   const [editing, setEditing] = useState(false);
   const [editForm, setEditForm] = useState({ name: '', sizeHa: '', notes: '' });
   const [editBoundaryCoords, setEditBoundaryCoords] = useState<LatLng[]>([]);
   const [editBoundaryFile, setEditBoundaryFile] = useState<BoundaryFileRef | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState(false);
   const [actionError, setActionError] = useState('');
+
+  useEffect(() => {
+    if (operational.mode === 'remote' && operational.status === 'ready' && fieldId) {
+      void operational.refreshFieldBoundary(fieldId).catch(() => undefined);
+    }
+  }, [fieldId, operational.mode, operational.refreshFieldBoundary, operational.status]);
 
   if (operational.status === 'loading') return <Alert severity="info">Loading field…</Alert>;
 
@@ -89,18 +96,28 @@ export default function FieldDetail() {
 
   const handleSaveEdit = async () => {
     const boundaryChanged = JSON.stringify(editBoundaryCoords) !== JSON.stringify(field.boundaryCoords || []) || editBoundaryFile !== field.boundary;
-    if (operational.mode === 'remote' && (editForm.notes.trim() || boundaryChanged)) {
-      setActionError('Production Beta does not yet support field notes or boundary-version writes. Revert them before saving; field name and area are supported.');
+    if (operational.mode === 'remote' && editForm.notes.trim()) {
+      setActionError('Production Beta does not yet support field notes. Revert the note before saving; field name, area and boundary geometry are supported.');
       return;
     }
     try {
-      await operational.updateField(field.id, {
-        name: editForm.name,
-        sizeHa: parseFloat(editForm.sizeHa) || 0,
-        notes: editForm.notes,
-        boundaryCoords: editBoundaryCoords.length >= 3 ? editBoundaryCoords : undefined,
-        boundary: editBoundaryFile,
-      });
+      if (operational.mode === 'remote') {
+        if (boundaryChanged) {
+          await operational.createFieldBoundaryVersion(field.id, editBoundaryCoords);
+        }
+        const nextSize = parseFloat(editForm.sizeHa) || 0;
+        if (editForm.name !== field.name || nextSize !== field.sizeHa) {
+          await operational.updateField(field.id, { name: editForm.name, sizeHa: nextSize });
+        }
+      } else {
+        await operational.updateField(field.id, {
+          name: editForm.name,
+          sizeHa: parseFloat(editForm.sizeHa) || 0,
+          notes: editForm.notes,
+          boundaryCoords: editBoundaryCoords.length >= 3 ? editBoundaryCoords : undefined,
+          boundary: editBoundaryFile,
+        });
+      }
       setEditing(false);
       setActionError('');
     } catch (error) {
@@ -213,7 +230,7 @@ export default function FieldDetail() {
       </Button>
 
       {actionError && <Alert severity="error" sx={{ mb: 2 }}>{actionError}</Alert>}
-      {operational.lastSaved?.resource === 'field' && operational.lastSaved.recordId === field.id && !actionError && <Alert severity="success" sx={{ mb: 2 }}>Saved.</Alert>}
+      {(operational.lastSaved?.resource === 'field' || operational.lastSaved?.resource === 'boundary') && operational.lastSaved.recordId === field.id && !actionError && <Alert severity="success" sx={{ mb: 2 }}>Saved.</Alert>}
 
       {/* Field Info */}
       <Card elevation={0} sx={{ mb: 4, border: `1.5px solid ${alpha(theme.palette.primary.main, 0.1)}`, borderRadius: '16px' }} className="ftf-animate-in">
@@ -237,7 +254,7 @@ export default function FieldDetail() {
               </Box>
             </Box>
             <Stack direction="row" spacing={0.5}>
-              <IconButton size="small" onClick={handleStartEdit}><EditIcon fontSize="small" /></IconButton>
+              <IconButton aria-label="Edit field" size="small" onClick={handleStartEdit}><EditIcon fontSize="small" /></IconButton>
               <IconButton aria-label={operational.mode === 'remote' ? 'Archive field' : 'Delete field'} size="small" onClick={() => setDeleteConfirm(true)} sx={{ color: 'error.main' }}><DeleteIcon fontSize="small" /></IconButton>
             </Stack>
           </Box>
@@ -253,10 +270,10 @@ export default function FieldDetail() {
             )}
             <Box>
               <Typography variant="h5" sx={{ fontWeight: 800, color: 'primary.main', fontFamily: '"Outfit", system-ui', lineHeight: 1 }}>
-                {operational.mode === 'remote' ? '—' : jobs.length}
+                {operational.mode === 'remote' ? remoteJobs.length : localJobs.length}
               </Typography>
               <Typography variant="caption" color="text.secondary">
-                {operational.mode === 'local' && jobs.length === 1 ? 'Job' : 'Jobs'}
+                {(operational.mode === 'remote' ? remoteJobs.length : localJobs.length) === 1 ? 'Job' : 'Jobs'}
               </Typography>
             </Box>
           </Stack>
@@ -276,6 +293,17 @@ export default function FieldDetail() {
             <MapIcon sx={{ color: 'primary.main', fontSize: 20 }} />
             <Typography variant="subtitle1" fontWeight={700} color="primary.dark">Field Boundary</Typography>
             <Stack direction="row" spacing={1} sx={{ ml: 'auto' }} alignItems="center">
+              {operational.mode === 'remote' && (
+                <Button
+                  size="small"
+                  aria-label="Refresh boundary"
+                  onClick={() => void operational.refreshFieldBoundary(field.id).then(() => setActionError('')).catch((error) => setActionError(describeOperationalError(error)))}
+                  disabled={operational.saving}
+                  sx={{ borderRadius: '8px', fontWeight: 700 }}
+                >
+                  Refresh
+                </Button>
+              )}
               {property.lotPlan && (
                 <Button
                   size="small"
@@ -355,7 +383,6 @@ export default function FieldDetail() {
             variant="contained"
             size="small"
             startIcon={<AddIcon />}
-            disabled={operational.mode === 'remote'}
             onClick={() => navigate(`/jobs/client/${clientId}/property/${propertyId}/field/${field.id}/new-job`)}
             sx={{ borderRadius: '10px', fontWeight: 700 }}
           >
@@ -364,10 +391,36 @@ export default function FieldDetail() {
         </Box>
 
         {operational.mode === 'remote' ? (
-          <Alert severity="info">
-            Job history is not connected in this Production Beta slice. No browser-cached job records are being shown.
-          </Alert>
-        ) : jobs.length === 0 ? (
+          remoteJobs.length === 0 ? (
+            <Card elevation={0} sx={{ border: `1.5px dashed ${alpha(theme.palette.primary.main, 0.15)}`, borderRadius: '14px' }}>
+              <CardContent sx={{ textAlign: 'center', py: 5 }}>
+                <AssignmentIcon sx={{ fontSize: 40, color: alpha(theme.palette.text.secondary, 0.3), mb: 1.5 }} />
+                <Typography variant="body2" color="text.secondary">No spray jobs recorded yet.</Typography>
+              </CardContent>
+            </Card>
+          ) : (
+            <Stack spacing={2}>
+              {remoteJobs.map((job) => (
+                <Card key={job.id} elevation={0} onClick={() => navigate(`/jobs/client/${clientId}/property/${propertyId}/field/${field.id}/job/${job.id}`)}
+                  sx={{ border: `1.5px solid ${alpha(theme.palette.primary.main, 0.1)}`, borderRadius: '14px', cursor: 'pointer' }}>
+                  <CardContent sx={{ p: 2.5 }}>
+                    <Stack direction="row" justifyContent="space-between" spacing={2}>
+                      <Box>
+                        <Typography variant="subtitle2" fontWeight={700}>{job.reference}</Typography>
+                        <Typography variant="body2" color="text.secondary">{job.scope || 'No scope recorded'}</Typography>
+                        {job.notes && <Typography variant="caption" color="text.secondary">{job.notes}</Typography>}
+                      </Box>
+                      <Stack alignItems="flex-end" spacing={0.5}>
+                        <Chip label={job.status} size="small" variant="outlined" />
+                        {job.scheduledDate && <Typography variant="caption" color="text.secondary">{new Date(`${job.scheduledDate}T00:00:00`).toLocaleDateString('en-AU')}</Typography>}
+                      </Stack>
+                    </Stack>
+                  </CardContent>
+                </Card>
+              ))}
+            </Stack>
+          )
+        ) : localJobs.length === 0 ? (
           <Card elevation={0} sx={{ border: `1.5px dashed ${alpha(theme.palette.primary.main, 0.15)}`, borderRadius: '14px' }}>
             <CardContent sx={{ textAlign: 'center', py: 5 }}>
               <AssignmentIcon sx={{ fontSize: 40, color: alpha(theme.palette.text.secondary, 0.3), mb: 1.5 }} />
@@ -386,7 +439,7 @@ export default function FieldDetail() {
           </Card>
         ) : (
           <Stack spacing={2}>
-            {jobs.map((job) => {
+            {localJobs.map((job) => {
               const outcome = getOutcomeByJob(job.id);
               return (
                 <Card

@@ -97,12 +97,12 @@ function App() {
           <Route path="/calculator" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><Calculator /></ProtectedRoute>} />
           <Route path="/jobs" element={<ClientList />} />
           <Route path="/jobs/import" element={<OperationalFeatureGate feature="Import Spray Rec"><SprayRecImport /></OperationalFeatureGate>} />
-          <Route path="/jobs/history" element={<OperationalFeatureGate feature="Job History"><JobHistory /></OperationalFeatureGate>} />
+          <Route path="/jobs/history" element={<JobHistory />} />
           <Route path="/jobs/client/:clientId" element={<ClientDetail />} />
           <Route path="/jobs/client/:clientId/property/:propertyId" element={<PropertyDetail />} />
           <Route path="/jobs/client/:clientId/property/:propertyId/field/:fieldId" element={<FieldDetail />} />
-          <Route path="/jobs/client/:clientId/property/:propertyId/field/:fieldId/new-job" element={<OperationalFeatureGate feature="Record Job"><JobCreate /></OperationalFeatureGate>} />
-          <Route path="/jobs/client/:clientId/property/:propertyId/field/:fieldId/job/:jobId" element={<OperationalFeatureGate feature="Job Details"><JobDetail /></OperationalFeatureGate>} />
+          <Route path="/jobs/client/:clientId/property/:propertyId/field/:fieldId/new-job" element={<JobCreate />} />
+          <Route path="/jobs/client/:clientId/property/:propertyId/field/:fieldId/job/:jobId" element={<JobDetail />} />
           <Route path="/quotes" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><QuoteList /></ProtectedRoute>} />
           <Route path="/quotes/new" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><QuoteCreate /></ProtectedRoute>} />
           <Route path="/quotes/settings" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><QuoteSettings /></ProtectedRoute>} />

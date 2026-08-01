@@ -61,6 +61,8 @@ import {
   geocodeLocality,
   HourlyWeatherPoint,
 } from '../services/weatherService';
+import { useOperationalData } from '../contexts/OperationalDataContext';
+import { describeOperationalError } from '../services/operationalDataStore';
 
 const WIND_DIRECTIONS = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
 
@@ -83,10 +85,17 @@ export default function JobCreate() {
   const { clientId, propertyId, fieldId } = useParams<{ clientId: string; propertyId: string; fieldId: string }>();
   const navigate = useNavigate();
   const theme = useTheme();
+  const operational = useOperationalData();
 
-  const field = getFieldById(fieldId || '');
-  const property = getPropertyById(propertyId || '');
-  const client = getClientById(clientId || '');
+  const field = operational.mode === 'remote'
+    ? operational.fields.find((record) => record.id === fieldId && record.propertyId === propertyId)
+    : getFieldById(fieldId || '');
+  const property = operational.mode === 'remote'
+    ? operational.properties.find((record) => record.id === propertyId && record.clientId === clientId)
+    : getPropertyById(propertyId || '');
+  const client = operational.mode === 'remote'
+    ? operational.clients.find((record) => record.id === clientId)
+    : getClientById(clientId || '');
 
   const allWeeds = useMemo(() => getAllWeeds(), []);
   const allBrandNames = useMemo(() => getAllBrands(), []);
@@ -177,6 +186,10 @@ export default function JobCreate() {
   const [droneModel, setDroneModel] = useState('');
   const [applicatorName, setApplicatorName] = useState('');
   const [notes, setNotes] = useState('');
+  const [jobReference, setJobReference] = useState(`JOB-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}`);
+  const [jobStatus, setJobStatus] = useState('draft');
+  const [requestedDate, setRequestedDate] = useState('');
+  const [saveError, setSaveError] = useState('');
 
   // Clear the export after importing
   useEffect(() => {
@@ -405,9 +418,31 @@ export default function JobCreate() {
     return `${(bytes / 1048576).toFixed(1)} MB`;
   };
 
-  const handleSave = () => {
-    if (!weedTarget.trim() || !dateSprayed) return;
+  const handleSave = async () => {
+    if (!weedTarget.trim() || !dateSprayed || (operational.mode === 'remote' && !jobReference.trim())) return;
     const validChemicals = chemicals.filter((c) => c.product.trim());
+    if (operational.mode === 'remote') {
+      const hasUnsupportedValue = validChemicals.length > 0 || waterRateLHa.trim() !== '' || adjuvants.trim() !== ''
+        || selectedSurfactants.length > 0 || weatherLog.length > 0 || sprayConditions.length > 0
+        || Object.values(weather).some((value) => value !== null && value !== '') || !!manualTime
+        || !!sprayRec || !!batchInfo || droneModel.trim() !== '' || applicatorName.trim() !== '' || !!fromQuoteId;
+      if (hasUnsupportedValue) {
+        setSaveError('Chemical, weather, spray recommendation, operator, quote and compliance values are not yet supported by the Production Beta job API. Remove those values before saving; they have not been saved.');
+        return;
+      }
+      try {
+        const created = await operational.createJob({
+          clientId: client.id, propertyId: property.id, fieldIds: [field.id], reference: jobReference.trim(),
+          scope: weedTarget.trim(), status: jobStatus, notes, requestedDate: requestedDate || undefined,
+          scheduledDate: dateSprayed || undefined,
+        });
+        setSaveError('');
+        navigate(`/jobs/client/${clientId}/property/${propertyId}/field/${fieldId}/job/${created.id}`);
+      } catch (error) {
+        setSaveError(describeOperationalError(error));
+      }
+      return;
+    }
     // Use first spray condition as primary weather, or manual fields
     const primaryWeather: WeatherConditions = sprayConditions.length > 0
       ? {
@@ -525,7 +560,29 @@ export default function JobCreate() {
         </Alert>
       )}
 
+      {saveError && <Alert severity="error" sx={{ mb: 2, borderRadius: '12px' }}>{saveError}</Alert>}
+
       <Stack spacing={3} className="ftf-animate-in-delay-1">
+        {operational.mode === 'remote' && (
+          <Card elevation={0} sx={{ border: `1.5px solid ${alpha(theme.palette.primary.main, 0.1)}`, borderRadius: '16px' }}>
+            <CardContent sx={{ p: 3 }}>
+              <Typography variant="subtitle1" fontWeight={700} color="primary.dark" sx={{ mb: 2.5 }}>Job Details</Typography>
+              <Stack spacing={2.5}>
+                <TextField label="Job Reference" value={jobReference} onChange={(event) => setJobReference(event.target.value)} required fullWidth />
+                <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
+                  <TextField select label="Status" value={jobStatus} onChange={(event) => setJobStatus(event.target.value)} fullWidth>
+                    <MenuItem value="draft">Draft</MenuItem>
+                    <MenuItem value="requested">Requested</MenuItem>
+                    <MenuItem value="scheduled">Scheduled</MenuItem>
+                    <MenuItem value="complete">Complete</MenuItem>
+                  </TextField>
+                  <TextField label="Requested Date" type="date" value={requestedDate} onChange={(event) => setRequestedDate(event.target.value)}
+                    slotProps={{ inputLabel: { shrink: true } }} fullWidth />
+                </Stack>
+              </Stack>
+            </CardContent>
+          </Card>
+        )}
         {/* Weed & Chemicals */}
         <Card elevation={0} sx={{ border: `1.5px solid ${alpha(theme.palette.primary.main, 0.1)}`, borderRadius: '16px' }}>
           <CardContent sx={{ p: 3 }}>
@@ -1308,11 +1365,11 @@ export default function JobCreate() {
           <Button
             variant="contained"
             startIcon={<SaveIcon />}
-            onClick={handleSave}
-            disabled={!weedTarget.trim() || !dateSprayed}
+            onClick={() => void handleSave()}
+            disabled={!weedTarget.trim() || !dateSprayed || operational.saving || (operational.mode === 'remote' && !jobReference.trim())}
             sx={{ borderRadius: '10px', fontWeight: 700, px: 4 }}
           >
-            Save Job
+            {operational.saving ? 'Saving…' : 'Save Job'}
           </Button>
         </Box>
       </Stack>

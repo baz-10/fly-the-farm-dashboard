@@ -65,6 +65,8 @@ import { generateClientReportPdf } from '../utils/clientReportPdf';
 import AssessmentIcon from '@mui/icons-material/Assessment';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import ExpandLessIcon from '@mui/icons-material/ExpandLess';
+import { useOperationalData } from '../contexts/OperationalDataContext';
+import { describeOperationalError } from '../services/operationalDataStore';
 
 const efficacyLabels: Record<number, string> = {
   1: 'No effect',
@@ -75,6 +77,91 @@ const efficacyLabels: Record<number, string> = {
 };
 
 export default function JobDetail() {
+  const operational = useOperationalData();
+  return operational.mode === 'remote' ? <AuthoritativeJobDetail /> : <LocalJobDetail />;
+}
+
+function AuthoritativeJobDetail() {
+  const { clientId, propertyId, fieldId, jobId } = useParams<{
+    clientId: string; propertyId: string; fieldId: string; jobId: string;
+  }>();
+  const navigate = useNavigate();
+  const theme = useTheme();
+  const operational = useOperationalData();
+  const [archiveConfirm, setArchiveConfirm] = useState(false);
+  const [actionError, setActionError] = useState('');
+  const job = operational.jobs.find((record) => record.id === jobId && record.clientId === clientId
+    && record.propertyId === propertyId && record.fieldIds.includes(fieldId || ''));
+  const field = operational.fields.find((record) => record.id === fieldId && record.propertyId === propertyId);
+  const property = operational.properties.find((record) => record.id === propertyId && record.clientId === clientId);
+  const client = operational.clients.find((record) => record.id === clientId);
+  const basePath = `/jobs/client/${clientId}/property/${propertyId}/field/${fieldId}`;
+
+  if (operational.status === 'loading') return <Alert severity="info">Loading job…</Alert>;
+  if (operational.status === 'error' || operational.status === 'unauthorised') {
+    return <Alert severity="error">{operational.status === 'unauthorised' ? 'You are not authorised to view this job.' : 'Authoritative job detail could not be loaded.'}</Alert>;
+  }
+  if (!job || !field || !property || !client) {
+    return <Box><Button startIcon={<ArrowBackIcon />} onClick={() => navigate(-1)} sx={{ mb: 2 }}>Back</Button><Alert severity="error">Job not found.</Alert></Box>;
+  }
+
+  const archive = async () => {
+    try {
+      await operational.archiveJob(job.id);
+      navigate(basePath);
+    } catch (error) {
+      setArchiveConfirm(false);
+      setActionError(describeOperationalError(error));
+    }
+  };
+  const displayDate = (value?: string) => value
+    ? new Date(`${value}T00:00:00`).toLocaleDateString('en-AU', { day: 'numeric', month: 'long', year: 'numeric' }) : '—';
+
+  return (
+    <Box>
+      <Button startIcon={<ArrowBackIcon />} onClick={() => navigate(basePath)} sx={{ mb: 3, color: 'text.secondary', fontWeight: 600 }}>{field.name}</Button>
+      {actionError && <Alert severity="error" sx={{ mb: 2 }}>{actionError}</Alert>}
+      {operational.lastSaved?.resource === 'job' && operational.lastSaved.recordId === job.id && !actionError && <Alert severity="success" sx={{ mb: 2 }}>Saved.</Alert>}
+      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 3 }} className="ftf-animate-in">
+        <Box>
+          <Typography variant="h4" sx={{ fontWeight: 800, color: 'primary.dark', fontSize: { xs: '1.4rem', md: '1.75rem' } }}>Spray Job — {job.reference}</Typography>
+          <Typography variant="body2" color="text.secondary">{client.name} &bull; {property.name} &bull; {field.name}</Typography>
+        </Box>
+        <IconButton aria-label="Archive job" size="small" onClick={() => setArchiveConfirm(true)} sx={{ color: 'error.main' }}><DeleteIcon fontSize="small" /></IconButton>
+      </Box>
+      <Stack spacing={3}>
+        <Card elevation={0} sx={{ border: `1.5px solid ${alpha(theme.palette.primary.main, 0.1)}`, borderRadius: '16px' }}>
+          <CardContent sx={{ p: 3 }}>
+            <Typography variant="subtitle1" fontWeight={700} color="primary.dark" sx={{ mb: 2 }}>Job Details</Typography>
+            <Stack spacing={1}>
+              <InfoRow label="Reference" value={job.reference} />
+              <InfoRow label="Scope / Weed Target" value={job.scope || '—'} />
+              <InfoRow label="Status" value={job.status} />
+              <InfoRow label="Requested Date" value={displayDate(job.requestedDate)} />
+              <InfoRow label="Scheduled Date" value={displayDate(job.scheduledDate)} />
+              <InfoRow label="Notes" value={job.notes || '—'} />
+            </Stack>
+          </CardContent>
+        </Card>
+        <Alert severity="info">Outcomes, reports, financials and compliance records are unavailable until their authoritative Production Beta slices are connected. Chemical, weather, spray recommendation and actual/quote data are not shown as server data.</Alert>
+      </Stack>
+      <Dialog open={archiveConfirm} onClose={() => setArchiveConfirm(false)} PaperProps={{ sx: { borderRadius: '16px' } }}>
+        <DialogTitle sx={{ fontWeight: 700 }}>Archive Job?</DialogTitle>
+        <DialogContent><Typography variant="body2">This will archive <strong>{job.reference}</strong>. Active missions or field links may prevent archival.</Typography></DialogContent>
+        <DialogActions sx={{ px: 3, pb: 2.5 }}>
+          <Button onClick={() => setArchiveConfirm(false)}>Cancel</Button>
+          <Button variant="contained" color="error" onClick={() => void archive()} disabled={operational.saving}>{operational.saving ? 'Saving…' : 'Archive'}</Button>
+        </DialogActions>
+      </Dialog>
+    </Box>
+  );
+}
+
+function InfoRow({ label, value }: { label: string; value: string }) {
+  return <Box sx={{ display: 'flex', gap: 2, py: 0.75 }}><Typography variant="body2" color="text.secondary" sx={{ minWidth: 140, fontWeight: 600 }}>{label}</Typography><Typography variant="body2">{value}</Typography></Box>;
+}
+
+function LocalJobDetail() {
   const { clientId, propertyId, fieldId, jobId } = useParams<{
     clientId: string; propertyId: string; fieldId: string; jobId: string;
   }>();

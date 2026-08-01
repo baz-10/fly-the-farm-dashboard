@@ -94,20 +94,27 @@ jest.mock('./pages/SprayRecImport', () => () => <div>Legacy browser spray recomm
 describe('App', () => {
   afterEach(cleanup);
 
-  test.each([
-    ['/jobs/history', 'Job History'],
-    ['/jobs/import', 'Import Spray Rec'],
-    ['/jobs/client/client-1/property/property-1/field/field-1/new-job', 'Record Job'],
-    ['/jobs/client/client-1/property/property-1/field/field-1/job/job-1', 'Job Details'],
-  ])('gates direct remote navigation to %s before legacy browser data can render', (path, feature) => {
+  test('keeps Spray Rec Import gated in remote mode', () => {
     mockOperationalMode = 'remote';
-    window.history.pushState({}, '', path);
+    window.history.pushState({}, '', '/jobs/import');
 
     render(<App />);
 
-    expect(screen.getByRole('heading', { name: feature })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Import Spray Rec' })).toBeInTheDocument();
     expect(screen.getByText(/not yet connected to production data/i)).toBeInTheDocument();
     expect(screen.queryByText(/Legacy browser/i)).not.toBeInTheDocument();
+  });
+
+  test.each([
+    ['/jobs/history', 'Legacy browser job history'],
+    ['/jobs/client/client-1/property/property-1/field/field-1/new-job', 'Legacy browser job creator'],
+    ['/jobs/client/client-1/property/property-1/field/field-1/job/job-1', 'Legacy browser job detail'],
+  ])('connects direct remote navigation to %s after the screen owns authoritative records', (path, expected) => {
+    mockOperationalMode = 'remote';
+    window.history.pushState({}, '', path);
+    render(<App />);
+    expect(screen.getByText(expected)).toBeInTheDocument();
+    expect(screen.queryByText(/not yet connected to production data/i)).not.toBeInTheDocument();
   });
 
   test('preserves the existing Job History route in local development mode', () => {

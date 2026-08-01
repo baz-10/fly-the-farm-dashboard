@@ -12,6 +12,7 @@ import {
   MenuItem,
   alpha,
   useTheme,
+  Alert,
 } from '@mui/material';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import CalendarTodayIcon from '@mui/icons-material/CalendarToday';
@@ -29,8 +30,77 @@ import {
   getFields,
   getOutcomeByJob,
 } from '../services/fieldManagementStore';
+import { useOperationalData } from '../contexts/OperationalDataContext';
 
 export default function JobHistory() {
+  const operational = useOperationalData();
+  return operational.mode === 'remote' ? <AuthoritativeJobHistory /> : <LocalJobHistory />;
+}
+
+function AuthoritativeJobHistory() {
+  const navigate = useNavigate();
+  const theme = useTheme();
+  const operational = useOperationalData();
+  const [search, setSearch] = useState('');
+  const [clientFilter, setClientFilter] = useState('');
+  const clients = operational.clients;
+  const clientMap = useMemo(() => new Map(clients.map((client) => [client.id, client])), [clients]);
+  const propertyMap = useMemo(() => new Map(operational.properties.map((property) => [property.id, property])), [operational.properties]);
+  const fieldMap = useMemo(() => new Map(operational.fields.map((field) => [field.id, field])), [operational.fields]);
+  const jobs = useMemo(() => [...operational.jobs].sort((a, b) =>
+    (b.scheduledDate || b.requestedDate || b.createdAt).localeCompare(a.scheduledDate || a.requestedDate || a.createdAt)), [operational.jobs]);
+  const filteredJobs = useMemo(() => jobs.filter((job) => {
+    if (clientFilter && job.clientId !== clientFilter) return false;
+    if (!search.trim()) return true;
+    const query = search.toLowerCase();
+    return [job.reference, job.scope, job.status, job.notes, clientMap.get(job.clientId)?.name,
+      propertyMap.get(job.propertyId)?.name, ...job.fieldIds.map((id) => fieldMap.get(id)?.name)]
+      .filter(Boolean).join(' ').toLowerCase().includes(query);
+  }), [clientFilter, clientMap, fieldMap, jobs, propertyMap, search]);
+
+  if (operational.status === 'loading') return <Alert severity="info">Loading job history…</Alert>;
+  if (operational.status === 'error' || operational.status === 'unauthorised') {
+    return <Alert severity="error">{operational.status === 'unauthorised' ? 'You are not authorised to view job history.' : 'Authoritative job history could not be loaded.'}</Alert>;
+  }
+  return (
+    <Box>
+      <Button startIcon={<ArrowBackIcon />} onClick={() => navigate('/jobs')} sx={{ mb: 3, color: 'text.secondary', fontWeight: 600 }}>All Clients</Button>
+      <Box className="ftf-animate-in" sx={{ mb: 3 }}>
+        <Typography variant="h4" sx={{ fontWeight: 800, color: 'primary.dark', fontSize: { xs: '1.5rem', md: '2rem' }, mb: 0.5 }}>Job History</Typography>
+        <Typography variant="body2" color="text.secondary">{jobs.length} job{jobs.length !== 1 ? 's' : ''} across all clients</Typography>
+      </Box>
+      <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} sx={{ mb: 3 }}>
+        <TextField placeholder="Search jobs..." value={search} onChange={(event) => setSearch(event.target.value)} size="small" sx={{ maxWidth: 300 }} />
+        <TextField select label="Client" value={clientFilter} onChange={(event) => setClientFilter(event.target.value)} size="small" sx={{ minWidth: 180 }}>
+          <MenuItem value="">All Clients</MenuItem>{clients.map((client) => <MenuItem key={client.id} value={client.id}>{client.name}</MenuItem>)}
+        </TextField>
+      </Stack>
+      <Alert severity="info" sx={{ mb: 2 }}>Outcome filters and efficacy records are unavailable until the authoritative outcome slice is connected.</Alert>
+      {filteredJobs.length === 0 ? (
+        <Card elevation={0} sx={{ border: `1.5px dashed ${alpha(theme.palette.primary.main, 0.15)}`, borderRadius: '14px' }}>
+          <CardContent sx={{ textAlign: 'center', py: 5 }}><AssignmentIcon sx={{ fontSize: 40, color: alpha(theme.palette.text.secondary, 0.3), mb: 1.5 }} /><Typography variant="body2" color="text.secondary">{jobs.length === 0 ? 'No spray jobs recorded yet.' : 'No jobs match your filters.'}</Typography></CardContent>
+        </Card>
+      ) : (
+        <Stack spacing={2}>
+          {filteredJobs.map((job) => {
+            const firstFieldId = job.fieldIds[0];
+            return <Card key={job.id} elevation={0} onClick={() => navigate(`/jobs/client/${job.clientId}/property/${job.propertyId}/field/${firstFieldId}/job/${job.id}`)}
+              sx={{ border: `1.5px solid ${alpha(theme.palette.primary.main, 0.1)}`, borderRadius: '14px', cursor: 'pointer' }}>
+              <CardContent sx={{ p: 2.5 }}>
+                <Stack direction="row" justifyContent="space-between" spacing={2}>
+                  <Box><Typography variant="subtitle2" fontWeight={700}>{job.reference}</Typography><Typography variant="body2" color="text.secondary">{job.scope || 'No scope recorded'}</Typography><Typography variant="caption" color="text.secondary">{clientMap.get(job.clientId)?.name} &bull; {propertyMap.get(job.propertyId)?.name} &bull; {job.fieldIds.map((id) => fieldMap.get(id)?.name).filter(Boolean).join(', ')}</Typography></Box>
+                  <Chip label={job.status} size="small" variant="outlined" />
+                </Stack>
+              </CardContent>
+            </Card>;
+          })}
+        </Stack>
+      )}
+    </Box>
+  );
+}
+
+function LocalJobHistory() {
   const navigate = useNavigate();
   const theme = useTheme();
 

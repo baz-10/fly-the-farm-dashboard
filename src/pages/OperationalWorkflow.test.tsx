@@ -1,9 +1,12 @@
 import React from 'react';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import ClientList from './ClientList';
 import ClientDetail from './ClientDetail';
 import PropertyDetail from './PropertyDetail';
 import FieldDetail from './FieldDetail';
+import JobCreate from './JobCreate';
+import JobDetail from './JobDetail';
+import JobHistory from './JobHistory';
 
 const client = {
   id: 'client-1', contractorUserId: '', name: 'North Farm', phone: '', email: '', notes: '', rowVersion: 1,
@@ -16,6 +19,11 @@ const property = {
 const field = {
   id: 'field-1', propertyId: 'property-1', name: 'North Paddock', sizeHa: 12.5, boundary: null, notes: '', rowVersion: 1,
   createdAt: '2026-08-01T00:00:00Z', updatedAt: '2026-08-01T00:00:00Z',
+};
+const job = {
+  id: 'job-1', clientId: 'client-1', propertyId: 'property-1', fieldIds: ['field-1'], reference: 'JOB-42',
+  scope: 'Spray lantana', status: 'scheduled', notes: 'Morning access', requestedDate: '2026-08-08', scheduledDate: '2026-08-10',
+  rowVersion: 3, createdAt: '2026-08-01T00:00:00Z', updatedAt: '2026-08-02T00:00:00Z',
 };
 
 let mockOperational: any;
@@ -30,24 +38,36 @@ jest.mock('react-router-dom', () => ({
 jest.mock('../contexts/OperationalDataContext', () => ({ useOperationalData: () => mockOperational }));
 jest.mock('../contexts/AuthContext', () => ({ useAuth: () => ({ user: { id: 'user-1', role: 'contractor' } }) }));
 jest.mock('../components/AddressAutocomplete', () => () => <div>Address search</div>);
-jest.mock('../components/FieldBoundaryEditor', () => () => <div>Boundary editor</div>);
+jest.mock('../components/FieldBoundaryEditor', () => (props: any) => <div>
+  Boundary editor
+  <button onClick={() => props.onCoordsChange?.([[-27, 153], [-27, 154], [-28, 154]])}>Draw test boundary</button>
+</div>);
 jest.mock('../services/fieldManagementStore', () => ({
   getClients: () => [], getClientById: () => undefined, getPropertiesByClient: () => [], getPropertyById: () => undefined,
-  getFieldsByProperty: () => [], getFieldById: () => undefined, getJobsByField: () => [], getOutcomeByJob: () => undefined,
+  getFieldsByProperty: () => [], getFieldById: () => undefined, getJobsByField: () => [], getJobs: () => [], getJobById: () => undefined,
+  getOutcomeByJob: () => undefined,
   getClientSummary: () => ({ propertyCount: 0, fieldCount: 0, jobCount: 0, lastJobDate: null }),
   getPropertySummary: () => ({ fieldCount: 0, totalHa: 0, jobCount: 0, lastJobDate: null }),
   getFieldSummary: () => ({ jobCount: 0, lastJobDate: null, lastWeed: null, lastEfficacy: null }),
   saveClient: jest.fn(), saveProperty: jest.fn(), saveField: jest.fn(), updateClient: jest.fn(), updateProperty: jest.fn(),
-  updateField: jest.fn(), deleteClient: jest.fn(), deleteProperty: jest.fn(), deleteField: jest.fn(),
+  updateField: jest.fn(), deleteClient: jest.fn(), deleteProperty: jest.fn(), deleteField: jest.fn(), deleteJob: jest.fn(),
+  saveJob: jest.fn(), updateJob: jest.fn(), saveOutcome: jest.fn(), updateOutcome: jest.fn(),
 }));
+jest.mock('../services/financialsStore', () => ({ getActualByJobId: () => undefined }));
+jest.mock('../services/askFtfReportStore', () => ({ getReportsForJob: () => [] }));
+jest.mock('../services/quoteStore', () => ({ getQuoteById: () => undefined, updateQuote: jest.fn() }));
+jest.mock('../utils/clientReportPdf', () => ({ generateClientReportPdf: jest.fn() }));
 
 function baseOperational(overrides: Record<string, unknown> = {}) {
   return {
-    mode: 'remote', status: 'ready', clients: [client], properties: [property], fields: [field],
+    mode: 'remote', status: 'ready', clients: [client], properties: [property], fields: [field], jobs: [job],
+    operatingLocations: [], fieldBoundaryVersions: [],
     saving: false, savedAt: null, lastSaved: null, error: null, refresh: jest.fn(),
     createClient: jest.fn(), updateClient: jest.fn(), archiveClient: jest.fn().mockResolvedValue(undefined),
     createProperty: jest.fn(), updateProperty: jest.fn(), archiveProperty: jest.fn().mockResolvedValue(undefined),
     createField: jest.fn(), updateField: jest.fn(), archiveField: jest.fn().mockResolvedValue(undefined),
+    createJob: jest.fn().mockResolvedValue(job), updateJob: jest.fn(), archiveJob: jest.fn().mockResolvedValue(undefined),
+    refreshFieldBoundary: jest.fn().mockResolvedValue(null), createFieldBoundaryVersion: jest.fn().mockResolvedValue(undefined),
     ...overrides,
   };
 }
@@ -57,6 +77,7 @@ function route(path: string, element: React.ReactElement) {
     ...(path.includes('client-1') ? { clientId: 'client-1' } : {}),
     ...(path.includes('property-1') ? { propertyId: 'property-1' } : {}),
     ...(path.includes('field-1') ? { fieldId: 'field-1' } : {}),
+    ...(path.includes('job-1') ? { jobId: 'job-1' } : {}),
   };
   return render(element);
 }
@@ -116,7 +137,62 @@ describe('authoritative client/property/field workflow screens', () => {
     route('/jobs/client/client-1/property/property-1/field/field-1', <FieldDetail />);
     expect(screen.getByRole('heading', { name: 'North Paddock' })).toBeInTheDocument();
     expect(screen.getByText(/North Farm/)).toBeInTheDocument();
-    expect(screen.getByText(/job history is not connected in this production beta slice/i)).toBeInTheDocument();
+    expect(screen.getByText('Spray lantana')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Record Job' })).toBeEnabled();
+    expect(screen.queryByText(/job history is not connected/i)).not.toBeInTheDocument();
+  });
+
+  test('saves edited boundary geometry through the version command and reloads it on direct route', async () => {
+    route('/jobs/client/client-1/property/property-1/field/field-1', <FieldDetail />);
+    await waitFor(() => expect(mockOperational.refreshFieldBoundary).toHaveBeenCalledWith('field-1'));
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh boundary' }));
+    await waitFor(() => expect(mockOperational.refreshFieldBoundary).toHaveBeenCalledTimes(2));
+    fireEvent.click(screen.getByRole('button', { name: 'Edit field' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Draw test boundary' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(mockOperational.createFieldBoundaryVersion).toHaveBeenCalledWith(
+      'field-1', [[-27, 153], [-27, 154], [-28, 154]],
+    ));
+  });
+
+  test('creates a remote job from authoritative route parents and supported workflow values', async () => {
+    route('/jobs/client/client-1/property/property-1/field/field-1/new-job', <JobCreate />);
+    fireEvent.change(screen.getByRole('textbox', { name: 'Job Reference' }), { target: { value: 'JOB-99' } });
+    fireEvent.change(screen.getByRole('combobox', { name: 'Weed Target' }), { target: { value: 'Spray lantana' } });
+    fireEvent.change(screen.getByRole('textbox', { name: 'Notes' }), { target: { value: 'Gate code 2' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save Job' }));
+    await waitFor(() => expect(mockOperational.createJob).toHaveBeenCalledWith(expect.objectContaining({
+      clientId: 'client-1', propertyId: 'property-1', fieldIds: ['field-1'], reference: 'JOB-99',
+      scope: 'Spray lantana', notes: 'Gate code 2', scheduledDate: expect.any(String),
+    })));
+  });
+
+  test('blocks remote save when an unsupported operator value was entered', async () => {
+    route('/jobs/client/client-1/property/property-1/field/field-1/new-job', <JobCreate />);
+    fireEvent.change(screen.getByRole('textbox', { name: 'Job Reference' }), { target: { value: 'JOB-99' } });
+    fireEvent.change(screen.getByRole('combobox', { name: 'Weed Target' }), { target: { value: 'Spray lantana' } });
+    fireEvent.change(screen.getByRole('textbox', { name: 'Drone Model' }), { target: { value: 'T50' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save Job' }));
+    expect(mockOperational.createJob).not.toHaveBeenCalled();
+    expect(await screen.findByText(/chemical, weather, spray recommendation, operator, quote and compliance values are not yet supported/i)).toBeInTheDocument();
+  });
+
+  test('loads and archives authoritative job detail without presenting local subrecords as server data', async () => {
+    route('/jobs/client/client-1/property/property-1/field/field-1/job/job-1', <JobDetail />);
+    expect(screen.getByRole('heading', { name: /JOB-42/ })).toBeInTheDocument();
+    expect(screen.getByText(/outcomes, reports, financials and compliance records are unavailable/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Archive job' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Archive' }));
+    await waitFor(() => expect(mockOperational.archiveJob).toHaveBeenCalledWith('job-1'));
+  });
+
+  test('job history lists authoritative jobs and distinguishes failed load from empty', () => {
+    route('/jobs/history', <JobHistory />);
+    expect(screen.getByText('JOB-42')).toBeInTheDocument();
+
+    mockOperational = baseOperational({ status: 'error', jobs: [], clients: [], properties: [], fields: [] });
+    route('/jobs/history', <JobHistory />);
+    expect(screen.getByText(/job history could not be loaded/i)).toBeInTheDocument();
     expect(screen.queryByText(/No spray jobs recorded yet/i)).not.toBeInTheDocument();
   });
 
