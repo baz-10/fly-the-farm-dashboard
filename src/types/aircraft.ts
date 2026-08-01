@@ -6,6 +6,8 @@ export type PricingModel = 'included' | 'per-hour' | 'per-hectare' | 'daily-rate
 // Core aircraft interface
 export interface Aircraft {
   id: string;
+  /** Authoritative Production Beta operating-location scope. */
+  operatingLocationId?: string;
   registration: string;
   manufacturer: string;
   model: string;
@@ -35,6 +37,10 @@ export interface Aircraft {
   };
 
   status: AircraftStatus;
+  serviceabilityState?: 'serviceable' | 'unserviceable' | 'inspection_required' | 'maintenance_required';
+  missionReady?: boolean;
+  notes?: string;
+  rowVersion?: number;
   assignedKits: string[]; // Equipment kit IDs currently installed
 
   // Operational limits and capabilities
