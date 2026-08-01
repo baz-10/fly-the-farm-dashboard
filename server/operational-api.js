@@ -323,6 +323,12 @@ function createOperationalHandler(resource, dependencies = {}) {
         return res.status(200).json({ data: mapDatabaseRecord(resource, result.record) });
       }
       assertPermission(context, resource, 'archive');
+      if (resource === 'missions') {
+        const existing = await repository.get(resource, context, id);
+        if (!existing || existing.archived_at || !hasAssignedLocationReadAccess(resource, context, existing)) {
+          throw apiError(404, 'NOT_FOUND', 'Operational record not found.');
+        }
+      }
       if (await repository.hasActiveDependencies(resource, context, id)) {
         throw apiError(409, 'ARCHIVE_CONFLICT', 'Archive dependent active records before archiving this record.');
       }

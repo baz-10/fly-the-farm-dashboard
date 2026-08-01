@@ -70,3 +70,22 @@ RET-006, RET-007, RET-008, IMP-004, IMP-005, IMP-006, NEW-001, NEW-003, NEW-005,
 - Backend integration: `npm test -- --runInBand src/__tests__/trustedOperationalApi.test.js src/__tests__/liveChainAccessApi.test.js src/__tests__/liveChainWorkflowApi.test.js src/__tests__/liveChainFixRoundApi.test.js src/__tests__/liveChainBackendPglite.test.js` — 5 suites, 47 tests passed.
 - Full non-watch suite: `CI=true npm test -- --runInBand --watchAll=false` — 51 suites, 312 tests passed, 0 failures.
 - Production build: `npm run build` — exit 0, compiled successfully with the same pre-existing lint, Browserslist and bundle-size warnings recorded above.
+
+## Review fix round 2
+
+### Delivered
+
+- Mission archive requests retain the existing `missions.archive` permission check, then load the target through the assigned-location-scoped repository read before dependency checks or archive writes. Missing, archived or inaccessible missions return the same 404 envelope without invoking either downstream operation.
+- Added forward-only migration `20260801011000_mission_archive_location_scope.sql`; no earlier migration was modified. It wraps the current public trusted generic writer and acquires the transaction advisory lock plus active-organisation row lock before checking the actor's active beta seat.
+- Trusted mission archives now require the active mission, its active same-organisation operating location, the actor's active same-organisation membership and an active location assignment. Those rows are locked for the transaction before the previous trusted writer is called.
+- An inaccessible archive returns `not_found` without exposing version state and without reaching mission mutation, audit or outbox writes. Accessible archives continue through the existing version, active-dependency, audit and transactional-outbox implementation.
+- The PGlite regression proves a member can archive a mission at an assigned location and cannot archive another location's mission by ID/version; denial preserves Planning status, `archived_at`, row version, audit count and outbox count.
+
+### TDD and verification evidence
+
+- Fix-round RED: focused API and PGlite suites ran with 12 passing and 3 expected failures. The handler skipped `repository.get`, the inaccessible request reached the archive path, and the trusted SQL writer archived an unassigned-location mission by ID/version.
+- Focused GREEN: `npm test -- --runInBand src/__tests__/liveChainAccessApi.test.js src/__tests__/liveChainBackendPglite.test.js` — 2 suites, 15 tests passed.
+- Backend integration: `npm test -- --runInBand src/__tests__/trustedOperationalApi.test.js src/__tests__/liveChainAccessApi.test.js src/__tests__/liveChainWorkflowApi.test.js src/__tests__/liveChainFixRoundApi.test.js src/__tests__/liveChainBackendPglite.test.js` — 5 suites, 49 tests passed.
+- Full non-watch suite: `CI=true npm test -- --runInBand --watchAll=false` — 51 suites, 314 tests passed, 0 failures. Console output remains the intentional logging from existing security-fix tests.
+- Production build: `npm run build` — exit 0, compiled successfully with the same pre-existing lint, Browserslist and bundle-size warnings recorded above.
+- Deployment must apply migration `20260801011000_mission_archive_location_scope.sql` before or with the server archive-handler release so both the API path and direct trusted RPC path enforce assigned-location scope.

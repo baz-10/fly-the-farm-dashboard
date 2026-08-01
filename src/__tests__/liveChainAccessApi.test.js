@@ -175,6 +175,65 @@ describe('live-chain access prerequisites', () => {
     expect(res.body.error.code).toBe('NOT_FOUND');
   });
 
+  test('archives a mission only after loading it through assigned-location scope', async () => {
+    const missionId = '77777777-7777-4777-8777-777777777777';
+    const repository = {
+      get: jest.fn().mockResolvedValue({
+        id: missionId,
+        operating_location_id: '33333333-3333-4333-8333-333333333333',
+        mission_number: 'M-ASSIGNED',
+        status: 'planning',
+        row_version: 1,
+      }),
+      hasActiveDependencies: jest.fn().mockResolvedValue(false),
+      archive: jest.fn().mockResolvedValue({ record: {
+        id: missionId,
+        operating_location_id: '33333333-3333-4333-8333-333333333333',
+        mission_number: 'M-ASSIGNED',
+        status: 'planning',
+        row_version: 2,
+      } }),
+    };
+    const handler = createOperationalHandler('missions', {
+      resolveContext: jest.fn().mockResolvedValue(context({
+        permissions: ['missions.archive'],
+      })),
+      repository,
+    });
+    const res = createResponse();
+
+    await handler(request('DELETE', { expectedVersion: 1 }, { id: missionId }), res);
+
+    expect(res.statusCode).toBe(200);
+    expect(repository.get).toHaveBeenCalledWith('missions', expect.any(Object), missionId);
+    expect(repository.hasActiveDependencies).toHaveBeenCalledWith('missions', expect.any(Object), missionId);
+    expect(repository.archive).toHaveBeenCalledWith('missions', expect.any(Object), missionId, 1);
+  });
+
+  test('returns 404 before dependency or archive writes for an unassigned mission', async () => {
+    const missionId = '88888888-8888-4888-8888-888888888888';
+    const repository = {
+      get: jest.fn().mockResolvedValue(null),
+      hasActiveDependencies: jest.fn(),
+      archive: jest.fn(),
+    };
+    const handler = createOperationalHandler('missions', {
+      resolveContext: jest.fn().mockResolvedValue(context({
+        permissions: ['missions.archive'],
+      })),
+      repository,
+    });
+    const res = createResponse();
+
+    await handler(request('DELETE', { expectedVersion: 1 }, { id: missionId }), res);
+
+    expect(res.statusCode).toBe(404);
+    expect(res.body.error.code).toBe('NOT_FOUND');
+    expect(repository.get).toHaveBeenCalledWith('missions', expect.any(Object), missionId);
+    expect(repository.hasActiveDependencies).not.toHaveBeenCalled();
+    expect(repository.archive).not.toHaveBeenCalled();
+  });
+
   test('keeps seat-denied errors distinct in API envelopes', async () => {
     const handler = createOperationalHandler('operating_locations', {
       resolveContext: jest.fn().mockRejectedValue(Object.assign(createHttpError(403, 'Your Fly the Farm seat is revoked.'), { code: 'SEAT_INACTIVE' })),

@@ -17,6 +17,7 @@ const workflowMigrationPath = resolve(scriptDirectory, '../supabase/migrations/2
 const reviewFixMigrationPath = resolve(scriptDirectory, '../supabase/migrations/20260801008000_live_chain_review_fixes.sql');
 const reviewFollowupMigrationPath = resolve(scriptDirectory, '../supabase/migrations/20260801009000_live_chain_review_followup.sql');
 const resolutionAtomicityMigrationPath = resolve(scriptDirectory, '../supabase/migrations/20260801010000_boundary_resolution_atomicity.sql');
+const missionArchiveScopeMigrationPath = resolve(scriptDirectory, '../supabase/migrations/20260801011000_mission_archive_location_scope.sql');
 
 async function expectRejected(db, label, sql) {
   try {
@@ -78,6 +79,7 @@ try {
   await db.exec(await readFile(reviewFixMigrationPath, 'utf8'));
   await db.exec(await readFile(reviewFollowupMigrationPath, 'utf8'));
   await db.exec(await readFile(resolutionAtomicityMigrationPath, 'utf8'));
+  await db.exec(await readFile(missionArchiveScopeMigrationPath, 'utf8'));
 
   const legacyRepair = await db.query(`
     select
@@ -468,6 +470,45 @@ try {
 
   await db.exec(`insert into public.operating_locations (id, organisation_id, name)
     values ('00000000-0000-0000-0000-000000001003', '00000000-0000-0000-0000-000000000001', 'Unassigned base');`);
+  await db.exec(`insert into public.missions (
+    id, organisation_id, job_id, operating_location_id, mission_number, title, status
+  ) values (
+    '00000000-0000-0000-0000-000000000702',
+    '00000000-0000-0000-0000-000000000001',
+    '00000000-0000-0000-0000-000000000601',
+    '00000000-0000-0000-0000-000000001003',
+    'M-UNASSIGNED', 'Unassigned mission', 'planning'
+  );`);
+  const assignedMissionArchive = await db.query(`select public.ftf_write_operational_resource(
+    '00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000101',
+    'missions', 'archive', '00000000-0000-0000-0000-000000000701', 1, '{}'::jsonb
+  ) as result;`);
+  if (assignedMissionArchive.rows[0]?.result?.record?.id !== '00000000-0000-0000-0000-000000000701'
+    || !assignedMissionArchive.rows[0]?.result?.record?.archived_at) {
+    throw new Error('member could not archive a mission at an assigned operating location');
+  }
+  const unassignedMissionArchive = await db.query(`select public.ftf_write_operational_resource(
+    '00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000101',
+    'missions', 'archive', '00000000-0000-0000-0000-000000000702', 1, '{}'::jsonb
+  ) as result;`);
+  if (unassignedMissionArchive.rows[0]?.result?.not_found !== true) {
+    throw new Error('member archived a mission at an unassigned operating location by ID and version');
+  }
+  const deniedMissionArchiveState = await db.query(`select
+    (select status from public.missions where id = '00000000-0000-0000-0000-000000000702') as status,
+    (select archived_at from public.missions where id = '00000000-0000-0000-0000-000000000702') as archived_at,
+    (select row_version from public.missions where id = '00000000-0000-0000-0000-000000000702') as row_version,
+    (select count(*)::integer from public.audit_events
+      where event_type = 'missions.archive' and entity_id = '00000000-0000-0000-0000-000000000702') as audit_count,
+    (select count(*)::integer from public.transactional_outbox
+      where topic = 'operational.missions.archive' and aggregate_id = '00000000-0000-0000-0000-000000000702') as outbox_count;`);
+  if (deniedMissionArchiveState.rows[0]?.status !== 'planning'
+    || deniedMissionArchiveState.rows[0]?.archived_at !== null
+    || deniedMissionArchiveState.rows[0]?.row_version !== 1
+    || deniedMissionArchiveState.rows[0]?.audit_count !== 0
+    || deniedMissionArchiveState.rows[0]?.outbox_count !== 0) {
+    throw new Error('denied mission archive changed mission, audit, or outbox state');
+  }
   const unassignedMission = await db.query(`select public.ftf_write_operational_resource(
     '00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000101',
     'missions', 'create', null, null,
