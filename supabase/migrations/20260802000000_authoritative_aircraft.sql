@@ -84,6 +84,52 @@ alter table public.aircraft force row level security;
 revoke all on table public.aircraft from public, anon, authenticated;
 grant select, insert, update, delete on table public.aircraft to service_role;
 
+create function public.ftf_provision_aircraft_admin_permissions()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if new.code <> 'admin' then return new; end if;
+  insert into public.permissions (organisation_id, code, description)
+  select new.organisation_id, code, description from (values
+    ('aircraft.read', 'View aircraft'), ('aircraft.create', 'Create aircraft'),
+    ('aircraft.update', 'Update aircraft'), ('aircraft.archive', 'Archive aircraft'),
+    ('aircraft.serviceability', 'Change aircraft serviceability and mission readiness')
+  ) values_to_add(code, description)
+  on conflict (organisation_id, code) do nothing;
+  insert into public.role_permissions (organisation_id, role_id, permission_id)
+  select new.organisation_id, new.id, permission.id from public.permissions permission
+  where permission.organisation_id = new.organisation_id and permission.code like 'aircraft.%'
+  on conflict (organisation_id, role_id, permission_id) do nothing;
+  return new;
+end;
+$$;
+
+create trigger roles_provision_aircraft_admin_permissions
+after insert on public.roles for each row execute function public.ftf_provision_aircraft_admin_permissions();
+
+insert into public.permissions (organisation_id, code, description)
+select organisation.id, values_to_add.code, values_to_add.description
+from public.organisations organisation
+cross join (values
+  ('aircraft.read', 'View aircraft'), ('aircraft.create', 'Create aircraft'),
+  ('aircraft.update', 'Update aircraft'), ('aircraft.archive', 'Archive aircraft'),
+  ('aircraft.serviceability', 'Change aircraft serviceability and mission readiness')
+) values_to_add(code, description)
+where organisation.archived_at is null
+on conflict (organisation_id, code) do nothing;
+
+insert into public.role_permissions (organisation_id, role_id, permission_id)
+select role.organisation_id, role.id, permission.id
+from public.roles role
+join public.permissions permission on permission.organisation_id = role.organisation_id and permission.code like 'aircraft.%'
+where role.code = 'admin' and role.archived_at is null
+on conflict (organisation_id, role_id, permission_id) do nothing;
+
+revoke all on function public.ftf_provision_aircraft_admin_permissions() from public, anon, authenticated;
+
 alter function public.ftf_write_operational_resource(uuid, uuid, text, text, uuid, integer, jsonb)
   rename to ftf_write_operational_resource_before_aircraft;
 

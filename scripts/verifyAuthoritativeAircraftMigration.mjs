@@ -45,6 +45,10 @@ try {
       ('10000000-0000-0000-0000-000000001002', '10000000-0000-0000-0000-000000000001', 'Unassigned base'),
       ('20000000-0000-0000-0000-000000002001', '20000000-0000-0000-0000-000000000002', 'Other base');
   `);
+  const permissions = await db.query(`select count(*)::int as count from public.role_permissions rp
+    join public.permissions p on p.organisation_id=rp.organisation_id and p.id=rp.permission_id
+    where rp.organisation_id='10000000-0000-0000-0000-000000000001' and p.code like 'aircraft.%';`);
+  if (permissions.rows[0]?.count !== 5) throw new Error('new Production Beta admin role did not receive Aircraft permissions');
   await db.exec(`
     select public.ftf_seed_internal_beta_access('10000000-0000-0000-0000-000000000001','10000000-0000-0000-0000-000000000101');
     select public.ftf_seed_internal_beta_access('20000000-0000-0000-0000-000000000002','20000000-0000-0000-0000-000000000202');
