@@ -16,10 +16,7 @@
     "api/store.js": {
       "maxDuration": 15
     },
-    "api/v1/operating-locations.js": {
-      "maxDuration": 15
-    },
-    "api/v1/field-boundary-versions.js": {
+    "api/v1/[resource].js": {
       "maxDuration": 15
     }
   },
