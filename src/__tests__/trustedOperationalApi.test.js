@@ -126,6 +126,31 @@ describe('trusted organisation operational API', () => {
     global.fetch = originalFetch;
   });
 
+  test('does not grant permissions from archived roles or archived permissions', async () => {
+    const originalFetch = global.fetch;
+    process.env.SUPABASE_URL = 'https://example.supabase.co';
+    process.env.SUPABASE_ANON_KEY = 'anon-key';
+    process.env.SUPABASE_SERVICE_ROLE_KEY = 'service-key';
+    global.fetch = jest.fn(async (url) => ({
+      ok: true,
+      status: 200,
+      text: async () => {
+        if (url.endsWith('/auth/v1/user')) return JSON.stringify({ id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' });
+        if (url.includes('/internal_users')) return JSON.stringify([{ id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', organisation_id: '11111111-1111-4111-8111-111111111111', display_name: 'A' }]);
+        if (url.includes('/memberships')) return JSON.stringify([{ role_id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc' }]);
+        if (url.includes('/roles')) return JSON.stringify([{ id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc', code: 'operator' }]);
+        if (url.includes('/role_permissions')) return JSON.stringify([{ permissions: { code: 'clients.create', archived_at: '2026-01-01T00:00:00Z' } }]);
+        if (url.includes('/organisations')) return JSON.stringify([{ id: '11111111-1111-4111-8111-111111111111', name: 'Farm A' }]);
+        return JSON.stringify([]);
+      },
+    }));
+
+    const resolved = await resolveRequestContext({ headers: { cookie: 'ftf_access_token=trusted-token' } });
+
+    expect(resolved.permissions).toEqual([]);
+    global.fetch = originalFetch;
+  });
+
   test('rejects a cross-tenant property assignment before creating a job', async () => {
     const repository = {
       relationshipExists: jest.fn().mockResolvedValue(false),
@@ -155,6 +180,43 @@ describe('trusted organisation operational API', () => {
 
     expect(res.statusCode).toBe(409);
     expect(res.body).toEqual({ error: { code: 'VERSION_CONFLICT', message: 'This record changed before your update.', meta: { currentVersion: 5 } } });
+  });
+
+  test('returns 404 when the record disappears after the pre-update read', async () => {
+    const repository = { get: jest.fn().mockResolvedValue({ id: '33333333-3333-4333-8333-333333333333', name: 'Old', row_version: 4 }), update: jest.fn().mockResolvedValue({ notFound: true }) };
+    const res = createResponse();
+
+    await handlerFor('clients', repository)(request('PATCH', {
+      expectedVersion: 4,
+      name: 'New',
+    }, { id: '33333333-3333-4333-8333-333333333333' }), res);
+
+    expect(res.statusCode).toBe(404);
+    expect(res.body.error.code).toBe('NOT_FOUND');
+  });
+
+  test('rejects a write whose origin matches host but not the trusted HTTPS origin', async () => {
+    const repository = { create: jest.fn() };
+    const req = request('POST', { name: 'Client A' });
+    req.headers = { host: 'farm.example', origin: 'http://farm.example' };
+    const res = createResponse();
+
+    await handlerFor('clients', repository)(req, res);
+
+    expect(res.statusCode).toBe(403);
+    expect(res.body.error.code).toBe('SAME_ORIGIN_REQUIRED');
+    expect(repository.create).not.toHaveBeenCalled();
+  });
+
+  test('rejects typed-invalid resource input with a 400 envelope', async () => {
+    const repository = { create: jest.fn() };
+    const res = createResponse();
+
+    await handlerFor('clients', repository)(request('POST', { name: { value: 'Client A' } }), res);
+
+    expect(res.statusCode).toBe(400);
+    expect(res.body.error.code).toBe('VALIDATION_ERROR');
+    expect(repository.create).not.toHaveBeenCalled();
   });
 
   test('rejects a client archive while active properties remain', async () => {

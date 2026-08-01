@@ -92,6 +92,8 @@ class OperationalRepository {
       publicMessage: 'Operational record could not be saved.',
     });
     if (result?.conflict) return { conflict: true, currentVersion: result.current_version };
+    if (result?.not_found) return { notFound: true };
+    if (result?.archive_conflict) return { archiveConflict: true };
     return { record: result?.record || result };
   }
 }

@@ -64,11 +64,12 @@ async function resolveRequestContext(req) {
     `id=in.(${roleIds.map(encodeURIComponent).join(',')})`,
     'archived_at=is.null',
   ], 'id,code') : [];
-  const permissions = roleIds.length ? await query('role_permissions', [
+  const activeRoleIds = (Array.isArray(roles) ? roles : []).map((role) => role.id).filter(Boolean);
+  const permissions = activeRoleIds.length ? await query('role_permissions', [
     `organisation_id=eq.${encodeURIComponent(internalUser.organisation_id)}`,
-    `role_id=in.(${roleIds.map(encodeURIComponent).join(',')})`,
+    `role_id=in.(${activeRoleIds.map(encodeURIComponent).join(',')})`,
     'archived_at=is.null',
-  ], 'permissions!inner(code)') : [];
+  ], 'permissions!inner(code,archived_at)') : [];
   const organisation = firstRow(await query('organisations', [
     `id=eq.${encodeURIComponent(internalUser.organisation_id)}`,
     'archived_at=is.null',
@@ -88,12 +89,13 @@ async function resolveRequestContext(req) {
     internalUser: { id: internalUser.id, name: internalUser.display_name },
     roles: (Array.isArray(roles) ? roles : []).map((role) => role.code).filter(Boolean),
     permissions: (Array.isArray(permissions) ? permissions : [])
+      .filter((entry) => entry.permissions?.archived_at == null)
       .map((entry) => entry.permissions?.code)
       .filter(Boolean),
     // No membership-to-location relation exists in the foundation schema, so no
     // location access is inferred until one is explicitly represented.
     operatingLocationIds: [],
-    entitlement: { tier: profile?.tier || null, seatActive: true },
+    entitlement: { tier: profile?.tier || null, seatActive: null },
   };
 }
 

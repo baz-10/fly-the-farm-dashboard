@@ -30,9 +30,11 @@ function assertSameOrigin(req) {
   const origin = String(req.headers?.origin || '');
   const host = String(req.headers?.['x-forwarded-host'] || req.headers?.host || '');
   if (!origin || !host) throw apiError(403, 'SAME_ORIGIN_REQUIRED', 'Same-origin requests are required.');
-  let originHost;
-  try { originHost = new URL(origin).host; } catch { throw apiError(403, 'SAME_ORIGIN_REQUIRED', 'Same-origin requests are required.'); }
-  if (originHost !== host) throw apiError(403, 'SAME_ORIGIN_REQUIRED', 'Same-origin requests are required.');
+  const forwardedProto = String(req.headers?.['x-forwarded-proto'] || '').split(',')[0].trim();
+  const protocol = forwardedProto || (host.startsWith('localhost') || host.startsWith('127.0.0.1') ? 'http' : 'https');
+  let trustedOrigin;
+  try { trustedOrigin = new URL(`${protocol}://${host}`).origin; } catch { throw apiError(403, 'SAME_ORIGIN_REQUIRED', 'Same-origin requests are required.'); }
+  if (origin !== trustedOrigin) throw apiError(403, 'SAME_ORIGIN_REQUIRED', 'Same-origin requests are required.');
 }
 
 function parseBody(req) {
@@ -83,10 +85,24 @@ function mapInput(resource, body, existing) {
   const baseline = existing ? mapDatabaseRecord(resource, existing) : {};
   const merged = { ...baseline, ...body };
   schema.required.forEach((field) => {
-    if (merged[field] === undefined || merged[field] === null || String(merged[field]).trim() === '') {
+    if (typeof merged[field] !== 'string' || merged[field].trim() === '') {
       throw apiError(400, 'VALIDATION_ERROR', `${field} is required.`);
     }
   });
+  ['contactName', 'contactEmail', 'contactPhone', 'address', 'status', 'scheduledStartAt'].forEach((field) => {
+    if (merged[field] !== undefined && merged[field] !== null && typeof merged[field] !== 'string') {
+      throw apiError(400, 'VALIDATION_ERROR', `${field} must be a string.`);
+    }
+  });
+  if (merged.contactEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(merged.contactEmail)) {
+    throw apiError(400, 'VALIDATION_ERROR', 'contactEmail must be a valid email address.');
+  }
+  if (merged.areaHectares !== undefined && merged.areaHectares !== null && (!Number.isFinite(Number(merged.areaHectares)) || Number(merged.areaHectares) < 0)) {
+    throw apiError(400, 'VALIDATION_ERROR', 'areaHectares must be a non-negative number.');
+  }
+  if (merged.scheduledStartAt && Number.isNaN(Date.parse(merged.scheduledStartAt))) {
+    throw apiError(400, 'VALIDATION_ERROR', 'scheduledStartAt must be a valid ISO date-time.');
+  }
   ['clientId', 'propertyId', 'fieldBoundaryVersionId', 'jobId', 'operatingLocationId'].forEach((field) => {
     if (merged[field] !== undefined && merged[field] !== null) assertUuid(merged[field], field);
   });
@@ -184,6 +200,7 @@ function createOperationalHandler(resource, dependencies = {}) {
         const { data, merged } = mapInput(resource, body, existing);
         await assertRelationships(repository, resource, context, merged);
         const result = await repository.update(resource, context, id, expectedVersion, data);
+        if (result.notFound) throw apiError(404, 'NOT_FOUND', 'Operational record not found.');
         if (result.conflict) throw apiError(409, 'VERSION_CONFLICT', 'This record changed before your update.', { currentVersion: result.currentVersion });
         return res.status(200).json({ data: mapDatabaseRecord(resource, result.record) });
       }
@@ -192,6 +209,8 @@ function createOperationalHandler(resource, dependencies = {}) {
         throw apiError(409, 'ARCHIVE_CONFLICT', 'Archive dependent active records before archiving this record.');
       }
       const result = await repository.archive(resource, context, id, expectedVersion);
+      if (result.notFound) throw apiError(404, 'NOT_FOUND', 'Operational record not found.');
+      if (result.archiveConflict) throw apiError(409, 'ARCHIVE_CONFLICT', 'Archive dependent active records before archiving this record.');
       if (result.conflict) throw apiError(409, 'VERSION_CONFLICT', 'This record changed before your update.', { currentVersion: result.currentVersion });
       return res.status(200).json({ data: mapDatabaseRecord(resource, result.record) });
     } catch (error) {

@@ -55,7 +55,7 @@ Green commands:
   inserts the audit and transactional-outbox entries in the same transaction.
 - Archives are controlled updates, and the server blocks an archive while its
   active dependent records exist. Mission writes only accept planning state.
-- PGlite now applies both migrations and executes an atomic client write,
+- PGlite now applies the trusted API migrations and executes an atomic client write,
   verifying that its audit and outbox rows are created together.
 
 ## Concerns / cutover gates
@@ -69,3 +69,58 @@ Green commands:
   and seeded role-permission records for each production account type.
 - Existing unrelated frontend ESLint/Browserslist warnings remain in the build;
   this server-only slice intentionally did not alter those workflows.
+
+## Review remediation — round 1
+
+### Forward-migration choice
+
+The first trusted-API migration is committed and treated as immutable. This
+round adds `20260801002000_trusted_operational_api_corrections.sql`, which is
+applied after it in the executable migration harness; the original migration
+was not rewritten.
+
+### Changes
+
+- Revoked direct `anon` and `authenticated` access to every operational table
+  used by the spine, so browser REST cannot bypass trusted permissions,
+  versions, lifecycle restrictions, archive validation, audit, or outbox.
+  The trusted server continues through `service_role` and the RPC only.
+- Replaced the RPC through the corrective migration. It locks the target row,
+  makes every update/archive conditional on `row_version = p_expected_version`,
+  distinguishes missing rows from version conflicts, and performs all direct
+  active-dependency checks in the archive transaction.
+- Expanded archive dependency checks: clients→properties/jobs;
+  properties→fields/boundary versions/jobs; fields→job fields;
+  jobs→job fields/missions; missions→mission versions.
+- Permission resolution now limits role permissions to active roles and filters
+  archived permissions. Seat state is `null` when not represented rather than
+  inferred as active.
+- Tightened full-origin validation, typed/format validation, and race-time
+  RPC not-found/archival-conflict API mapping.
+
+### TDD evidence
+
+`CI=true npm test -- --runInBand src/__tests__/trustedOperationalApi.test.js src/__tests__/operationalWriteCorrectionMigration.test.js`
+initially failed as expected for archived permission leakage, RPC not-found
+being returned as HTTP 200, HTTP-vs-HTTPS same-host origin acceptance,
+typed-invalid input being handled as HTTP 500, and the absent corrective
+migration. The tests became green after the corrective migration and focused
+server changes.
+
+The PGlite harness now applies all three migrations and executes real behavior
+checks for authenticated direct table-DML rejection, conditional concurrency
+conflict metadata, missing-record detection, and transactional archive
+dependency rejection.
+
+### Green verification
+
+- `CI=true npm test -- --runInBand src/__tests__/trustedOperationalApi.test.js src/__tests__/operationalWriteCorrectionMigration.test.js src/__tests__/productionSchemaPglite.test.js` — 3 suites, 17 tests passed.
+- `CI=true npm test -- --runInBand` — 39 suites, 177 tests passed.
+- `npm run build` — exit 0 with existing unrelated warnings.
+- `git diff --check` — exit 0 before commit.
+
+### Remaining concern
+
+The SQL archive checks are authoritative for writes through this API/RPC. A
+future schema slice should add database-level active-parent guards if new
+trusted writers are introduced; direct browser DML is now revoked.

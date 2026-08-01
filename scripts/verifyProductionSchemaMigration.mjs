@@ -12,6 +12,10 @@ const operationalWriteMigrationPath = resolve(
   scriptDirectory,
   '../supabase/migrations/20260801001000_trusted_operational_api_writes.sql'
 );
+const operationalCorrectionMigrationPath = resolve(
+  scriptDirectory,
+  '../supabase/migrations/20260801002000_trusted_operational_api_corrections.sql'
+);
 
 async function expectRejected(db, label, sql) {
   try {
@@ -24,6 +28,7 @@ async function expectRejected(db, label, sql) {
 
 const migration = await readFile(migrationPath, 'utf8');
 const operationalWriteMigration = await readFile(operationalWriteMigrationPath, 'utf8');
+const operationalCorrectionMigration = await readFile(operationalCorrectionMigrationPath, 'utf8');
 const db = new PGlite();
 
 try {
@@ -37,6 +42,7 @@ try {
   `);
   await db.exec(migration);
   await db.exec(operationalWriteMigration);
+  await db.exec(operationalCorrectionMigration);
 
   await db.exec(`
     insert into auth.users (id) values
@@ -133,6 +139,48 @@ try {
   if (atomicRows.rows[0].audit_count !== 1 || atomicRows.rows[0].outbox_count !== 1) {
     throw new Error('trusted operational write did not atomically create audit and outbox rows');
   }
+
+  const concurrencyResult = await db.query(
+    `select public.ftf_write_operational_resource(
+      '00000000-0000-0000-0000-000000000001',
+      '00000000-0000-0000-0000-000000000101',
+      'clients', 'update', '00000000-0000-0000-0000-000000000302', 99,
+      '{"name":"Stale client"}'::jsonb
+    ) as result;`
+  );
+  if (concurrencyResult.rows[0]?.result?.conflict !== true || concurrencyResult.rows[0]?.result?.current_version !== 1) {
+    throw new Error('trusted operational write did not return an optimistic concurrency conflict');
+  }
+  const notFoundResult = await db.query(
+    `select public.ftf_write_operational_resource(
+      '00000000-0000-0000-0000-000000000001',
+      '00000000-0000-0000-0000-000000000101',
+      'clients', 'update', '00000000-0000-0000-0000-000000000399', 1,
+      '{"name":"Missing client"}'::jsonb
+    ) as result;`
+  );
+  if (notFoundResult.rows[0]?.result?.not_found !== true) {
+    throw new Error('trusted operational write did not distinguish a missing record');
+  }
+  const archiveResult = await db.query(
+    `select public.ftf_write_operational_resource(
+      '00000000-0000-0000-0000-000000000001',
+      '00000000-0000-0000-0000-000000000101',
+      'clients', 'archive', '00000000-0000-0000-0000-000000000301', 1,
+      '{}'::jsonb
+    ) as result;`
+  );
+  if (archiveResult.rows[0]?.result?.archive_conflict !== true) {
+    throw new Error('trusted operational archive did not reject active dependencies');
+  }
+
+  await db.exec('set role authenticated;');
+  await expectRejected(
+    db,
+    'authenticated direct operational table insert',
+    `insert into public.clients (organisation_id, name) values ('00000000-0000-0000-0000-000000000001', 'Direct browser write');`
+  );
+  await db.exec('reset role;');
 } finally {
   await db.close();
 }
