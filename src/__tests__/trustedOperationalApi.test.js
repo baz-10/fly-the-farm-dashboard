@@ -169,6 +169,22 @@ describe('trusted organisation operational API', () => {
     expect(repository.create).not.toHaveBeenCalled();
   });
 
+  test('maps an RPC parent relationship race to a conflict response', async () => {
+    const repository = {
+      relationshipExists: jest.fn().mockResolvedValue(true),
+      create: jest.fn().mockResolvedValue({ relationshipConflict: true }),
+    };
+    const res = createResponse();
+
+    await handlerFor('properties', repository, context({ permissions: ['properties.create'] }))(request('POST', {
+      clientId: '33333333-3333-4333-8333-333333333333',
+      name: 'Race-safe property',
+    }), res);
+
+    expect(res.statusCode).toBe(409);
+    expect(res.body.error.code).toBe('RELATIONSHIP_CONFLICT');
+  });
+
   test('returns the current version when an update loses the optimistic concurrency race', async () => {
     const repository = { get: jest.fn().mockResolvedValue({ id: '33333333-3333-4333-8333-333333333333', name: 'Old', row_version: 4 }), update: jest.fn().mockResolvedValue({ conflict: true, currentVersion: 5 }) };
     const res = createResponse();

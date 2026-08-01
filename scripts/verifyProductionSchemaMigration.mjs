@@ -16,6 +16,10 @@ const operationalCorrectionMigrationPath = resolve(
   scriptDirectory,
   '../supabase/migrations/20260801002000_trusted_operational_api_corrections.sql'
 );
+const operationalParentGuardMigrationPath = resolve(
+  scriptDirectory,
+  '../supabase/migrations/20260801003000_trusted_operational_parent_guards.sql'
+);
 
 async function expectRejected(db, label, sql) {
   try {
@@ -29,6 +33,7 @@ async function expectRejected(db, label, sql) {
 const migration = await readFile(migrationPath, 'utf8');
 const operationalWriteMigration = await readFile(operationalWriteMigrationPath, 'utf8');
 const operationalCorrectionMigration = await readFile(operationalCorrectionMigrationPath, 'utf8');
+const operationalParentGuardMigration = await readFile(operationalParentGuardMigrationPath, 'utf8');
 const db = new PGlite();
 
 try {
@@ -43,6 +48,7 @@ try {
   await db.exec(migration);
   await db.exec(operationalWriteMigration);
   await db.exec(operationalCorrectionMigration);
+  await db.exec(operationalParentGuardMigration);
 
   await db.exec(`
     insert into auth.users (id) values
@@ -60,6 +66,8 @@ try {
     insert into public.memberships (organisation_id, internal_user_id, role_id) values
       ('00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000101', '00000000-0000-0000-0000-000000000111'),
       ('00000000-0000-0000-0000-000000000002', '00000000-0000-0000-0000-000000000202', '00000000-0000-0000-0000-000000000222');
+    insert into public.operating_locations (id, organisation_id, name) values
+      ('00000000-0000-0000-0000-000000001001', '00000000-0000-0000-0000-000000000001', 'Operations base');
     insert into public.clients (id, organisation_id, name) values
       ('00000000-0000-0000-0000-000000000301', '00000000-0000-0000-0000-000000000001', 'Client one'),
       ('00000000-0000-0000-0000-000000000302', '00000000-0000-0000-0000-000000000001', 'Client two'),
@@ -172,6 +180,42 @@ try {
   );
   if (archiveResult.rows[0]?.result?.archive_conflict !== true) {
     throw new Error('trusted operational archive did not reject active dependencies');
+  }
+
+  await db.exec(`update public.clients set archived_at = now() where id = '00000000-0000-0000-0000-000000000301';`);
+  const archivedClientProperty = await db.query(
+    `select public.ftf_write_operational_resource(
+      '00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000101',
+      'properties', 'create', null, null,
+      '{"client_id":"00000000-0000-0000-0000-000000000301","name":"Orphan property"}'::jsonb
+    ) as result;`
+  );
+  if (archivedClientProperty.rows[0]?.result?.relationship_conflict !== true) {
+    throw new Error('trusted property write accepted an archived client');
+  }
+
+  await db.exec(`update public.properties set archived_at = now() where id = '00000000-0000-0000-0000-000000000402';`);
+  const archivedPropertyJob = await db.query(
+    `select public.ftf_write_operational_resource(
+      '00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000101',
+      'jobs', 'create', null, null,
+      '{"client_id":"00000000-0000-0000-0000-000000000302","property_id":"00000000-0000-0000-0000-000000000402","reference":"ORPHAN-JOB"}'::jsonb
+    ) as result;`
+  );
+  if (archivedPropertyJob.rows[0]?.result?.relationship_conflict !== true) {
+    throw new Error('trusted job write accepted an archived or inconsistent property');
+  }
+
+  await db.exec(`update public.jobs set archived_at = now() where id = '00000000-0000-0000-0000-000000000701';`);
+  const archivedJobMission = await db.query(
+    `select public.ftf_write_operational_resource(
+      '00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000101',
+      'missions', 'create', null, null,
+      '{"job_id":"00000000-0000-0000-0000-000000000701","operating_location_id":"00000000-0000-0000-0000-000000001001","mission_number":"ORPHAN-MISSION","status":"planning"}'::jsonb
+    ) as result;`
+  );
+  if (archivedJobMission.rows[0]?.result?.relationship_conflict !== true) {
+    throw new Error('trusted mission write accepted an archived job');
   }
 
   await db.exec('set role authenticated;');

@@ -188,6 +188,7 @@ function createOperationalHandler(resource, dependencies = {}) {
         const { data, merged } = mapInput(resource, body);
         await assertRelationships(repository, resource, context, merged);
         const result = await repository.create(resource, context, data);
+        if (result.relationshipConflict) throw apiError(409, 'RELATIONSHIP_CONFLICT', 'The related record is missing, archived, or belongs to another organisation.');
         return res.status(201).json({ data: mapDatabaseRecord(resource, result.record) });
       }
       const id = assertUuid(req.query?.id, 'id');
@@ -201,6 +202,7 @@ function createOperationalHandler(resource, dependencies = {}) {
         await assertRelationships(repository, resource, context, merged);
         const result = await repository.update(resource, context, id, expectedVersion, data);
         if (result.notFound) throw apiError(404, 'NOT_FOUND', 'Operational record not found.');
+        if (result.relationshipConflict) throw apiError(409, 'RELATIONSHIP_CONFLICT', 'The related record is missing, archived, or belongs to another organisation.');
         if (result.conflict) throw apiError(409, 'VERSION_CONFLICT', 'This record changed before your update.', { currentVersion: result.currentVersion });
         return res.status(200).json({ data: mapDatabaseRecord(resource, result.record) });
       }

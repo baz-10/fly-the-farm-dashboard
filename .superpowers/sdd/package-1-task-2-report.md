@@ -124,3 +124,36 @@ dependency rejection.
 The SQL archive checks are authoritative for writes through this API/RPC. A
 future schema slice should add database-level active-parent guards if new
 trusted writers are introduced; direct browser DML is now revoked.
+
+## Review remediation — round 2
+
+### Forward-migration choice
+
+Added `20260801003000_trusted_operational_parent_guards.sql`; the two earlier
+trusted API migrations remain immutable. The PGlite harness applies all four
+migrations in order.
+
+### Change
+
+The RPC now derives relationship parents from `p_data` for every create and
+update, locks each required parent with `FOR UPDATE`, and requires the same
+organisation plus `archived_at is null` before mutation. It covers
+properties→clients, fields→properties/boundary versions, jobs→clients and the
+matching property, and missions→jobs/operating locations. Boundary-version and
+job-field resources remain explicitly outside this RPC/API slice. A failed
+in-transaction parent guard returns `relationship_conflict`, which the server
+maps to HTTP 409; target-record `not_found` remains HTTP 404.
+
+### TDD and verification
+
+The new API race-mapping and forward-migration contract tests first failed with
+HTTP 201 for an RPC relationship conflict and `ENOENT` for the missing
+migration. After the forward migration and response mapping:
+
+- `CI=true npm test -- --runInBand src/__tests__/trustedOperationalApi.test.js src/__tests__/operationalParentGuardMigration.test.js src/__tests__/productionSchemaPglite.test.js` — 3 suites, 18 tests passed.
+- The executable PGlite migration test now proves property/client,
+  job/property-client, and mission/job writes are rejected after their active
+  parent has been archived.
+- `CI=true npm test -- --runInBand` — 40 suites, 179 tests passed.
+- `npm run build` — exit 0 with existing unrelated warnings.
+- `git diff --check` — exit 0 before commit.

@@ -94,6 +94,7 @@ class OperationalRepository {
     if (result?.conflict) return { conflict: true, currentVersion: result.current_version };
     if (result?.not_found) return { notFound: true };
     if (result?.archive_conflict) return { archiveConflict: true };
+    if (result?.relationship_conflict) return { relationshipConflict: true };
     return { record: result?.record || result };
   }
 }
