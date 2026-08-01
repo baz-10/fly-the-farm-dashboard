@@ -35,15 +35,13 @@ import DeleteIcon from '@mui/icons-material/Delete';
 import PlaceIcon from '@mui/icons-material/Place';
 import AddressAutocomplete, { AddressResult } from '../components/AddressAutocomplete';
 import {
-  getClients,
-  saveClient,
-  saveProperty,
-  saveField,
   getClientSummary,
 } from '../services/fieldManagementStore';
 import { Client, ClientAddress } from '../types/fieldManagement';
 import { AustralianState, ALL_STATES } from '../types/chemical';
 import { useAuth } from '../contexts/AuthContext';
+import { useOperationalData } from '../contexts/OperationalDataContext';
+import { describeOperationalError } from '../services/operationalDataStore';
 
 const emptyAddress = (): ClientAddress => ({
   label: 'Home',
@@ -57,7 +55,8 @@ export default function ClientList() {
   const navigate = useNavigate();
   const theme = useTheme();
   const { user } = useAuth();
-  const [clients, setClients] = useState(getClients);
+  const operational = useOperationalData();
+  const { clients } = operational;
   const [dialogOpen, setDialogOpen] = useState(false);
   const [search, setSearch] = useState('');
   const [form, setForm] = useState({ name: '', phone: '', email: '', notes: '' });
@@ -74,19 +73,27 @@ export default function ClientList() {
     c.name.toLowerCase().includes(search.toLowerCase())
   );
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!form.name.trim()) return;
     const addresses = formAddresses.filter((a) => a.address.trim() || a.locality.trim());
-    const client = saveClient({
-      ...form,
-      addresses: addresses.length > 0 ? addresses : undefined,
-      contractorUserId: user?.id || '',
-    });
-    setClients([...clients, client]);
-    setDialogOpen(false);
-    setForm({ name: '', phone: '', email: '', notes: '' });
-    setFormAddresses([emptyAddress()]);
-    navigate(`/jobs/client/${client.id}`);
+    if (operational.mode === 'remote' && (addresses.length > 0 || form.notes.trim())) {
+      setSnackbar({ open: true, message: 'Production Beta does not yet support client addresses or notes. Remove them before saving.', severity: 'error' });
+      return;
+    }
+    try {
+      const client = await operational.createClient({
+        ...form,
+        addresses: addresses.length > 0 ? addresses : undefined,
+        contractorUserId: user?.id || '',
+      });
+      setDialogOpen(false);
+      setForm({ name: '', phone: '', email: '', notes: '' });
+      setFormAddresses([emptyAddress()]);
+      setSnackbar({ open: true, message: 'Client saved.', severity: 'success' });
+      navigate(`/jobs/client/${client.id}`);
+    } catch (error) {
+      setSnackbar({ open: true, message: describeOperationalError(error), severity: 'error' });
+    }
   };
 
   const updateAddress = (index: number, updates: Partial<ClientAddress>) => {
@@ -132,9 +139,14 @@ export default function ClientList() {
   const handleCSVImport = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    if (operational.mode === 'remote') {
+      setSnackbar({ open: true, message: 'CSV client import is unavailable in Production Beta until all legacy address and notes fields have authoritative API columns.', severity: 'error' });
+      e.target.value = '';
+      return;
+    }
 
     const reader = new FileReader();
-    reader.onload = (evt) => {
+    reader.onload = async (evt) => {
       try {
         const text = evt.target?.result as string;
         const lines = text.split(/\r?\n/).filter((l) => l.trim());
@@ -166,9 +178,9 @@ export default function ClientList() {
 
         // Track created entities to dedup across rows
         // key: lowercase client name → client record
-        const clientMap = new Map<string, ReturnType<typeof saveClient>>();
+        const clientMap = new Map<string, Client>();
         // key: clientId + '|' + lowercase property name → property record
-        const propMap = new Map<string, ReturnType<typeof saveProperty>>();
+        const propMap = new Map<string, Awaited<ReturnType<typeof operational.createProperty>>>();
 
         let clientCount = 0;
         let propCount = 0;
@@ -199,7 +211,7 @@ export default function ClientList() {
               ? [{ label: 'Primary', address: addr, locality: town, state: validState, postcode }]
               : undefined;
 
-            client = saveClient({
+            client = await operational.createClient({
               name,
               phone: phoneIdx >= 0 ? values[phoneIdx]?.trim() || '' : '',
               email: emailIdx >= 0 ? values[emailIdx]?.trim() || '' : '',
@@ -216,7 +228,7 @@ export default function ClientList() {
             const propKey = `${client.id}|${propertyName.toLowerCase()}`;
             let property = propMap.get(propKey);
             if (!property) {
-              property = saveProperty({
+              property = await operational.createProperty({
                 clientId: client.id,
                 name: propertyName,
                 address: addr,
@@ -231,7 +243,7 @@ export default function ClientList() {
 
             // Create field if field name provided
             if (fieldName) {
-              saveField({
+              await operational.createField({
                 propertyId: property.id,
                 name: fieldName,
                 sizeHa: hectares,
@@ -243,7 +255,6 @@ export default function ClientList() {
           }
         }
 
-        setClients(getClients());
         const parts: string[] = [];
         parts.push(`${clientCount} client${clientCount !== 1 ? 's' : ''}`);
         if (propCount > 0) parts.push(`${propCount} propert${propCount !== 1 ? 'ies' : 'y'}`);
@@ -376,7 +387,18 @@ export default function ClientList() {
         )}
       </Box>
 
-      {filtered.length === 0 && clients.length === 0 && (
+      {operational.status === 'loading' && (
+        <Alert severity="info" sx={{ mb: 3 }}>Loading operational data…</Alert>
+      )}
+      {operational.status === 'unauthorised' && (
+        <Alert severity="error" sx={{ mb: 3 }}>You are not authorised to view this organisation's operational records.</Alert>
+      )}
+      {operational.status === 'error' && (
+        <Alert severity="error" sx={{ mb: 3 }} action={<Button color="inherit" size="small" onClick={() => void operational.refresh()}>Retry</Button>}>
+          Operational data is unavailable. No cached business records are being shown.
+        </Alert>
+      )}
+      {filtered.length === 0 && clients.length === 0 && operational.status === 'ready' && (
         <Box className="ftf-animate-in-delay-1" sx={{ textAlign: 'center', py: 8 }}>
           <Box sx={{
             width: 80, height: 80, borderRadius: '20px',
@@ -402,7 +424,14 @@ export default function ClientList() {
 
       <Grid container spacing={2} className="ftf-animate-in-delay-1">
         {filtered.map((client) => {
-          const summary = getClientSummary(client.id);
+          const summary = operational.mode === 'local'
+            ? getClientSummary(client.id)
+            : {
+                propertyCount: operational.properties.filter((property) => property.clientId === client.id).length,
+                fieldCount: operational.fields.filter((field) => operational.properties.some((property) => property.clientId === client.id && property.id === field.propertyId)).length,
+                jobCount: null,
+                lastJobDate: null,
+              };
           const primaryAddr = client.addresses?.[0];
           return (
             <Grid size={{ xs: 12, sm: 6, md: 4 }} key={client.id}>
@@ -473,7 +502,7 @@ export default function ClientList() {
                       </Box>
                       <Box>
                         <Typography variant="h5" sx={{ fontWeight: 800, color: '#5b7a3a', fontFamily: '"Outfit", system-ui', lineHeight: 1 }}>
-                          {summary.jobCount}
+                          {summary.jobCount ?? '—'}
                         </Typography>
                         <Typography variant="caption" color="text.secondary">
                           {summary.jobCount === 1 ? 'Job' : 'Jobs'}
@@ -629,8 +658,8 @@ export default function ClientList() {
         </DialogContent>
         <DialogActions sx={{ px: 3, pb: 2.5 }}>
           <Button onClick={() => setDialogOpen(false)}>Cancel</Button>
-          <Button variant="contained" onClick={handleSave} disabled={!form.name.trim()} sx={{ borderRadius: '10px', fontWeight: 700 }}>
-            Add Client
+          <Button variant="contained" onClick={() => void handleSave()} disabled={!form.name.trim() || operational.saving} sx={{ borderRadius: '10px', fontWeight: 700 }}>
+            {operational.saving ? 'Saving…' : 'Add Client'}
           </Button>
         </DialogActions>
       </Dialog>

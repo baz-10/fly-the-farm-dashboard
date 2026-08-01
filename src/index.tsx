@@ -5,6 +5,7 @@ import CssBaseline from '@mui/material/CssBaseline';
 import theme from './theme/theme';
 import { AuthProvider } from './contexts/AuthContext';
 import App from './App';
+import { OperationalDataProvider } from './contexts/OperationalDataContext';
 
 const root = ReactDOM.createRoot(
   document.getElementById('root') as HTMLElement
@@ -15,7 +16,9 @@ root.render(
     <ThemeProvider theme={theme}>
       <CssBaseline />
       <AuthProvider>
-        <App />
+        <OperationalDataProvider>
+          <App />
+        </OperationalDataProvider>
       </AuthProvider>
     </ThemeProvider>
   </React.StrictMode>

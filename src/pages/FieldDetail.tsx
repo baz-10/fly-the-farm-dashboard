@@ -33,32 +33,43 @@ import MapIcon from '@mui/icons-material/Map';
 import DownloadIcon from '@mui/icons-material/Download';
 import ForestIcon from '@mui/icons-material/Forest';
 import {
-  getFieldById,
-  getPropertyById,
-  getClientById,
-  updateField,
-  updateProperty,
-  deleteField,
   getJobsByField,
   getOutcomeByJob,
 } from '../services/fieldManagementStore';
 import { JobRecord, BoundaryFileRef, LatLng } from '../types/fieldManagement';
 import FieldBoundaryEditor from '../components/FieldBoundaryEditor';
+import { useOperationalData } from '../contexts/OperationalDataContext';
+import { describeOperationalError } from '../services/operationalDataStore';
 
 export default function FieldDetail() {
   const { clientId, propertyId, fieldId } = useParams<{ clientId: string; propertyId: string; fieldId: string }>();
   const navigate = useNavigate();
   const theme = useTheme();
+  const operational = useOperationalData();
 
-  const [field, setField] = useState(() => getFieldById(fieldId || ''));
-  const [property, setProperty] = useState(() => getPropertyById(propertyId || ''));
-  const [client] = useState(() => getClientById(clientId || ''));
-  const [jobs] = useState(() => getJobsByField(fieldId || ''));
+  const field = operational.fields.find((record) => record.id === fieldId && record.propertyId === propertyId);
+  const property = operational.properties.find((record) => record.id === propertyId && record.clientId === clientId);
+  const client = operational.clients.find((record) => record.id === clientId);
+  const [jobs] = useState<JobRecord[]>(() => operational.mode === 'local' ? getJobsByField(fieldId || '') : []);
   const [editing, setEditing] = useState(false);
   const [editForm, setEditForm] = useState({ name: '', sizeHa: '', notes: '' });
   const [editBoundaryCoords, setEditBoundaryCoords] = useState<LatLng[]>([]);
   const [editBoundaryFile, setEditBoundaryFile] = useState<BoundaryFileRef | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState(false);
+  const [actionError, setActionError] = useState('');
+
+  if (operational.status === 'loading') return <Alert severity="info">Loading field…</Alert>;
+
+  if (operational.status === 'error' || operational.status === 'unauthorised') {
+    return (
+      <Box>
+        <Button startIcon={<ArrowBackIcon />} onClick={() => navigate(`/jobs/client/${clientId}/property/${propertyId}`)} sx={{ mb: 2 }}>Back</Button>
+        <Alert severity="error">
+          {operational.status === 'unauthorised' ? 'You are not authorised to view this field.' : 'Operational data is unavailable. This field could not be loaded.'}
+        </Alert>
+      </Box>
+    );
+  }
 
   if (!field || !property || !client) {
     return (
@@ -76,21 +87,35 @@ export default function FieldDetail() {
     setEditing(true);
   };
 
-  const handleSaveEdit = () => {
-    const updated = updateField(field.id, {
-      name: editForm.name,
-      sizeHa: parseFloat(editForm.sizeHa) || 0,
-      notes: editForm.notes,
-      boundaryCoords: editBoundaryCoords.length >= 3 ? editBoundaryCoords : undefined,
-      boundary: editBoundaryFile,
-    });
-    setField(updated);
-    setEditing(false);
+  const handleSaveEdit = async () => {
+    const boundaryChanged = JSON.stringify(editBoundaryCoords) !== JSON.stringify(field.boundaryCoords || []) || editBoundaryFile !== field.boundary;
+    if (operational.mode === 'remote' && (editForm.notes.trim() || boundaryChanged)) {
+      setActionError('Production Beta does not yet support field notes or boundary-version writes. Revert them before saving; field name and area are supported.');
+      return;
+    }
+    try {
+      await operational.updateField(field.id, {
+        name: editForm.name,
+        sizeHa: parseFloat(editForm.sizeHa) || 0,
+        notes: editForm.notes,
+        boundaryCoords: editBoundaryCoords.length >= 3 ? editBoundaryCoords : undefined,
+        boundary: editBoundaryFile,
+      });
+      setEditing(false);
+      setActionError('');
+    } catch (error) {
+      setActionError(describeOperationalError(error));
+    }
   };
 
-  const handleDelete = () => {
-    deleteField(field.id);
-    navigate(`/jobs/client/${clientId}/property/${propertyId}`);
+  const handleDelete = async () => {
+    try {
+      await operational.archiveField(field.id);
+      navigate(`/jobs/client/${clientId}/property/${propertyId}`);
+    } catch (error) {
+      setDeleteConfirm(false);
+      setActionError(describeOperationalError(error));
+    }
   };
 
   const formatFileSize = (bytes: number) => {
@@ -149,16 +174,18 @@ export default function FieldDetail() {
         boundingBox,
         uploadedAt: new Date().toISOString(),
       };
-      const updated = updateField(field.id, { boundary });
-      setField(updated);
+      void operational.updateField(field.id, { boundary }).catch((error) => {
+        setActionError(describeOperationalError(error));
+      });
     };
     reader.readAsDataURL(file);
     e.target.value = '';
   };
 
   const handleRemoveBoundary = () => {
-    const updated = updateField(field.id, { boundary: null });
-    setField(updated);
+    void operational.updateField(field.id, { boundary: null }).catch((error) => {
+      setActionError(describeOperationalError(error));
+    });
   };
 
   const handleDownloadBoundary = () => {
@@ -185,6 +212,9 @@ export default function FieldDetail() {
         {property.name}
       </Button>
 
+      {actionError && <Alert severity="error" sx={{ mb: 2 }}>{actionError}</Alert>}
+      {operational.savedAt && !actionError && <Alert severity="success" sx={{ mb: 2 }}>Saved.</Alert>}
+
       {/* Field Info */}
       <Card elevation={0} sx={{ mb: 4, border: `1.5px solid ${alpha(theme.palette.primary.main, 0.1)}`, borderRadius: '16px' }} className="ftf-animate-in">
         <CardContent sx={{ p: 3 }}>
@@ -208,7 +238,7 @@ export default function FieldDetail() {
             </Box>
             <Stack direction="row" spacing={0.5}>
               <IconButton size="small" onClick={handleStartEdit}><EditIcon fontSize="small" /></IconButton>
-              <IconButton size="small" onClick={() => setDeleteConfirm(true)} sx={{ color: 'error.main' }}><DeleteIcon fontSize="small" /></IconButton>
+              <IconButton aria-label={operational.mode === 'remote' ? 'Archive field' : 'Delete field'} size="small" onClick={() => setDeleteConfirm(true)} sx={{ color: 'error.main' }}><DeleteIcon fontSize="small" /></IconButton>
             </Stack>
           </Box>
 
@@ -223,10 +253,10 @@ export default function FieldDetail() {
             )}
             <Box>
               <Typography variant="h5" sx={{ fontWeight: 800, color: 'primary.main', fontFamily: '"Outfit", system-ui', lineHeight: 1 }}>
-                {jobs.length}
+                {operational.mode === 'remote' ? '—' : jobs.length}
               </Typography>
               <Typography variant="caption" color="text.secondary">
-                {jobs.length === 1 ? 'Job' : 'Jobs'}
+                {operational.mode === 'local' && jobs.length === 1 ? 'Job' : 'Jobs'}
               </Typography>
             </Box>
           </Stack>
@@ -325,6 +355,7 @@ export default function FieldDetail() {
             variant="contained"
             size="small"
             startIcon={<AddIcon />}
+            disabled={operational.mode === 'remote'}
             onClick={() => navigate(`/jobs/client/${clientId}/property/${propertyId}/field/${field.id}/new-job`)}
             sx={{ borderRadius: '10px', fontWeight: 700 }}
           >
@@ -332,7 +363,11 @@ export default function FieldDetail() {
           </Button>
         </Box>
 
-        {jobs.length === 0 ? (
+        {operational.mode === 'remote' ? (
+          <Alert severity="info">
+            Job history is not connected in this Production Beta slice. No browser-cached job records are being shown.
+          </Alert>
+        ) : jobs.length === 0 ? (
           <Card elevation={0} sx={{ border: `1.5px dashed ${alpha(theme.palette.primary.main, 0.15)}`, borderRadius: '14px' }}>
             <CardContent sx={{ textAlign: 'center', py: 5 }}>
               <AssignmentIcon sx={{ fontSize: 40, color: alpha(theme.palette.text.secondary, 0.3), mb: 1.5 }} />
@@ -451,12 +486,11 @@ export default function FieldDetail() {
               onBoundaryFile={setEditBoundaryFile}
               propertyLat={property?.lat}
               propertyLng={property?.lng}
-              onPropertyPinMove={(lat, lng) => {
-                if (property) {
-                  const updated = updateProperty(property.id, { lat, lng });
-                  setProperty(updated);
-                }
-              }}
+              onPropertyPinMove={operational.mode === 'local' ? (lat, lng) => {
+                void operational.updateProperty(property.id, { lat, lng }).catch((error) => {
+                  setActionError(describeOperationalError(error));
+                });
+              } : undefined}
               mapHeight={380}
             />
 
@@ -465,21 +499,25 @@ export default function FieldDetail() {
         </DialogContent>
         <DialogActions sx={{ px: 3, pb: 2.5 }}>
           <Button onClick={() => setEditing(false)}>Cancel</Button>
-          <Button variant="contained" onClick={handleSaveEdit} sx={{ borderRadius: '10px', fontWeight: 700 }}>Save</Button>
+          <Button variant="contained" onClick={() => void handleSaveEdit()} disabled={operational.saving} sx={{ borderRadius: '10px', fontWeight: 700 }}>{operational.saving ? 'Saving…' : 'Save'}</Button>
         </DialogActions>
       </Dialog>
 
-      {/* Delete Confirm */}
+      {/* Archive/Delete Confirm */}
       <Dialog open={deleteConfirm} onClose={() => setDeleteConfirm(false)} PaperProps={{ sx: { borderRadius: '16px' } }}>
-        <DialogTitle sx={{ fontWeight: 700 }}>Delete Field?</DialogTitle>
+        <DialogTitle sx={{ fontWeight: 700 }}>{operational.mode === 'remote' ? 'Archive Field?' : 'Delete Field?'}</DialogTitle>
         <DialogContent>
           <Typography variant="body2">
-            This will permanently delete <strong>{field.name}</strong> and all its job records.
+            {operational.mode === 'remote'
+              ? <>This will archive <strong>{field.name}</strong>. Active job links must be archived first.</>
+              : <>This will permanently delete <strong>{field.name}</strong> and all its job records.</>}
           </Typography>
         </DialogContent>
         <DialogActions sx={{ px: 3, pb: 2.5 }}>
           <Button onClick={() => setDeleteConfirm(false)}>Cancel</Button>
-          <Button variant="contained" color="error" onClick={handleDelete} sx={{ borderRadius: '10px', fontWeight: 700 }}>Delete</Button>
+          <Button variant="contained" color="error" onClick={() => void handleDelete()} disabled={operational.saving} sx={{ borderRadius: '10px', fontWeight: 700 }}>
+            {operational.saving ? 'Saving…' : operational.mode === 'remote' ? 'Archive' : 'Delete'}
+          </Button>
         </DialogActions>
       </Dialog>
     </Box>

@@ -34,15 +34,12 @@ import EmailIcon from '@mui/icons-material/Email';
 import HomeIcon from '@mui/icons-material/Home';
 import AddressAutocomplete, { AddressResult } from '../components/AddressAutocomplete';
 import {
-  getClientById,
-  updateClient,
-  deleteClient,
-  getPropertiesByClient,
-  saveProperty,
   getPropertySummary,
 } from '../services/fieldManagementStore';
 import { ALL_STATES, AustralianState } from '../types/chemical';
 import { ClientAddress } from '../types/fieldManagement';
+import { useOperationalData } from '../contexts/OperationalDataContext';
+import { describeOperationalError } from '../services/operationalDataStore';
 
 const defaultPropertyForm = { name: '', address: '', state: 'NSW' as AustralianState, locality: '', lotPlan: '', notes: '', lat: undefined as number | undefined, lng: undefined as number | undefined };
 
@@ -50,15 +47,32 @@ export default function ClientDetail() {
   const { clientId } = useParams<{ clientId: string }>();
   const navigate = useNavigate();
   const theme = useTheme();
+  const operational = useOperationalData();
 
-  const [client, setClient] = useState(() => getClientById(clientId || ''));
-  const [properties, setProperties] = useState(() => getPropertiesByClient(clientId || ''));
+  const client = operational.clients.find((record) => record.id === clientId);
+  const properties = operational.properties.filter((record) => record.clientId === clientId);
   const [editing, setEditing] = useState(false);
   const [editForm, setEditForm] = useState({ name: '', phone: '', email: '', notes: '' });
   const [editAddresses, setEditAddresses] = useState<ClientAddress[]>([]);
   const [propDialogOpen, setPropDialogOpen] = useState(false);
   const [propForm, setPropForm] = useState(defaultPropertyForm);
   const [deleteConfirm, setDeleteConfirm] = useState(false);
+  const [actionError, setActionError] = useState('');
+
+  if (operational.status === 'loading') {
+    return <Alert severity="info">Loading client…</Alert>;
+  }
+
+  if (operational.status === 'error' || operational.status === 'unauthorised') {
+    return (
+      <Box>
+        <Button startIcon={<ArrowBackIcon />} onClick={() => navigate('/jobs')} sx={{ mb: 2 }}>Back</Button>
+        <Alert severity="error">
+          {operational.status === 'unauthorised' ? 'You are not authorised to view this client.' : 'Operational data is unavailable. This client could not be loaded.'}
+        </Alert>
+      </Box>
+    );
+  }
 
   if (!client) {
     return (
@@ -75,29 +89,50 @@ export default function ClientDetail() {
     setEditing(true);
   };
 
-  const handleSaveEdit = () => {
+  const handleSaveEdit = async () => {
     const addresses = editAddresses.filter((a) => a.address.trim() || a.locality.trim());
-    const updated = updateClient(client.id, { ...editForm, addresses: addresses.length > 0 ? addresses : undefined });
-    setClient(updated);
-    setEditing(false);
+    if (operational.mode === 'remote' && (addresses.length > 0 || editForm.notes.trim())) {
+      setActionError('Production Beta does not yet support client addresses or notes. Remove them before saving.');
+      return;
+    }
+    try {
+      await operational.updateClient(client.id, { ...editForm, addresses: addresses.length > 0 ? addresses : undefined });
+      setEditing(false);
+      setActionError('');
+    } catch (error) {
+      setActionError(describeOperationalError(error));
+    }
   };
 
   const updateEditAddress = (index: number, updates: Partial<ClientAddress>) => {
     setEditAddresses((prev) => prev.map((a, i) => i === index ? { ...a, ...updates } : a));
   };
 
-  const handleDelete = () => {
-    deleteClient(client.id);
-    navigate('/jobs');
+  const handleDelete = async () => {
+    try {
+      await operational.archiveClient(client.id);
+      navigate('/jobs');
+    } catch (error) {
+      setDeleteConfirm(false);
+      setActionError(describeOperationalError(error));
+    }
   };
 
-  const handleSaveProperty = () => {
+  const handleSaveProperty = async () => {
     if (!propForm.name.trim()) return;
-    const property = saveProperty({ ...propForm, clientId: client.id });
-    setProperties([...properties, property]);
-    setPropDialogOpen(false);
-    setPropForm(defaultPropertyForm);
-    navigate(`/jobs/client/${client.id}/property/${property.id}`);
+    if (operational.mode === 'remote' && (propForm.locality.trim() || propForm.lotPlan.trim() || propForm.notes.trim() || propForm.lat !== undefined || propForm.lng !== undefined)) {
+      setActionError('Production Beta currently saves the property name and address only. Remove town, lot/plan, notes, and map-pin details before saving.');
+      return;
+    }
+    try {
+      const property = await operational.createProperty({ ...propForm, clientId: client.id });
+      setPropDialogOpen(false);
+      setPropForm(defaultPropertyForm);
+      setActionError('');
+      navigate(`/jobs/client/${client.id}/property/${property.id}`);
+    } catch (error) {
+      setActionError(describeOperationalError(error));
+    }
   };
 
   return (
@@ -109,6 +144,9 @@ export default function ClientDetail() {
       >
         All Clients
       </Button>
+
+      {actionError && <Alert severity="error" sx={{ mb: 2 }}>{actionError}</Alert>}
+      {operational.savedAt && !actionError && <Alert severity="success" sx={{ mb: 2 }}>Saved.</Alert>}
 
       {/* Client Info */}
       <Card elevation={0} sx={{ mb: 4, border: `1.5px solid ${alpha(theme.palette.primary.main, 0.1)}`, borderRadius: '16px' }} className="ftf-animate-in">
@@ -130,7 +168,7 @@ export default function ClientDetail() {
             </Box>
             <Stack direction="row" spacing={0.5}>
               <IconButton size="small" onClick={handleStartEdit}><EditIcon fontSize="small" /></IconButton>
-              <IconButton size="small" onClick={() => setDeleteConfirm(true)} sx={{ color: 'error.main' }}><DeleteIcon fontSize="small" /></IconButton>
+              <IconButton aria-label={operational.mode === 'remote' ? 'Archive client' : 'Delete client'} size="small" onClick={() => setDeleteConfirm(true)} sx={{ color: 'error.main' }}><DeleteIcon fontSize="small" /></IconButton>
             </Stack>
           </Box>
 
@@ -203,7 +241,14 @@ export default function ClientDetail() {
         ) : (
           <Grid container spacing={2}>
             {properties.map((prop) => {
-              const summary = getPropertySummary(prop.id);
+              const summary = operational.mode === 'local'
+                ? getPropertySummary(prop.id)
+                : {
+                    fieldCount: operational.fields.filter((field) => field.propertyId === prop.id).length,
+                    totalHa: operational.fields.filter((field) => field.propertyId === prop.id).reduce((total, field) => total + field.sizeHa, 0),
+                    jobCount: null,
+                    lastJobDate: null,
+                  };
               return (
                 <Grid size={{ xs: 12, sm: 6 }} key={prop.id}>
                   <Card elevation={0} sx={{
@@ -244,7 +289,7 @@ export default function ClientDetail() {
                             <Box component="span" fontWeight={700} color="text.primary">{summary.totalHa.toFixed(0)}</Box> ha
                           </Typography>
                           <Typography variant="caption" color="text.secondary">
-                            <Box component="span" fontWeight={700} color="text.primary">{summary.jobCount}</Box> job{summary.jobCount !== 1 ? 's' : ''}
+                            <Box component="span" fontWeight={700} color="text.primary">{summary.jobCount ?? '—'}</Box> job{summary.jobCount !== 1 ? 's' : ''}
                           </Typography>
                         </Stack>
                         <Box className="card-arrow" sx={{
@@ -304,8 +349,8 @@ export default function ClientDetail() {
         </DialogContent>
         <DialogActions sx={{ px: 3, pb: 2.5 }}>
           <Button onClick={() => setPropDialogOpen(false)}>Cancel</Button>
-          <Button variant="contained" onClick={handleSaveProperty} disabled={!propForm.name.trim()} sx={{ borderRadius: '10px', fontWeight: 700 }}>
-            Add Property
+          <Button variant="contained" onClick={() => void handleSaveProperty()} disabled={!propForm.name.trim() || operational.saving} sx={{ borderRadius: '10px', fontWeight: 700 }}>
+            {operational.saving ? 'Saving…' : 'Add Property'}
           </Button>
         </DialogActions>
       </Dialog>
@@ -412,21 +457,25 @@ export default function ClientDetail() {
         </DialogContent>
         <DialogActions sx={{ px: 3, pb: 2.5 }}>
           <Button onClick={() => setEditing(false)}>Cancel</Button>
-          <Button variant="contained" onClick={handleSaveEdit} sx={{ borderRadius: '10px', fontWeight: 700 }}>Save</Button>
+          <Button variant="contained" onClick={() => void handleSaveEdit()} disabled={operational.saving} sx={{ borderRadius: '10px', fontWeight: 700 }}>{operational.saving ? 'Saving…' : 'Save'}</Button>
         </DialogActions>
       </Dialog>
 
-      {/* Delete Confirm */}
+      {/* Archive/Delete Confirm */}
       <Dialog open={deleteConfirm} onClose={() => setDeleteConfirm(false)} PaperProps={{ sx: { borderRadius: '16px' } }}>
-        <DialogTitle sx={{ fontWeight: 700 }}>Delete Client?</DialogTitle>
+        <DialogTitle sx={{ fontWeight: 700 }}>{operational.mode === 'remote' ? 'Archive Client?' : 'Delete Client?'}</DialogTitle>
         <DialogContent>
           <Typography variant="body2">
-            This will permanently delete <strong>{client.name}</strong> and all their properties, fields, and job records.
+            {operational.mode === 'remote'
+              ? <>This will archive <strong>{client.name}</strong>. Active properties must be archived first.</>
+              : <>This will permanently delete <strong>{client.name}</strong> and all their properties, fields, and job records.</>}
           </Typography>
         </DialogContent>
         <DialogActions sx={{ px: 3, pb: 2.5 }}>
           <Button onClick={() => setDeleteConfirm(false)}>Cancel</Button>
-          <Button variant="contained" color="error" onClick={handleDelete} sx={{ borderRadius: '10px', fontWeight: 700 }}>Delete</Button>
+          <Button variant="contained" color="error" onClick={() => void handleDelete()} disabled={operational.saving} sx={{ borderRadius: '10px', fontWeight: 700 }}>
+            {operational.saving ? 'Saving…' : operational.mode === 'remote' ? 'Archive' : 'Delete'}
+          </Button>
         </DialogActions>
       </Dialog>
     </Box>

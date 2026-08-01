@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   Typography,
@@ -31,12 +31,6 @@ import ArrowForwardIcon from '@mui/icons-material/ArrowForward';
 import GrassIcon from '@mui/icons-material/Grass';
 import LandscapeIcon from '@mui/icons-material/Landscape';
 import {
-  getPropertyById,
-  getClientById,
-  updateProperty,
-  deleteProperty,
-  getFieldsByProperty,
-  saveField,
   getFieldSummary,
 } from '../services/fieldManagementStore';
 import { ALL_STATES } from '../types/chemical';
@@ -44,6 +38,8 @@ import { AustralianState } from '../types/chemical';
 import AddressAutocomplete, { AddressResult } from '../components/AddressAutocomplete';
 import FieldBoundaryEditor from '../components/FieldBoundaryEditor';
 import { LatLng, BoundaryFileRef } from '../types/fieldManagement';
+import { useOperationalData } from '../contexts/OperationalDataContext';
+import { describeOperationalError } from '../services/operationalDataStore';
 
 const defaultFieldForm = { name: '', sizeHa: '', notes: '' };
 
@@ -51,10 +47,11 @@ export default function PropertyDetail() {
   const { clientId, propertyId } = useParams<{ clientId: string; propertyId: string }>();
   const navigate = useNavigate();
   const theme = useTheme();
+  const operational = useOperationalData();
 
-  const [property, setProperty] = useState(() => getPropertyById(propertyId || ''));
-  const [client] = useState(() => getClientById(clientId || ''));
-  const [fields, setFields] = useState(() => getFieldsByProperty(propertyId || ''));
+  const property = operational.properties.find((record) => record.id === propertyId && record.clientId === clientId);
+  const client = operational.clients.find((record) => record.id === clientId);
+  const fields = operational.fields.filter((record) => record.propertyId === propertyId);
   const [editing, setEditing] = useState(false);
   const [editForm, setEditForm] = useState({ name: '', address: '', state: 'NSW' as AustralianState, locality: '', lotPlan: '', notes: '', lat: undefined as number | undefined, lng: undefined as number | undefined });
   const [fieldDialogOpen, setFieldDialogOpen] = useState(false);
@@ -62,6 +59,20 @@ export default function PropertyDetail() {
   const [fieldBoundaryCoords, setFieldBoundaryCoords] = useState<LatLng[]>([]);
   const [fieldBoundaryFile, setFieldBoundaryFile] = useState<BoundaryFileRef | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState(false);
+  const [actionError, setActionError] = useState('');
+
+  if (operational.status === 'loading') return <Alert severity="info">Loading property…</Alert>;
+
+  if (operational.status === 'error' || operational.status === 'unauthorised') {
+    return (
+      <Box>
+        <Button startIcon={<ArrowBackIcon />} onClick={() => navigate(`/jobs/client/${clientId}`)} sx={{ mb: 2 }}>Back</Button>
+        <Alert severity="error">
+          {operational.status === 'unauthorised' ? 'You are not authorised to view this property.' : 'Operational data is unavailable. This property could not be loaded.'}
+        </Alert>
+      </Box>
+    );
+  }
 
   if (!property || !client) {
     return (
@@ -86,33 +97,54 @@ export default function PropertyDetail() {
     setEditing(true);
   };
 
-  const handleSaveEdit = () => {
-    const updated = updateProperty(property.id, editForm);
-    setProperty(updated);
-    setEditing(false);
+  const handleSaveEdit = async () => {
+    if (operational.mode === 'remote' && (editForm.locality.trim() || editForm.lotPlan.trim() || editForm.notes.trim() || editForm.lat !== undefined || editForm.lng !== undefined)) {
+      setActionError('Production Beta currently saves the property name and address only. Remove town, lot/plan, notes, and map-pin details before saving.');
+      return;
+    }
+    try {
+      await operational.updateProperty(property.id, editForm);
+      setEditing(false);
+      setActionError('');
+    } catch (error) {
+      setActionError(describeOperationalError(error));
+    }
   };
 
-  const handleDelete = () => {
-    deleteProperty(property.id);
-    navigate(`/jobs/client/${clientId}`);
+  const handleDelete = async () => {
+    try {
+      await operational.archiveProperty(property.id);
+      navigate(`/jobs/client/${clientId}`);
+    } catch (error) {
+      setDeleteConfirm(false);
+      setActionError(describeOperationalError(error));
+    }
   };
 
-  const handleSaveField = () => {
+  const handleSaveField = async () => {
     if (!fieldForm.name.trim()) return;
-    const field = saveField({
-      propertyId: property.id,
-      name: fieldForm.name,
-      sizeHa: parseFloat(fieldForm.sizeHa) || 0,
-      boundary: fieldBoundaryFile,
-      boundaryCoords: fieldBoundaryCoords.length >= 3 ? fieldBoundaryCoords : undefined,
-      notes: fieldForm.notes,
-    });
-    setFields([...fields, field]);
-    setFieldDialogOpen(false);
-    setFieldForm(defaultFieldForm);
-    setFieldBoundaryCoords([]);
-    setFieldBoundaryFile(null);
-    navigate(`/jobs/client/${clientId}/property/${property.id}/field/${field.id}`);
+    if (operational.mode === 'remote' && (fieldForm.notes.trim() || fieldBoundaryCoords.length > 0 || fieldBoundaryFile)) {
+      setActionError('Production Beta does not yet support field notes or boundary-version writes. Remove them before saving; field name and area are supported.');
+      return;
+    }
+    try {
+      const field = await operational.createField({
+        propertyId: property.id,
+        name: fieldForm.name,
+        sizeHa: parseFloat(fieldForm.sizeHa) || 0,
+        boundary: fieldBoundaryFile,
+        boundaryCoords: fieldBoundaryCoords.length >= 3 ? fieldBoundaryCoords : undefined,
+        notes: fieldForm.notes,
+      });
+      setFieldDialogOpen(false);
+      setFieldForm(defaultFieldForm);
+      setFieldBoundaryCoords([]);
+      setFieldBoundaryFile(null);
+      setActionError('');
+      navigate(`/jobs/client/${clientId}/property/${property.id}/field/${field.id}`);
+    } catch (error) {
+      setActionError(describeOperationalError(error));
+    }
   };
 
   const totalHa = fields.reduce((sum, f) => sum + (f.sizeHa || 0), 0);
@@ -126,6 +158,9 @@ export default function PropertyDetail() {
       >
         {client.name}
       </Button>
+
+      {actionError && <Alert severity="error" sx={{ mb: 2 }}>{actionError}</Alert>}
+      {operational.savedAt && !actionError && <Alert severity="success" sx={{ mb: 2 }}>Saved.</Alert>}
 
       {/* Property Info */}
       <Card elevation={0} sx={{ mb: 4, border: `1.5px solid ${alpha(theme.palette.secondary.main, 0.12)}`, borderRadius: '16px' }} className="ftf-animate-in">
@@ -153,7 +188,7 @@ export default function PropertyDetail() {
             </Box>
             <Stack direction="row" spacing={0.5}>
               <IconButton size="small" onClick={handleStartEdit}><EditIcon fontSize="small" /></IconButton>
-              <IconButton size="small" onClick={() => setDeleteConfirm(true)} sx={{ color: 'error.main' }}><DeleteIcon fontSize="small" /></IconButton>
+              <IconButton aria-label={operational.mode === 'remote' ? 'Archive property' : 'Delete property'} size="small" onClick={() => setDeleteConfirm(true)} sx={{ color: 'error.main' }}><DeleteIcon fontSize="small" /></IconButton>
             </Stack>
           </Box>
 
@@ -221,7 +256,9 @@ export default function PropertyDetail() {
         ) : (
           <Grid container spacing={2}>
             {fields.map((field) => {
-              const summary = getFieldSummary(field.id);
+              const summary = operational.mode === 'local'
+                ? getFieldSummary(field.id)
+                : { jobCount: null, lastJobDate: null, lastWeed: null, lastEfficacy: null };
               return (
                 <Grid size={{ xs: 12, sm: 6 }} key={field.id}>
                   <Card elevation={0} sx={{
@@ -253,7 +290,7 @@ export default function PropertyDetail() {
                         </Box>
                         <Stack direction="row" spacing={2}>
                           <Typography variant="caption" color="text.secondary">
-                            <Box component="span" fontWeight={700} color="text.primary">{summary.jobCount}</Box> job{summary.jobCount !== 1 ? 's' : ''}
+                            <Box component="span" fontWeight={700} color="text.primary">{summary.jobCount ?? '—'}</Box> job{summary.jobCount !== 1 ? 's' : ''}
                           </Typography>
                           {summary.lastWeed && (
                             <Typography variant="caption" color="text.secondary">
@@ -321,10 +358,11 @@ export default function PropertyDetail() {
               onBoundaryFile={setFieldBoundaryFile}
               propertyLat={property.lat}
               propertyLng={property.lng}
-              onPropertyPinMove={(lat, lng) => {
-                const updated = updateProperty(property.id, { lat, lng });
-                setProperty(updated);
-              }}
+              onPropertyPinMove={operational.mode === 'local' ? (lat, lng) => {
+                void operational.updateProperty(property.id, { lat, lng }).catch((error) => {
+                  setActionError(describeOperationalError(error));
+                });
+              } : undefined}
               mapHeight={380}
             />
 
@@ -333,8 +371,8 @@ export default function PropertyDetail() {
         </DialogContent>
         <DialogActions sx={{ px: 3, pb: 2.5 }}>
           <Button onClick={() => { setFieldDialogOpen(false); setFieldBoundaryCoords([]); setFieldBoundaryFile(null); }}>Cancel</Button>
-          <Button variant="contained" onClick={handleSaveField} disabled={!fieldForm.name.trim()} sx={{ borderRadius: '10px', fontWeight: 700 }}>
-            Add Field
+          <Button variant="contained" onClick={() => void handleSaveField()} disabled={!fieldForm.name.trim() || operational.saving} sx={{ borderRadius: '10px', fontWeight: 700 }}>
+            {operational.saving ? 'Saving…' : 'Add Field'}
           </Button>
         </DialogActions>
       </Dialog>
@@ -380,21 +418,25 @@ export default function PropertyDetail() {
         </DialogContent>
         <DialogActions sx={{ px: 3, pb: 2.5 }}>
           <Button onClick={() => setEditing(false)}>Cancel</Button>
-          <Button variant="contained" onClick={handleSaveEdit} sx={{ borderRadius: '10px', fontWeight: 700 }}>Save</Button>
+          <Button variant="contained" onClick={() => void handleSaveEdit()} disabled={operational.saving} sx={{ borderRadius: '10px', fontWeight: 700 }}>{operational.saving ? 'Saving…' : 'Save'}</Button>
         </DialogActions>
       </Dialog>
 
-      {/* Delete Confirm */}
+      {/* Archive/Delete Confirm */}
       <Dialog open={deleteConfirm} onClose={() => setDeleteConfirm(false)} PaperProps={{ sx: { borderRadius: '16px' } }}>
-        <DialogTitle sx={{ fontWeight: 700 }}>Delete Property?</DialogTitle>
+        <DialogTitle sx={{ fontWeight: 700 }}>{operational.mode === 'remote' ? 'Archive Property?' : 'Delete Property?'}</DialogTitle>
         <DialogContent>
           <Typography variant="body2">
-            This will permanently delete <strong>{property.name}</strong> and all its fields and job records.
+            {operational.mode === 'remote'
+              ? <>This will archive <strong>{property.name}</strong>. Active fields must be archived first.</>
+              : <>This will permanently delete <strong>{property.name}</strong> and all its fields and job records.</>}
           </Typography>
         </DialogContent>
         <DialogActions sx={{ px: 3, pb: 2.5 }}>
           <Button onClick={() => setDeleteConfirm(false)}>Cancel</Button>
-          <Button variant="contained" color="error" onClick={handleDelete} sx={{ borderRadius: '10px', fontWeight: 700 }}>Delete</Button>
+          <Button variant="contained" color="error" onClick={() => void handleDelete()} disabled={operational.saving} sx={{ borderRadius: '10px', fontWeight: 700 }}>
+            {operational.saving ? 'Saving…' : operational.mode === 'remote' ? 'Archive' : 'Delete'}
+          </Button>
         </DialogActions>
       </Dialog>
     </Box>

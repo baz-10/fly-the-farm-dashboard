@@ -23,6 +23,8 @@ export interface Client {
   notes: string;
   createdAt: string;
   updatedAt: string;
+  /** Authoritative API optimistic-concurrency token in remote mode. */
+  rowVersion?: number;
 }
 
 export interface Property {
@@ -38,6 +40,8 @@ export interface Property {
   notes: string;
   createdAt: string;
   updatedAt: string;
+  /** Authoritative API optimistic-concurrency token in remote mode. */
+  rowVersion?: number;
 }
 
 // ─── Field / Paddock ─────────────────────────────────────────
@@ -68,6 +72,10 @@ export interface Field {
   notes: string;
   createdAt: string;
   updatedAt: string;
+  /** Authoritative API optimistic-concurrency token in remote mode. */
+  rowVersion?: number;
+  /** Server-managed reference to the active immutable boundary version. */
+  fieldBoundaryVersionId?: string;
 }
 
 // ─── Chemical Entry ──────────────────────────────────────────
