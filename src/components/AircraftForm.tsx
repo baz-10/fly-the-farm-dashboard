@@ -17,6 +17,7 @@ import {
 // import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 // import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
 import { useAircraft } from '../contexts/AircraftContext';
+import { useOperationalData } from '../contexts/OperationalDataContext';
 import { Aircraft, AircraftStatus } from '../types/aircraft';
 import { addMonthsToDateInput } from '../utils/aircraftMaintenance';
 // import { enAU } from 'date-fns/locale';
@@ -28,6 +29,7 @@ interface AircraftFormProps {
 }
 
 interface FormData {
+  operatingLocationId: string;
   registration: string;
   manufacturer: string;
   model: string;
@@ -69,6 +71,7 @@ interface FormData {
 }
 
 const initialFormData: FormData = {
+  operatingLocationId: '',
   registration: '',
   manufacturer: '',
   model: '',
@@ -107,6 +110,7 @@ interface FormErrors {
 
 export default function AircraftForm({ aircraftId, onSave, onCancel }: AircraftFormProps) {
   const { createAircraft, updateAircraft, getAircraftById, error } = useAircraft();
+  const { mode, operatingLocations } = useOperationalData();
   const [formData, setFormData] = useState<FormData>(initialFormData);
   const [errors, setErrors] = useState<FormErrors>({});
   const [saving, setSaving] = useState(false);
@@ -118,6 +122,7 @@ export default function AircraftForm({ aircraftId, onSave, onCancel }: AircraftF
       const aircraft = getAircraftById(aircraftId);
       if (aircraft) {
         setFormData({
+          operatingLocationId: aircraft.operatingLocationId || '',
           registration: aircraft.registration,
           manufacturer: aircraft.manufacturer,
           model: aircraft.model,
@@ -153,10 +158,18 @@ export default function AircraftForm({ aircraftId, onSave, onCancel }: AircraftF
     }
   }, [aircraftId, getAircraftById]);
 
+  useEffect(() => {
+    if (mode !== 'remote' || aircraftId || operatingLocations.length !== 1) return;
+    setFormData((previous) => ({ ...previous, operatingLocationId: operatingLocations[0].id }));
+  }, [aircraftId, mode, operatingLocations]);
+
   const validateForm = useCallback((): boolean => {
     const newErrors: FormErrors = {};
 
     // Required fields
+    if (mode === 'remote' && !formData.operatingLocationId) {
+      newErrors.operatingLocationId = 'Operating location is required';
+    }
     if (!formData.registration.trim()) {
       newErrors.registration = 'Registration is required';
     } else if (!/^[A-Z0-9-]+$/.test(formData.registration.trim().toUpperCase())) {
@@ -282,7 +295,7 @@ export default function AircraftForm({ aircraftId, onSave, onCancel }: AircraftF
 
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
-  }, [formData]);
+  }, [formData, mode]);
 
   const handleInputChange = (field: keyof FormData) => (
     event: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement> | SelectChangeEvent
@@ -337,6 +350,7 @@ export default function AircraftForm({ aircraftId, onSave, onCancel }: AircraftF
 
     try {
       const aircraftData: Omit<Aircraft, 'id' | 'createdAt' | 'updatedAt'> = {
+        operatingLocationId: formData.operatingLocationId || undefined,
         registration: formData.registration.trim().toUpperCase(),
         manufacturer: formData.manufacturer.trim(),
         model: formData.model.trim(),
@@ -346,6 +360,11 @@ export default function AircraftForm({ aircraftId, onSave, onCancel }: AircraftF
         maxAltitude: parseFloat(formData.maxAltitude),
         maxWindSpeed: parseFloat(formData.maxWindSpeed),
         status: formData.status,
+        serviceabilityState: formData.status === 'operational' ? 'serviceable'
+          : formData.status === 'maintenance' ? 'maintenance_required'
+            : formData.status === 'inspection' ? 'inspection_required' : 'unserviceable',
+        missionReady: formData.status === 'operational',
+        notes: aircraftId ? getAircraftById(aircraftId)?.notes || '' : '',
         assignedKits: [],
         maintenanceDates: {
           lastInspection: new Date(formData.lastInspection).toISOString(),
@@ -372,9 +391,9 @@ export default function AircraftForm({ aircraftId, onSave, onCancel }: AircraftF
           minimumCrewSize: parseInt(formData.minimumCrewSize),
         },
         documentation: {
-          manuals: [],
-          certificates: [],
-          logbooks: [],
+          manuals: aircraftId ? getAircraftById(aircraftId)?.documentation.manuals || [] : [],
+          certificates: aircraftId ? getAircraftById(aircraftId)?.documentation.certificates || [] : [],
+          logbooks: aircraftId ? getAircraftById(aircraftId)?.documentation.logbooks || [] : [],
           complianceChecks: {
             casaCompliant: formData.casaCompliant,
             lastCasaInspection: formData.lastCasaInspection ? new Date(formData.lastCasaInspection).toISOString() : new Date().toISOString(),
@@ -421,6 +440,23 @@ export default function AircraftForm({ aircraftId, onSave, onCancel }: AircraftF
             Basic Information
           </Typography>
           <Grid container spacing={2}>
+            <Grid size={{ xs: 12, sm: 6 }}>
+              {mode === 'remote' && (
+                <FormControl fullWidth error={Boolean(errors.operatingLocationId)}>
+                  <InputLabel id="aircraft-operating-location-label">Operating location *</InputLabel>
+                  <Select
+                    labelId="aircraft-operating-location-label"
+                    label="Operating location *"
+                    value={formData.operatingLocationId}
+                    onChange={handleInputChange('operatingLocationId')}
+                  >
+                    {operatingLocations.map((location) => (
+                      <MenuItem key={location.id} value={location.id}>{location.name}</MenuItem>
+                    ))}
+                  </Select>
+                </FormControl>
+              )}
+            </Grid>
             <Grid size={{ xs: 12, sm: 6 }}>
               <TextField
                 fullWidth

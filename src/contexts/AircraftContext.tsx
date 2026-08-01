@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { Aircraft, EquipmentKit, AircraftKitConfiguration, AircraftStatus, EquipmentKitType, OperationalStatus } from '../types/aircraft';
-import { clearSharedValue, PERSISTENCE_KEYS, readSharedValue, writeSharedValue } from '../services/persistence';
+import { clearSharedValue, getPersistenceMode, PERSISTENCE_KEYS, readSharedValue, writeSharedValue } from '../services/persistence';
+import { AircraftApiError, AircraftWriteInput, createAircraftApiGateway } from '../services/aircraftApi';
 import { getCompatibleAvailableKits, isKitCompatibleWithAircraft } from '../utils/aircraftKitCompatibility';
 
 // Context type definition
@@ -204,6 +205,8 @@ const validateStoredData = (data: unknown): boolean => {
 
 // Aircraft Context Provider
 export function AircraftProvider({ children }: { children: React.ReactNode }) {
+  const remoteMode = getPersistenceMode() === 'remote';
+  const aircraftApi = useMemo(() => createAircraftApiGateway(), []);
   const [aircraft, setAircraft] = useState<Aircraft[]>([]);
   const [equipmentKits, setEquipmentKits] = useState<EquipmentKit[]>([]);
   const [configurations, setConfigurations] = useState<AircraftKitConfiguration[]>([]);
@@ -233,6 +236,12 @@ export function AircraftProvider({ children }: { children: React.ReactNode }) {
     setError(null);
 
     try {
+      if (remoteMode) {
+        setAircraft(await aircraftApi.list());
+        setEquipmentKits([]);
+        setConfigurations([]);
+        return;
+      }
       const data = await readSharedValue<AircraftStoreData | null>(STORAGE_KEY, null);
       if (!data) {
         return;
@@ -253,10 +262,11 @@ export function AircraftProvider({ children }: { children: React.ReactNode }) {
       hasLoadedRef.current = true;
       setIsLoading(false);
     }
-  }, []);
+  }, [aircraftApi, remoteMode]);
 
   // Save data to localStorage with error handling
   const saveData = useCallback(async () => {
+    if (remoteMode) return;
     const snapshot = {
       aircraft,
       equipmentKits,
@@ -280,13 +290,14 @@ export function AircraftProvider({ children }: { children: React.ReactNode }) {
       .then(persistSnapshot);
     saveQueueRef.current = queuedSave;
     await queuedSave;
-  }, [aircraft, equipmentKits, configurations]);
+  }, [aircraft, equipmentKits, configurations, remoteMode]);
 
   // Clear all data
   const clearData = useCallback(async () => {
     setAircraft([]);
     setEquipmentKits([]);
     setConfigurations([]);
+    if (remoteMode) return;
     try {
       await clearSharedValue(STORAGE_KEY);
     } catch (error) {
@@ -294,7 +305,7 @@ export function AircraftProvider({ children }: { children: React.ReactNode }) {
       setError(message);
       console.error(message, error);
     }
-  }, []);
+  }, [remoteMode]);
 
   // Clear error state
   const clearError = useCallback(() => {
@@ -303,6 +314,19 @@ export function AircraftProvider({ children }: { children: React.ReactNode }) {
 
   // Aircraft CRUD operations with validation
   const createAircraft = useCallback(async (aircraftData: Omit<Aircraft, 'id' | 'createdAt' | 'updatedAt'>): Promise<string> => {
+    if (remoteMode) {
+      try {
+        setError(null);
+        const { assignedKits: _assignedKits, rowVersion: _rowVersion, ...input } = aircraftData;
+        const created = await aircraftApi.create(input as AircraftWriteInput);
+        setAircraft((previous) => [...previous, created]);
+        return created.id;
+      } catch (error) {
+        const message = error instanceof AircraftApiError ? error.message : 'The aircraft record could not be saved.';
+        setError(message);
+        throw error;
+      }
+    }
     return safeOperation(() => {
       // Validate input data
       if (!aircraftData.registration || !aircraftData.manufacturer || !aircraftData.model) {
@@ -326,9 +350,25 @@ export function AircraftProvider({ children }: { children: React.ReactNode }) {
       setAircraft(prev => [...prev, newAircraft]);
       return id;
     }, 'Failed to create aircraft') || '';
-  }, [safeOperation]);
+  }, [aircraftApi, remoteMode, safeOperation]);
 
   const updateAircraft = useCallback(async (id: string, updates: Partial<Omit<Aircraft, 'id' | 'createdAt' | 'updatedAt'>>) => {
+    if (remoteMode) {
+      try {
+        setError(null);
+        const current = aircraft.find((item) => item.id === id);
+        if (!current) throw new Error(`Aircraft with ID ${id} not found`);
+        const merged = { ...current, ...updates };
+        const { id: _id, createdAt: _createdAt, updatedAt: _updatedAt, assignedKits: _assignedKits, rowVersion, ...input } = merged;
+        const confirmed = await aircraftApi.update(id, input as AircraftWriteInput, rowVersion || 1);
+        setAircraft((previous) => previous.map((item) => item.id === id ? confirmed : item));
+        return;
+      } catch (error) {
+        const message = error instanceof AircraftApiError ? error.message : error instanceof Error ? error.message : 'The aircraft record could not be updated.';
+        setError(message);
+        throw error;
+      }
+    }
     safeOperation(() => {
       if (!id) {
         throw new Error('Aircraft ID is required');
@@ -347,9 +387,24 @@ export function AircraftProvider({ children }: { children: React.ReactNode }) {
         );
       });
     }, 'Failed to update aircraft');
-  }, [safeOperation]);
+  }, [aircraft, aircraftApi, remoteMode, safeOperation]);
 
   const deleteAircraft = useCallback(async (id: string) => {
+    if (remoteMode) {
+      try {
+        setError(null);
+        const current = aircraft.find((item) => item.id === id);
+        if (!current) throw new Error(`Aircraft with ID ${id} not found`);
+        await aircraftApi.archive(id, current.rowVersion || 1);
+        setAircraft((previous) => previous.filter((item) => item.id !== id));
+        setConfigurations((previous) => previous.filter((config) => config.aircraftId !== id));
+        return;
+      } catch (error) {
+        const message = error instanceof AircraftApiError ? error.message : error instanceof Error ? error.message : 'The aircraft record could not be archived.';
+        setError(message);
+        throw error;
+      }
+    }
     safeOperation(() => {
       if (!id) {
         throw new Error('Aircraft ID is required');
@@ -366,7 +421,7 @@ export function AircraftProvider({ children }: { children: React.ReactNode }) {
       // Also remove configurations for this aircraft
       setConfigurations(prev => prev.filter(config => config.aircraftId !== id));
     }, 'Failed to delete aircraft');
-  }, [safeOperation]);
+  }, [aircraft, aircraftApi, remoteMode, safeOperation]);
 
   const getAircraftById = useCallback((id: string): Aircraft | undefined => {
     return aircraft.find(a => a.id === id);
@@ -563,6 +618,7 @@ export function AircraftProvider({ children }: { children: React.ReactNode }) {
 
   // Auto-save the latest fleet snapshot, including an intentionally empty fleet.
   useEffect(() => {
+    if (remoteMode) return;
     if (!hasLoadedRef.current) {
       return;
     }
@@ -581,7 +637,7 @@ export function AircraftProvider({ children }: { children: React.ReactNode }) {
         saveTimeoutRef.current = null;
       }
     };
-  }, [aircraft, equipmentKits, configurations, saveData]);
+  }, [aircraft, equipmentKits, configurations, remoteMode, saveData]);
 
   // Load data on mount
   useEffect(() => {
