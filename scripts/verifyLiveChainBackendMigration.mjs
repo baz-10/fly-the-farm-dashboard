@@ -16,6 +16,7 @@ const accessMigrationPath = resolve(scriptDirectory, '../supabase/migrations/202
 const workflowMigrationPath = resolve(scriptDirectory, '../supabase/migrations/20260801007000_live_chain_workflow_prerequisites.sql');
 const reviewFixMigrationPath = resolve(scriptDirectory, '../supabase/migrations/20260801008000_live_chain_review_fixes.sql');
 const reviewFollowupMigrationPath = resolve(scriptDirectory, '../supabase/migrations/20260801009000_live_chain_review_followup.sql');
+const resolutionAtomicityMigrationPath = resolve(scriptDirectory, '../supabase/migrations/20260801010000_boundary_resolution_atomicity.sql');
 
 async function expectRejected(db, label, sql) {
   try {
@@ -76,6 +77,7 @@ try {
   await db.exec(await readFile(workflowMigrationPath, 'utf8'));
   await db.exec(await readFile(reviewFixMigrationPath, 'utf8'));
   await db.exec(await readFile(reviewFollowupMigrationPath, 'utf8'));
+  await db.exec(await readFile(resolutionAtomicityMigrationPath, 'utf8'));
 
   const legacyRepair = await db.query(`
     select
@@ -103,6 +105,26 @@ try {
   if (recordedResolution.rows[0]?.result?.record?.issue_id !== resolutionIssueId) {
     throw new Error('controlled boundary migration issue resolution was not appended');
   }
+  await db.exec('reset role;');
+  const resolutionId = recordedResolution.rows[0].result.record.id;
+  const resolutionAtomicity = await db.query(`select
+    (select count(*)::integer from public.audit_events
+      where organisation_id = '00000000-0000-0000-0000-000000000001'
+        and actor_internal_user_id = '00000000-0000-0000-0000-000000000101'
+        and event_type = 'boundary_migration_issue_resolutions.create'
+        and entity_type = 'boundary_migration_issue_resolutions'
+        and entity_id = '${resolutionId}'
+        and event_payload->>'issue_id' = '${resolutionIssueId}') as audit_count,
+    (select count(*)::integer from public.transactional_outbox
+      where organisation_id = '00000000-0000-0000-0000-000000000001'
+        and topic = 'operational.boundary_migration_issue_resolutions.create'
+        and aggregate_type = 'boundary_migration_issue_resolutions'
+        and aggregate_id = '${resolutionId}'
+        and payload->>'issue_id' = '${resolutionIssueId}') as outbox_count;`);
+  if (resolutionAtomicity.rows[0]?.audit_count !== 1 || resolutionAtomicity.rows[0]?.outbox_count !== 1) {
+    throw new Error('boundary issue resolution did not atomically create its audit and outbox records');
+  }
+  await db.exec('set role service_role;');
   await expectRejected(db, 'service-role direct boundary issue resolution insert', `insert into public.boundary_migration_issue_resolutions (
     organisation_id, issue_id, resolved_by_internal_user_id, resolution_details
   ) values (
@@ -110,6 +132,51 @@ try {
     '00000000-0000-0000-0000-000000000101', '{}'::jsonb
   );`);
   await db.exec('reset role;');
+
+  const rollbackIssue = await db.query(`select id from public.operational_migration_issues
+    where organisation_id = '00000000-0000-0000-0000-000000000001'
+      and issue_code = 'legacy_shared_boundary_repaired' limit 1;`);
+  const rollbackIssueId = rollbackIssue.rows[0]?.id;
+  await expectRejected(db, 'cross-organisation resolution actor', `select public.ftf_record_boundary_migration_issue_resolution(
+    '00000000-0000-0000-0000-000000000001',
+    '00000000-0000-0000-0000-000000000202',
+    '${rollbackIssueId}', '{}'::jsonb
+  );`);
+  await db.exec(`
+    create function public.ftf_test_reject_resolution_outbox() returns trigger
+    language plpgsql as $$
+    begin
+      if new.topic = 'operational.boundary_migration_issue_resolutions.create' then
+        raise exception 'forced resolution outbox failure';
+      end if;
+      return new;
+    end;
+    $$;
+    create trigger ftf_test_reject_resolution_outbox
+    before insert on public.transactional_outbox
+    for each row execute function public.ftf_test_reject_resolution_outbox();
+  `);
+  await db.exec('set role service_role;');
+  await expectRejected(db, 'resolution outbox failure', `select public.ftf_record_boundary_migration_issue_resolution(
+    '00000000-0000-0000-0000-000000000001',
+    '00000000-0000-0000-0000-000000000101',
+    '${rollbackIssueId}', '{"resolution":"must_roll_back"}'::jsonb
+  );`);
+  await db.exec('reset role;');
+  await db.exec(`drop trigger ftf_test_reject_resolution_outbox on public.transactional_outbox;
+    drop function public.ftf_test_reject_resolution_outbox();`);
+  const resolutionRollback = await db.query(`select
+    (select count(*)::integer from public.boundary_migration_issue_resolutions
+      where issue_id = '${rollbackIssueId}') as resolution_count,
+    (select count(*)::integer from public.audit_events
+      where event_type = 'boundary_migration_issue_resolutions.create'
+        and event_payload->>'issue_id' = '${rollbackIssueId}') as audit_count,
+    (select count(*)::integer from public.transactional_outbox
+      where topic = 'operational.boundary_migration_issue_resolutions.create'
+        and payload->>'issue_id' = '${rollbackIssueId}') as outbox_count;`);
+  if (resolutionRollback.rows[0]?.resolution_count !== 0 || resolutionRollback.rows[0]?.audit_count !== 0 || resolutionRollback.rows[0]?.outbox_count !== 0) {
+    throw new Error('failed boundary issue resolution did not roll back resolution, audit, and outbox together');
+  }
   await expectRejected(db, 'boundary issue resolution update', `update public.boundary_migration_issue_resolutions
     set resolution_details = '{"resolution":"changed"}'::jsonb where issue_id = '${resolutionIssueId}';`);
   await expectRejected(db, 'boundary issue resolution delete', `delete from public.boundary_migration_issue_resolutions

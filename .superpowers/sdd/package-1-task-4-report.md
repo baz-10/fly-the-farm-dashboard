@@ -242,3 +242,47 @@ through `080` remain unchanged.
 Review-fix requirement references: NEW-001, NEW-002, NEW-003, NEW-004,
 NEW-005, NEW-006, NEW-007, NEW-008, NEW-020, REP-001, REP-002, REP-003,
 REP-004, RET-003, RET-004, RET-005, RET-006, RET-007, RET-008.
+
+## Review fix round 3 — 2026-08-01
+
+The third review correction is isolated in the forward-only
+`20260801010000_boundary_resolution_atomicity.sql` migration. Migration `090`
+and all earlier committed migrations remain unchanged.
+
+### Review finding addressed
+
+`ftf_record_boundary_migration_issue_resolution` now inserts the immutable
+resolution, its audit event, and its transactional outbox event inside one
+trusted PostgreSQL function call. The replacement preserves the organisation
+advisory lock, active-organisation row lock, capacity-aware actor validation,
+same-organisation issue validation, and object-details validation from `090`.
+
+The audit event uses type `boundary_migration_issue_resolutions.create`; the
+outbox topic is `operational.boundary_migration_issue_resolutions.create`.
+Both identify the resolution record as their entity/aggregate and carry the
+resolution record plus source `issue_id` in the payload.
+
+### Review-fix TDD and rollback evidence
+
+The PGlite regression first failed with
+`boundary issue resolution did not atomically create its audit and outbox records`
+against `090`. After applying `100`, the focused gate passed 2 suites and 8
+tests.
+
+The PostgreSQL behavior test also installs a test-only outbox trigger that
+throws for the resolution topic. The controlled command then fails, and the
+test verifies zero resolution, audit, and outbox rows remain for that issue.
+It separately verifies cross-organisation actor rejection and the successful
+event actor, organisation, entity/aggregate, topic/type, and issue payload.
+
+### Review-fix verification
+
+- Backend regression gate — 11 suites, 49 tests passed.
+- Full repository: `CI=true npm test -- --runInBand` — 50 suites, 255 tests
+  passed, 0 failed.
+- Production build: `npm run build` — exit 0 with the pre-existing ESLint,
+  Browserslist-age, and bundle-size warnings.
+
+Review-fix requirement references: NEW-001, NEW-002, NEW-003, NEW-004,
+NEW-005, NEW-006, NEW-007, NEW-008, NEW-020, REP-001, REP-002, REP-003,
+REP-004, RET-003, RET-004, RET-005, RET-006, RET-007, RET-008.
