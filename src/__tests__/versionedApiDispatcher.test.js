@@ -51,6 +51,7 @@ describe('v1 operational API dispatcher', () => {
     'fields',
     'jobs',
     'missions',
+    'aircraft',
     'operating-locations',
     'field-boundary-versions',
     'session',

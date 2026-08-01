@@ -11,6 +11,7 @@ function createDefaultHandlers() {
     fields: createOperationalHandler('fields'),
     jobs: createOperationalHandler('jobs'),
     missions: createOperationalHandler('missions'),
+    aircraft: createOperationalHandler('aircraft'),
     'operating-locations': createOperationalHandler('operating_locations'),
     'field-boundary-versions': createFieldBoundaryVersionHandler(),
     session: createSessionHandler(),

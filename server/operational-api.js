@@ -15,6 +15,11 @@ const SCHEMAS = {
   fields: { required: ['propertyId', 'name'], readOnly: ['fieldBoundaryVersionId'], fields: { propertyId: 'property_id', fieldBoundaryVersionId: 'field_boundary_version_id', name: 'name', areaHectares: 'area_hectares' } },
   jobs: { required: ['clientId', 'propertyId', 'reference'], fields: { clientId: 'client_id', propertyId: 'property_id', fieldIds: 'field_ids', reference: 'reference', scope: 'scope', status: 'status', notes: 'notes', requestedDate: 'requested_date', scheduledDate: 'scheduled_date' } },
   missions: { required: ['jobId', 'operatingLocationId', 'missionNumber'], fields: { jobId: 'job_id', operatingLocationId: 'operating_location_id', missionNumber: 'mission_number', title: 'title', description: 'description', status: 'status', scheduledStartAt: 'scheduled_start_at' } },
+  aircraft: { required: ['operatingLocationId', 'registration', 'manufacturer', 'model', 'serialNumber'], fields: {
+    operatingLocationId: 'operating_location_id', registration: 'registration', manufacturer: 'manufacturer', model: 'model', serialNumber: 'serial_number',
+    activationDate: 'activation_date', status: 'status', serviceabilityState: 'serviceability_state', missionReady: 'mission_ready',
+    mtow: 'mtow', maxAltitude: 'max_altitude', maxWindSpeed: 'max_wind_speed', documentation: 'documentation', notes: 'notes',
+  } },
 };
 
 function apiError(statusCode, code, message, meta) {
@@ -64,6 +69,30 @@ function assertPermission(context, resource, action) {
 
 function mapDatabaseRecord(resource, record) {
   if (!record) return null;
+  if (resource === 'aircraft') {
+    return {
+      id: record.id, operatingLocationId: record.operating_location_id, registration: record.registration,
+      manufacturer: record.manufacturer, model: record.model, serialNumber: record.serial_number,
+      activationDate: record.activation_date, status: record.status, serviceabilityState: record.serviceability_state,
+      missionReady: record.mission_ready, mtow: Number(record.mtow), maxAltitude: Number(record.max_altitude), maxWindSpeed: Number(record.max_wind_speed),
+      maintenanceDates: {
+        lastInspection: record.last_inspection, nextInspectionDue: record.next_inspection_due,
+        lastMajorService: record.last_major_service, nextMajorServiceDue: record.next_major_service_due,
+        totalFlightHours: Number(record.total_flight_hours), hoursSinceLastService: Number(record.hours_since_last_service),
+      },
+      insurance: {
+        policyNumber: record.insurance_policy_number, provider: record.insurance_provider,
+        expiryDate: record.insurance_expiry_date, coverageAmount: Number(record.insurance_coverage_amount), hullValue: Number(record.hull_value),
+      },
+      operationalLimits: {
+        minOperatingTemp: Number(record.min_operating_temp), maxOperatingTemp: Number(record.max_operating_temp),
+        maxPayloadWeight: Number(record.max_payload_weight), batteryCycles: record.battery_cycles === null ? undefined : Number(record.battery_cycles),
+        maxFlightTime: Number(record.max_flight_time), serviceRange: Number(record.service_range), minimumCrewSize: Number(record.minimum_crew_size),
+      },
+      documentation: record.documentation, notes: record.notes || '', rowVersion: record.row_version,
+      createdAt: record.created_at, updatedAt: record.updated_at,
+    };
+  }
   const schema = SCHEMAS[resource];
   const result = { id: record.id };
   Object.entries(schema.fields).forEach(([apiField, databaseField]) => {
@@ -76,6 +105,7 @@ function mapDatabaseRecord(resource, record) {
 }
 
 function mapInput(resource, body, existing) {
+  if (resource === 'aircraft') return mapAircraftInput(body, existing);
   const schema = SCHEMAS[resource];
   const readOnly = new Set(schema.readOnly || []);
   const allowed = new Set([...Object.keys(schema.fields).filter((field) => !readOnly.has(field)), 'expectedVersion']);
@@ -139,6 +169,71 @@ function mapInput(resource, body, existing) {
   return { data, merged };
 }
 
+function assertAircraftNumber(value, field, { minimum = Number.NEGATIVE_INFINITY, integer = false } = {}) {
+  const number = Number(value);
+  if (!Number.isFinite(number) || number < minimum || (integer && !Number.isInteger(number))) {
+    throw apiError(400, 'VALIDATION_ERROR', `${field} must be a ${integer ? 'whole ' : ''}number of at least ${minimum}.`);
+  }
+  return number;
+}
+
+function assertAircraftDate(value, field, required = true) {
+  if ((value === undefined || value === null || value === '') && !required) return null;
+  if (typeof value !== 'string' || Number.isNaN(Date.parse(value))) throw apiError(400, 'VALIDATION_ERROR', `${field} must be a valid date.`);
+  return value.slice(0, 10);
+}
+
+function mapAircraftInput(body, existing) {
+  const allowed = new Set(['operatingLocationId', 'registration', 'manufacturer', 'model', 'serialNumber', 'activationDate', 'status', 'serviceabilityState', 'missionReady', 'mtow', 'maxAltitude', 'maxWindSpeed', 'maintenanceDates', 'insurance', 'operationalLimits', 'documentation', 'notes', 'expectedVersion']);
+  Object.keys(body).forEach((key) => { if (!allowed.has(key)) throw apiError(400, 'VALIDATION_ERROR', `Unexpected field: ${key}.`); });
+  const baseline = existing ? mapDatabaseRecord('aircraft', existing) : {};
+  const merged = { ...baseline, ...body };
+  ['operatingLocationId', 'registration', 'manufacturer', 'model', 'serialNumber'].forEach((field) => {
+    if (typeof merged[field] !== 'string' || !merged[field].trim()) throw apiError(400, 'VALIDATION_ERROR', `${field} is required.`);
+  });
+  assertUuid(merged.operatingLocationId, 'operatingLocationId');
+  merged.registration = merged.registration.trim().toUpperCase();
+  if (!/^[A-Z0-9-]+$/.test(merged.registration)) throw apiError(400, 'VALIDATION_ERROR', 'registration may only contain uppercase letters, numbers, and hyphens.');
+  if (!['operational', 'maintenance', 'retired', 'inspection'].includes(merged.status)) throw apiError(400, 'VALIDATION_ERROR', 'status is invalid.');
+  if (!['serviceable', 'unserviceable', 'inspection_required', 'maintenance_required'].includes(merged.serviceabilityState)) throw apiError(400, 'VALIDATION_ERROR', 'serviceabilityState is invalid.');
+  if (typeof merged.missionReady !== 'boolean') throw apiError(400, 'VALIDATION_ERROR', 'missionReady must be a boolean.');
+  if (merged.missionReady && (merged.status !== 'operational' || merged.serviceabilityState !== 'serviceable')) throw apiError(400, 'VALIDATION_ERROR', 'A mission-ready aircraft must be operational and serviceable.');
+  const maintenance = merged.maintenanceDates;
+  const insurance = merged.insurance;
+  const limits = merged.operationalLimits;
+  const documentation = merged.documentation;
+  if (!maintenance || typeof maintenance !== 'object' || Array.isArray(maintenance)) throw apiError(400, 'VALIDATION_ERROR', 'maintenanceDates is required.');
+  if (!insurance || typeof insurance !== 'object' || Array.isArray(insurance)) throw apiError(400, 'VALIDATION_ERROR', 'insurance is required.');
+  if (!limits || typeof limits !== 'object' || Array.isArray(limits)) throw apiError(400, 'VALIDATION_ERROR', 'operationalLimits is required.');
+  if (!documentation || typeof documentation !== 'object' || Array.isArray(documentation)
+    || !['manuals', 'certificates', 'logbooks'].every((key) => Array.isArray(documentation[key]) && documentation[key].every((entry) => typeof entry === 'string'))
+    || !documentation.complianceChecks || typeof documentation.complianceChecks.casaCompliant !== 'boolean') {
+    throw apiError(400, 'VALIDATION_ERROR', 'documentation must contain controlled file ID arrays and compliance checks.');
+  }
+  if (typeof insurance.policyNumber !== 'string' || !insurance.policyNumber.trim() || typeof insurance.provider !== 'string' || !insurance.provider.trim()) throw apiError(400, 'VALIDATION_ERROR', 'Insurance policy number and provider are required.');
+  const mtow = assertAircraftNumber(merged.mtow, 'mtow', { minimum: 0.001 });
+  const maxPayloadWeight = assertAircraftNumber(limits.maxPayloadWeight, 'maxPayloadWeight', { minimum: 0.001 });
+  if (maxPayloadWeight > mtow) throw apiError(400, 'VALIDATION_ERROR', 'maxPayloadWeight cannot exceed mtow.');
+  const minOperatingTemp = assertAircraftNumber(limits.minOperatingTemp, 'minOperatingTemp');
+  const maxOperatingTemp = assertAircraftNumber(limits.maxOperatingTemp, 'maxOperatingTemp');
+  if (minOperatingTemp >= maxOperatingTemp) throw apiError(400, 'VALIDATION_ERROR', 'maxOperatingTemp must exceed minOperatingTemp.');
+  const data = {
+    operating_location_id: merged.operatingLocationId, registration: merged.registration, manufacturer: merged.manufacturer.trim(), model: merged.model.trim(), serial_number: merged.serialNumber.trim(),
+    activation_date: assertAircraftDate(merged.activationDate, 'activationDate', false), status: merged.status, serviceability_state: merged.serviceabilityState, mission_ready: merged.missionReady,
+    mtow, max_altitude: assertAircraftNumber(merged.maxAltitude, 'maxAltitude', { minimum: 0.001 }), max_wind_speed: assertAircraftNumber(merged.maxWindSpeed, 'maxWindSpeed', { minimum: 0.001 }),
+    last_inspection: assertAircraftDate(maintenance.lastInspection, 'lastInspection', false), next_inspection_due: assertAircraftDate(maintenance.nextInspectionDue, 'nextInspectionDue', false),
+    last_major_service: assertAircraftDate(maintenance.lastMajorService, 'lastMajorService', false), next_major_service_due: assertAircraftDate(maintenance.nextMajorServiceDue, 'nextMajorServiceDue', false),
+    total_flight_hours: assertAircraftNumber(maintenance.totalFlightHours, 'totalFlightHours'), hours_since_last_service: assertAircraftNumber(maintenance.hoursSinceLastService, 'hoursSinceLastService'),
+    insurance_policy_number: insurance.policyNumber.trim(), insurance_provider: insurance.provider.trim(), insurance_expiry_date: assertAircraftDate(insurance.expiryDate, 'insuranceExpiryDate'),
+    insurance_coverage_amount: assertAircraftNumber(insurance.coverageAmount, 'coverageAmount'), hull_value: assertAircraftNumber(insurance.hullValue, 'hullValue'),
+    min_operating_temp: minOperatingTemp, max_operating_temp: maxOperatingTemp, max_payload_weight: maxPayloadWeight,
+    battery_cycles: limits.batteryCycles === undefined || limits.batteryCycles === null ? null : assertAircraftNumber(limits.batteryCycles, 'batteryCycles', { integer: true }),
+    max_flight_time: assertAircraftNumber(limits.maxFlightTime, 'maxFlightTime', { minimum: 0.001 }), service_range: assertAircraftNumber(limits.serviceRange, 'serviceRange', { minimum: 0.001 }),
+    minimum_crew_size: assertAircraftNumber(limits.minimumCrewSize, 'minimumCrewSize', { minimum: 1, integer: true }), documentation, notes: typeof merged.notes === 'string' ? merged.notes : '',
+  };
+  return { data, merged };
+}
+
 function isIsoCalendarDate(value) {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
   if (!match) return false;
@@ -149,13 +244,13 @@ function isIsoCalendarDate(value) {
   return day <= new Date(Date.UTC(year, month, 0)).getUTCDate();
 }
 
-function assertMissionLocationAccess(context, operatingLocationId) {
+function assertLocationAccess(context, operatingLocationId, resource = 'record') {
   if ((context.operatingLocationIds || []).includes(operatingLocationId)) return;
-  throw apiError(403, 'LOCATION_FORBIDDEN', 'This mission operating location is not assigned to your membership.');
+  throw apiError(403, 'LOCATION_FORBIDDEN', `This ${resource} operating location is not assigned to your membership.`);
 }
 
 function hasAssignedLocationReadAccess(resource, context, record) {
-  if (!['missions', 'operating_locations'].includes(resource)) return true;
+  if (!['missions', 'aircraft', 'operating_locations'].includes(resource)) return true;
   const operatingLocationId = resource === 'operating_locations'
     ? record?.id : record?.operating_location_id ?? record?.operatingLocationId;
   return typeof operatingLocationId === 'string'
@@ -296,7 +391,7 @@ function createOperationalHandler(resource, dependencies = {}) {
       if (req.method === 'POST') {
         assertPermission(context, resource, 'create');
         const { data, merged } = mapInput(resource, body);
-        if (resource === 'missions') assertMissionLocationAccess(context, merged.operatingLocationId);
+        if (['missions', 'aircraft'].includes(resource)) assertLocationAccess(context, merged.operatingLocationId, resource === 'missions' ? 'mission' : 'aircraft');
         await assertRelationships(repository, resource, context, merged);
         const result = await repository.create(resource, context, data);
         if (result.relationshipConflict) throw apiError(409, 'RELATIONSHIP_CONFLICT', 'The related record is missing, archived, or belongs to another organisation.');
@@ -312,7 +407,10 @@ function createOperationalHandler(resource, dependencies = {}) {
         const existing = await repository.get(resource, context, id);
         if (!existing || existing.archived_at) throw apiError(404, 'NOT_FOUND', 'Operational record not found.');
         const { data, merged } = mapInput(resource, body, existing);
-        if (resource === 'missions') assertMissionLocationAccess(context, merged.operatingLocationId);
+        if (['missions', 'aircraft'].includes(resource)) assertLocationAccess(context, merged.operatingLocationId, resource === 'missions' ? 'mission' : 'aircraft');
+        if (resource === 'aircraft' && (merged.status !== existing.status || merged.serviceabilityState !== existing.serviceability_state || merged.missionReady !== existing.mission_ready)) {
+          assertPermission(context, resource, 'serviceability');
+        }
         await assertRelationships(repository, resource, context, merged);
         const result = await repository.update(resource, context, id, expectedVersion, data);
         if (result.notFound) throw apiError(404, 'NOT_FOUND', 'Operational record not found.');
@@ -323,7 +421,7 @@ function createOperationalHandler(resource, dependencies = {}) {
         return res.status(200).json({ data: mapDatabaseRecord(resource, result.record) });
       }
       assertPermission(context, resource, 'archive');
-      if (resource === 'missions') {
+      if (['missions', 'aircraft'].includes(resource)) {
         const existing = await repository.get(resource, context, id);
         if (!existing || existing.archived_at || !hasAssignedLocationReadAccess(resource, context, existing)) {
           throw apiError(404, 'NOT_FOUND', 'Operational record not found.');

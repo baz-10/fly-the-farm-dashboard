@@ -6,6 +6,7 @@ const TABLES = {
   fields: 'fields',
   jobs: 'jobs',
   missions: 'missions',
+  aircraft: 'aircraft',
   operating_locations: 'operating_locations',
   field_boundary_versions: 'field_boundary_versions',
   job_fields: 'job_fields',
@@ -27,7 +28,7 @@ function activeFilter() {
 }
 
 function assignedLocationFilter(resource, context) {
-  const column = resource === 'operating_locations' ? 'id' : resource === 'missions' ? 'operating_location_id' : null;
+  const column = resource === 'operating_locations' ? 'id' : ['missions', 'aircraft'].includes(resource) ? 'operating_location_id' : null;
   if (!column) return null;
   const ids = Array.isArray(context.operatingLocationIds) ? context.operatingLocationIds.filter(Boolean) : [];
   if (ids.length === 0) return false;
