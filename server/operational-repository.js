@@ -27,18 +27,68 @@ function activeFilter() {
 }
 
 class OperationalRepository {
+  async attachJobFieldIds(context, records) {
+    if (!Array.isArray(records) || records.length === 0) return records;
+    const jobIds = records.map((record) => record.id).filter(Boolean);
+    const links = await supabaseRequest(`rest/v1/job_fields?${tenantFilter(context)}&job_id=in.(${jobIds.map(encodeURIComponent).join(',')})&${activeFilter()}&select=job_id,field_id&order=field_id.asc`, {
+      publicMessage: 'Job field assignments could not be loaded.',
+    });
+    return records.map((record) => ({
+      ...record,
+      field_ids: (Array.isArray(links) ? links : []).filter((link) => link.job_id === record.id).map((link) => link.field_id),
+    }));
+  }
+
   async list(resource, context, { page = 1, pageSize = 25 } = {}) {
     const offset = (page - 1) * pageSize;
-    return supabaseRequest(`rest/v1/${tableFor(resource)}?${tenantFilter(context)}&${activeFilter()}&select=*&order=updated_at.desc&offset=${offset}&limit=${pageSize}`, {
+    const records = await supabaseRequest(`rest/v1/${tableFor(resource)}?${tenantFilter(context)}&${activeFilter()}&select=*&order=updated_at.desc&offset=${offset}&limit=${pageSize}`, {
       publicMessage: 'Operational records could not be loaded.',
     });
+    return resource === 'jobs' ? this.attachJobFieldIds(context, records) : records;
   }
 
   async get(resource, context, id) {
     const rows = await supabaseRequest(`rest/v1/${tableFor(resource)}?${tenantFilter(context)}&id=eq.${encodeURIComponent(id)}&${activeFilter()}&select=*&limit=1`, {
       publicMessage: 'Operational record could not be loaded.',
     });
-    return Array.isArray(rows) && rows[0] ? rows[0] : null;
+    if (!Array.isArray(rows) || !rows[0]) return null;
+    if (resource !== 'jobs') return rows[0];
+    const [record] = await this.attachJobFieldIds(context, [rows[0]]);
+    return record || null;
+  }
+
+  async listBoundaryVersions(context, { fieldId, propertyId, page = 1, pageSize = 25 }) {
+    const offset = (page - 1) * pageSize;
+    const filters = [tenantFilter(context), activeFilter()];
+    if (fieldId) filters.push(`field_id=eq.${encodeURIComponent(fieldId)}`);
+    if (propertyId) filters.push(`property_id=eq.${encodeURIComponent(propertyId)}`);
+    return supabaseRequest(`rest/v1/field_boundary_versions?${filters.join('&')}&select=*&order=version_number.desc&offset=${offset}&limit=${pageSize}`, {
+      publicMessage: 'Boundary versions could not be loaded.',
+    });
+  }
+
+  async getBoundaryVersion(context, id) {
+    return this.get('field_boundary_versions', context, id);
+  }
+
+  async createBoundaryVersion(context, values) {
+    const result = await supabaseRequest('rest/v1/rpc/ftf_create_field_boundary_version', {
+      method: 'POST',
+      body: JSON.stringify({
+        p_organisation_id: context.organisation.id,
+        p_actor_internal_user_id: context.internalUser.id,
+        p_field_id: values.fieldId,
+        p_property_id: values.propertyId,
+        p_expected_field_version: values.expectedFieldVersion,
+        p_boundary_geojson: values.boundaryGeojson,
+        p_captured_at: values.capturedAt,
+      }),
+      publicMessage: 'Boundary version could not be saved.',
+    });
+    if (result?.conflict) return { conflict: true, currentVersion: result.current_version };
+    if (result?.not_found) return { notFound: true };
+    if (result?.relationship_conflict) return { relationshipConflict: true };
+    return { record: result?.record || result, fieldVersion: result?.field_version };
   }
 
   async relationshipExists(resource, context, id, filters = {}) {
@@ -96,6 +146,8 @@ class OperationalRepository {
     if (result?.not_found) return { notFound: true };
     if (result?.archive_conflict) return { archiveConflict: true };
     if (result?.relationship_conflict) return { relationshipConflict: true };
+    if (result?.location_forbidden) return { locationForbidden: true };
+    if (result?.lifecycle_conflict) return { lifecycleConflict: true };
     return { record: result?.record || result };
   }
 }

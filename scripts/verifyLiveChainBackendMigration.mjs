@@ -13,6 +13,7 @@ const migrationNames = [
   '20260801005000_property_state.sql',
 ];
 const accessMigrationPath = resolve(scriptDirectory, '../supabase/migrations/20260801006000_live_chain_access_prerequisites.sql');
+const workflowMigrationPath = resolve(scriptDirectory, '../supabase/migrations/20260801007000_live_chain_workflow_prerequisites.sql');
 
 async function expectRejected(db, label, sql) {
   try {
@@ -60,6 +61,7 @@ try {
   `);
 
   await db.exec(await readFile(accessMigrationPath, 'utf8'));
+  await db.exec(await readFile(workflowMigrationPath, 'utf8'));
 
   const migratedAccess = await db.query(`
     select
@@ -152,9 +154,214 @@ try {
     throw new Error('operating-location archive accepted an active mission dependency');
   }
 
+  await db.exec(`
+    insert into public.fields (id, organisation_id, property_id, name) values
+      ('00000000-0000-0000-0000-000000000801', '00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000501', 'North field'),
+      ('00000000-0000-0000-0000-000000000802', '00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000501', 'South field');
+    insert into public.properties (id, organisation_id, client_id, name, state)
+      values ('00000000-0000-0000-0000-000000000502', '00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000401', 'Other property', 'QLD');
+    insert into public.fields (id, organisation_id, property_id, name)
+      values ('00000000-0000-0000-0000-000000000803', '00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000502', 'Other property field');
+  `);
+
+  await expectRejected(db, 'invalid boundary geometry', `select public.ftf_create_field_boundary_version(
+    '00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000101',
+    '00000000-0000-0000-0000-000000000801', '00000000-0000-0000-0000-000000000501', 1,
+    '{"type":"Point","coordinates":[153,-27]}'::jsonb, null
+  );`);
+  await expectRejected(db, 'oversized boundary geometry', `select public.ftf_create_field_boundary_version(
+    '00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000101',
+    '00000000-0000-0000-0000-000000000801', '00000000-0000-0000-0000-000000000501', 1,
+    jsonb_build_object('type', 'Polygon', 'coordinates', '[]'::jsonb, 'padding', repeat('x', 270000)), null
+  );`);
+
+  const firstBoundary = await db.query(`select public.ftf_create_field_boundary_version(
+    '00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000101',
+    '00000000-0000-0000-0000-000000000801', '00000000-0000-0000-0000-000000000501', 1,
+    '{"type":"Polygon","coordinates":[[[153,-27],[154,-27],[154,-28],[153,-27]]]}'::jsonb,
+    '2026-08-01T00:00:00Z'
+  ) as result;`);
+  const firstBoundaryResult = firstBoundary.rows[0]?.result;
+  if (firstBoundaryResult?.record?.version_number !== 1 || firstBoundaryResult?.field_version !== 2) {
+    throw new Error('trusted boundary create did not atomically advance the field version');
+  }
+  const boundaryId = firstBoundaryResult.record.id;
+  const staleBoundary = await db.query(`select public.ftf_create_field_boundary_version(
+    '00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000101',
+    '00000000-0000-0000-0000-000000000801', '00000000-0000-0000-0000-000000000501', 1,
+    '{"type":"Polygon","coordinates":[[[153,-27],[155,-27],[155,-28],[153,-27]]]}'::jsonb, null
+  ) as result;`);
+  if (staleBoundary.rows[0]?.result?.conflict !== true || staleBoundary.rows[0]?.result?.current_version !== 2) {
+    throw new Error('stale boundary update did not return current field version');
+  }
+  const boundaryAtomicity = await db.query(`
+    select
+      (select count(*)::integer from public.field_boundary_versions where field_id = '00000000-0000-0000-0000-000000000801') as boundary_count,
+      (select field_boundary_version_id from public.fields where id = '00000000-0000-0000-0000-000000000801') as current_boundary_id,
+      (select count(*)::integer from public.audit_events where event_type = 'field_boundary_versions.create' and entity_id = '${boundaryId}') as audit_count,
+      (select count(*)::integer from public.transactional_outbox where topic = 'operational.field_boundary_versions.create' and aggregate_id = '${boundaryId}') as outbox_count;
+  `);
+  const boundaryState = boundaryAtomicity.rows[0];
+  if (boundaryState.boundary_count !== 1 || boundaryState.current_boundary_id !== boundaryId || boundaryState.audit_count !== 1 || boundaryState.outbox_count !== 1) {
+    throw new Error('boundary create/conflict did not preserve atomic version, audit, and outbox state');
+  }
+
+  const multiBoundary = await db.query(`select public.ftf_create_field_boundary_version(
+    '00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000101',
+    '00000000-0000-0000-0000-000000000801', '00000000-0000-0000-0000-000000000501', 2,
+    '{"type":"MultiPolygon","coordinates":[[[[153,-27],[154,-27],[154,-28],[153,-27]]]]}'::jsonb, null
+  ) as result;`);
+  if (multiBoundary.rows[0]?.result?.record?.version_number !== 2 || multiBoundary.rows[0]?.result?.field_version !== 3) {
+    throw new Error('trusted boundary command did not accept a valid MultiPolygon');
+  }
+
+  const jobCreate = await db.query(`select public.ftf_write_operational_resource(
+    '00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000101',
+    'jobs', 'create', null, null,
+    '{
+      "client_id":"00000000-0000-0000-0000-000000000401",
+      "property_id":"00000000-0000-0000-0000-000000000501",
+      "field_ids":["00000000-0000-0000-0000-000000000801","00000000-0000-0000-0000-000000000802"],
+      "reference":"JOB-LIVE","scope":"Two paddocks","status":"draft","notes":"Morning requested",
+      "requested_date":"2026-08-08","scheduled_date":"2026-08-10"
+    }'::jsonb
+  ) as result;`);
+  const jobRecord = jobCreate.rows[0]?.result?.record;
+  const liveJobId = jobRecord?.id;
+  if (!liveJobId || jobRecord.scope !== 'Two paddocks' || jobRecord.field_ids?.length !== 2) {
+    throw new Error('trusted job create did not return workflow fields and multiple field IDs');
+  }
+  const jobCreateState = await db.query(`
+    select
+      (select count(*)::integer from public.job_fields where job_id = '${liveJobId}' and archived_at is null) as active_fields,
+      (select count(*)::integer from public.audit_events where event_type = 'jobs.create' and entity_id = '${liveJobId}') as audit_count,
+      (select count(*)::integer from public.transactional_outbox where topic = 'operational.jobs.create' and aggregate_id = '${liveJobId}') as outbox_count;
+  `);
+  if (jobCreateState.rows[0].active_fields !== 2 || jobCreateState.rows[0].audit_count !== 1 || jobCreateState.rows[0].outbox_count !== 1) {
+    throw new Error('job and multi-field assignments were not atomic with audit/outbox');
+  }
+
+  const inconsistentJob = await db.query(`select public.ftf_write_operational_resource(
+    '00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000101',
+    'jobs', 'update', '${liveJobId}', 1,
+    '{
+      "client_id":"00000000-0000-0000-0000-000000000401",
+      "property_id":"00000000-0000-0000-0000-000000000501",
+      "field_ids":["00000000-0000-0000-0000-000000000801","00000000-0000-0000-0000-000000000803"],
+      "reference":"JOB-BROKEN","scope":"Invalid mix","status":"draft","notes":"",
+      "requested_date":"2026-08-08","scheduled_date":"2026-08-10"
+    }'::jsonb
+  ) as result;`);
+  if (inconsistentJob.rows[0]?.result?.relationship_conflict !== true) {
+    throw new Error('job update accepted fields from different properties');
+  }
+  const inconsistentRollback = await db.query(`
+    select
+      (select reference from public.jobs where id = '${liveJobId}') as reference,
+      (select count(*)::integer from public.job_fields where job_id = '${liveJobId}' and archived_at is null) as active_fields,
+      (select count(*)::integer from public.audit_events where event_type = 'jobs.update' and entity_id = '${liveJobId}') as update_audits;
+  `);
+  if (inconsistentRollback.rows[0].reference !== 'JOB-LIVE' || inconsistentRollback.rows[0].active_fields !== 2 || inconsistentRollback.rows[0].update_audits !== 0) {
+    throw new Error('failed multi-field job update did not roll back cleanly');
+  }
+
+  const jobUpdate = await db.query(`select public.ftf_write_operational_resource(
+    '00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000101',
+    'jobs', 'update', '${liveJobId}', 1,
+    '{
+      "client_id":"00000000-0000-0000-0000-000000000401",
+      "property_id":"00000000-0000-0000-0000-000000000501",
+      "field_ids":["00000000-0000-0000-0000-000000000801"],
+      "reference":"JOB-LIVE","scope":"North only","status":"scheduled","notes":"Confirmed",
+      "requested_date":"2026-08-08","scheduled_date":"2026-08-11"
+    }'::jsonb
+  ) as result;`);
+  const updatedJob = jobUpdate.rows[0]?.result?.record;
+  if (updatedJob?.row_version !== 2 || updatedJob?.field_ids?.length !== 1 || updatedJob?.scheduled_date !== '2026-08-11') {
+    throw new Error('trusted job update did not atomically replace workflow fields and field assignments');
+  }
+  const staleJob = await db.query(`select public.ftf_write_operational_resource(
+    '00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000101',
+    'jobs', 'update', '${liveJobId}', 1,
+    '{"client_id":"00000000-0000-0000-0000-000000000401","property_id":"00000000-0000-0000-0000-000000000501","field_ids":["00000000-0000-0000-0000-000000000802"],"reference":"STALE"}'::jsonb
+  ) as result;`);
+  if (staleJob.rows[0]?.result?.conflict !== true || staleJob.rows[0]?.result?.current_version !== 2) {
+    throw new Error('stale job field replacement did not return a version conflict');
+  }
+  const staleJobState = await db.query(`select
+    (select reference from public.jobs where id = '${liveJobId}') as reference,
+    (select field_id from public.job_fields where job_id = '${liveJobId}' and archived_at is null) as field_id;`);
+  if (staleJobState.rows[0].reference !== 'JOB-LIVE' || staleJobState.rows[0].field_id !== '00000000-0000-0000-0000-000000000801') {
+    throw new Error('stale job update changed the job or active field assignment');
+  }
+
+  const propertyMove = await db.query(`select public.ftf_write_operational_resource(
+    '00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000101',
+    'jobs', 'update', '${liveJobId}', 2,
+    '{
+      "client_id":"00000000-0000-0000-0000-000000000401",
+      "property_id":"00000000-0000-0000-0000-000000000502",
+      "field_ids":["00000000-0000-0000-0000-000000000803"],
+      "reference":"JOB-MOVED","scope":"Other property","status":"draft","notes":""
+    }'::jsonb
+  ) as result;`);
+  if (propertyMove.rows[0]?.result?.relationship_conflict !== true) {
+    throw new Error('job update did not explicitly preserve its original client/property relationship');
+  }
+
+  await db.exec(`insert into public.operating_locations (id, organisation_id, name)
+    values ('00000000-0000-0000-0000-000000001003', '00000000-0000-0000-0000-000000000001', 'Unassigned base');`);
+  const unassignedMission = await db.query(`select public.ftf_write_operational_resource(
+    '00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000101',
+    'missions', 'create', null, null,
+    '{"job_id":"${liveJobId}","operating_location_id":"00000000-0000-0000-0000-000000001003","mission_number":"M-DENIED","title":"Denied","status":"planning"}'::jsonb
+  ) as result;`);
+  if (unassignedMission.rows[0]?.result?.location_forbidden !== true) {
+    throw new Error('mission accepted an active but unassigned operating location');
+  }
+
+  const missionCreate = await db.query(`select public.ftf_write_operational_resource(
+    '00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000101',
+    'missions', 'create', null, null,
+    '{
+      "job_id":"${liveJobId}","operating_location_id":"00000000-0000-0000-0000-000000001001",
+      "mission_number":"M-LIVE","title":"North paddock spray","description":"Planning brief",
+      "scheduled_start_at":"2026-08-11T06:00:00Z","status":"planning"
+    }'::jsonb
+  ) as result;`);
+  const missionRecord = missionCreate.rows[0]?.result?.record;
+  const liveMissionId = missionRecord?.id;
+  if (!liveMissionId || missionRecord.title !== 'North paddock spray' || missionRecord.description !== 'Planning brief' || missionRecord.status !== 'planning') {
+    throw new Error('trusted mission create did not persist safe Planning metadata');
+  }
+  await expectRejected(db, 'approved mission create', `select public.ftf_write_operational_resource(
+    '00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000101',
+    'missions', 'create', null, null,
+    '{"job_id":"${liveJobId}","operating_location_id":"00000000-0000-0000-0000-000000001001","mission_number":"M-APPROVED","status":"approved"}'::jsonb
+  );`);
+  await db.exec(`update public.missions set status = 'approved' where id = '${liveMissionId}';`);
+  const approvedMissionUpdate = await db.query(`select public.ftf_write_operational_resource(
+    '00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000101',
+    'missions', 'update', '${liveMissionId}', 2,
+    '{"job_id":"${liveJobId}","operating_location_id":"00000000-0000-0000-0000-000000001001","mission_number":"M-LIVE","title":"Downgrade","status":"planning"}'::jsonb
+  ) as result;`);
+  if (approvedMissionUpdate.rows[0]?.result?.lifecycle_conflict !== true) {
+    throw new Error('generic mission update changed an authorised mission lifecycle');
+  }
+  const missionAtomicity = await db.query(`select
+    (select count(*)::integer from public.audit_events where event_type = 'missions.create' and entity_id = '${liveMissionId}') as audit_count,
+    (select count(*)::integer from public.transactional_outbox where topic = 'operational.missions.create' and aggregate_id = '${liveMissionId}') as outbox_count;`);
+  if (missionAtomicity.rows[0].audit_count !== 1 || missionAtomicity.rows[0].outbox_count !== 1) {
+    throw new Error('mission Planning write did not atomically create audit and outbox rows');
+  }
+
+  await expectRejected(db, 'immutable boundary update', `update public.field_boundary_versions set boundary_geojson = '{}'::jsonb where id = '${boundaryId}';`);
+
   await db.exec('set role authenticated;');
   await expectRejected(db, 'authenticated seat assignment DML', `update public.internal_user_seat_assignments set status = 'active';`);
   await expectRejected(db, 'authenticated operating-location DML', `insert into public.operating_locations (organisation_id, name) values ('00000000-0000-0000-0000-000000000001', 'Browser location');`);
+  await expectRejected(db, 'authenticated boundary version DML', `insert into public.field_boundary_versions (organisation_id, property_id, field_id, version_number, boundary_geojson) values ('00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000501', '00000000-0000-0000-0000-000000000801', 99, '{}'::jsonb);`);
+  await expectRejected(db, 'authenticated job field DML', `insert into public.job_fields (organisation_id, property_id, job_id, field_id) values ('00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000501', '${liveJobId}', '00000000-0000-0000-0000-000000000802');`);
   await db.exec('reset role;');
 } finally {
   await db.close();
