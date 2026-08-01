@@ -1,4 +1,4 @@
-import { createOperationalDataStore, describeOperationalError, OperationalDataGateway } from '../operationalDataStore';
+import { createOperationalDataStore, describeOperationalError, OperationalDataGateway, SAVED_CONFIRMATION_MS } from '../operationalDataStore';
 import { Client, Field, Property } from '../../types/fieldManagement';
 
 const client = (id: string, name = id): Client => ({
@@ -77,6 +77,34 @@ describe('operational data store', () => {
     expect(store.getSnapshot().clients.map((record) => record.id)).toEqual(['two']);
   });
 
+  test('derives scope from an authoritative resolver and ignores a stale session response', async () => {
+    const oldSession = deferred<string>();
+    const store = createOperationalDataStore(gateway({ listClients: jest.fn().mockResolvedValue([client('current')]) }));
+    const oldAuthentication = store.authenticate('user-1', () => oldSession.promise);
+    expect(store.getSnapshot()).toEqual(expect.objectContaining({ status: 'loading', clients: [] }));
+
+    await store.authenticate('user-2', async () => 'org-2');
+    oldSession.resolve('org-1');
+    await oldAuthentication;
+
+    expect(store.getSnapshot()).toEqual(expect.objectContaining({
+      status: 'ready', clients: [expect.objectContaining({ id: 'current' })],
+    }));
+  });
+
+  test.each([
+    [401, 'UNAUTHENTICATED', 'unauthorised'],
+    [503, 'NETWORK_ERROR', 'error'],
+  ])('surfaces session resolution failure %s without loading operational data', async (status, code, expectedStatus) => {
+    const data = gateway();
+    const store = createOperationalDataStore(data);
+    await store.authenticate('user-1', async () => {
+      throw Object.assign(new Error('Session unavailable'), { status, code });
+    });
+    expect(store.getSnapshot()).toEqual(expect.objectContaining({ status: expectedStatus, clients: [], error: expect.objectContaining({ code }) }));
+    expect(data.listClients).not.toHaveBeenCalled();
+  });
+
   test('distinguishes a failed load from a valid empty result', async () => {
     const store = createOperationalDataStore(gateway({ listClients: jest.fn().mockRejectedValue(Object.assign(new Error('Offline'), { code: 'NETWORK_ERROR' })) }));
     await store.setAuthenticatedUser('user-1');
@@ -125,6 +153,41 @@ describe('operational data store', () => {
     expect(store.getSnapshot().lastSaved).toEqual({
       resource: 'client', recordId: 'confirmed', at: expect.any(String),
     });
+  });
+
+  test('expires saved confirmation after the explicit confirmation duration', async () => {
+    jest.useFakeTimers();
+    try {
+      const store = createOperationalDataStore(gateway({ createClient: jest.fn().mockResolvedValue(client('confirmed')) }));
+      await store.setAuthenticatedUser('user-1');
+      await store.createClient({ name: 'Confirmed', phone: '', email: '', notes: '', contractorUserId: '' });
+      expect(store.getSnapshot().lastSaved).not.toBeNull();
+      jest.advanceTimersByTime(SAVED_CONFIRMATION_MS);
+      expect(store.getSnapshot().lastSaved).toBeNull();
+      expect(store.getSnapshot().savedAt).toBeNull();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  test('resets pending mutations when refresh invalidates their generation', async () => {
+    const oldSave = deferred<Client>();
+    const currentSave = deferred<Client>();
+    const data = gateway({
+      createClient: jest.fn().mockReturnValueOnce(oldSave.promise).mockReturnValueOnce(currentSave.promise),
+    });
+    const store = createOperationalDataStore(data);
+    await store.setAuthenticatedUser('user-1');
+    const stale = store.createClient({ name: 'Old', phone: '', email: '', notes: '', contractorUserId: '' });
+    await store.refresh();
+    const current = store.createClient({ name: 'Current', phone: '', email: '', notes: '', contractorUserId: '' });
+
+    oldSave.resolve(client('old'));
+    await expect(stale).rejects.toEqual(expect.objectContaining({ code: 'STALE_SCOPE' }));
+    expect(store.getSnapshot().saving).toBe(true);
+    currentSave.resolve(client('current'));
+    await current;
+    expect(store.getSnapshot().saving).toBe(false);
   });
 
   test('discards an in-flight mutation when authentication changes before confirmation', async () => {

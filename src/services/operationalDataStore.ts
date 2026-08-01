@@ -5,6 +5,7 @@ import {
 } from './operationalApi';
 
 export type OperationalLoadStatus = 'idle' | 'loading' | 'ready' | 'error' | 'unauthorised';
+export const SAVED_CONFIRMATION_MS = 3000;
 
 export interface OperationalDataError {
   message: string;
@@ -26,7 +27,8 @@ export interface OperationalDataState {
 }
 
 export interface OperationalDataGateway {
-  resolveOrganisation(): Promise<string>;
+  /** Local compatibility hook; remote callers must resolve organisation from /api/v1/session. */
+  resolveOrganisation?(): Promise<string>;
   listClients(): Promise<Client[]>;
   listProperties(): Promise<Property[]>;
   listFields(): Promise<Field[]>;
@@ -72,7 +74,8 @@ export function describeOperationalError(error: unknown): string {
 export interface OperationalDataStore {
   getSnapshot(): OperationalDataState;
   subscribe(listener: () => void): () => void;
-  setAuthenticatedUser(userId: string | null, tenantIdentity?: string | null): Promise<void>;
+  setAuthenticatedUser(userId: string | null, organisationId?: string | null): Promise<void>;
+  authenticate(userId: string, resolveOrganisation: () => Promise<string>): Promise<void>;
   refresh(): Promise<void>;
   createClient(input: ClientCreateInput): Promise<Client>;
   updateClient(id: string, input: ClientUpdateInput): Promise<Client>;
@@ -88,10 +91,11 @@ export interface OperationalDataStore {
 export function createOperationalDataStore(gateway: OperationalDataGateway): OperationalDataStore {
   let state = emptyState();
   let userId: string | null = null;
-  let authenticatedScope: string | null = null;
   let organisationId: string | null = null;
+  let scopeResolver: (() => Promise<string>) | null = null;
   let generation = 0;
   let pendingMutations = 0;
+  let savedConfirmationTimer: ReturnType<typeof setTimeout> | null = null;
   const listeners = new Set<() => void>();
 
   const emit = (next: OperationalDataState) => {
@@ -101,19 +105,33 @@ export function createOperationalDataStore(gateway: OperationalDataGateway): Ope
   const patch = (updates: Partial<OperationalDataState>) => emit({ ...state, ...updates });
   const clear = (status: OperationalLoadStatus) => emit({ ...emptyState(), status });
 
-  async function load(): Promise<void> {
-    if (!userId) { clear('idle'); return; }
-    const activeGeneration = ++generation;
-    clear('loading');
+  function clearSavedConfirmationTimer() {
+    if (savedConfirmationTimer !== null) clearTimeout(savedConfirmationTimer);
+    savedConfirmationTimer = null;
+  }
+
+  function beginScope(nextUserId: string | null, resolver: (() => Promise<string>) | null): number {
+    generation += 1;
+    pendingMutations = 0;
+    clearSavedConfirmationTimer();
+    userId = nextUserId;
+    organisationId = null;
+    scopeResolver = resolver;
+    clear(nextUserId ? 'loading' : 'idle');
+    return generation;
+  }
+
+  async function authenticate(nextUserId: string, resolveOrganisation: () => Promise<string>): Promise<void> {
+    const activeGeneration = beginScope(nextUserId, resolveOrganisation);
     try {
-      const resolvedOrganisation = await gateway.resolveOrganisation();
-      if (activeGeneration !== generation || !userId) return;
+      const resolvedOrganisation = await resolveOrganisation();
+      if (activeGeneration !== generation || userId !== nextUserId) return;
       if (!resolvedOrganisation) throw Object.assign(new Error('No active organisation is available.'), { code: 'FORBIDDEN', status: 403 });
       organisationId = resolvedOrganisation;
       const [clients, properties, fields] = await Promise.all([
         gateway.listClients(), gateway.listProperties(), gateway.listFields(),
       ]);
-      if (activeGeneration !== generation || !userId || organisationId !== resolvedOrganisation) return;
+      if (activeGeneration !== generation || userId !== nextUserId || organisationId !== resolvedOrganisation) return;
       emit({ clients, properties, fields, status: 'ready', saving: false, savedAt: null, lastSaved: null, error: null });
     } catch (error) {
       if (activeGeneration !== generation) return;
@@ -121,6 +139,11 @@ export function createOperationalDataStore(gateway: OperationalDataGateway): Ope
       const normalized = operationalError(error);
       emit({ ...emptyState(), status: normalized.status === 401 || normalized.status === 403 ? 'unauthorised' : 'error', error: normalized });
     }
+  }
+
+  async function refresh(): Promise<void> {
+    if (!userId || !scopeResolver) { beginScope(null, null); return; }
+    await authenticate(userId, scopeResolver);
   }
 
   function expectedVersion(collection: Array<{ id: string; rowVersion?: number }>, id: string): number {
@@ -135,6 +158,7 @@ export function createOperationalDataStore(gateway: OperationalDataGateway): Ope
   ): Promise<T> {
     const activeGeneration = generation;
     pendingMutations += 1;
+    clearSavedConfirmationTimer();
     patch({ saving: true, savedAt: null, lastSaved: null, error: null });
     try {
       const record = await request();
@@ -144,6 +168,10 @@ export function createOperationalDataStore(gateway: OperationalDataGateway): Ope
       confirm(record);
       const at = new Date().toISOString();
       patch({ savedAt: at, lastSaved: { resource, recordId: recordId || record.id || '', at }, error: null });
+      savedConfirmationTimer = setTimeout(() => {
+        if (activeGeneration === generation && state.lastSaved?.at === at) patch({ savedAt: null, lastSaved: null });
+        savedConfirmationTimer = null;
+      }, SAVED_CONFIRMATION_MS);
       return record;
     } catch (error) {
       if (activeGeneration === generation) patch({ savedAt: null, lastSaved: null, error: operationalError(error) });
@@ -161,18 +189,16 @@ export function createOperationalDataStore(gateway: OperationalDataGateway): Ope
   return {
     getSnapshot: () => state,
     subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
-    async setAuthenticatedUser(nextUserId, tenantIdentity = null) {
-      const nextScope = nextUserId ? `${nextUserId}:${tenantIdentity || ''}` : null;
-      if (nextScope === authenticatedScope && nextUserId !== null) return;
-      userId = nextUserId;
-      authenticatedScope = nextScope;
-      organisationId = null;
-      generation += 1;
-      pendingMutations = 0;
-      if (!nextUserId) { clear('idle'); return; }
-      await load();
+    async setAuthenticatedUser(nextUserId, authenticatedOrganisationId = null) {
+      if (!nextUserId) { beginScope(null, null); return; }
+      await authenticate(nextUserId, async () => {
+        if (authenticatedOrganisationId) return authenticatedOrganisationId;
+        if (gateway.resolveOrganisation) return gateway.resolveOrganisation();
+        return 'local-development';
+      });
     },
-    refresh: load,
+    authenticate,
+    refresh,
     createClient(input) {
       return mutate('client', null, () => gateway.createClient(input), (record) => patch({ clients: [...state.clients, record as Client] }));
     },

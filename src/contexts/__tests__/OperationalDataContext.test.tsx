@@ -9,9 +9,10 @@ const mockApi = {
   fields: { list: jest.fn().mockResolvedValue({ records: [], page: 1, pageSize: 100 }), create: jest.fn(), update: jest.fn(), archive: jest.fn() },
 };
 let mockMode = 'remote';
+let mockUser: any = { id: 'user-1', role: 'contractor', tenantId: 'profile-tenant-that-is-not-the-operational-org' };
 const mockSetCurrentUser = jest.fn();
 
-jest.mock('../../contexts/AuthContext', () => ({ useAuth: () => ({ user: { id: 'user-1', role: 'contractor' } }) }));
+jest.mock('../../contexts/AuthContext', () => ({ useAuth: () => ({ user: mockUser }) }));
 jest.mock('../../services/persistence', () => ({ getPersistenceMode: () => mockMode }));
 jest.mock('../../services/fieldManagementStore', () => ({
   setCurrentUser: (user: unknown) => mockSetCurrentUser(user),
@@ -33,10 +34,39 @@ function Probe() {
 describe('OperationalDataProvider', () => {
   beforeEach(() => {
     mockMode = 'remote';
+    mockUser = { id: 'user-1', role: 'contractor', tenantId: 'profile-tenant-that-is-not-the-operational-org' };
+    jest.clearAllMocks();
     mockApi.session.mockResolvedValue({ user: { id: 'user-1', email: null, name: 'Pilot' }, organisation: { id: 'org-1', name: 'Farm Org' } });
     mockApi.clients.list.mockResolvedValue({ records: [], page: 1, pageSize: 100 });
     mockApi.properties.list.mockResolvedValue({ records: [], page: 1, pageSize: 100 });
     mockApi.fields.list.mockResolvedValue({ records: [], page: 1, pageSize: 100 });
+  });
+
+  test('clears immediately during a session switch and ignores a stale session response', async () => {
+    let resolveOldSession!: (value: unknown) => void;
+    const oldSession = new Promise((resolve) => { resolveOldSession = resolve; });
+    const { rerender } = render(<OperationalDataProvider><Probe /></OperationalDataProvider>);
+    await waitFor(() => expect(screen.getByText('remote:ready:0')).toBeInTheDocument());
+
+    mockUser = { id: 'user-2', role: 'contractor', tenantId: 'misleading-profile-tenant' };
+    mockApi.session.mockReturnValueOnce(oldSession as any);
+    rerender(<OperationalDataProvider><Probe /></OperationalDataProvider>);
+    expect(screen.getByText('remote:loading:0')).toBeInTheDocument();
+
+    mockUser = { id: 'user-3', role: 'contractor', tenantId: 'another-misleading-profile-tenant' };
+    mockApi.session.mockResolvedValueOnce({
+      user: { id: 'user-3', email: null, name: 'Pilot 3' },
+      organisation: { id: 'authoritative-org-3', name: 'Farm Org 3' },
+    });
+    rerender(<OperationalDataProvider><Probe /></OperationalDataProvider>);
+    await waitFor(() => expect(screen.getByText('remote:ready:0')).toBeInTheDocument());
+
+    resolveOldSession({
+      user: { id: 'user-2', email: null, name: 'Pilot 2' },
+      organisation: { id: 'stale-org-2', name: 'Stale Farm Org' },
+    });
+    await waitFor(() => expect(screen.getByText('remote:ready:0')).toBeInTheDocument());
+    expect(mockApi.session).toHaveBeenCalledTimes(3);
   });
 
   test('loads remote authoritative collections through the v1 adapter and exposes no browser cache fallback', async () => {
@@ -46,6 +76,13 @@ describe('OperationalDataProvider', () => {
     expect(mockApi.clients.list).toHaveBeenCalledWith(1, 100);
     expect(mockApi.properties.list).toHaveBeenCalledWith(1, 100);
     expect(mockApi.fields.list).toHaveBeenCalledWith(1, 100);
+  });
+
+  test('surfaces an authoritative session failure without falling back to browser data', async () => {
+    mockApi.session.mockRejectedValueOnce(Object.assign(new Error('No active membership'), { status: 403, code: 'FORBIDDEN' }));
+    render(<OperationalDataProvider><Probe /></OperationalDataProvider>);
+    await waitFor(() => expect(screen.getByText('remote:unauthorised:0')).toBeInTheDocument());
+    expect(mockApi.clients.list).not.toHaveBeenCalled();
   });
 
   test('applies authenticated user scoping before loading the local compatibility store', async () => {

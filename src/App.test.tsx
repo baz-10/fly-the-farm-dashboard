@@ -9,9 +9,15 @@ jest.mock('./contexts/OperationalDataContext', () => ({ useOperationalData: () =
 jest.mock('react-router-dom', () => {
   const React = require('react');
   const Route = () => null;
+  const matches = (pattern: string | undefined, path: string) => {
+    if (!pattern) return false;
+    const patternParts = pattern.split('/');
+    const pathParts = path.split('/');
+    return patternParts.length === pathParts.length && patternParts.every((part, index) => part.startsWith(':') || part === pathParts[index]);
+  };
   const findRoute = (children: React.ReactNode, path: string): React.ReactElement | null => {
     for (const child of React.Children.toArray(children) as React.ReactElement<any>[]) {
-      if (child.props.path === path) return child.props.element;
+      if (matches(child.props.path, path)) return child.props.element;
       const nested = findRoute(child.props.children, path);
       if (nested) return nested;
     }
@@ -52,8 +58,8 @@ jest.mock('./pages/ClientList', () => () => null);
 jest.mock('./pages/ClientDetail', () => () => null);
 jest.mock('./pages/PropertyDetail', () => () => null);
 jest.mock('./pages/FieldDetail', () => () => null);
-jest.mock('./pages/JobCreate', () => () => null);
-jest.mock('./pages/JobDetail', () => () => null);
+jest.mock('./pages/JobCreate', () => () => <div>Legacy browser job creator</div>);
+jest.mock('./pages/JobDetail', () => () => <div>Legacy browser job detail</div>);
 jest.mock('./pages/Admin', () => () => null);
 jest.mock('./pages/QuoteList', () => () => null);
 jest.mock('./pages/QuoteCreate', () => () => null);
@@ -91,6 +97,8 @@ describe('App', () => {
   test.each([
     ['/jobs/history', 'Job History'],
     ['/jobs/import', 'Import Spray Rec'],
+    ['/jobs/client/client-1/property/property-1/field/field-1/new-job', 'Record Job'],
+    ['/jobs/client/client-1/property/property-1/field/field-1/job/job-1', 'Job Details'],
   ])('gates direct remote navigation to %s before legacy browser data can render', (path, feature) => {
     mockOperationalMode = 'remote';
     window.history.pushState({}, '', path);

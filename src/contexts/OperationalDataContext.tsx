@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useLayoutEffect, useMemo, useSyncExternalStore } from 'react';
 import { useAuth } from './AuthContext';
 import { getPersistenceMode, PersistenceMode } from '../services/persistence';
-import { createOperationalApi, listAll } from '../services/operationalApi';
+import { createOperationalApi, listAll, OperationalApi, OperationalApiError } from '../services/operationalApi';
 import {
   createOperationalDataStore, OperationalDataGateway, OperationalDataState, OperationalDataStore,
 } from '../services/operationalDataStore';
@@ -14,10 +14,8 @@ type OperationalDataContextValue = OperationalDataState & OperationalDataStore &
 
 const OperationalDataContext = createContext<OperationalDataContextValue | null>(null);
 
-function createRemoteGateway(): OperationalDataGateway {
-  const api = createOperationalApi();
+function createRemoteGateway(api: OperationalApi): OperationalDataGateway {
   return {
-    resolveOrganisation: async () => (await api.session()).organisation.id,
     listClients: () => listAll((page, pageSize) => api.clients.list(page, pageSize)),
     listProperties: () => listAll((page, pageSize) => api.properties.list(page, pageSize)),
     listFields: () => listAll((page, pageSize) => api.fields.list(page, pageSize)),
@@ -57,12 +55,15 @@ export function OperationalDataProvider({ children }: { children: React.ReactNod
   const userRole = user?.role;
   const contractorId = user?.contractorId;
   const clientRecordId = user?.clientRecordId;
-  const tenantIdentity = user?.tenantId;
   const mode = getPersistenceMode();
-  const store = useMemo(
-    () => createOperationalDataStore(mode === 'remote' ? createRemoteGateway() : createLocalGateway()),
-    [mode],
-  );
+  const runtime = useMemo(() => {
+    if (mode === 'remote') {
+      const api = createOperationalApi();
+      return { api, store: createOperationalDataStore(createRemoteGateway(api)) };
+    }
+    return { api: null, store: createOperationalDataStore(createLocalGateway()) };
+  }, [mode]);
+  const { api, store } = runtime;
   const state = useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot);
 
   useLayoutEffect(() => {
@@ -74,8 +75,20 @@ export function OperationalDataProvider({ children }: { children: React.ReactNod
         clientRecordId,
       } : null);
     }
-    void store.setAuthenticatedUser(userId || null, tenantIdentity || null);
-  }, [clientRecordId, contractorId, mode, store, tenantIdentity, userId, userRole]);
+    if (!userId) {
+      void store.setAuthenticatedUser(null);
+    } else if (mode === 'remote' && api) {
+      void store.authenticate(userId, async () => {
+        const session = await api.session();
+        if (session.user.id !== userId) {
+          throw new OperationalApiError(401, 'UNAUTHENTICATED', 'The authenticated session changed. Sign in again.');
+        }
+        return session.organisation.id;
+      });
+    } else {
+      void store.setAuthenticatedUser(userId, 'local-development');
+    }
+  }, [api, clientRecordId, contractorId, mode, store, userId, userRole]);
 
   const value = useMemo<OperationalDataContextValue>(() => ({ ...state, ...store, mode }), [mode, state, store]);
   return <OperationalDataContext.Provider value={value}>{children}</OperationalDataContext.Provider>;

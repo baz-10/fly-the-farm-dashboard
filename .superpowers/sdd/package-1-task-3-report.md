@@ -169,3 +169,49 @@ writes require a valid state code immediately.
 Fix-round requirement references: RET-002, RET-003, RET-004, RET-005, RET-006,
 IMP-002, IMP-003, IMP-004, NEW-001, NEW-003, NEW-005, NEW-006, NEW-007, NEW-008,
 REP-003, REP-004.
+
+## Fix round 2 — remaining review findings
+
+### Changes
+
+- Applied the existing `OperationalFeatureGate` to the parameterised JobCreate
+  and JobDetail routes. Bookmarked/direct remote URLs now show explicit Record
+  Job or Job Details unavailable states without mounting either legacy child;
+  the routes remain unchanged for local development and Task 4 can reconnect
+  them in place.
+- Moved remote organisation resolution into `OperationalDataContext`: after an
+  authenticated user is present it calls `/api/v1/session`, verifies the session
+  user, and passes only the session organisation ID into the operational store.
+  `ftf_profiles.tenantId` is no longer used for remote operational scope.
+- Authentication/session resolution starts a new store generation and clears
+  prior records synchronously. A later auth attempt invalidates earlier session
+  and collection responses. Session 401/403 becomes `unauthorised`; other
+  session failures become `error`; neither path loads or falls back to browser
+  data. Refresh re-runs the retained authoritative session resolver.
+- Generation changes now reset pending mutation count. A mutation invalidated
+  by refresh cannot leave a count that keeps a later valid save stuck in
+  `saving=true`.
+- Saved confirmation now expires after the explicit three-second
+  `SAVED_CONFIRMATION_MS` duration. New mutations, authentication changes, and
+  refresh also clear the timer and confirmation.
+
+### TDD and verification
+
+The first red checkpoint showed two legacy job pages mounting from direct URLs,
+the missing authoritative `authenticate` store contract, non-expiring Saved
+state, and the refresh generation leaking one pending mutation into the next
+save. Regression coverage also exercises immediate clear during session
+resolution, stale session completion, session failure without list calls, and
+misleading profile tenant IDs that differ from the authoritative organisation.
+
+- Focused: 4 suites, 35 tests passed, 0 failed.
+- Full: 46 suites, 229 tests passed, 0 failed.
+- `npm run build`: exit 0, compiled with existing repository warnings.
+- `git diff --check`: exit 0.
+
+The prior fix-round deployment concern still applies: existing properties need
+a trusted real-state backfill; no state is guessed.
+
+Fix-round requirement references: RET-002, RET-003, RET-004, RET-005, RET-006,
+IMP-002, IMP-003, IMP-004, NEW-001, NEW-003, NEW-005, NEW-006, NEW-007, NEW-008,
+REP-003, REP-004.
