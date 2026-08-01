@@ -15,6 +15,7 @@ const migrationNames = [
 const accessMigrationPath = resolve(scriptDirectory, '../supabase/migrations/20260801006000_live_chain_access_prerequisites.sql');
 const workflowMigrationPath = resolve(scriptDirectory, '../supabase/migrations/20260801007000_live_chain_workflow_prerequisites.sql');
 const reviewFixMigrationPath = resolve(scriptDirectory, '../supabase/migrations/20260801008000_live_chain_review_fixes.sql');
+const reviewFollowupMigrationPath = resolve(scriptDirectory, '../supabase/migrations/20260801009000_live_chain_review_followup.sql');
 
 async function expectRejected(db, label, sql) {
   try {
@@ -74,6 +75,7 @@ try {
   await db.exec(await readFile(accessMigrationPath, 'utf8'));
   await db.exec(await readFile(workflowMigrationPath, 'utf8'));
   await db.exec(await readFile(reviewFixMigrationPath, 'utf8'));
+  await db.exec(await readFile(reviewFollowupMigrationPath, 'utf8'));
 
   const legacyRepair = await db.query(`
     select
@@ -87,6 +89,33 @@ try {
   if (repair.first_pointer !== '00000000-0000-0000-0000-000000000511' || repair.second_pointer === repair.first_pointer || repair.second_owner !== '00000000-0000-0000-0000-000000000612' || repair.unassigned_issues !== 1 || repair.shared_issues !== 1) {
     throw new Error('080 did not preserve/report unassigned history and deterministically repair shared current boundaries');
   }
+  const resolutionIssue = await db.query(`select id from public.operational_migration_issues
+    where organisation_id = '00000000-0000-0000-0000-000000000001'
+      and issue_code = 'legacy_boundary_unassigned'
+      and source_entity_id = '00000000-0000-0000-0000-000000000512';`);
+  const resolutionIssueId = resolutionIssue.rows[0]?.id;
+  await db.exec('set role service_role;');
+  const recordedResolution = await db.query(`select public.ftf_record_boundary_migration_issue_resolution(
+    '00000000-0000-0000-0000-000000000001',
+    '00000000-0000-0000-0000-000000000101',
+    '${resolutionIssueId}', '{"resolution":"reviewed_unassigned_history"}'::jsonb
+  ) as result;`);
+  if (recordedResolution.rows[0]?.result?.record?.issue_id !== resolutionIssueId) {
+    throw new Error('controlled boundary migration issue resolution was not appended');
+  }
+  await expectRejected(db, 'service-role direct boundary issue resolution insert', `insert into public.boundary_migration_issue_resolutions (
+    organisation_id, issue_id, resolved_by_internal_user_id, resolution_details
+  ) values (
+    '00000000-0000-0000-0000-000000000001', '${resolutionIssueId}',
+    '00000000-0000-0000-0000-000000000101', '{}'::jsonb
+  );`);
+  await db.exec('reset role;');
+  await expectRejected(db, 'boundary issue resolution update', `update public.boundary_migration_issue_resolutions
+    set resolution_details = '{"resolution":"changed"}'::jsonb where issue_id = '${resolutionIssueId}';`);
+  await expectRejected(db, 'boundary issue resolution delete', `delete from public.boundary_migration_issue_resolutions
+    where issue_id = '${resolutionIssueId}';`);
+  await expectRejected(db, 'legacy issue ledger resolution update', `update public.operational_migration_issues
+    set resolved_at = now() where id = '${resolutionIssueId}';`);
   await expectRejected(db, 'cross-field current boundary pointer', `update public.fields set field_boundary_version_id = '00000000-0000-0000-0000-000000000511' where id = '00000000-0000-0000-0000-000000000612';`);
 
   const legacyOperationalHistory = await db.query(`select public.ftf_read_field_boundary_versions(
@@ -432,10 +461,22 @@ try {
     '00000000-0000-0000-0000-000000000002', '00000000-0000-0000-0000-000000000202'
   );`);
 
+  await db.exec(`update public.organisations set archived_at = now() where id = '00000000-0000-0000-0000-000000000001';`);
+  const archivedOrganisationHistory = await db.query(`select public.ftf_read_field_boundary_versions(
+    '00000000-0000-0000-0000-000000000001', '${boundaryId}', null, null, 0, 1
+  ) as result;`);
+  if (archivedOrganisationHistory.rows[0]?.result?.length !== 0) {
+    throw new Error('boundary read returned data after its organisation was archived');
+  }
+
   await db.exec('set role authenticated;');
   await expectRejected(db, 'authenticated seat assignment DML', `update public.internal_user_seat_assignments set status = 'active';`);
   await expectRejected(db, 'authenticated operating-location DML', `insert into public.operating_locations (organisation_id, name) values ('00000000-0000-0000-0000-000000000001', 'Browser location');`);
   await expectRejected(db, 'authenticated boundary version DML', `insert into public.field_boundary_versions (organisation_id, property_id, field_id, version_number, boundary_geojson) values ('00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000501', '00000000-0000-0000-0000-000000000801', 99, '{}'::jsonb);`);
+  await expectRejected(db, 'authenticated boundary issue resolution command', `select public.ftf_record_boundary_migration_issue_resolution(
+    '00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000101',
+    '${resolutionIssueId}', '{}'::jsonb
+  );`);
   await expectRejected(db, 'authenticated job field DML', `insert into public.job_fields (organisation_id, property_id, job_id, field_id) values ('00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000501', '${liveJobId}', '00000000-0000-0000-0000-000000000802');`);
   await db.exec('reset role;');
 } finally {

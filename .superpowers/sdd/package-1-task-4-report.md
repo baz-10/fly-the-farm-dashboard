@@ -195,3 +195,50 @@ capacity-aware helper after acquiring the organisation locks.
 Review-fix requirement references: NEW-001, NEW-002, NEW-003, NEW-004,
 NEW-005, NEW-006, NEW-007, NEW-008, NEW-020, REP-001, REP-002, REP-003,
 REP-004, RET-003, RET-004, RET-005, RET-006, RET-007, RET-008.
+
+## Review fix round 2 — 2026-08-01
+
+The second review correction is isolated in the forward-only
+`20260801009000_live_chain_review_followup.sql` migration. Migrations `060`
+through `080` remain unchanged.
+
+### Review findings addressed
+
+- `ftf_read_field_boundary_versions` now joins the exact organisation and
+  requires `organisations.archived_at IS NULL`. A service request using context
+  resolved before archival therefore receives no boundary rows, and the HTTP
+  get handler returns 404.
+- `operational_migration_issues` remains an immutable observation ledger. New
+  resolution activity is stored as immutable events in
+  `boundary_migration_issue_resolutions`, linked to the exact same-organisation
+  issue and resolving internal user.
+- Resolution events can only be inserted through the service-role-only
+  `ftf_record_boundary_migration_issue_resolution` command. The command follows
+  the trusted-write lock order, rechecks the active organisation and actor seat,
+  and accepts only object details. Direct service/browser inserts and all
+  updates/deletes are rejected.
+- The legacy `operational_migration_issues.resolved_at` values remain preserved
+  as insert-time migration evidence; they are not used as a mutable resolution
+  channel.
+
+### Review-fix TDD evidence
+
+1. The archived-organisation regression first failed with
+   `boundary read returned data after its organisation was archived`; the API
+   stale-context characterization already mapped an empty RPC result to 404.
+2. After the active-organisation RPC fix passed, the resolution-event cycle
+   first failed with PostgreSQL error `42883` because
+   `ftf_record_boundary_migration_issue_resolution` did not exist.
+3. The completed focused gate passed 2 suites and 8 tests.
+
+### Review-fix verification
+
+- Backend regression gate — 11 suites, 49 tests passed.
+- Full repository: `CI=true npm test -- --runInBand` — 50 suites, 255 tests
+  passed, 0 failed.
+- Production build: `npm run build` — exit 0 with the pre-existing ESLint,
+  Browserslist-age, and bundle-size warnings.
+
+Review-fix requirement references: NEW-001, NEW-002, NEW-003, NEW-004,
+NEW-005, NEW-006, NEW-007, NEW-008, NEW-020, REP-001, REP-002, REP-003,
+REP-004, RET-003, RET-004, RET-005, RET-006, RET-007, RET-008.

@@ -1,4 +1,4 @@
-const { createOperationalHandler } = require('../../server/operational-api');
+const { createFieldBoundaryVersionHandler, createOperationalHandler } = require('../../server/operational-api');
 const { OperationalRepository } = require('../../server/operational-repository');
 const { resolveRequestContext } = require('../../server/request-context');
 
@@ -107,5 +107,22 @@ describe('Task 4 review fixes at the API boundary', () => {
       p_organisation_id: '11111111-1111-4111-8111-111111111111',
       p_entity_id: '33333333-3333-4333-8333-333333333333',
     }));
+  });
+
+  test('a boundary hidden after context resolution is returned as not found', async () => {
+    process.env.SUPABASE_URL = 'https://example.supabase.co';
+    process.env.SUPABASE_ANON_KEY = 'anon-key';
+    process.env.SUPABASE_SERVICE_ROLE_KEY = 'service-key';
+    global.fetch = jest.fn(async () => ({ ok: true, status: 200, text: async () => '[]' }));
+    const handler = createFieldBoundaryVersionHandler({
+      resolveContext: jest.fn().mockResolvedValue(context(['field_boundary_versions.read'])),
+      repository: new OperationalRepository(),
+    });
+    const res = createResponse();
+
+    await handler(request('GET', {}, { id: '33333333-3333-4333-8333-333333333333' }), res);
+
+    expect(res.statusCode).toBe(404);
+    expect(res.body.error.code).toBe('NOT_FOUND');
   });
 });
