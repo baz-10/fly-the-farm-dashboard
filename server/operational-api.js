@@ -12,7 +12,7 @@ const SCHEMAS = {
   operating_locations: { required: ['name'], fields: { name: 'name', address: 'address', timezone: 'timezone' } },
   clients: { required: ['name'], fields: { name: 'name', contactName: 'contact_name', contactEmail: 'contact_email', contactPhone: 'contact_phone' } },
   properties: { required: ['clientId', 'name', 'state'], fields: { clientId: 'client_id', name: 'name', address: 'address', state: 'state' } },
-  fields: { required: ['propertyId', 'name'], fields: { propertyId: 'property_id', fieldBoundaryVersionId: 'field_boundary_version_id', name: 'name', areaHectares: 'area_hectares' } },
+  fields: { required: ['propertyId', 'name'], readOnly: ['fieldBoundaryVersionId'], fields: { propertyId: 'property_id', fieldBoundaryVersionId: 'field_boundary_version_id', name: 'name', areaHectares: 'area_hectares' } },
   jobs: { required: ['clientId', 'propertyId', 'reference'], fields: { clientId: 'client_id', propertyId: 'property_id', fieldIds: 'field_ids', reference: 'reference', scope: 'scope', status: 'status', notes: 'notes', requestedDate: 'requested_date', scheduledDate: 'scheduled_date' } },
   missions: { required: ['jobId', 'operatingLocationId', 'missionNumber'], fields: { jobId: 'job_id', operatingLocationId: 'operating_location_id', missionNumber: 'mission_number', title: 'title', description: 'description', status: 'status', scheduledStartAt: 'scheduled_start_at' } },
 };
@@ -77,7 +77,8 @@ function mapDatabaseRecord(resource, record) {
 
 function mapInput(resource, body, existing) {
   const schema = SCHEMAS[resource];
-  const allowed = new Set([...Object.keys(schema.fields), 'expectedVersion']);
+  const readOnly = new Set(schema.readOnly || []);
+  const allowed = new Set([...Object.keys(schema.fields).filter((field) => !readOnly.has(field)), 'expectedVersion']);
   Object.keys(body).forEach((key) => {
     if (allowed.has(key)) return;
     if (/financial|cost|margin|price|revenue|payload/i.test(key)) {
@@ -110,7 +111,7 @@ function mapInput(resource, body, existing) {
     throw apiError(400, 'VALIDATION_ERROR', 'scheduledStartAt must be a valid ISO date-time.');
   }
   ['requestedDate', 'scheduledDate'].forEach((field) => {
-    if (merged[field] && !/^\d{4}-\d{2}-\d{2}$/.test(merged[field])) {
+    if (merged[field] && !isIsoCalendarDate(merged[field])) {
       throw apiError(400, 'VALIDATION_ERROR', `${field} must be an ISO date.`);
     }
   });
@@ -132,10 +133,20 @@ function mapInput(resource, body, existing) {
   }
   const data = {};
   Object.entries(schema.fields).forEach(([apiField, databaseField]) => {
-    if (merged[apiField] !== undefined) data[databaseField] = merged[apiField];
+    if (!readOnly.has(apiField) && merged[apiField] !== undefined) data[databaseField] = merged[apiField];
   });
   if (resource === 'missions' && !data.status) data.status = 'planning';
   return { data, merged };
+}
+
+function isIsoCalendarDate(value) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) return false;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  if (year < 1 || month < 1 || month > 12 || day < 1) return false;
+  return day <= new Date(Date.UTC(year, month, 0)).getUTCDate();
 }
 
 function assertMissionLocationAccess(context, operatingLocationId) {

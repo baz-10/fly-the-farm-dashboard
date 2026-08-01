@@ -106,6 +106,17 @@ async function resolveRequestContext(req) {
   if (!seatAllocation) {
     throw accessError('SEAT_INACTIVE', 'Your Fly the Farm seat allocation is inactive.');
   }
+  const rankedSeatAssignments = await query('internal_user_seat_assignments', [
+    `organisation_id=eq.${encodeURIComponent(internalUser.organisation_id)}`,
+    'status=eq.active',
+    'archived_at=is.null',
+    'order=assigned_at.asc,id.asc',
+  ], 'id,internal_user_id');
+  const seatRank = (Array.isArray(rankedSeatAssignments) ? rankedSeatAssignments : [])
+    .findIndex((assignment) => assignment.id === seatAssignment.id);
+  if (seatRank < 0 || seatRank >= Number(seatAllocation.allocated_seats)) {
+    throw accessError('SEAT_CAP_EXCEEDED', 'Your Fly the Farm seat is beyond the active organisation allocation.');
+  }
 
   const membershipIds = memberships.map((membership) => membership.id).filter(Boolean);
   const locationAssignments = membershipIds.length ? await query('membership_operating_location_assignments', [

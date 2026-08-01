@@ -59,16 +59,34 @@ class OperationalRepository {
 
   async listBoundaryVersions(context, { fieldId, propertyId, page = 1, pageSize = 25 }) {
     const offset = (page - 1) * pageSize;
-    const filters = [tenantFilter(context), activeFilter()];
-    if (fieldId) filters.push(`field_id=eq.${encodeURIComponent(fieldId)}`);
-    if (propertyId) filters.push(`property_id=eq.${encodeURIComponent(propertyId)}`);
-    return supabaseRequest(`rest/v1/field_boundary_versions?${filters.join('&')}&select=*&order=version_number.desc&offset=${offset}&limit=${pageSize}`, {
+    return supabaseRequest('rest/v1/rpc/ftf_read_field_boundary_versions', {
+      method: 'POST',
+      body: JSON.stringify({
+        p_organisation_id: context.organisation.id,
+        p_entity_id: null,
+        p_field_id: fieldId,
+        p_property_id: propertyId,
+        p_offset: offset,
+        p_limit: pageSize,
+      }),
       publicMessage: 'Boundary versions could not be loaded.',
     });
   }
 
   async getBoundaryVersion(context, id) {
-    return this.get('field_boundary_versions', context, id);
+    const records = await supabaseRequest('rest/v1/rpc/ftf_read_field_boundary_versions', {
+      method: 'POST',
+      body: JSON.stringify({
+        p_organisation_id: context.organisation.id,
+        p_entity_id: id,
+        p_field_id: null,
+        p_property_id: null,
+        p_offset: 0,
+        p_limit: 1,
+      }),
+      publicMessage: 'Boundary version could not be loaded.',
+    });
+    return Array.isArray(records) && records[0] ? records[0] : null;
   }
 
   async createBoundaryVersion(context, values) {

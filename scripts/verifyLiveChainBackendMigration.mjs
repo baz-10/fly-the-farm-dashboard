@@ -14,6 +14,7 @@ const migrationNames = [
 ];
 const accessMigrationPath = resolve(scriptDirectory, '../supabase/migrations/20260801006000_live_chain_access_prerequisites.sql');
 const workflowMigrationPath = resolve(scriptDirectory, '../supabase/migrations/20260801007000_live_chain_workflow_prerequisites.sql');
+const reviewFixMigrationPath = resolve(scriptDirectory, '../supabase/migrations/20260801008000_live_chain_review_fixes.sql');
 
 async function expectRejected(db, label, sql) {
   try {
@@ -58,10 +59,56 @@ try {
     insert into public.operating_locations (id, organisation_id, name) values
       ('00000000-0000-0000-0000-000000001001', '00000000-0000-0000-0000-000000000001', 'Operations base'),
       ('00000000-0000-0000-0000-000000001002', '00000000-0000-0000-0000-000000000002', 'Other tenant base');
+    insert into public.clients (id, organisation_id, name)
+      values ('00000000-0000-0000-0000-000000000311', '00000000-0000-0000-0000-000000000001', 'Legacy client');
+    insert into public.properties (id, organisation_id, client_id, name, state)
+      values ('00000000-0000-0000-0000-000000000411', '00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000311', 'Legacy property', 'QLD');
+    insert into public.field_boundary_versions (id, organisation_id, property_id, version_number, boundary_geojson) values
+      ('00000000-0000-0000-0000-000000000511', '00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000411', 1, '{"type":"Polygon","coordinates":[[[153,-27],[154,-27],[154,-28],[153,-27]]]}'::jsonb),
+      ('00000000-0000-0000-0000-000000000512', '00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000411', 2, '{"type":"Polygon","coordinates":[[[153,-27],[155,-27],[155,-28],[153,-27]]]}'::jsonb);
+    insert into public.fields (id, organisation_id, property_id, field_boundary_version_id, name) values
+      ('00000000-0000-0000-0000-000000000611', '00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000411', '00000000-0000-0000-0000-000000000511', 'Legacy shared one'),
+      ('00000000-0000-0000-0000-000000000612', '00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000411', '00000000-0000-0000-0000-000000000511', 'Legacy shared two');
   `);
 
   await db.exec(await readFile(accessMigrationPath, 'utf8'));
   await db.exec(await readFile(workflowMigrationPath, 'utf8'));
+  await db.exec(await readFile(reviewFixMigrationPath, 'utf8'));
+
+  const legacyRepair = await db.query(`
+    select
+      (select field_boundary_version_id from public.fields where id = '00000000-0000-0000-0000-000000000611') as first_pointer,
+      (select field_boundary_version_id from public.fields where id = '00000000-0000-0000-0000-000000000612') as second_pointer,
+      (select field_id from public.field_boundary_versions where id = (select field_boundary_version_id from public.fields where id = '00000000-0000-0000-0000-000000000612')) as second_owner,
+      (select count(*)::integer from public.operational_migration_issues where issue_code = 'legacy_boundary_unassigned' and source_entity_id = '00000000-0000-0000-0000-000000000512') as unassigned_issues,
+      (select count(*)::integer from public.operational_migration_issues where issue_code = 'legacy_shared_boundary_repaired') as shared_issues;
+  `);
+  const repair = legacyRepair.rows[0];
+  if (repair.first_pointer !== '00000000-0000-0000-0000-000000000511' || repair.second_pointer === repair.first_pointer || repair.second_owner !== '00000000-0000-0000-0000-000000000612' || repair.unassigned_issues !== 1 || repair.shared_issues !== 1) {
+    throw new Error('080 did not preserve/report unassigned history and deterministically repair shared current boundaries');
+  }
+  await expectRejected(db, 'cross-field current boundary pointer', `update public.fields set field_boundary_version_id = '00000000-0000-0000-0000-000000000511' where id = '00000000-0000-0000-0000-000000000612';`);
+
+  const legacyOperationalHistory = await db.query(`select public.ftf_read_field_boundary_versions(
+    '00000000-0000-0000-0000-000000000001', null,
+    '00000000-0000-0000-0000-000000000611', '00000000-0000-0000-0000-000000000411', 0, 100
+  ) as result;`);
+  if (legacyOperationalHistory.rows[0]?.result?.some((row) => row.id === '00000000-0000-0000-0000-000000000512')) {
+    throw new Error('unassignable legacy boundary leaked into operational field history');
+  }
+  await expectRejected(db, 'generic field pointer write', `select public.ftf_write_operational_resource(
+    '00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000101',
+    'fields', 'update', '00000000-0000-0000-0000-000000000611', 1,
+    '{"property_id":"00000000-0000-0000-0000-000000000411","field_boundary_version_id":"00000000-0000-0000-0000-000000000511","name":"Pointer injection"}'::jsonb
+  );`);
+  await db.exec(`update public.fields set archived_at = now() where id = '00000000-0000-0000-0000-000000000611';`);
+  const archivedParentHistory = await db.query(`select public.ftf_read_field_boundary_versions(
+    '00000000-0000-0000-0000-000000000001', null,
+    '00000000-0000-0000-0000-000000000611', '00000000-0000-0000-0000-000000000411', 0, 100
+  ) as result;`);
+  if (archivedParentHistory.rows[0]?.result?.length !== 0) {
+    throw new Error('boundary read returned history for an archived field parent');
+  }
 
   const migratedAccess = await db.query(`
     select
@@ -122,6 +169,20 @@ try {
   if (controlledSeed.rows[0]?.result?.allocated_seats !== 2 || controlledSeed.rows[0]?.result?.seat_assignments !== 2) {
     throw new Error('controlled beta seed did not allocate explicit active seats');
   }
+  await db.exec(`update public.organisation_seat_allocations set allocated_seats = 1 where organisation_id = '00000000-0000-0000-0000-000000000001';`);
+  const rankedSeats = await db.query(`select internal_user_id from public.internal_user_seat_assignments
+    where organisation_id = '00000000-0000-0000-0000-000000000001' and status = 'active' and archived_at is null
+    order by assigned_at, id;`);
+  const deniedSeatActor = rankedSeats.rows[1]?.internal_user_id;
+  const deniedSeatCheck = await db.query(`select public.ftf_actor_has_active_beta_seat(
+    '00000000-0000-0000-0000-000000000001', '${deniedSeatActor}'
+  ) as allowed;`);
+  if (deniedSeatCheck.rows[0]?.allowed !== false) throw new Error('SQL seat check accepted an assignment beyond the reduced allocation');
+  await expectRejected(db, 'oversubscribed actor trusted write', `select public.ftf_write_operational_resource(
+    '00000000-0000-0000-0000-000000000001', '${deniedSeatActor}',
+    'clients', 'create', null, null, '{"name":"Oversubscribed"}'::jsonb
+  );`);
+  await db.exec(`update public.organisation_seat_allocations set allocated_seats = 2 where organisation_id = '00000000-0000-0000-0000-000000000001';`);
   const seededActorWrite = await db.query(`select public.ftf_write_operational_resource(
     '00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000303',
     'clients', 'create', null, null, '{"name":"Seeded actor client"}'::jsonb
@@ -356,6 +417,20 @@ try {
   }
 
   await expectRejected(db, 'immutable boundary update', `update public.field_boundary_versions set boundary_geojson = '{}'::jsonb where id = '${boundaryId}';`);
+
+  await db.exec(`update public.organisations set archived_at = now() where id = '00000000-0000-0000-0000-000000000002';`);
+  await expectRejected(db, 'archived organisation generic write', `select public.ftf_write_operational_resource(
+    '00000000-0000-0000-0000-000000000002', '00000000-0000-0000-0000-000000000202',
+    'operating_locations', 'create', null, null, '{"name":"Archived org base"}'::jsonb
+  );`);
+  await expectRejected(db, 'archived organisation boundary command', `select public.ftf_create_field_boundary_version(
+    '00000000-0000-0000-0000-000000000002', '00000000-0000-0000-0000-000000000202',
+    '00000000-0000-0000-0000-000000000801', '00000000-0000-0000-0000-000000000501', 1,
+    '{"type":"Polygon","coordinates":[[[153,-27],[154,-27],[154,-28],[153,-27]]]}'::jsonb, null
+  );`);
+  await expectRejected(db, 'archived organisation seed command', `select public.ftf_seed_internal_beta_access(
+    '00000000-0000-0000-0000-000000000002', '00000000-0000-0000-0000-000000000202'
+  );`);
 
   await db.exec('set role authenticated;');
   await expectRejected(db, 'authenticated seat assignment DML', `update public.internal_user_seat_assignments set status = 'active';`);

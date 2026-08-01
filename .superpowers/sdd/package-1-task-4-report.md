@@ -133,3 +133,65 @@ PostgreSQL behavior for:
 Requirement references: NEW-001, NEW-002, NEW-003, NEW-004, NEW-005, NEW-006,
 NEW-007, NEW-008, NEW-020, REP-001, REP-002, REP-003, REP-004, RET-003,
 RET-004, RET-005, RET-006, RET-007, RET-008.
+
+## Review fix round 1 — 2026-08-01
+
+The review fixes are delivered as the forward-only
+`20260801008000_live_chain_review_fixes.sql` migration; the committed `060` and
+`070` migrations remain unchanged.
+
+### Review findings addressed
+
+- Generic field create/update rejects `fieldBoundaryVersionId` at the HTTP
+  boundary and `field_boundary_version_id` at the trusted SQL boundary. The
+  existing pointer is preserved on ordinary field updates, so only the trusted
+  boundary-version command can advance it.
+- The current field pointer now has an exact same-organisation, same-property,
+  same-field composite foreign key to its immutable boundary version.
+- Pre-`070` shared current boundaries are repaired deterministically: `070`'s
+  selected owner retains the source, each additional field receives an
+  immutable duplicate, and its pointer is updated to that duplicate.
+- Legacy unassigned boundary versions remain preserved. Each is recorded in
+  append-only `operational_migration_issues` with a policy marker and is
+  excluded from operational field history rather than assigned by guesswork.
+- Request context and trusted PostgreSQL commands rank active assignments by
+  `(assigned_at, id)` and reject assignments beyond the current allocation,
+  including after an allocation reduction.
+- Boundary list/get now call the service-role-only
+  `ftf_read_field_boundary_versions` RPC. The RPC joins active boundary,
+  same-field, and property rows, so archived parents return no history/404.
+- Each public trusted write wrapper takes the organisation advisory lock, then
+  row-locks and rechecks the active organisation in the same transaction.
+  Generic and boundary writes also recheck the capacity-aware actor seat.
+- Job date validation now rejects impossible calendar dates rather than only
+  validating the `YYYY-MM-DD` shape.
+
+### Review-fix TDD evidence
+
+The first focused run of
+`CI=true npm test -- --runInBand src/__tests__/liveChainFixRoundApi.test.js src/__tests__/liveChainBackendPglite.test.js`
+failed 7 tests: field pointer injection reached the repository, impossible
+dates reached PostgreSQL, an over-capacity request context was accepted,
+boundary reads used the table endpoint, and the `080` migration was absent.
+
+After implementing the HTTP/repository changes and the forward migration, the
+PGlite verifier exposed one remaining failure:
+`oversubscribed actor trusted write was accepted`. The inherited wrapper still
+used its older inline positive-seat check. The public wrappers now enforce the
+capacity-aware helper after acquiring the organisation locks.
+
+### Review-fix verification
+
+- PGlite migration/behavior verifier:
+  `node scripts/verifyLiveChainBackendMigration.mjs` — exit 0.
+- Focused review-fix gate — 2 suites, 7 tests passed.
+- Backend regression gate — 11 suites, 48 tests passed.
+- Full repository: `CI=true npm test -- --runInBand` — 50 suites, 254 tests
+  passed, 0 failed.
+- Production build: `npm run build` — exit 0. The build reports the same
+  pre-existing repository-wide ESLint, stale Browserslist, and bundle-size
+  warnings; no review-fix compile error was reported.
+
+Review-fix requirement references: NEW-001, NEW-002, NEW-003, NEW-004,
+NEW-005, NEW-006, NEW-007, NEW-008, NEW-020, REP-001, REP-002, REP-003,
+REP-004, RET-003, RET-004, RET-005, RET-006, RET-007, RET-008.
