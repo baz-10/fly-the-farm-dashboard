@@ -38,6 +38,37 @@ Green commands:
 - `npm run build` — exit 0. Existing frontend ESLint and Browserslist warnings remain unchanged.
 - `git diff --check` — exit 0 before commit.
 
+## Review remediation — round 3
+
+### Forward-migration choice and lock protocol
+
+Added `20260801004000_trusted_operational_lock_protocol.sql`; all earlier
+migrations remain immutable. It renames the existing guarded RPC implementation
+to a private, non-executable function and exposes a service-role-only wrapper.
+The wrapper obtains `pg_advisory_xact_lock(hashtext(organisation_id))` before
+calling the implementation, so every trusted create, update, and archive in one
+organisation follows the same transaction-scoped lock protocol before any row
+lock. Different organisations use different advisory keys and remain concurrent.
+
+### TDD and verification
+
+The new migration contract test initially failed with `ENOENT` before the
+forward migration existed. The executable PGlite harness applies the migration
+and invokes the wrapper through all existing RPC behavior checks, thereby
+exercising the advisory-lock call and preserving archive/parent guards.
+
+PGlite's in-process test harness has no independently connected sessions for a
+meaningful two-session lock-contention test. A staging PostgreSQL cutover gate
+is therefore required: run concurrent property-update vs job-create and
+job-update transactions in the same organisation, verify one waits rather than
+deadlocks, and verify a different-organisation write proceeds independently.
+This report does not claim a local two-connection concurrency test.
+
+- `CI=true npm test -- --runInBand src/__tests__/operationalLockProtocolMigration.test.js src/__tests__/productionSchemaPglite.test.js` — 2 suites, 2 tests passed.
+- `CI=true npm test -- --runInBand` — 41 suites, 180 tests passed.
+- `npm run build` — exit 0 with existing unrelated warnings.
+- `git diff --check` — exit 0 before commit.
+
 ## Self-review
 
 - New `/api/v1/session` and resource routes are additive; legacy `/api/store`

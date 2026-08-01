@@ -20,6 +20,10 @@ const operationalParentGuardMigrationPath = resolve(
   scriptDirectory,
   '../supabase/migrations/20260801003000_trusted_operational_parent_guards.sql'
 );
+const operationalLockProtocolMigrationPath = resolve(
+  scriptDirectory,
+  '../supabase/migrations/20260801004000_trusted_operational_lock_protocol.sql'
+);
 
 async function expectRejected(db, label, sql) {
   try {
@@ -34,6 +38,7 @@ const migration = await readFile(migrationPath, 'utf8');
 const operationalWriteMigration = await readFile(operationalWriteMigrationPath, 'utf8');
 const operationalCorrectionMigration = await readFile(operationalCorrectionMigrationPath, 'utf8');
 const operationalParentGuardMigration = await readFile(operationalParentGuardMigrationPath, 'utf8');
+const operationalLockProtocolMigration = await readFile(operationalLockProtocolMigrationPath, 'utf8');
 const db = new PGlite();
 
 try {
@@ -49,6 +54,7 @@ try {
   await db.exec(operationalWriteMigration);
   await db.exec(operationalCorrectionMigration);
   await db.exec(operationalParentGuardMigration);
+  await db.exec(operationalLockProtocolMigration);
 
   await db.exec(`
     insert into auth.users (id) values
