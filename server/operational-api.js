@@ -8,6 +8,7 @@ const MAX_PAGE_SIZE = 100;
 const AUSTRALIAN_STATES = new Set(['NSW', 'VIC', 'QLD', 'SA', 'WA', 'TAS', 'NT', 'ACT']);
 
 const SCHEMAS = {
+  operating_locations: { required: ['name'], fields: { name: 'name', address: 'address', timezone: 'timezone' } },
   clients: { required: ['name'], fields: { name: 'name', contactName: 'contact_name', contactEmail: 'contact_email', contactPhone: 'contact_phone' } },
   properties: { required: ['clientId', 'name', 'state'], fields: { clientId: 'client_id', name: 'name', address: 'address', state: 'state' } },
   fields: { required: ['propertyId', 'name'], fields: { propertyId: 'property_id', fieldBoundaryVersionId: 'field_boundary_version_id', name: 'name', areaHectares: 'area_hectares' } },
@@ -90,7 +91,7 @@ function mapInput(resource, body, existing) {
       throw apiError(400, 'VALIDATION_ERROR', `${field} is required.`);
     }
   });
-  ['contactName', 'contactEmail', 'contactPhone', 'address', 'state', 'status', 'scheduledStartAt'].forEach((field) => {
+  ['contactName', 'contactEmail', 'contactPhone', 'address', 'timezone', 'state', 'status', 'scheduledStartAt'].forEach((field) => {
     if (merged[field] !== undefined && merged[field] !== null && typeof merged[field] !== 'string') {
       throw apiError(400, 'VALIDATION_ERROR', `${field} must be a string.`);
     }
@@ -119,6 +120,11 @@ function mapInput(resource, body, existing) {
   });
   if (resource === 'missions' && !data.status) data.status = 'planning';
   return { data, merged };
+}
+
+function assertMissionLocationAccess(context, operatingLocationId) {
+  if ((context.operatingLocationIds || []).includes(operatingLocationId)) return;
+  throw apiError(403, 'LOCATION_FORBIDDEN', 'This mission operating location is not assigned to your membership.');
 }
 
 async function assertRelationships(repository, resource, context, values) {
@@ -190,6 +196,7 @@ function createOperationalHandler(resource, dependencies = {}) {
       if (req.method === 'POST') {
         assertPermission(context, resource, 'create');
         const { data, merged } = mapInput(resource, body);
+        if (resource === 'missions') assertMissionLocationAccess(context, merged.operatingLocationId);
         await assertRelationships(repository, resource, context, merged);
         const result = await repository.create(resource, context, data);
         if (result.relationshipConflict) throw apiError(409, 'RELATIONSHIP_CONFLICT', 'The related record is missing, archived, or belongs to another organisation.');
@@ -203,6 +210,7 @@ function createOperationalHandler(resource, dependencies = {}) {
         const existing = await repository.get(resource, context, id);
         if (!existing || existing.archived_at) throw apiError(404, 'NOT_FOUND', 'Operational record not found.');
         const { data, merged } = mapInput(resource, body, existing);
+        if (resource === 'missions') assertMissionLocationAccess(context, merged.operatingLocationId);
         await assertRelationships(repository, resource, context, merged);
         const result = await repository.update(resource, context, id, expectedVersion, data);
         if (result.notFound) throw apiError(404, 'NOT_FOUND', 'Operational record not found.');

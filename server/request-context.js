@@ -23,6 +23,12 @@ function query(table, filters, select) {
   });
 }
 
+function accessError(code, message) {
+  const error = createHttpError(403, message);
+  error.code = code;
+  return error;
+}
+
 async function resolveRequestContext(req) {
   const accessToken = parseCookies(req)[ACCESS_COOKIE];
   if (!accessToken) throw createHttpError(401, 'Authentication is required.');
@@ -47,7 +53,7 @@ async function resolveRequestContext(req) {
       `internal_user_id=eq.${encodeURIComponent(candidate.id)}`,
       'is_active=is.true',
       'archived_at=is.null',
-    ], 'role_id');
+    ], 'id,role_id');
     if (Array.isArray(candidateMemberships) && candidateMemberships.length > 0) {
       internalUser = candidate;
       memberships = candidateMemberships;
@@ -77,6 +83,46 @@ async function resolveRequestContext(req) {
   ], 'id,name'));
   if (!organisation) throw createHttpError(403, 'Your organisation is not active.');
 
+  const seatAssignments = await query('internal_user_seat_assignments', [
+    `organisation_id=eq.${encodeURIComponent(internalUser.organisation_id)}`,
+    `internal_user_id=eq.${encodeURIComponent(internalUser.id)}`,
+    'limit=2',
+  ], 'id,organisation_seat_allocation_id,status,archived_at');
+  const seatAssignment = firstRow(seatAssignments);
+  if (!seatAssignment) {
+    throw accessError('SEAT_MIGRATION_REQUIRED', 'Your Fly the Farm seat assignment requires migration.');
+  }
+  if (seatAssignment.status !== 'active' || seatAssignment.archived_at) {
+    const status = seatAssignment.status === 'revoked' || seatAssignment.archived_at ? 'revoked' : 'inactive';
+    throw accessError('SEAT_INACTIVE', `Your Fly the Farm seat is ${status}.`);
+  }
+  const seatAllocation = firstRow(await query('organisation_seat_allocations', [
+    `organisation_id=eq.${encodeURIComponent(internalUser.organisation_id)}`,
+    `id=eq.${encodeURIComponent(seatAssignment.organisation_seat_allocation_id)}`,
+    'archived_at=is.null',
+    'allocated_seats=gt.0',
+    'limit=1',
+  ], 'id,allocated_seats'));
+  if (!seatAllocation) {
+    throw accessError('SEAT_INACTIVE', 'Your Fly the Farm seat allocation is inactive.');
+  }
+
+  const membershipIds = memberships.map((membership) => membership.id).filter(Boolean);
+  const locationAssignments = membershipIds.length ? await query('membership_operating_location_assignments', [
+    `organisation_id=eq.${encodeURIComponent(internalUser.organisation_id)}`,
+    `membership_id=in.(${membershipIds.map(encodeURIComponent).join(',')})`,
+    'is_active=is.true',
+    'archived_at=is.null',
+  ], 'operating_location_id') : [];
+  const assignedLocationIds = [...new Set((Array.isArray(locationAssignments) ? locationAssignments : [])
+    .map((assignment) => assignment.operating_location_id)
+    .filter(Boolean))];
+  const activeLocations = assignedLocationIds.length ? await query('operating_locations', [
+    `organisation_id=eq.${encodeURIComponent(internalUser.organisation_id)}`,
+    `id=in.(${assignedLocationIds.map(encodeURIComponent).join(',')})`,
+    'archived_at=is.null',
+  ], 'id') : [];
+
   // Entitlement is legacy-compatible metadata only; it never grants permissions.
   const profile = firstRow(await query('ftf_profiles', [
     `user_id=eq.${encodeURIComponent(authUser.id)}`,
@@ -92,10 +138,8 @@ async function resolveRequestContext(req) {
       .filter((entry) => entry.permissions?.archived_at == null)
       .map((entry) => entry.permissions?.code)
       .filter(Boolean),
-    // No membership-to-location relation exists in the foundation schema, so no
-    // location access is inferred until one is explicitly represented.
-    operatingLocationIds: [],
-    entitlement: { tier: profile?.tier || null, seatActive: null },
+    operatingLocationIds: (Array.isArray(activeLocations) ? activeLocations : []).map((location) => location.id).filter(Boolean),
+    entitlement: { tier: profile?.tier || null, seatActive: true, seatStatus: 'active' },
   };
 }
 

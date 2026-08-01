@@ -51,6 +51,7 @@ class OperationalRepository {
 
   async hasActiveDependencies(resource, context, id) {
     const dependency = {
+      operating_locations: ['missions', 'operating_location_id'],
       clients: ['properties', 'client_id'],
       properties: ['fields', 'property_id'],
       fields: ['job_fields', 'field_id'],

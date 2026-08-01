@@ -75,7 +75,10 @@ describe('trusted organisation operational API', () => {
       text: async () => {
         if (url.endsWith('/auth/v1/user')) return JSON.stringify({ id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', email: 'a@example.test' });
         if (url.includes('/internal_users')) return JSON.stringify([{ id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', organisation_id: '11111111-1111-4111-8111-111111111111', display_name: 'A' }]);
-        if (url.includes('/memberships')) return JSON.stringify([{ role_id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc' }]);
+        if (url.includes('/memberships')) return JSON.stringify([{ id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd', role_id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc' }]);
+        if (url.includes('/internal_user_seat_assignments')) return JSON.stringify([{ organisation_seat_allocation_id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee', status: 'active', archived_at: null }]);
+        if (url.includes('/organisation_seat_allocations')) return JSON.stringify([{ id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee', allocated_seats: 1 }]);
+        if (url.includes('/membership_operating_location_assignments')) return JSON.stringify([]);
         if (url.includes('/roles')) return JSON.stringify([{ code: 'operator' }]);
         if (url.includes('/role_permissions')) return JSON.stringify([]);
         if (url.includes('/operating_locations')) return JSON.stringify([]);
@@ -112,7 +115,10 @@ describe('trusted organisation operational API', () => {
           { id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc', organisation_id: '22222222-2222-4222-8222-222222222222', display_name: 'Active member' },
         ]);
         if (url.includes('/memberships') && url.includes('11111111-1111-4111-8111-111111111111')) return JSON.stringify([]);
-        if (url.includes('/memberships')) return JSON.stringify([{ role_id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd' }]);
+        if (url.includes('/memberships')) return JSON.stringify([{ id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee', role_id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd' }]);
+        if (url.includes('/internal_user_seat_assignments')) return JSON.stringify([{ organisation_seat_allocation_id: 'ffffffff-ffff-4fff-8fff-ffffffffffff', status: 'active', archived_at: null }]);
+        if (url.includes('/organisation_seat_allocations')) return JSON.stringify([{ id: 'ffffffff-ffff-4fff-8fff-ffffffffffff', allocated_seats: 1 }]);
+        if (url.includes('/membership_operating_location_assignments')) return JSON.stringify([]);
         if (url.includes('/roles')) return JSON.stringify([{ code: 'operator' }]);
         if (url.includes('/role_permissions')) return JSON.stringify([]);
         if (url.includes('/organisations')) return JSON.stringify([{ id: '22222222-2222-4222-8222-222222222222', name: 'Farm B' }]);
@@ -137,7 +143,10 @@ describe('trusted organisation operational API', () => {
       text: async () => {
         if (url.endsWith('/auth/v1/user')) return JSON.stringify({ id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' });
         if (url.includes('/internal_users')) return JSON.stringify([{ id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', organisation_id: '11111111-1111-4111-8111-111111111111', display_name: 'A' }]);
-        if (url.includes('/memberships')) return JSON.stringify([{ role_id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc' }]);
+        if (url.includes('/memberships')) return JSON.stringify([{ id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd', role_id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc' }]);
+        if (url.includes('/internal_user_seat_assignments')) return JSON.stringify([{ organisation_seat_allocation_id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee', status: 'active', archived_at: null }]);
+        if (url.includes('/organisation_seat_allocations')) return JSON.stringify([{ id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee', allocated_seats: 1 }]);
+        if (url.includes('/membership_operating_location_assignments')) return JSON.stringify([]);
         if (url.includes('/roles')) return JSON.stringify([{ id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc', code: 'operator' }]);
         if (url.includes('/role_permissions')) return JSON.stringify([{ permissions: { code: 'clients.create', archived_at: '2026-01-01T00:00:00Z' } }]);
         if (url.includes('/organisations')) return JSON.stringify([{ id: '11111111-1111-4111-8111-111111111111', name: 'Farm A' }]);
