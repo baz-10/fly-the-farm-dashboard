@@ -18,6 +18,16 @@ const job = (id: string, fieldIds = ['field-1']): OperationalJob => ({
   id, clientId: 'client-1', propertyId: 'property-1', fieldIds, reference: id, scope: 'Spray weeds', status: 'draft',
   notes: '', rowVersion: 1, createdAt: '2026-08-01T00:00:00Z', updatedAt: '2026-08-01T00:00:00Z',
 });
+const location = (id: string) => ({
+  id, name: `${id} base`, address: '', timezone: 'Australia/Brisbane', rowVersion: 1,
+  createdAt: '2026-08-01T00:00:00Z', updatedAt: '2026-08-01T00:00:00Z',
+});
+const mission = (id: string, overrides: Record<string, unknown> = {}) => ({
+  id, jobId: 'job-1', operatingLocationId: 'location-1', missionNumber: 'MSN-001',
+  title: 'North block spray', description: 'Treat lantana', status: 'Planning',
+  scheduledStartAt: '2026-08-10T08:30:00Z', rowVersion: 2,
+  createdAt: '2026-08-01T00:00:00Z', updatedAt: '2026-08-01T00:00:00Z', ...overrides,
+});
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -34,14 +44,16 @@ function gateway(overrides: Partial<OperationalDataGateway> = {}): OperationalDa
     listFields: jest.fn().mockResolvedValue([]),
     listOperatingLocations: jest.fn().mockResolvedValue([]),
     listJobs: jest.fn().mockResolvedValue([]),
+    listMissions: jest.fn().mockResolvedValue([]),
     listFieldBoundaryVersions: jest.fn().mockResolvedValue([]),
     createClient: jest.fn(), updateClient: jest.fn(), archiveClient: jest.fn(),
     createProperty: jest.fn(), updateProperty: jest.fn(), archiveProperty: jest.fn(),
     createField: jest.fn(), updateField: jest.fn(), archiveField: jest.fn(),
     createJob: jest.fn(), updateJob: jest.fn(), archiveJob: jest.fn(),
+    createMission: jest.fn(), updateMission: jest.fn(), archiveMission: jest.fn(),
     createFieldBoundaryVersion: jest.fn(),
     ...overrides,
-  };
+  } as OperationalDataGateway;
 }
 
 describe('operational data store', () => {
@@ -273,6 +285,84 @@ describe('operational data store', () => {
     const resetting = store.setAuthenticatedUser('user-2');
     expect(store.getSnapshot()).toEqual(expect.objectContaining({ jobs: [], operatingLocations: [], fieldBoundaryVersions: [] }));
     await resetting;
+  });
+
+  test('loads Planning missions only when their job and active operating location are authoritative', async () => {
+    const store = createOperationalDataStore(gateway({
+      listClients: jest.fn().mockResolvedValue([client('client-1')]),
+      listProperties: jest.fn().mockResolvedValue([property('property-1', 'client-1')]),
+      listFields: jest.fn().mockResolvedValue([field('field-1', 'property-1')]),
+      listJobs: jest.fn().mockResolvedValue([job('job-1')]),
+      listOperatingLocations: jest.fn().mockResolvedValue([location('location-1')]),
+      listMissions: jest.fn().mockResolvedValue([mission('mission-1')]),
+    } as any));
+    await store.setAuthenticatedUser('user-1');
+    expect(store.getSnapshot()).toEqual(expect.objectContaining({
+      status: 'ready', missions: [expect.objectContaining({ id: 'mission-1', status: 'Planning' })],
+    }));
+
+    const invalidStore = createOperationalDataStore(gateway({
+      listClients: jest.fn().mockResolvedValue([client('client-1')]),
+      listProperties: jest.fn().mockResolvedValue([property('property-1', 'client-1')]),
+      listFields: jest.fn().mockResolvedValue([field('field-1', 'property-1')]),
+      listJobs: jest.fn().mockResolvedValue([job('job-1')]),
+      listOperatingLocations: jest.fn().mockResolvedValue([location('location-1')]),
+      listMissions: jest.fn().mockResolvedValue([mission('mission-2', { operatingLocationId: 'other-location' })]),
+    } as any));
+    await invalidStore.setAuthenticatedUser('user-1');
+    expect(invalidStore.getSnapshot()).toEqual(expect.objectContaining({
+      status: 'error', missions: [], error: expect.objectContaining({ code: 'MALFORMED_RESPONSE' }),
+    }));
+  });
+
+  test('publishes create, update and archive mission changes only after server confirmation', async () => {
+    const create = deferred<any>();
+    const data = gateway({
+      listClients: jest.fn().mockResolvedValue([client('client-1')]),
+      listProperties: jest.fn().mockResolvedValue([property('property-1', 'client-1')]),
+      listFields: jest.fn().mockResolvedValue([field('field-1', 'property-1')]),
+      listJobs: jest.fn().mockResolvedValue([job('job-1')]),
+      listOperatingLocations: jest.fn().mockResolvedValue([location('location-1')]),
+      createMission: jest.fn().mockReturnValue(create.promise),
+      updateMission: jest.fn().mockResolvedValue(mission('mission-1', { title: 'Confirmed edit', rowVersion: 2 })),
+      archiveMission: jest.fn().mockResolvedValue(mission('mission-1', { rowVersion: 3 })),
+    } as any);
+    const store = createOperationalDataStore(data) as any;
+    await store.setAuthenticatedUser('user-1');
+    const pending = store.createMission({
+      jobId: 'job-1', operatingLocationId: 'location-1', missionNumber: 'MSN-001',
+      title: 'Pending mission', description: '', status: 'Planning', scheduledStartAt: '2026-08-10T08:30:00Z',
+    });
+    expect(store.getSnapshot()).toEqual(expect.objectContaining({ missions: [], saving: true, savedAt: null }));
+    create.resolve(mission('mission-1', { title: 'Confirmed mission', rowVersion: 1 }));
+    await pending;
+    expect(store.getSnapshot()).toEqual(expect.objectContaining({ missions: [expect.objectContaining({ title: 'Confirmed mission' })] }));
+
+    await store.updateMission('mission-1', { title: 'Confirmed edit', status: 'Planning' });
+    expect(data.updateMission).toHaveBeenCalledWith('mission-1', expect.objectContaining({ status: 'Planning' }), 1);
+    expect(store.getSnapshot().missions[0]).toEqual(expect.objectContaining({ title: 'Confirmed edit', rowVersion: 2 }));
+
+    await store.archiveMission('mission-1');
+    expect(data.archiveMission).toHaveBeenCalledWith('mission-1', 2);
+    expect(store.getSnapshot()).toEqual(expect.objectContaining({ missions: [] }));
+  });
+
+  test('clears missions immediately across logout and tenant changes', async () => {
+    const secondLoad = deferred<any[]>();
+    const data = gateway({
+      listClients: jest.fn().mockResolvedValue([]), listProperties: jest.fn().mockResolvedValue([]),
+      listFields: jest.fn().mockResolvedValue([]), listJobs: jest.fn().mockResolvedValue([]),
+      listOperatingLocations: jest.fn().mockResolvedValue([]),
+      listMissions: jest.fn().mockResolvedValueOnce([]).mockReturnValueOnce(secondLoad.promise),
+    } as any);
+    const store = createOperationalDataStore(data) as any;
+    await store.setAuthenticatedUser('user-1');
+    const switching = store.setAuthenticatedUser('user-2');
+    expect(store.getSnapshot().missions).toEqual([]);
+    secondLoad.resolve([]);
+    await switching;
+    await store.setAuthenticatedUser(null);
+    expect(store.getSnapshot()).toEqual(expect.objectContaining({ status: 'idle', missions: [] }));
   });
 
   test('rejects a job whose server response does not match the loaded authoritative parent chain', async () => {

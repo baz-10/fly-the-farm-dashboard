@@ -1,7 +1,8 @@
 import { Client, Field, Property } from '../types/fieldManagement';
 import {
   FieldBoundaryVersionCreateInput, OperationalFieldBoundaryVersion, OperationalJob, OperationalJobCreateInput,
-  OperationalJobUpdateInput, OperationalOperatingLocation,
+  OperationalJobUpdateInput, OperationalMission, OperationalMissionCreateInput, OperationalMissionUpdateInput,
+  OperationalOperatingLocation,
   ClientCreateInput, ClientUpdateInput, FieldCreateInput, FieldUpdateInput,
   PropertyCreateInput, PropertyUpdateInput,
 } from './operationalApi';
@@ -23,11 +24,12 @@ export interface OperationalDataState {
   fields: Field[];
   operatingLocations: OperationalOperatingLocation[];
   jobs: OperationalJob[];
+  missions: OperationalMission[];
   fieldBoundaryVersions: OperationalFieldBoundaryVersion[];
   status: OperationalLoadStatus;
   saving: boolean;
   savedAt: string | null;
-  lastSaved: { resource: 'client' | 'property' | 'field' | 'job' | 'boundary'; recordId: string; at: string } | null;
+  lastSaved: { resource: 'client' | 'property' | 'field' | 'job' | 'mission' | 'boundary'; recordId: string; at: string } | null;
   error: OperationalDataError | null;
 }
 
@@ -39,6 +41,7 @@ export interface OperationalDataGateway {
   listFields(): Promise<Field[]>;
   listOperatingLocations(): Promise<OperationalOperatingLocation[]>;
   listJobs(): Promise<OperationalJob[]>;
+  listMissions(): Promise<OperationalMission[]>;
   listFieldBoundaryVersions(fieldId: string): Promise<OperationalFieldBoundaryVersion[]>;
   createClient(input: ClientCreateInput): Promise<Client>;
   updateClient(id: string, input: ClientUpdateInput, expectedVersion: number): Promise<Client>;
@@ -52,11 +55,14 @@ export interface OperationalDataGateway {
   createJob(input: OperationalJobCreateInput): Promise<OperationalJob>;
   updateJob(id: string, input: OperationalJobUpdateInput, expectedVersion: number): Promise<OperationalJob>;
   archiveJob(id: string, expectedVersion: number): Promise<unknown>;
+  createMission(input: OperationalMissionCreateInput): Promise<OperationalMission>;
+  updateMission(id: string, input: OperationalMissionUpdateInput, expectedVersion: number): Promise<OperationalMission>;
+  archiveMission(id: string, expectedVersion: number): Promise<unknown>;
   createFieldBoundaryVersion(input: FieldBoundaryVersionCreateInput): Promise<OperationalFieldBoundaryVersion>;
 }
 
 const emptyState = (): OperationalDataState => ({
-  clients: [], properties: [], fields: [], operatingLocations: [], jobs: [], fieldBoundaryVersions: [],
+  clients: [], properties: [], fields: [], operatingLocations: [], jobs: [], missions: [], fieldBoundaryVersions: [],
   status: 'idle', saving: false, savedAt: null, lastSaved: null, error: null,
 });
 
@@ -102,6 +108,9 @@ export interface OperationalDataStore {
   createJob(input: OperationalJobCreateInput): Promise<OperationalJob>;
   updateJob(id: string, input: OperationalJobUpdateInput): Promise<OperationalJob>;
   archiveJob(id: string): Promise<void>;
+  createMission(input: OperationalMissionCreateInput): Promise<OperationalMission>;
+  updateMission(id: string, input: OperationalMissionUpdateInput): Promise<OperationalMission>;
+  archiveMission(id: string): Promise<void>;
   refreshFieldBoundary(fieldId: string): Promise<OperationalFieldBoundaryVersion | null>;
   createFieldBoundaryVersion(fieldId: string, coordinates: Array<[number, number]>): Promise<OperationalFieldBoundaryVersion>;
 }
@@ -146,14 +155,16 @@ export function createOperationalDataStore(gateway: OperationalDataGateway): Ope
       if (activeGeneration !== generation || userId !== nextUserId) return;
       if (!resolvedOrganisation) throw Object.assign(new Error('No active organisation is available.'), { code: 'FORBIDDEN', status: 403 });
       organisationId = resolvedOrganisation;
-      const [clients, properties, fields, operatingLocations, jobs] = await Promise.all([
+      const [clients, properties, fields, operatingLocations, jobs, missions] = await Promise.all([
         gateway.listClients(), gateway.listProperties(), gateway.listFields(),
-        gateway.listOperatingLocations(), gateway.listJobs(),
+        gateway.listOperatingLocations(), gateway.listJobs(), gateway.listMissions(),
       ]);
       if (activeGeneration !== generation || userId !== nextUserId || organisationId !== resolvedOrganisation) return;
       const clientIds = new Set(clients.map((record) => record.id));
       const propertiesById = new Map(properties.map((record) => [record.id, record]));
       const fieldsById = new Map(fields.map((record) => [record.id, record]));
+      const jobIds = new Set(jobs.map((record) => record.id));
+      const operatingLocationIds = new Set(operatingLocations.map((record) => record.id));
       const invalidProperty = properties.some((record) => !clientIds.has(record.clientId));
       const invalidField = fields.some((record) => !propertiesById.has(record.propertyId));
       const invalidJob = jobs.some((record) => {
@@ -161,10 +172,12 @@ export function createOperationalDataStore(gateway: OperationalDataGateway): Ope
         return !clientIds.has(record.clientId) || !parent || parent.clientId !== record.clientId
           || record.fieldIds.some((fieldId) => fieldsById.get(fieldId)?.propertyId !== record.propertyId);
       });
-      if (invalidProperty || invalidField || invalidJob) {
+      const invalidMission = missions.some((record) => record.status !== 'Planning'
+        || !jobIds.has(record.jobId) || !operatingLocationIds.has(record.operatingLocationId));
+      if (invalidProperty || invalidField || invalidJob || invalidMission) {
         throw Object.assign(new Error('The operational API returned records outside the active parent chain.'), { code: 'MALFORMED_RESPONSE' });
       }
-      emit({ clients, properties, fields, operatingLocations, jobs, fieldBoundaryVersions: [], status: 'ready', saving: false, savedAt: null, lastSaved: null, error: null });
+      emit({ clients, properties, fields, operatingLocations, jobs, missions, fieldBoundaryVersions: [], status: 'ready', saving: false, savedAt: null, lastSaved: null, error: null });
     } catch (error) {
       if (activeGeneration !== generation) return;
       organisationId = null;
@@ -183,7 +196,7 @@ export function createOperationalDataStore(gateway: OperationalDataGateway): Ope
   }
 
   async function mutate<T extends { id?: string }>(
-    resource: 'client' | 'property' | 'field' | 'job' | 'boundary',
+    resource: 'client' | 'property' | 'field' | 'job' | 'mission' | 'boundary',
     recordId: string | null,
     request: () => Promise<T>,
     confirm: (record: T) => void,
@@ -217,6 +230,23 @@ export function createOperationalDataStore(gateway: OperationalDataGateway): Ope
   }
 
   const replace = <T extends { id: string }>(records: T[], record: T): T[] => records.map((existing) => existing.id === record.id ? record : existing);
+
+  const missionValidationError = (message: string) => Object.assign(new Error(message), {
+    code: 'VALIDATION_ERROR', status: 400,
+  });
+
+  function validateMissionInput(input: OperationalMissionCreateInput | OperationalMissionUpdateInput, current?: OperationalMission) {
+    const status = input.status ?? current?.status;
+    const jobId = input.jobId ?? current?.jobId;
+    const operatingLocationId = input.operatingLocationId ?? current?.operatingLocationId;
+    if (status !== 'Planning') throw missionValidationError('Remote mission writes may only use Planning status.');
+    if (!jobId || !state.jobs.some((record) => record.id === jobId)) {
+      throw missionValidationError('Select an authoritative job before saving the mission.');
+    }
+    if (!operatingLocationId || !state.operatingLocations.some((record) => record.id === operatingLocationId)) {
+      throw missionValidationError('Select an active authoritative operating location before saving the mission.');
+    }
+  }
 
   return {
     getSnapshot: () => state,
@@ -266,6 +296,21 @@ export function createOperationalDataStore(gateway: OperationalDataGateway): Ope
     },
     async archiveJob(id) {
       await mutate('job', id, () => gateway.archiveJob(id, expectedVersion(state.jobs, id)) as Promise<{ id?: string }>, () => patch({ jobs: state.jobs.filter((record) => record.id !== id) }));
+    },
+    createMission(input) {
+      try { validateMissionInput(input); } catch (error) { return Promise.reject(error); }
+      return mutate('mission', null, () => gateway.createMission(input), (record) => patch({ missions: [...state.missions, record as OperationalMission] }));
+    },
+    updateMission(id, input) {
+      const current = state.missions.find((record) => record.id === id);
+      if (!current) return Promise.reject(Object.assign(new Error('Mission not found.'), { code: 'NOT_FOUND', status: 404 }));
+      try { validateMissionInput(input, current); } catch (error) { return Promise.reject(error); }
+      return mutate('mission', id, () => gateway.updateMission(id, input, expectedVersion(state.missions, id)), (record) => patch({ missions: replace(state.missions, record as OperationalMission) }));
+    },
+    async archiveMission(id) {
+      const current = state.missions.find((record) => record.id === id);
+      if (!current) throw Object.assign(new Error('Mission not found.'), { code: 'NOT_FOUND', status: 404 });
+      await mutate('mission', id, () => gateway.archiveMission(id, expectedVersion(state.missions, id)) as Promise<{ id?: string }>, () => patch({ missions: state.missions.filter((record) => record.id !== id) }));
     },
     async refreshFieldBoundary(fieldId) {
       const activeGeneration = generation;

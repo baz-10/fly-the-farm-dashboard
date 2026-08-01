@@ -73,12 +73,18 @@ export interface OperationalMission {
   jobId: string;
   operatingLocationId: string;
   missionNumber: string;
-  status: string;
+  title: string;
+  description: string;
+  status: 'Planning';
   scheduledStartAt?: string;
   rowVersion: number;
   createdAt: string;
   updatedAt: string;
 }
+
+export type OperationalMissionCreateInput = Omit<OperationalMission, 'id' | 'rowVersion' | 'createdAt' | 'updatedAt'>;
+export type OperationalMissionUpdateInput = Partial<Pick<OperationalMission,
+  'jobId' | 'operatingLocationId' | 'missionNumber' | 'title' | 'description' | 'status' | 'scheduledStartAt'>>;
 
 export type ClientCreateInput = Omit<Client, 'id' | 'createdAt' | 'updatedAt' | 'rowVersion'>;
 export type PropertyCreateInput = Omit<Property, 'id' | 'createdAt' | 'updatedAt' | 'rowVersion'>;
@@ -303,13 +309,16 @@ export function mapApiFieldBoundaryVersion(record: ApiRecord): OperationalFieldB
   };
 }
 
-function mapMission(record: ApiRecord): OperationalMission {
+export function mapApiMission(record: ApiRecord): OperationalMission {
   const scheduledStartAt = optionalText(record, 'scheduledStartAt', 'scheduled_start_at') || undefined;
   if (scheduledStartAt && Number.isNaN(Date.parse(scheduledStartAt))) return malformed('scheduledStartAt');
+  const status = requiredText(record, 'status');
+  if (status.toLowerCase() !== 'planning') return malformed('status');
   return {
     id: requiredText(record, 'id'), jobId: requiredText(record, 'jobId', 'job_id'),
     operatingLocationId: requiredText(record, 'operatingLocationId', 'operating_location_id'),
-    missionNumber: requiredText(record, 'missionNumber', 'mission_number'), status: requiredText(record, 'status'),
+    missionNumber: requiredText(record, 'missionNumber', 'mission_number'),
+    title: requiredText(record, 'title'), description: optionalText(record, 'description'), status: 'Planning',
     scheduledStartAt, rowVersion: versionValue(record), createdAt: timestamp(record, 'createdAt', 'created_at'),
     updatedAt: timestamp(record, 'updatedAt', 'updated_at'),
   };
@@ -337,7 +346,7 @@ export interface OperationalApi {
     get(id: string): Promise<OperationalFieldBoundaryVersion>;
     create(input: FieldBoundaryVersionCreateInput): Promise<OperationalFieldBoundaryVersion>;
   };
-  missions: ResourceAdapter<OperationalMission, Omit<OperationalMission, 'id' | 'rowVersion' | 'createdAt' | 'updatedAt'>, Partial<Pick<OperationalMission, 'missionNumber' | 'status' | 'scheduledStartAt'>>>;
+  missions: ResourceAdapter<OperationalMission, OperationalMissionCreateInput, OperationalMissionUpdateInput>;
 }
 
 interface ApiOptions { timeoutMs?: number; }
@@ -467,13 +476,20 @@ export function createOperationalApi(options: ApiOptions = {}): OperationalApi {
     ...(input.requestedDate !== undefined ? { requestedDate: input.requestedDate } : {}),
     ...(input.scheduledDate !== undefined ? { scheduledDate: input.scheduledDate } : {}),
   });
-  const missionWritable = (input: any): ApiRecord => ({
-    ...(input.jobId !== undefined ? { jobId: input.jobId } : {}),
-    ...(input.operatingLocationId !== undefined ? { operatingLocationId: input.operatingLocationId } : {}),
-    ...(input.missionNumber !== undefined ? { missionNumber: input.missionNumber } : {}),
-    ...(input.status !== undefined ? { status: input.status } : {}),
-    ...(input.scheduledStartAt !== undefined ? { scheduledStartAt: input.scheduledStartAt } : {}),
-  });
+  const missionWritable = (input: OperationalMissionCreateInput | OperationalMissionUpdateInput): ApiRecord => {
+    if (input.status !== undefined && input.status !== 'Planning') {
+      throw new OperationalApiError(400, 'VALIDATION_ERROR', 'Remote mission writes may only use Planning status.');
+    }
+    return {
+      ...(input.jobId !== undefined ? { jobId: input.jobId } : {}),
+      ...(input.operatingLocationId !== undefined ? { operatingLocationId: input.operatingLocationId } : {}),
+      ...(input.missionNumber !== undefined ? { missionNumber: input.missionNumber } : {}),
+      ...(input.title !== undefined ? { title: input.title } : {}),
+      ...(input.description !== undefined ? { description: input.description } : {}),
+      ...(input.status !== undefined ? { status: 'planning' } : {}),
+      ...(input.scheduledStartAt !== undefined ? { scheduledStartAt: input.scheduledStartAt } : {}),
+    };
+  };
 
   return {
     async session() {
@@ -526,7 +542,7 @@ export function createOperationalApi(options: ApiOptions = {}): OperationalApi {
         },
       };
     })(),
-    missions: resource('missions', mapMission, missionWritable),
+    missions: resource('missions', mapApiMission, missionWritable),
   };
 }
 

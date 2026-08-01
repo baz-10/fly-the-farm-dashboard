@@ -21,6 +21,7 @@ function createRemoteGateway(api: OperationalApi): OperationalDataGateway {
     listFields: () => listAll((page, pageSize) => api.fields.list(page, pageSize)),
     listOperatingLocations: () => listAll((page, pageSize) => api.operatingLocations.list(page, pageSize)),
     listJobs: () => listAll((page, pageSize) => api.jobs.list(page, pageSize)),
+    listMissions: () => listAll((page, pageSize) => api.missions.list(page, pageSize)),
     listFieldBoundaryVersions: (fieldId) => listAll((page, pageSize) => api.fieldBoundaryVersions.list(fieldId, page, pageSize)),
     createClient: (input) => api.clients.create(input),
     updateClient: (id, input, expectedVersion) => api.clients.update(id, input, expectedVersion),
@@ -34,6 +35,9 @@ function createRemoteGateway(api: OperationalApi): OperationalDataGateway {
     createJob: (input) => api.jobs.create(input),
     updateJob: (id, input, expectedVersion) => api.jobs.update(id, input, expectedVersion),
     archiveJob: (id, expectedVersion) => api.jobs.archive(id, expectedVersion),
+    createMission: (input) => api.missions.create(input),
+    updateMission: (id, input, expectedVersion) => api.missions.update(id, input, expectedVersion),
+    archiveMission: (id, expectedVersion) => api.missions.archive(id, expectedVersion),
     createFieldBoundaryVersion: (input) => api.fieldBoundaryVersions.create(input),
   };
 }
@@ -46,6 +50,7 @@ function createLocalGateway(): OperationalDataGateway {
     listFields: async () => getFields(),
     listOperatingLocations: async () => [],
     listJobs: async () => [],
+    listMissions: async () => [],
     listFieldBoundaryVersions: async () => [],
     createClient: async (input) => saveClient(input),
     updateClient: async (id, input) => updateClient(id, input),
@@ -59,6 +64,9 @@ function createLocalGateway(): OperationalDataGateway {
     createJob: async () => { throw new Error('Authoritative job commands are unavailable in local mode.'); },
     updateJob: async () => { throw new Error('Authoritative job commands are unavailable in local mode.'); },
     archiveJob: async () => { throw new Error('Authoritative job commands are unavailable in local mode.'); },
+    createMission: async () => { throw new Error('Authoritative mission commands are unavailable in local mode.'); },
+    updateMission: async () => { throw new Error('Authoritative mission commands are unavailable in local mode.'); },
+    archiveMission: async () => { throw new Error('Authoritative mission commands are unavailable in local mode.'); },
     createFieldBoundaryVersion: async () => { throw new Error('Authoritative boundary commands are unavailable in local mode.'); },
   };
 }

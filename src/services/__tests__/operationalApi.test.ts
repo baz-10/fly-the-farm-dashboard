@@ -114,6 +114,67 @@ describe('operational API adapter', () => {
     })]);
   });
 
+  test('maps complete authoritative mission metadata and normalises the only supported lifecycle state', async () => {
+    jest.spyOn(global, 'fetch').mockImplementation(() => jsonResponse(200, {
+      data: [{
+        id: 'mission-1', job_id: 'job-1', operating_location_id: 'location-1', mission_number: 'MSN-001',
+        title: 'North block spray', description: 'Treat lantana along the creek', status: 'planning',
+        scheduled_start_at: '2026-08-10T08:30:00Z', row_version: 3,
+        created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-02T00:00:00Z',
+      }],
+      pagination: { page: 1, pageSize: 100 },
+    }));
+
+    await expect(createOperationalApi().missions.list()).resolves.toEqual(expect.objectContaining({
+      records: [expect.objectContaining({
+        id: 'mission-1', jobId: 'job-1', operatingLocationId: 'location-1', missionNumber: 'MSN-001',
+        title: 'North block spray', description: 'Treat lantana along the creek', status: 'Planning',
+        scheduledStartAt: '2026-08-10T08:30:00Z', rowVersion: 3,
+      })],
+    }));
+  });
+
+  test('sends only supported mission metadata and forces the trusted Planning status spelling', async () => {
+    const fetchMock = jest.spyOn(global, 'fetch').mockImplementation(() => jsonResponse(201, { data: {
+      id: 'mission-1', jobId: 'job-1', operatingLocationId: 'location-1', missionNumber: 'MSN-001',
+      title: 'North block spray', description: 'Treat lantana', status: 'planning',
+      scheduledStartAt: '2026-08-10T08:30:00Z', rowVersion: 1,
+      createdAt: '2026-08-01T00:00:00Z', updatedAt: '2026-08-01T00:00:00Z',
+    } }));
+
+    await createOperationalApi().missions.create({
+      jobId: 'job-1', operatingLocationId: 'location-1', missionNumber: 'MSN-001',
+      title: 'North block spray', description: 'Treat lantana', status: 'Planning',
+      scheduledStartAt: '2026-08-10T08:30:00Z',
+    } as any);
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/v1/missions', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({
+        jobId: 'job-1', operatingLocationId: 'location-1', missionNumber: 'MSN-001',
+        title: 'North block spray', description: 'Treat lantana', status: 'planning',
+        scheduledStartAt: '2026-08-10T08:30:00Z',
+      }),
+    }));
+  });
+
+  test('rejects non-Planning mission responses and mutations before they enter frontend state', async () => {
+    const fetchMock = jest.spyOn(global, 'fetch').mockImplementation(() => jsonResponse(200, { data: [{
+      id: 'mission-1', jobId: 'job-1', operatingLocationId: 'location-1', missionNumber: 'MSN-001',
+      title: 'Unsafe state', description: '', status: 'Approved', rowVersion: 1,
+      createdAt: '2026-08-01T00:00:00Z', updatedAt: '2026-08-01T00:00:00Z',
+    }], pagination: { page: 1, pageSize: 100 } }));
+    const api = createOperationalApi();
+
+    await expect(api.missions.list()).rejects.toEqual(expect.objectContaining({ code: 'MALFORMED_RESPONSE' }));
+    fetchMock.mockClear();
+    await expect(api.missions.create({
+      jobId: 'job-1', operatingLocationId: 'location-1', missionNumber: 'MSN-002',
+      title: 'Unsafe create', description: '', status: 'Approved',
+    } as any)).rejects.toEqual(expect.objectContaining({ code: 'VALIDATION_ERROR' }));
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   test.each([
     ['clients', { id: '', name: 'Farm', rowVersion: 1, createdAt: '2026-08-01T00:00:00Z', updatedAt: '2026-08-01T00:00:00Z' }],
     ['properties', { id: 'property-1', clientId: '', name: 'Farm', state: 'QLD', rowVersion: 1, createdAt: '2026-08-01T00:00:00Z', updatedAt: '2026-08-01T00:00:00Z' }],
