@@ -90,3 +90,59 @@ Staging live-database validation remains mandatory before production cutover:
 apply the repository migration in staging and exercise cross-tenant foreign-key
 rejection, authorization-table write denial for browser roles, archive actor
 tenant rejection, relationship mismatch rejection, and live RLS behavior.
+
+## Review remediation (round 2)
+
+### Files changed
+
+- `package.json` and `package-lock.json`
+- `scripts/verifyProductionSchemaMigration.mjs`
+- `src/__tests__/productionSchemaMigration.test.js`
+- `src/__tests__/productionSchemaPglite.test.js`
+- `supabase/migrations/20260801000000_production_beta_foundation.sql`
+- `supabase/README.md`
+- `.superpowers/sdd/package-1-task-1-report.md`
+
+### TDD red tests
+
+`CI=true npm test -- --runInBand src/__tests__/productionSchemaMigration.test.js src/__tests__/productionSchemaPglite.test.js`
+failed as expected: the PGlite runner did not yet exist; jobs and fields lacked
+the property-aware composite chains required for `job_fields`; and the
+authorization tables still exposed authenticated select policies despite being
+server-only. The follow-up authorization test also proved that the browser role
+policy assumptions were removed before the migration was made green.
+
+### Executable PostgreSQL migration test
+
+- Added `@electric-sql/pglite` `0.5.4` as a development dependency.
+- The runner bootstraps `auth.users`, `auth.uid()`, and Supabase-like roles,
+  then applies the repository migration text unchanged and executes real SQL.
+- It verifies actual PostgreSQL rejection for cross-tenant client assignment,
+  job/client/property mismatch, field/boundary/property mismatch,
+  job-field/property mismatch, cross-tenant archive actor assignment, audit
+  update, and transactional-outbox delete.
+- Concrete compatibility attempt: PGlite rejected `create extension if not
+  exists pgcrypto` with `extension "pgcrypto" is not available`. PGlite did
+  execute `select gen_random_uuid()` successfully, so the unnecessary extension
+  statement was removed while retaining UUID defaults supported by current
+  PostgreSQL/Supabase and PGlite.
+
+### Green verification
+
+- `CI=true npm test -- --runInBand src/__tests__/productionSchemaMigration.test.js src/__tests__/productionSchemaPglite.test.js`
+  — 2 suites, 7 tests passed.
+- `CI=true npm test -- --runInBand` — 36 suites, 160 tests passed.
+- `npm run build` — exit 0 with existing unrelated ESLint/Browserslist warnings.
+- `git diff --check` — run before commit.
+
+### Self-review and cutover gate
+
+- Authorization records are now explicitly server-only: no browser grants and
+  no browser RLS policies; `service_role` remains the trusted administrator.
+- `job_fields.property_id` binds both referenced job and field to the same
+  organisation property through composite foreign keys.
+- Static checks retain RLS/grant assertions that a superuser PGlite test cannot
+  observe, while PGlite now executes the migration and integrity behavior.
+- Staging remains the production cutover gate for Supabase-specific role/RLS
+  behavior and repository migration deployment. `npm install` reports 58
+  existing dependency audit findings; this task did not run broad audit fixes.

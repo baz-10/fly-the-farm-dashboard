@@ -1,8 +1,6 @@
 -- Production beta foundation: organisation-scoped operational records.
 -- This migration intentionally leaves legacy ftf_profiles and ftf_store untouched.
 
-create extension if not exists pgcrypto;
-
 create or replace function public.set_tenant_row_update_metadata()
 returns trigger
 language plpgsql
@@ -197,6 +195,7 @@ create table public.fields (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   unique (organisation_id, id),
+  unique (organisation_id, property_id, id),
   foreign key (organisation_id, property_id) references public.properties (organisation_id, id),
   foreign key (organisation_id, property_id, field_boundary_version_id) references public.field_boundary_versions (organisation_id, property_id, id)
 );
@@ -214,6 +213,7 @@ create table public.jobs (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   unique (organisation_id, id),
+  unique (organisation_id, property_id, id),
   unique (organisation_id, reference),
   foreign key (organisation_id, client_id) references public.clients (organisation_id, id),
   foreign key (organisation_id, client_id, property_id) references public.properties (organisation_id, client_id, id)
@@ -222,6 +222,7 @@ create table public.jobs (
 create table public.job_fields (
   id uuid primary key default gen_random_uuid(),
   organisation_id uuid not null,
+  property_id uuid not null,
   job_id uuid not null,
   field_id uuid not null,
   target_area_hectares numeric(12, 4),
@@ -232,8 +233,8 @@ create table public.job_fields (
   updated_at timestamptz not null default now(),
   unique (organisation_id, id),
   unique (organisation_id, job_id, field_id),
-  foreign key (organisation_id, job_id) references public.jobs (organisation_id, id),
-  foreign key (organisation_id, field_id) references public.fields (organisation_id, id)
+  foreign key (organisation_id, property_id, job_id) references public.jobs (organisation_id, property_id, id),
+  foreign key (organisation_id, property_id, field_id) references public.fields (organisation_id, property_id, id)
 );
 
 create table public.missions (
@@ -344,9 +345,10 @@ create index fields_organisation_property_boundary_idx on public.fields (organis
 create index fields_archived_by_idx on public.fields (organisation_id, archived_by_internal_user_id);
 create index jobs_organisation_client_idx on public.jobs (organisation_id, client_id);
 create index jobs_organisation_client_property_idx on public.jobs (organisation_id, client_id, property_id);
+create index jobs_organisation_property_idx on public.jobs (organisation_id, property_id);
 create index jobs_archived_by_idx on public.jobs (organisation_id, archived_by_internal_user_id);
-create index job_fields_organisation_job_idx on public.job_fields (organisation_id, job_id);
-create index job_fields_organisation_field_idx on public.job_fields (organisation_id, field_id);
+create index job_fields_organisation_property_job_idx on public.job_fields (organisation_id, property_id, job_id);
+create index job_fields_organisation_property_field_idx on public.job_fields (organisation_id, property_id, field_id);
 create index job_fields_archived_by_idx on public.job_fields (organisation_id, archived_by_internal_user_id);
 create index missions_organisation_job_idx on public.missions (organisation_id, job_id);
 create index missions_organisation_location_idx on public.missions (organisation_id, operating_location_id);
@@ -424,21 +426,6 @@ create policy operating_locations_tenant_access on public.operating_locations
   for all to authenticated
   using (public.current_user_has_organisation_access(organisation_id))
   with check (public.current_user_has_organisation_access(organisation_id));
-create policy internal_users_tenant_access on public.internal_users
-  for select to authenticated
-  using (public.current_user_has_organisation_access(organisation_id));
-create policy memberships_tenant_access on public.memberships
-  for select to authenticated
-  using (public.current_user_has_organisation_access(organisation_id));
-create policy roles_tenant_access on public.roles
-  for select to authenticated
-  using (public.current_user_has_organisation_access(organisation_id));
-create policy permissions_tenant_access on public.permissions
-  for select to authenticated
-  using (public.current_user_has_organisation_access(organisation_id));
-create policy role_permissions_tenant_access on public.role_permissions
-  for select to authenticated
-  using (public.current_user_has_organisation_access(organisation_id));
 create policy clients_tenant_access on public.clients
   for all to authenticated
   using (public.current_user_has_organisation_access(organisation_id))

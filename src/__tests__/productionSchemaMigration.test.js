@@ -42,6 +42,10 @@ const browserCrudTables = mutableTables.filter(
   (table) => !authorisationTables.includes(table)
 );
 
+const browserRlsTables = tenantTables.filter(
+  (table) => !authorisationTables.includes(table)
+);
+
 const tenantRelationships = [
   ['memberships', 'internal_users'],
   ['memberships', 'roles'],
@@ -51,8 +55,6 @@ const tenantRelationships = [
   ['field_boundary_versions', 'properties'],
   ['fields', 'properties'],
   ['jobs', 'clients'],
-  ['job_fields', 'jobs'],
-  ['job_fields', 'fields'],
   ['missions', 'jobs'],
   ['missions', 'operating_locations'],
   ['mission_versions', 'missions'],
@@ -137,6 +139,19 @@ describe('production beta database migration contract', () => {
     expect(tableDefinition(migration, 'fields')).toContain(
       'foreign key (organisation_id, property_id, field_boundary_version_id) references public.field_boundary_versions (organisation_id, property_id, id)'
     );
+    expect(tableDefinition(migration, 'jobs')).toContain(
+      'unique (organisation_id, property_id, id)'
+    );
+    expect(tableDefinition(migration, 'fields')).toContain(
+      'unique (organisation_id, property_id, id)'
+    );
+    expect(tableDefinition(migration, 'job_fields')).toContain('property_id uuid not null');
+    expect(tableDefinition(migration, 'job_fields')).toContain(
+      'foreign key (organisation_id, property_id, job_id) references public.jobs (organisation_id, property_id, id)'
+    );
+    expect(tableDefinition(migration, 'job_fields')).toContain(
+      'foreign key (organisation_id, property_id, field_id) references public.fields (organisation_id, property_id, id)'
+    );
 
     mutableTables.forEach((table) => {
       expect(tableDefinition(migration, table)).toMatch(/archived_by_internal_user_id uuid/);
@@ -152,9 +167,13 @@ describe('production beta database migration contract', () => {
     expect(migration).toMatch(/iu\.is_active = true/);
     expect(migration).toMatch(/m\.is_active = true/);
 
-    tenantTables.forEach((table) => {
+    browserRlsTables.forEach((table) => {
       expect(migration).toContain(`create policy ${table}_tenant_access on public.${table}`);
       expect(migration).toContain('public.current_user_has_organisation_access(organisation_id)');
+    });
+
+    authorisationTables.forEach((table) => {
+      expect(migration).not.toContain(`create policy ${table}_tenant_access on public.${table}`);
     });
   });
 
@@ -173,15 +192,8 @@ describe('production beta database migration contract', () => {
       expect(migration).toContain(
         `grant select, insert, update, delete on table public.${table} to service_role`
       );
-      expect(migration).not.toContain(
-        `grant select, insert, update, delete on table public.${table} to authenticated`
-      );
-      expect(migration).toContain(
-        `create policy ${table}_tenant_access on public.${table} for select to authenticated`
-      );
-      expect(migration).not.toContain(
-        `create policy ${table}_tenant_access on public.${table} for all to authenticated`
-      );
+      expect(migration).not.toContain(`grant select on table public.${table} to authenticated`);
+      expect(migration).not.toContain(`create policy ${table}_tenant_access on public.${table}`);
     });
   });
 

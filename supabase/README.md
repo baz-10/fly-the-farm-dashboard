@@ -7,3 +7,5 @@ CI=true npm test -- --runInBand src/__tests__/productionSchemaMigration.test.js
 ```
 
 The migration adds new `public` tables only. It does not alter `ftf_profiles` or `ftf_store`. Initial organisation, internal-user, membership, role, and permission bootstrap data must be created by a trusted server-side deployment/admin process; authenticated browser clients cannot self-assign an organisation.
+
+Internal-user, membership, role, permission, and role-permission tables are server-only. Browser roles have no grants or RLS policies on these authorization records; trusted server-side `service_role` processes perform their administration.
