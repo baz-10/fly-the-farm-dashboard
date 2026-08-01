@@ -212,6 +212,16 @@ export default function JobCreate() {
     }
   }, []);
 
+  if (operational.mode === 'remote' && (operational.status === 'idle' || operational.status === 'loading')) {
+    return <Alert severity="info">Loading job form…</Alert>;
+  }
+  if (operational.mode === 'remote' && operational.status === 'error') {
+    return <Alert severity="error">The authoritative job workflow is unavailable. Refresh and try again.</Alert>;
+  }
+  if (operational.mode === 'remote' && operational.status === 'unauthorised') {
+    return <Alert severity="error">You are not authorised to create a job for this organisation.</Alert>;
+  }
+
   if (!field || !property || !client) {
     return (
       <Box>
@@ -422,7 +432,10 @@ export default function JobCreate() {
     if (!weedTarget.trim() || !dateSprayed || (operational.mode === 'remote' && !jobReference.trim())) return;
     const validChemicals = chemicals.filter((c) => c.product.trim());
     if (operational.mode === 'remote') {
-      const hasUnsupportedValue = validChemicals.length > 0 || waterRateLHa.trim() !== '' || adjuvants.trim() !== ''
+      const hasUnsupportedChemicalValue = chemicals.some((chemical) => Object.values(chemical).some((entry) => (
+        typeof entry === 'string' ? entry.trim() !== '' : entry !== null && entry !== undefined
+      )));
+      const hasUnsupportedValue = hasUnsupportedChemicalValue || waterRateLHa.trim() !== '' || adjuvants.trim() !== ''
         || selectedSurfactants.length > 0 || weatherLog.length > 0 || sprayConditions.length > 0
         || Object.values(weather).some((value) => value !== null && value !== '') || !!manualTime
         || !!sprayRec || !!batchInfo || droneModel.trim() !== '' || applicatorName.trim() !== '' || !!fromQuoteId;

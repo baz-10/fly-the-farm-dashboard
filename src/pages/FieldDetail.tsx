@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   Typography,
@@ -46,6 +46,7 @@ export default function FieldDetail() {
   const navigate = useNavigate();
   const theme = useTheme();
   const operational = useOperationalData();
+  const { mode: operationalMode, refreshFieldBoundary } = operational;
 
   const field = operational.fields.find((record) => record.id === fieldId && record.propertyId === propertyId);
   const property = operational.properties.find((record) => record.id === propertyId && record.clientId === clientId);
@@ -58,12 +59,36 @@ export default function FieldDetail() {
   const [editBoundaryFile, setEditBoundaryFile] = useState<BoundaryFileRef | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState(false);
   const [actionError, setActionError] = useState('');
+  const [boundaryLoadStatus, setBoundaryLoadStatus] = useState<'idle' | 'loading' | 'ready' | 'error' | 'unauthorised' | 'not-found'>(
+    operationalMode === 'remote' ? 'idle' : 'ready',
+  );
+
+  const loadBoundary = useCallback(async (isActive: () => boolean = () => true) => {
+    if (operationalMode !== 'remote' || !fieldId) return;
+    if (isActive()) setBoundaryLoadStatus('loading');
+    try {
+      await refreshFieldBoundary(fieldId);
+      if (isActive()) setBoundaryLoadStatus('ready');
+    } catch (error) {
+      if (!isActive()) return;
+      const candidate = error as { status?: number; code?: string };
+      if (candidate.status === 401 || candidate.status === 403 || candidate.code === 'FORBIDDEN' || candidate.code === 'UNAUTHENTICATED') {
+        setBoundaryLoadStatus('unauthorised');
+      } else if (candidate.status === 404 || candidate.code === 'NOT_FOUND') {
+        setBoundaryLoadStatus('not-found');
+      } else {
+        setBoundaryLoadStatus('error');
+      }
+    }
+  }, [fieldId, operationalMode, refreshFieldBoundary]);
 
   useEffect(() => {
+    let active = true;
     if (operational.mode === 'remote' && operational.status === 'ready' && fieldId) {
-      void operational.refreshFieldBoundary(fieldId).catch(() => undefined);
+      void loadBoundary(() => active);
     }
-  }, [fieldId, operational.mode, operational.refreshFieldBoundary, operational.status]);
+    return () => { active = false; };
+  }, [fieldId, loadBoundary, operational.mode, operational.status]);
 
   if (operational.status === 'loading') return <Alert severity="info">Loading field…</Alert>;
 
@@ -297,7 +322,7 @@ export default function FieldDetail() {
                 <Button
                   size="small"
                   aria-label="Refresh boundary"
-                  onClick={() => void operational.refreshFieldBoundary(field.id).then(() => setActionError('')).catch((error) => setActionError(describeOperationalError(error)))}
+                  onClick={() => void loadBoundary()}
                   disabled={operational.saving}
                   sx={{ borderRadius: '8px', fontWeight: 700 }}
                 >
@@ -321,7 +346,17 @@ export default function FieldDetail() {
             </Stack>
           </Box>
 
-          {field.boundaryCoords && field.boundaryCoords.length >= 3 ? (
+          {operational.mode === 'remote' && boundaryLoadStatus !== 'ready' ? (
+            <Alert severity={boundaryLoadStatus === 'idle' || boundaryLoadStatus === 'loading' ? 'info' : boundaryLoadStatus === 'not-found' ? 'warning' : 'error'}>
+              {boundaryLoadStatus === 'idle' || boundaryLoadStatus === 'loading'
+                ? 'Loading authoritative boundary…'
+                : boundaryLoadStatus === 'unauthorised'
+                  ? 'You are not authorised to view this boundary.'
+                  : boundaryLoadStatus === 'not-found'
+                    ? 'The authoritative boundary was not found.'
+                    : 'The authoritative boundary is unavailable. Refresh to try again.'}
+            </Alert>
+          ) : field.boundaryCoords && field.boundaryCoords.length >= 3 ? (
             <Stack spacing={2}>
               <FieldBoundaryEditor
                 coords={field.boundaryCoords}

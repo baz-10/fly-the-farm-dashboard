@@ -66,6 +66,7 @@ export interface FieldBoundaryVersionCreateInput {
 
 export type OperationalJobCreateInput = Omit<OperationalJob, 'id' | 'rowVersion' | 'createdAt' | 'updatedAt'>;
 export type OperationalJobUpdateInput = Partial<Pick<OperationalJob, 'fieldIds' | 'reference' | 'scope' | 'status' | 'notes' | 'requestedDate' | 'scheduledDate'>>;
+export type OperationalJobArchiveConfirmation = Omit<OperationalJob, 'fieldIds'>;
 
 export interface OperationalMission {
   id: string;
@@ -241,16 +242,23 @@ export function mapApiOperatingLocation(record: ApiRecord): OperationalOperating
   };
 }
 
-export function mapApiJob(record: ApiRecord): OperationalJob {
+function mapApiJobCore(record: ApiRecord): OperationalJobArchiveConfirmation {
   return {
     id: requiredText(record, 'id'), clientId: requiredText(record, 'clientId', 'client_id'),
-    propertyId: requiredText(record, 'propertyId', 'property_id'),
-    fieldIds: stringArray(record, 'fieldIds', 'field_ids', false), reference: requiredText(record, 'reference'),
+    propertyId: requiredText(record, 'propertyId', 'property_id'), reference: requiredText(record, 'reference'),
     scope: optionalText(record, 'scope'), status: requiredText(record, 'status'), notes: optionalText(record, 'notes'),
     requestedDate: optionalDate(record, 'requestedDate', 'requested_date'),
     scheduledDate: optionalDate(record, 'scheduledDate', 'scheduled_date'), rowVersion: versionValue(record),
     createdAt: timestamp(record, 'createdAt', 'created_at'), updatedAt: timestamp(record, 'updatedAt', 'updated_at'),
   };
+}
+
+export function mapApiJob(record: ApiRecord): OperationalJob {
+  return { ...mapApiJobCore(record), fieldIds: stringArray(record, 'fieldIds', 'field_ids', false) };
+}
+
+export function mapApiJobArchiveConfirmation(record: ApiRecord): OperationalJobArchiveConfirmation {
+  return mapApiJobCore(record);
 }
 
 function boundaryGeojson(record: ApiRecord): OperationalBoundaryGeoJson {
@@ -309,12 +317,12 @@ function mapMission(record: ApiRecord): OperationalMission {
 
 interface ApiList<T> { records: T[]; page: number; pageSize: number; }
 
-interface ResourceAdapter<T, TCreate, TUpdate> {
+interface ResourceAdapter<T, TCreate, TUpdate, TArchive = T> {
   list(page?: number, pageSize?: number): Promise<ApiList<T>>;
   get(id: string): Promise<T>;
   create(input: TCreate): Promise<T>;
   update(id: string, input: TUpdate, expectedVersion: number): Promise<T>;
-  archive(id: string, expectedVersion: number): Promise<T>;
+  archive(id: string, expectedVersion: number): Promise<TArchive>;
 }
 
 export interface OperationalApi {
@@ -323,7 +331,7 @@ export interface OperationalApi {
   clients: ResourceAdapter<Client, ClientCreateInput, ClientUpdateInput>;
   properties: ResourceAdapter<Property, PropertyCreateInput, PropertyUpdateInput>;
   fields: ResourceAdapter<Field, FieldCreateInput, FieldUpdateInput>;
-  jobs: ResourceAdapter<OperationalJob, OperationalJobCreateInput, OperationalJobUpdateInput>;
+  jobs: ResourceAdapter<OperationalJob, OperationalJobCreateInput, OperationalJobUpdateInput, OperationalJobArchiveConfirmation>;
   fieldBoundaryVersions: {
     list(fieldId: string, page?: number, pageSize?: number): Promise<ApiList<OperationalFieldBoundaryVersion>>;
     get(id: string): Promise<OperationalFieldBoundaryVersion>;
@@ -371,17 +379,24 @@ export function createOperationalApi(options: ApiOptions = {}): OperationalApi {
     }
   }
 
-  function resource<T, TCreate, TUpdate>(
+  function resource<T, TCreate, TUpdate, TArchive = T>(
     name: string,
     map: (record: ApiRecord) => T,
     writable: (input: TCreate | TUpdate) => ApiRecord,
-  ): ResourceAdapter<T, TCreate, TUpdate> {
+    archiveMap: (record: ApiRecord) => TArchive = map as unknown as (record: ApiRecord) => TArchive,
+  ): ResourceAdapter<T, TCreate, TUpdate, TArchive> {
     const base = `/api/v1/${name}`;
     const responseRecord = (envelope: any): T => {
       if (!envelope?.data || typeof envelope.data !== 'object' || Array.isArray(envelope.data)) {
         throw new OperationalApiError(0, 'MALFORMED_RESPONSE', 'The operational API returned an invalid record.');
       }
       return map(envelope.data);
+    };
+    const responseArchiveRecord = (envelope: any): TArchive => {
+      if (!envelope?.data || typeof envelope.data !== 'object' || Array.isArray(envelope.data)) {
+        throw new OperationalApiError(0, 'MALFORMED_RESPONSE', 'The operational API returned an invalid record.');
+      }
+      return archiveMap(envelope.data);
     };
     return {
       async list(page = 1, pageSize = 100) {
@@ -410,7 +425,7 @@ export function createOperationalApi(options: ApiOptions = {}): OperationalApi {
         }));
       },
       async archive(id, expectedVersion) {
-        return responseRecord(await request(`${base}?id=${encodeURIComponent(id)}`, {
+        return responseArchiveRecord(await request(`${base}?id=${encodeURIComponent(id)}`, {
           method: 'DELETE', body: JSON.stringify({ expectedVersion }),
         }));
       },
@@ -490,7 +505,7 @@ export function createOperationalApi(options: ApiOptions = {}): OperationalApi {
     clients: resource('clients', mapApiClient, clientWritable),
     properties: resource('properties', mapApiProperty, propertyWritable),
     fields: resource('fields', mapApiField, fieldWritable),
-    jobs: resource('jobs', mapApiJob, jobWritable),
+    jobs: resource('jobs', mapApiJob, jobWritable, mapApiJobArchiveConfirmation),
     fieldBoundaryVersions: (() => {
       const base = '/api/v1/field-boundary-versions';
       const responseRecord = async (promise: Promise<any>) => {

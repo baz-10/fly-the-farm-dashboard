@@ -186,6 +186,18 @@ describe('operational API adapter', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
+  test('accepts a server-confirmed job archive record without the list-only fieldIds join', async () => {
+    jest.spyOn(global, 'fetch').mockImplementation(() => jsonResponse(200, { data: {
+      id: 'job-1', clientId: 'client-1', propertyId: 'property-1', reference: 'JOB-42', scope: 'Spray lantana',
+      status: 'archived', notes: '', rowVersion: 4,
+      createdAt: '2026-08-01T00:00:00Z', updatedAt: '2026-08-02T00:00:00Z',
+    } }));
+
+    await expect(createOperationalApi().jobs.archive('job-1', 3)).resolves.toEqual(expect.objectContaining({
+      id: 'job-1', reference: 'JOB-42', rowVersion: 4,
+    }));
+  });
+
   test('rejects a malformed successful list envelope instead of treating it as a valid empty list', async () => {
     jest.spyOn(global, 'fetch').mockImplementation(() => jsonResponse(200, { pagination: { page: 1, pageSize: 100 } }));
     await expect(createOperationalApi().clients.list()).rejects.toEqual(expect.objectContaining({

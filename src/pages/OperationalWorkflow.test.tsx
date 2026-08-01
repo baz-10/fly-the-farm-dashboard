@@ -72,6 +72,13 @@ function baseOperational(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((res, rej) => { resolve = res; reject = rej; });
+  return { promise, resolve, reject };
+}
+
 function route(path: string, element: React.ReactElement) {
   mockParams = {
     ...(path.includes('client-1') ? { clientId: 'client-1' } : {}),
@@ -133,8 +140,10 @@ describe('authoritative client/property/field workflow screens', () => {
     expect(screen.getByText('North Paddock')).toBeInTheDocument();
   });
 
-  test('loads the requested field with its authoritative parent chain', () => {
+  test('loads the requested field with its authoritative parent chain', async () => {
     route('/jobs/client/client-1/property/property-1/field/field-1', <FieldDetail />);
+    await waitFor(() => expect(mockOperational.refreshFieldBoundary).toHaveBeenCalledWith('field-1'));
+    await waitFor(() => expect(screen.queryByText(/loading authoritative boundary/i)).not.toBeInTheDocument());
     expect(screen.getByRole('heading', { name: 'North Paddock' })).toBeInTheDocument();
     expect(screen.getByText(/North Farm/)).toBeInTheDocument();
     expect(screen.getByText('Spray lantana')).toBeInTheDocument();
@@ -153,6 +162,27 @@ describe('authoritative client/property/field workflow screens', () => {
     await waitFor(() => expect(mockOperational.createFieldBoundaryVersion).toHaveBeenCalledWith(
       'field-1', [[-27, 153], [-27, 154], [-28, 154]],
     ));
+  });
+
+  test('does not present a remote field as boundary-empty until the authoritative load confirms empty', async () => {
+    const load = deferred<null>();
+    mockOperational = baseOperational({ refreshFieldBoundary: jest.fn().mockReturnValue(load.promise) });
+    route('/jobs/client/client-1/property/property-1/field/field-1', <FieldDetail />);
+    expect(screen.getByText(/loading authoritative boundary/i)).toBeInTheDocument();
+    expect(screen.queryByText(/No boundary set/i)).not.toBeInTheDocument();
+    load.resolve(null);
+    expect(await screen.findByText(/No boundary set/i)).toBeInTheDocument();
+  });
+
+  test.each([
+    [Object.assign(new Error('Offline'), { code: 'NETWORK_ERROR' }), /authoritative boundary is unavailable/i],
+    [Object.assign(new Error('Forbidden'), { status: 403, code: 'FORBIDDEN' }), /not authorised to view this boundary/i],
+    [Object.assign(new Error('Missing'), { status: 404, code: 'NOT_FOUND' }), /authoritative boundary was not found/i],
+  ])('keeps remote boundary load failure distinct from confirmed empty', async (failure, expected) => {
+    mockOperational = baseOperational({ refreshFieldBoundary: jest.fn().mockRejectedValue(failure) });
+    route('/jobs/client/client-1/property/property-1/field/field-1', <FieldDetail />);
+    expect(await screen.findByText(expected)).toBeInTheDocument();
+    expect(screen.queryByText(/No boundary set/i)).not.toBeInTheDocument();
   });
 
   test('creates a remote job from authoritative route parents and supported workflow values', async () => {
@@ -175,6 +205,31 @@ describe('authoritative client/property/field workflow screens', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save Job' }));
     expect(mockOperational.createJob).not.toHaveBeenCalled();
     expect(await screen.findByText(/chemical, weather, spray recommendation, operator, quote and compliance values are not yet supported/i)).toBeInTheDocument();
+  });
+
+  test.each([
+    ['Product / Brand', 'combobox', 'Glyphosate'],
+    ['Active Ingredient', 'textbox', 'glyphosate'],
+    ['Rate per hectare', 'textbox', '2 L/ha'],
+  ])('blocks remote save when unsupported chemical row field %s is entered', async (label, role, value) => {
+    route('/jobs/client/client-1/property/property-1/field/field-1/new-job', <JobCreate />);
+    fireEvent.change(screen.getByRole('textbox', { name: 'Job Reference' }), { target: { value: 'JOB-99' } });
+    fireEvent.change(screen.getByRole('combobox', { name: 'Weed Target' }), { target: { value: 'Spray lantana' } });
+    fireEvent.change(screen.getByRole(role as any, { name: label }), { target: { value } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save Job' }));
+    expect(mockOperational.createJob).not.toHaveBeenCalled();
+    expect(await screen.findByText(/chemical, weather, spray recommendation, operator, quote and compliance values are not yet supported/i)).toBeInTheDocument();
+  });
+
+  test.each([
+    ['loading', /loading job form/i],
+    ['error', /authoritative job workflow is unavailable/i],
+    ['unauthorised', /not authorised to create a job/i],
+  ])('renders remote operational %s before evaluating the direct-route parent chain', (status, expected) => {
+    mockOperational = baseOperational({ status, clients: [], properties: [], fields: [], jobs: [] });
+    route('/jobs/client/client-1/property/property-1/field/field-1/new-job', <JobCreate />);
+    expect(screen.getByText(expected)).toBeInTheDocument();
+    expect(screen.queryByText('Field not found.')).not.toBeInTheDocument();
   });
 
   test('loads and archives authoritative job detail without presenting local subrecords as server data', async () => {
