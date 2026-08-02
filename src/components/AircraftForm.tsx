@@ -108,6 +108,20 @@ interface FormErrors {
   [key: string]: string;
 }
 
+const NATIVE_AIRCRAFT_DATE_FIELDS = [
+  'activationDate', 'lastInspection', 'nextInspectionDue', 'lastMajorService',
+  'nextMajorServiceDue', 'expiryDate', 'lastCasaInspection', 'nextCasaInspectionDue',
+] as const;
+
+export function reconcileNativeAircraftDates<T extends object>(form: HTMLFormElement, current: T): T {
+  const reconciled = { ...current } as unknown as Record<string, unknown>;
+  NATIVE_AIRCRAFT_DATE_FIELDS.forEach((field) => {
+    const input = form.elements.namedItem(field);
+    if (input instanceof HTMLInputElement && input.value) reconciled[field] = input.value;
+  });
+  return reconciled as unknown as T;
+}
+
 export default function AircraftForm({ aircraftId, onSave, onCancel }: AircraftFormProps) {
   const { createAircraft, updateAircraft, getAircraftById, error } = useAircraft();
   const { mode, operatingLocations } = useOperationalData();
@@ -163,133 +177,133 @@ export default function AircraftForm({ aircraftId, onSave, onCancel }: AircraftF
     setFormData((previous) => ({ ...previous, operatingLocationId: operatingLocations[0].id }));
   }, [aircraftId, mode, operatingLocations]);
 
-  const validateForm = useCallback((): boolean => {
+  const validateForm = useCallback((candidate: FormData = formData): boolean => {
     const newErrors: FormErrors = {};
 
     // Required fields
-    if (mode === 'remote' && !formData.operatingLocationId) {
+    if (mode === 'remote' && !candidate.operatingLocationId) {
       newErrors.operatingLocationId = 'Operating location is required';
     }
-    if (!formData.registration.trim()) {
+    if (!candidate.registration.trim()) {
       newErrors.registration = 'Registration is required';
-    } else if (!/^[A-Z0-9-]+$/.test(formData.registration.trim().toUpperCase())) {
+    } else if (!/^[A-Z0-9-]+$/.test(candidate.registration.trim().toUpperCase())) {
       newErrors.registration = 'Registration must contain only uppercase letters, numbers, and hyphens';
     }
 
-    if (!formData.manufacturer.trim()) {
+    if (!candidate.manufacturer.trim()) {
       newErrors.manufacturer = 'Manufacturer is required';
     }
 
-    if (!formData.model.trim()) {
+    if (!candidate.model.trim()) {
       newErrors.model = 'Model is required';
     }
 
-    if (!formData.serialNumber.trim()) {
+    if (!candidate.serialNumber.trim()) {
       newErrors.serialNumber = 'Serial number is required';
     }
 
-    if (!formData.activationDate) {
+    if (!candidate.activationDate) {
       newErrors.activationDate = 'Activation date is required';
     }
 
     // Numeric validations
-    const mtow = parseFloat(formData.mtow);
-    if (!formData.mtow || isNaN(mtow) || mtow <= 0) {
+    const mtow = parseFloat(candidate.mtow);
+    if (!candidate.mtow || isNaN(mtow) || mtow <= 0) {
       newErrors.mtow = 'MTOW must be a positive number';
     } else if (mtow > 150) {
       newErrors.mtow = 'MTOW seems too high for a drone (max 150kg)';
     }
 
-    const maxAltitude = parseFloat(formData.maxAltitude);
-    if (!formData.maxAltitude || isNaN(maxAltitude) || maxAltitude <= 0) {
+    const maxAltitude = parseFloat(candidate.maxAltitude);
+    if (!candidate.maxAltitude || isNaN(maxAltitude) || maxAltitude <= 0) {
       newErrors.maxAltitude = 'Max altitude must be a positive number';
     } else if (maxAltitude > 120) {
       newErrors.maxAltitude = 'Max altitude cannot exceed 120m AGL';
     }
 
-    const maxWindSpeed = parseFloat(formData.maxWindSpeed);
-    if (!formData.maxWindSpeed || isNaN(maxWindSpeed) || maxWindSpeed <= 0) {
+    const maxWindSpeed = parseFloat(candidate.maxWindSpeed);
+    if (!candidate.maxWindSpeed || isNaN(maxWindSpeed) || maxWindSpeed <= 0) {
       newErrors.maxWindSpeed = 'Max wind speed must be a positive number';
     }
 
     // Insurance validations
-    if (!formData.policyNumber.trim()) {
+    if (!candidate.policyNumber.trim()) {
       newErrors.policyNumber = 'Policy number is required';
     }
 
-    if (!formData.provider.trim()) {
+    if (!candidate.provider.trim()) {
       newErrors.provider = 'Insurance provider is required';
     }
 
-    if (!formData.expiryDate) {
+    if (!candidate.expiryDate) {
       newErrors.expiryDate = 'Insurance expiry date is required';
-    } else if (new Date(formData.expiryDate) < new Date()) {
+    } else if (new Date(candidate.expiryDate) < new Date()) {
       newErrors.expiryDate = 'Insurance has expired';
     }
 
-    const coverageAmount = parseFloat(formData.coverageAmount);
-    if (!formData.coverageAmount || isNaN(coverageAmount) || coverageAmount <= 0) {
+    const coverageAmount = parseFloat(candidate.coverageAmount);
+    if (!candidate.coverageAmount || isNaN(coverageAmount) || coverageAmount <= 0) {
       newErrors.coverageAmount = 'Coverage amount must be a positive number';
     }
 
-    const hullValue = parseFloat(formData.hullValue);
-    if (!formData.hullValue || isNaN(hullValue) || hullValue <= 0) {
+    const hullValue = parseFloat(candidate.hullValue);
+    if (!candidate.hullValue || isNaN(hullValue) || hullValue <= 0) {
       newErrors.hullValue = 'Hull value must be a positive number';
     }
 
     // Maintenance date validations
-    if (!formData.lastInspection) {
+    if (!candidate.lastInspection) {
       newErrors.lastInspection = 'Last inspection date is required';
     }
 
-    if (!formData.nextInspectionDue) {
+    if (!candidate.nextInspectionDue) {
       newErrors.nextInspectionDue = 'Next inspection due date is required';
-    } else if (new Date(formData.nextInspectionDue) < new Date()) {
+    } else if (new Date(candidate.nextInspectionDue) < new Date()) {
       newErrors.nextInspectionDue = 'Inspection is overdue';
     }
 
-    if (!formData.lastMajorService) {
+    if (!candidate.lastMajorService) {
       newErrors.lastMajorService = 'Last major service date is required';
     }
 
-    if (!formData.nextMajorServiceDue) {
+    if (!candidate.nextMajorServiceDue) {
       newErrors.nextMajorServiceDue = 'Next major service due date is required';
     }
 
     // Operational limits validations
-    const minTemp = parseFloat(formData.minOperatingTemp);
-    const maxTemp = parseFloat(formData.maxOperatingTemp);
+    const minTemp = parseFloat(candidate.minOperatingTemp);
+    const maxTemp = parseFloat(candidate.maxOperatingTemp);
 
-    if (formData.minOperatingTemp && !isNaN(minTemp) && formData.maxOperatingTemp && !isNaN(maxTemp)) {
+    if (candidate.minOperatingTemp && !isNaN(minTemp) && candidate.maxOperatingTemp && !isNaN(maxTemp)) {
       if (minTemp >= maxTemp) {
         newErrors.maxOperatingTemp = 'Max temperature must be higher than minimum temperature';
       }
     }
 
-    const maxPayload = parseFloat(formData.maxPayloadWeight);
-    if (!formData.maxPayloadWeight || isNaN(maxPayload) || maxPayload <= 0) {
+    const maxPayload = parseFloat(candidate.maxPayloadWeight);
+    if (!candidate.maxPayloadWeight || isNaN(maxPayload) || maxPayload <= 0) {
       newErrors.maxPayloadWeight = 'Max payload weight must be a positive number';
     } else if (maxPayload > mtow) {
       newErrors.maxPayloadWeight = 'Max payload cannot exceed MTOW';
     }
 
-    const batteryCycles = parseFloat(formData.batteryCycles);
-    if (!formData.batteryCycles || isNaN(batteryCycles) || batteryCycles <= 0) {
+    const batteryCycles = parseFloat(candidate.batteryCycles);
+    if (!candidate.batteryCycles || isNaN(batteryCycles) || batteryCycles <= 0) {
       newErrors.batteryCycles = 'Battery cycles must be a positive number';
     }
 
-    const maxFlightTime = parseFloat(formData.maxFlightTime);
-    if (!formData.maxFlightTime || isNaN(maxFlightTime) || maxFlightTime <= 0) {
+    const maxFlightTime = parseFloat(candidate.maxFlightTime);
+    if (!candidate.maxFlightTime || isNaN(maxFlightTime) || maxFlightTime <= 0) {
       newErrors.maxFlightTime = 'Max flight time must be a positive number';
     }
 
-    const serviceRange = parseFloat(formData.serviceRange);
-    if (!formData.serviceRange || isNaN(serviceRange) || serviceRange <= 0) {
+    const serviceRange = parseFloat(candidate.serviceRange);
+    if (!candidate.serviceRange || isNaN(serviceRange) || serviceRange <= 0) {
       newErrors.serviceRange = 'Service range must be a positive number';
     }
 
-    const crewSize = parseInt(formData.minimumCrewSize);
-    if (!formData.minimumCrewSize || isNaN(crewSize) || crewSize < 1) {
+    const crewSize = parseInt(candidate.minimumCrewSize);
+    if (!candidate.minimumCrewSize || isNaN(crewSize) || crewSize < 1) {
       newErrors.minimumCrewSize = 'Minimum crew size must be at least 1';
     }
 
@@ -341,7 +355,10 @@ export default function AircraftForm({ aircraftId, onSave, onCancel }: AircraftF
     event.preventDefault();
     setSubmitError('');
 
-    if (!validateForm()) {
+    const submittedFormData = reconcileNativeAircraftDates(event.currentTarget as HTMLFormElement, formData);
+    setFormData(submittedFormData);
+
+    if (!validateForm(submittedFormData)) {
       setSubmitError('Some required aircraft details are missing or invalid. Review the highlighted fields before saving.');
       return;
     }
@@ -349,7 +366,7 @@ export default function AircraftForm({ aircraftId, onSave, onCancel }: AircraftF
     setSaving(true);
 
     try {
-      const aircraftData: Omit<Aircraft, 'id' | 'createdAt' | 'updatedAt'> = {
+      const aircraftData = ((formData: FormData): Omit<Aircraft, 'id' | 'createdAt' | 'updatedAt'> => ({
         operatingLocationId: formData.operatingLocationId || undefined,
         registration: formData.registration.trim().toUpperCase(),
         manufacturer: formData.manufacturer.trim(),
@@ -400,7 +417,7 @@ export default function AircraftForm({ aircraftId, onSave, onCancel }: AircraftF
             nextCasaInspectionDue: formData.nextCasaInspectionDue ? new Date(formData.nextCasaInspectionDue).toISOString() : new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(),
           },
         },
-      };
+      }))(submittedFormData);
 
       if (aircraftId) {
         await updateAircraft(aircraftId, aircraftData);
@@ -496,6 +513,7 @@ export default function AircraftForm({ aircraftId, onSave, onCancel }: AircraftF
               <TextField
                 fullWidth
                 label="Activation Date *"
+                name="activationDate"
                 type="date"
                 value={formData.activationDate}
                 onChange={handleDateChange('activationDate')}
@@ -689,6 +707,7 @@ export default function AircraftForm({ aircraftId, onSave, onCancel }: AircraftF
               <TextField
                 fullWidth
                 label="Last Inspection *"
+                name="lastInspection"
                 type="date"
                 value={formData.lastInspection}
                 onChange={handleDateChange('lastInspection')}
@@ -701,6 +720,7 @@ export default function AircraftForm({ aircraftId, onSave, onCancel }: AircraftF
               <TextField
                 fullWidth
                 label="Next Inspection Due *"
+                name="nextInspectionDue"
                 type="date"
                 value={formData.nextInspectionDue}
                 onChange={handleDateChange('nextInspectionDue')}
@@ -713,6 +733,7 @@ export default function AircraftForm({ aircraftId, onSave, onCancel }: AircraftF
               <TextField
                 fullWidth
                 label="Last Major Service *"
+                name="lastMajorService"
                 type="date"
                 value={formData.lastMajorService}
                 onChange={handleDateChange('lastMajorService')}
@@ -725,6 +746,7 @@ export default function AircraftForm({ aircraftId, onSave, onCancel }: AircraftF
               <TextField
                 fullWidth
                 label="Next Major Service Due *"
+                name="nextMajorServiceDue"
                 type="date"
                 value={formData.nextMajorServiceDue}
                 onChange={handleDateChange('nextMajorServiceDue')}
@@ -786,6 +808,7 @@ export default function AircraftForm({ aircraftId, onSave, onCancel }: AircraftF
               <TextField
                 fullWidth
                 label="Expiry Date *"
+                name="expiryDate"
                 type="date"
                 value={formData.expiryDate}
                 onChange={handleDateChange('expiryDate')}
@@ -831,6 +854,7 @@ export default function AircraftForm({ aircraftId, onSave, onCancel }: AircraftF
               <TextField
                 fullWidth
                 label="Last CASA Inspection"
+                name="lastCasaInspection"
                 type="date"
                 value={formData.lastCasaInspection}
                 onChange={handleDateChange('lastCasaInspection')}
@@ -841,6 +865,7 @@ export default function AircraftForm({ aircraftId, onSave, onCancel }: AircraftF
               <TextField
                 fullWidth
                 label="Next CASA Inspection Due"
+                name="nextCasaInspectionDue"
                 type="date"
                 value={formData.nextCasaInspectionDue}
                 onChange={handleDateChange('nextCasaInspectionDue')}

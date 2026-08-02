@@ -1,5 +1,5 @@
 import { fireEvent, render, screen } from '@testing-library/react';
-import AircraftForm from '../AircraftForm';
+import AircraftForm, { reconcileNativeAircraftDates } from '../AircraftForm';
 
 jest.mock('../../contexts/AircraftContext', () => ({
   useAircraft: () => ({ createAircraft: jest.fn(), updateAircraft: jest.fn(), getAircraftById: jest.fn(), error: null }),
@@ -21,4 +21,17 @@ test('offers only authoritative assigned operating locations on the preserved Ai
   fireEvent.mouseDown(location);
   expect(screen.getByText('Dalby Base')).toBeInTheDocument();
   expect(screen.getByText('Emerald Base')).toBeInTheDocument();
+});
+
+test('uses native date control values when the browser has not emitted a React change event', () => {
+  const form = document.createElement('form');
+  const date = document.createElement('input');
+  date.name = 'lastInspection';
+  date.type = 'date';
+  date.value = '2026-08-01';
+  form.appendChild(date);
+
+  expect(reconcileNativeAircraftDates(form, { lastInspection: '' })).toEqual({
+    lastInspection: '2026-08-01',
+  });
 });
