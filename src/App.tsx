@@ -51,6 +51,7 @@ import { WorkPackProvider } from './contexts/WorkPackContext';
 import FleetWorkPacks from './pages/FleetWorkPacks';
 import { useAuth } from './contexts/AuthContext';
 import OperationalFeatureGate from './components/OperationalFeatureGate';
+import Personnel from './pages/Personnel';
 
 function WorkflowProviders({ children }: { children: React.ReactNode }) {
   const { user } = useAuth();
@@ -119,6 +120,7 @@ function App() {
           <Route path="/financials/:actualId" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><ActualDetail /></ProtectedRoute>} />
           <Route path="/ask-ftf" element={<ProtectedRoute allowedRoles={['admin', 'contractor']} requiredEntitlement="legacyAskFtf"><AskFTF /></ProtectedRoute>} />
           <Route path="/aircraft" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><AircraftManagement /></ProtectedRoute>} />
+          <Route path="/personnel" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><Personnel /></ProtectedRoute>} />
           <Route path="/fleet-work-packs" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><FleetWorkPacks /></ProtectedRoute>} />
           <Route path="/jsa" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><JSAManagement /></ProtectedRoute>} />
           <Route path="/missions" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><MissionRegister /></ProtectedRoute>} />
