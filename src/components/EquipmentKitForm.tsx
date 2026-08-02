@@ -140,6 +140,13 @@ const equipmentKitTypes: EquipmentKitType[] = [
   'custom'
 ];
 
+const NATIVE_EQUIPMENT_KIT_DATE_FIELDS = ['lastCalibrationDate','nextCalibrationDue','lastMaintenanceDate','nextMaintenanceDue'] as const;
+export function reconcileNativeEquipmentKitDates<T extends object>(form: HTMLFormElement,current:T):T {
+  const reconciled={...current} as unknown as Record<string,unknown>;
+  NATIVE_EQUIPMENT_KIT_DATE_FIELDS.forEach((field)=>{const input=form.elements.namedItem(field);if(input instanceof HTMLInputElement&&input.value)reconciled[field]=input.value;});
+  return reconciled as unknown as T;
+}
+
 interface FormErrors {
   [key: string]: string;
 }
@@ -225,7 +232,7 @@ export default function EquipmentKitForm({ kitId, onSave, onCancel }: EquipmentK
     setFormData((previous) => ({ ...previous, operatingLocationId: operatingLocations[0].id }));
   }, [kitId, mode, operatingLocations]);
 
-  const validateForm = useCallback((): boolean => {
+  const validateForm = useCallback((candidate?: FormData): boolean => ((formData: FormData) => {
     const newErrors: FormErrors = {};
 
     // Required fields
@@ -348,7 +355,7 @@ export default function EquipmentKitForm({ kitId, onSave, onCancel }: EquipmentK
 
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
-  }, [formData]);
+  })(candidate || formData), [formData]);
 
   const handleInputChange = (field: keyof FormData) => (
     event: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement> | SelectChangeEvent
@@ -449,13 +456,16 @@ export default function EquipmentKitForm({ kitId, onSave, onCancel }: EquipmentK
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
 
-    if (!validateForm()) {
+    const submittedFormData = reconcileNativeEquipmentKitDates(event.currentTarget as HTMLFormElement, formData);
+    setFormData(submittedFormData);
+    if (!validateForm(submittedFormData)) {
       return;
     }
 
     setSaving(true);
 
     try {
+      const formData = submittedFormData;
       const kitData: Omit<EquipmentKit, 'id' | 'createdAt' | 'updatedAt'> = {
         operatingLocationId: formData.operatingLocationId,
         name: formData.name.trim(),
@@ -797,6 +807,7 @@ export default function EquipmentKitForm({ kitId, onSave, onCancel }: EquipmentK
               <TextField
                 fullWidth
                 label="Last Calibration Date *"
+                name="lastCalibrationDate"
                 type="date"
                 value={formData.lastCalibrationDate}
                 onChange={handleDateChange('lastCalibrationDate')}
@@ -809,6 +820,7 @@ export default function EquipmentKitForm({ kitId, onSave, onCancel }: EquipmentK
               <TextField
                 fullWidth
                 label="Next Calibration Due *"
+                name="nextCalibrationDue"
                 type="date"
                 value={formData.nextCalibrationDue}
                 onChange={handleDateChange('nextCalibrationDue')}
@@ -821,6 +833,7 @@ export default function EquipmentKitForm({ kitId, onSave, onCancel }: EquipmentK
               <TextField
                 fullWidth
                 label="Last Maintenance Date *"
+                name="lastMaintenanceDate"
                 type="date"
                 value={formData.lastMaintenanceDate}
                 onChange={handleDateChange('lastMaintenanceDate')}
@@ -833,6 +846,7 @@ export default function EquipmentKitForm({ kitId, onSave, onCancel }: EquipmentK
               <TextField
                 fullWidth
                 label="Next Maintenance Due *"
+                name="nextMaintenanceDue"
                 type="date"
                 value={formData.nextMaintenanceDue}
                 onChange={handleDateChange('nextMaintenanceDue')}
