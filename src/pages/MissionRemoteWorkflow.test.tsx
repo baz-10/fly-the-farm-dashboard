@@ -28,6 +28,15 @@ let mockSearch = '';
 const mockNavigate = jest.fn();
 const mockMissionMapGet = jest.fn();
 const mockMissionMapSave = jest.fn();
+const missionAircraft = {
+  id: 'aircraft-1', operatingLocationId: 'location-1', registration: 'VH-FTF1', model: 'DJI Agras T50',
+  status: 'operational', serviceabilityState: 'serviceable', missionReady: true,
+  operationalLimits: { maxPayloadWeight: 40 }, maxWindSpeed: 18, maxAltitude: 120,
+};
+const missionKit = {
+  id: 'kit-1', operatingLocationId: 'location-1', name: 'T50 Spray Kit', type: 'spray-system',
+  compatibleAircraft: ['aircraft-1'], specifications: { weight: 10 }, operationalData: { status: 'available' },
+};
 
 jest.mock('react-router-dom', () => ({
   useNavigate: () => mockNavigate,
@@ -35,6 +44,12 @@ jest.mock('react-router-dom', () => ({
   useSearchParams: () => [new URLSearchParams(mockSearch), jest.fn()],
 }), { virtual: true });
 jest.mock('../contexts/OperationalDataContext', () => ({ useOperationalData: () => mockOperational }));
+jest.mock('../contexts/AircraftContext', () => ({
+  useAircraft: () => ({
+    aircraft: [missionAircraft], equipmentKits: [missionKit], configurations: [],
+    isLoading: false, error: null, getCompatibleKits: () => [missionKit], validateConfiguration: () => true,
+  }),
+}));
 jest.mock('../services/missionMapsApi', () => ({
   createMissionMapsApi: () => ({ get: mockMissionMapGet, save: mockMissionMapSave }),
   MissionMapsApiError: class MissionMapsApiError extends Error {},
@@ -90,7 +105,7 @@ describe('remote authoritative mission workflow', () => {
   });
 
   test('renders a valid authoritative empty register only after a successful load', () => {
-    mockOperational = operational({ missions: [] });
+    mockOperational = operational({ missions: [], createMission: jest.fn().mockResolvedValue(mission) });
     render(<MissionRegister />);
     expect(screen.getByText(/No Planning missions/i)).toBeInTheDocument();
   });
@@ -102,15 +117,30 @@ describe('remote authoritative mission workflow', () => {
     expect(screen.queryByText(/No Planning missions/i)).not.toBeInTheDocument();
   });
 
-  test('loads bookmarked mission detail from authoritative state and suppresses operational claims', () => {
+  test('restores the approved Mission Planner while accurately gating incomplete downstream capabilities', () => {
     mockParams = { missionId: 'mission-1' };
     render(<MissionPlanning />);
-    expect(screen.getByRole('heading', { name: 'North block spray' })).toBeInTheDocument();
-    expect(screen.getByText(/Planning only · Not ready for operations/i)).toBeInTheDocument();
-    expect(screen.getByText(/aircraft, equipment, personnel, chemicals, weather, JSA, risk controls, authorisation, completion, pack and financials are unavailable/i)).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Mission Planner' })).toBeInTheDocument();
+    expect(screen.getByText(/Draft · Planning incomplete/i)).toBeInTheDocument();
+    expect(screen.getByText('Mission Boundary')).toBeInTheDocument();
+    expect(screen.getByText('Mission Details')).toBeInTheDocument();
+    expect(screen.getByText('Aircraft & Equipment')).toBeInTheDocument();
     expect(screen.getByText(/Mission maps are authoritative/i)).toBeInTheDocument();
+    expect(screen.getByRole('combobox', { name: 'Aircraft' })).toBeInTheDocument();
+    expect(screen.getByRole('combobox', { name: 'Equipment Kit' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Authorise|Authorize/i })).not.toBeInTheDocument();
     expect(screen.queryByText(/APVMA Compliant/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Aircraft — unavailable/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Equipment — unavailable/i)).not.toBeInTheDocument();
+  });
+
+  test('resolves authoritative parent records instead of asking for duplicate entry', () => {
+    mockParams = { missionId: 'mission-1' };
+    render(<MissionPlanning />);
+    expect(screen.getByText('North Farm')).toBeInTheDocument();
+    expect(screen.getByText('Home Block')).toBeInTheDocument();
+    expect(screen.getByText('North Paddock')).toBeInTheDocument();
+    expect(screen.queryByRole('textbox', { name: 'Client' })).not.toBeInTheDocument();
   });
 
   test('opens the preserved map editor only after authoritative map load succeeds', async () => {
@@ -149,16 +179,15 @@ describe('remote authoritative mission workflow', () => {
     await waitFor(() => expect(mockNavigate).toHaveBeenCalledWith('/missions/mission-99'));
   });
 
-  test('blocks save rather than discarding entered unsupported operational values', () => {
-    mockOperational = operational({ missions: [] });
+  test('does not let disconnected downstream capabilities block a valid Draft save', async () => {
+    mockOperational = operational({ missions: [], createMission: jest.fn().mockResolvedValue(mission) });
     mockSearch = 'jobId=job-1';
     render(<MissionPlanning />);
     fireEvent.change(screen.getByRole('textbox', { name: 'Mission number' }), { target: { value: 'MSN-099' } });
     fireEvent.change(screen.getByRole('textbox', { name: 'Mission title' }), { target: { value: 'Creek run' } });
-    fireEvent.change(screen.getByRole('textbox', { name: 'Aircraft planning (not connected)' }), { target: { value: 'DJI T50' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save Mission' }));
-    expect(mockOperational.createMission).not.toHaveBeenCalled();
-    expect(screen.getByText(/unsupported operational values were entered and were not saved/i)).toBeInTheDocument();
+    expect(mockOperational.createMission).toHaveBeenCalledWith(expect.objectContaining({ status: 'Planning' }));
+    expect(screen.getByText(/Draft is unauthorised and not ready to fly/i)).toBeInTheDocument();
   });
 
   test('keeps conflict detail visible and does not replace the confirmed mission', async () => {

@@ -351,6 +351,8 @@ export default function MissionPlanning() {
 
 function AuthoritativeMissionPlanning() {
   const operational = useOperationalData();
+  const { aircraft, equipmentKits, isLoading: fleetLoading, error: fleetError } = useAircraft();
+  const theme = useTheme();
   const navigate = useNavigate();
   const params = useParams<{ missionId: string; clientId: string; propertyId: string; fieldId: string; jobId: string }>();
   const [searchParams] = useSearchParams();
@@ -370,7 +372,8 @@ function AuthoritativeMissionPlanning() {
   const [title, setTitle] = React.useState('');
   const [description, setDescription] = React.useState('');
   const [scheduledStart, setScheduledStart] = React.useState(defaultScheduledDateInput);
-  const [unsupportedAircraft, setUnsupportedAircraft] = React.useState('');
+  const [selectedAircraftId, setSelectedAircraftId] = React.useState('');
+  const [selectedKitId, setSelectedKitId] = React.useState('');
   const [actionError, setActionError] = React.useState('');
   const [archiveOpen, setArchiveOpen] = React.useState(false);
   const [mapStatus, setMapStatus] = React.useState<'idle'|'loading'|'ready'|'error'>('idle');
@@ -423,7 +426,6 @@ function AuthoritativeMissionPlanning() {
       setDescription(selectedMission.description);
       setScheduledStart(selectedMission.scheduledStartAt
         ? formatDateTimeInput(new Date(selectedMission.scheduledStartAt)) : '');
-      setUnsupportedAircraft('');
       setActionError('');
       return;
     }
@@ -436,6 +438,43 @@ function AuthoritativeMissionPlanning() {
       }
     }
   }, [editing, operational.operatingLocations, routeJob, selectedMission]);
+
+  const selectedJob = operational.jobs.find((record) => record.id === jobId);
+  const selectedLocation = operational.operatingLocations.find((record) => record.id === operatingLocationId);
+  const selectedClient = selectedJob && operational.clients.find((record) => record.id === selectedJob.clientId);
+  const selectedProperty = selectedJob && operational.properties.find((record) => record.id === selectedJob.propertyId);
+  const selectedFields = selectedJob ? operational.fields.filter((record) => selectedJob.fieldIds.includes(record.id)) : [];
+  const hasActiveLocation = operational.operatingLocations.length > 0;
+  const canSave = Boolean(selectedJob && selectedLocation && missionNumber.trim() && title.trim()) && !operational.saving;
+
+  const availableAircraft = aircraft.filter((record) => (
+    record.operatingLocationId === operatingLocationId
+    && record.status === 'operational'
+    && record.serviceabilityState !== 'unserviceable'
+    && record.serviceabilityState !== 'inspection_required'
+    && record.serviceabilityState !== 'maintenance_required'
+    && record.missionReady !== false
+  ));
+  const availableKits = equipmentKits.filter((record) => (
+    record.operatingLocationId === operatingLocationId
+    && record.operationalData?.status === 'available'
+  ));
+
+  React.useEffect(() => {
+    if (!availableAircraft.some((record) => record.id === selectedAircraftId)) {
+      setSelectedAircraftId(availableAircraft[0]?.id || '');
+    }
+  }, [availableAircraft, selectedAircraftId]);
+
+  React.useEffect(() => {
+    const selectedAircraft = availableAircraft.find((record) => record.id === selectedAircraftId);
+    const compatible = selectedAircraft
+      ? availableKits.filter((kit) => kit.compatibleAircraft.includes(selectedAircraft.id))
+      : [];
+    if (!compatible.some((record) => record.id === selectedKitId)) {
+      setSelectedKitId(compatible[0]?.id || '');
+    }
+  }, [availableAircraft, availableKits, selectedAircraftId, selectedKitId]);
 
   if (operational.status === 'idle' || operational.status === 'loading') {
     return <Alert severity="info">Loading authoritative mission…</Alert>;
@@ -453,21 +492,8 @@ function AuthoritativeMissionPlanning() {
     return <Alert severity="error">The authoritative job was not found for this route.</Alert>;
   }
 
-  const selectedJob = operational.jobs.find((record) => record.id === jobId);
-  const selectedLocation = operational.operatingLocations.find((record) => record.id === operatingLocationId);
-  const selectedClient = selectedJob && operational.clients.find((record) => record.id === selectedJob.clientId);
-  const selectedProperty = selectedJob && operational.properties.find((record) => record.id === selectedJob.propertyId);
-  const selectedFields = selectedJob ? operational.fields.filter((record) => selectedJob.fieldIds.includes(record.id)) : [];
-  const hasActiveLocation = operational.operatingLocations.length > 0;
-  const hasUnsupportedValues = Boolean(unsupportedAircraft.trim());
-  const canSave = Boolean(selectedJob && selectedLocation && missionNumber.trim() && title.trim()) && !operational.saving;
-
   const save = async () => {
     setActionError('');
-    if (hasUnsupportedValues) {
-      setActionError('Unsupported operational values were entered and were not saved. Clear them before saving the connected Planning fields.');
-      return;
-    }
     if (!selectedJob || !selectedLocation || !missionNumber.trim() || !title.trim()) {
       setActionError('Mission number, title, authoritative job and active operating location are required.');
       return;
@@ -506,25 +532,30 @@ function AuthoritativeMissionPlanning() {
   };
 
   const unavailableSections = [
-    'Aircraft', 'Equipment', 'Personnel', 'Chemicals', 'Weather', 'JSA',
+    'Personnel', 'Chemicals', 'Weather', 'JSA',
     'Risk controls', 'Authorisation', 'Completion', 'Pack', 'Financials',
   ];
 
   return (
-    <Box sx={{ maxWidth: 1320, mx: 'auto' }}>
-      <Stack direction={{ xs: 'column', md: 'row' }} justifyContent="space-between" alignItems={{ md: 'center' }} spacing={2} sx={{ mb: 3 }}>
-        <Box>
-          <Typography component="h1" variant="h4" sx={{ fontWeight: 900, color: 'primary.dark' }}>{selectedMission ? title : 'New Mission'}</Typography>
-          <Typography color="text.secondary">Connected Planning details for the authoritative job and operating location.</Typography>
-        </Box>
+    <Box sx={{ maxWidth: 1500, mx: 'auto' }}>
+      <Stack direction={{ xs: 'column', md: 'row' }} justifyContent="space-between" alignItems={{ md: 'flex-end' }} spacing={2} sx={{ mb: 3 }}>
+        <Stack direction="row" spacing={2} alignItems="center">
+          <Box sx={{ width: 54, height: 54, borderRadius: '8px', bgcolor: alpha(theme.palette.primary.main, 0.08), color: 'primary.main', display: 'grid', placeItems: 'center' }}>
+            <FlightTakeoffIcon sx={{ fontSize: 32 }} />
+          </Box>
+          <Box>
+            <Typography component="h1" variant="h3" sx={{ fontWeight: 800, color: 'primary.dark', fontSize: { xs: '2rem', md: '2.6rem' } }}>Mission Planner</Typography>
+            <Typography color="text.secondary">Plan and authorise operational missions from authoritative business records.</Typography>
+          </Box>
+        </Stack>
         <Stack direction="row" spacing={1} alignItems="center">
-          <Chip color="warning" variant="outlined" label="Planning only · Not ready for operations" />
+          <Chip color="warning" variant="outlined" label="Draft · Planning incomplete" />
           {selectedMission && <Button color="error" variant="outlined" startIcon={<DeleteOutlineIcon />} onClick={() => setArchiveOpen(true)}>Archive Mission</Button>}
         </Stack>
       </Stack>
 
       <Alert severity="warning" sx={{ mb: 2 }}>
-        This remote slice cannot authorise a mission or mark it ready/compliant. It persists Planning metadata only.
+        This Draft is unauthorised and not ready to fly. Mission maps are authoritative; personnel, chemicals, weather, JSA, risk controls, authorisation, completion, pack and financials remain gated.
       </Alert>
       {!hasActiveLocation && <Alert severity="error" sx={{ mb: 2 }}>No active authorised operating location is available for this session.</Alert>}
       {actionError && <Alert severity="error" sx={{ mb: 2 }}>{actionError}</Alert>}
@@ -533,9 +564,7 @@ function AuthoritativeMissionPlanning() {
       <Grid container spacing={2}>
         <Grid size={{ xs: 12, lg: 8 }}>
           <Stack spacing={2}>
-            <Card variant="outlined" sx={{ borderRadius: 2.5 }}>
-              <CardContent>
-                <Typography variant="h6" sx={{ fontWeight: 800, mb: 2 }}>Mission details</Typography>
+            <Panel title="Mission Details" icon={<GrassIcon />}>
                 <Grid container spacing={2}>
                   <Grid size={{ xs: 12, md: 6 }}>
                     <TextField select fullWidth label="Job" value={jobId} onChange={(event) => setJobId(event.target.value)} disabled={Boolean(routeJob)}>
@@ -552,40 +581,40 @@ function AuthoritativeMissionPlanning() {
                   <Grid size={{ xs: 12, md: 6 }}><TextField fullWidth type="datetime-local" label="Scheduled start" value={scheduledStart} onChange={(event) => setScheduledStart(event.target.value)} InputLabelProps={{ shrink: true }} /></Grid>
                   <Grid size={{ xs: 12 }}><TextField fullWidth multiline minRows={3} label="Description" value={description} onChange={(event) => setDescription(event.target.value)} /></Grid>
                 </Grid>
-              </CardContent>
-            </Card>
+            </Panel>
 
-            {selectedMission && <Card variant="outlined" sx={{ borderRadius: 2.5 }}><CardContent>
-              <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{mb:2}}><Typography variant="h6" sx={{fontWeight:800}}>Mission Planning Map</Typography><Chip label={`Authoritative version ${mapVersion}`} color={mapVersion?'success':'default'} variant="outlined" /></Stack>
+            {selectedMission && <Panel title="Mission Boundary" icon={<MapIcon />} action={<Chip label={`Authoritative version ${mapVersion}`} color={mapVersion?'success':'default'} variant="outlined" />}>
               {mapStatus==='loading' && <Alert severity="info">Loading authoritative Mission geometry…</Alert>}
               {mapStatus==='error' && <Alert severity="error">Mission geometry could not be loaded. No empty or browser-stored map has been substituted. {mapError}</Alert>}
               {mapError && mapStatus!=='error' && <Alert severity="error" sx={{mb:2}}>{mapError}</Alert>}
               {mapStatus==='ready' && <><FieldBoundaryEditor coords={mapPolygons[0]||[]} polygons={mapPolygons} onCoordsChange={(coords)=>setMapPolygons((current)=>[coords,...current.slice(1)])} onPolygonsChange={setMapPolygons} onAreaChange={setMapArea} features={mapFeatures} onFeaturesChange={setMapFeatures} mapHeight={580} />
                 <TextField fullWidth multiline minRows={2} label="Mission map notes" value={mapNotes} onChange={(e)=>setMapNotes(e.target.value)} sx={{mt:2}} />
                 <Stack direction="row" justifyContent="flex-end" sx={{mt:2}}><Button variant="contained" startIcon={<SaveIcon/>} disabled={mapSaving} onClick={()=>void saveMap()}>{mapSaving?'Saving authoritative map…':'Save Mission Map'}</Button></Stack></>}
-            </CardContent></Card>}
+            </Panel>}
 
-            <Card variant="outlined" sx={{ borderRadius: 2.5 }}>
-              <CardContent>
-                <Typography variant="h6" sx={{ fontWeight: 800 }}>Operational planning</Typography>
-                <Alert severity="info" sx={{ my: 2 }}>Aircraft, equipment, personnel, chemicals, weather, JSA, risk controls, authorisation, completion, pack and financials are unavailable and are not persisted in this remote Planning slice. Mission maps are authoritative.</Alert>
+            <Panel title="Downstream Mission Workflow" icon={<SecurityIcon />}>
+                <Alert severity="info" sx={{ mb: 2 }}>Incomplete capabilities remain gated and do not block a valid Draft Mission.</Alert>
                 <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap" sx={{ mb: 2 }}>
                   {unavailableSections.map((section) => <Chip key={section} size="small" variant="outlined" label={`${section} — unavailable`} />)}
                 </Stack>
-                <TextField
-                  fullWidth
-                  label="Aircraft planning (not connected)"
-                  value={unsupportedAircraft}
-                  onChange={(event) => setUnsupportedAircraft(event.target.value)}
-                  helperText="Any value here blocks save because aircraft planning is not connected or persisted."
-                />
-              </CardContent>
-            </Card>
+            </Panel>
           </Stack>
         </Grid>
 
         <Grid size={{ xs: 12, lg: 4 }}>
           <Stack spacing={2}>
+            <Panel title="Aircraft & Equipment" icon={<AirplanemodeActiveIcon />}>
+              {fleetError && <Alert severity="error" sx={{ mb: 1.5 }}>{fleetError}</Alert>}
+              {fleetLoading ? <LinearProgress /> : <MissionEquipmentSelector
+                aircraft={availableAircraft}
+                equipmentKits={availableKits}
+                selectedAircraftId={selectedAircraftId}
+                selectedKitId={selectedKitId}
+                onAircraftChange={setSelectedAircraftId}
+                onKitChange={setSelectedKitId}
+              />}
+              <Alert severity="warning" sx={{ mt: 1.5 }}>Assignments are selected from authoritative fleet records. Save persistence is being connected before this Draft can be treated as assigned.</Alert>
+            </Panel>
             <Card variant="outlined" sx={{ borderRadius: 2.5 }}>
               <CardContent>
                 <Typography variant="h6" sx={{ fontWeight: 800, mb: 1.5 }}>Authoritative parent chain</Typography>
