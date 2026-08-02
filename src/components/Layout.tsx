@@ -32,6 +32,7 @@ import GrassIcon from '@mui/icons-material/Grass';
 import HomeIcon from '@mui/icons-material/Home';
 import LogoutIcon from '@mui/icons-material/Logout';
 import MenuIcon from '@mui/icons-material/Menu';
+import PeopleIcon from '@mui/icons-material/People';
 import ReceiptLongIcon from '@mui/icons-material/ReceiptLong';
 import SearchIcon from '@mui/icons-material/Search';
 import SecurityIcon from '@mui/icons-material/Security';
@@ -52,6 +53,7 @@ const NAV_ITEMS: Array<{ label: string; shortLabel: string; path: string; icon: 
   { label: 'Calculator', shortLabel: 'Calculator', path: '/calculator', icon: <CalculateIcon />, roles: ['admin', 'contractor'] },
   { label: 'Jobs', shortLabel: 'Jobs', path: '/jobs', icon: <AssignmentIcon />, roles: ['admin', 'contractor', 'client'] },
   { label: 'Aircraft', shortLabel: 'Aircraft', path: '/aircraft', icon: <AirplanemodeActiveIcon />, roles: ['admin', 'contractor'] },
+  { label: 'Personnel', shortLabel: 'Personnel', path: '/personnel', icon: <PeopleIcon />, roles: ['admin', 'contractor'] },
   { label: 'Fleet & Packs', shortLabel: 'Fleet', path: '/fleet-work-packs', icon: <LocalShippingIcon />, roles: ['admin', 'contractor'] },
   { label: 'Missions', shortLabel: 'Missions', path: '/missions', icon: <FlightTakeoffIcon />, roles: ['admin', 'contractor'] },
   { label: 'JSA System', shortLabel: 'JSA', path: '/jsa', icon: <SecurityIcon />, roles: ['admin', 'contractor'] },
