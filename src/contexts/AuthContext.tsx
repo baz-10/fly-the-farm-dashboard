@@ -38,12 +38,20 @@ interface LoginResult {
   error?: string;
 }
 
+interface AuthActionResult {
+  success: boolean;
+  error?: string;
+}
+
 interface AuthContextType {
   user: User | null;
   isAuthenticated: boolean;
   isLoading: boolean;
   login: (email: string, password: string) => Promise<LoginResult>;
   register: (email: string, name: string, password: string, role: UserRole, contractorCode?: string) => Promise<RegistrationResult>;
+  completeSession: (accessToken: string, refreshToken: string, expiresIn: number) => Promise<AuthActionResult>;
+  requestPasswordReset: (email: string) => Promise<AuthActionResult>;
+  resetPassword: (password: string, accessToken: string, refreshToken: string, expiresIn: number) => Promise<AuthActionResult>;
   logout: () => void;
   updateUser: (updates: Partial<User>) => void;
 }
@@ -324,6 +332,51 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (remoteMode) void requestRemoteAuth({ action: 'logout' });
   }, [remoteMode]);
 
+  const completeSession = useCallback(async (
+    accessToken: string,
+    refreshToken: string,
+    expiresIn: number,
+  ): Promise<AuthActionResult> => {
+    if (!remoteMode) return { success: false, error: 'Email confirmation is only available with remote persistence.' };
+    try {
+      const result = await requestRemoteAuth({ action: 'complete-session', accessToken, refreshToken, expiresIn });
+      setUser(result.user);
+      cacheUser(result.user, false);
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Email confirmation failed.' };
+    }
+  }, [remoteMode]);
+
+  const requestPasswordReset = useCallback(async (email: string): Promise<AuthActionResult> => {
+    if (!remoteMode) return { success: false, error: 'Password recovery is only available with remote persistence.' };
+    try {
+      await requestRemoteAuth({ action: 'forgot-password', email });
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Password recovery failed.' };
+    }
+  }, [remoteMode]);
+
+  const resetPassword = useCallback(async (
+    password: string,
+    accessToken: string,
+    refreshToken: string,
+    expiresIn: number,
+  ): Promise<AuthActionResult> => {
+    if (!remoteMode) return { success: false, error: 'Password reset is only available with remote persistence.' };
+    try {
+      const result = await requestRemoteAuth({
+        action: 'reset-password', password, accessToken, refreshToken, expiresIn,
+      });
+      setUser(result.user);
+      cacheUser(result.user, false);
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Password reset failed.' };
+    }
+  }, [remoteMode]);
+
   const updateUser = useCallback((updates: Partial<User>) => {
     setUser((previous) => {
       if (!previous) return null;
@@ -334,7 +387,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [remoteMode]);
 
   return (
-    <AuthContext.Provider value={{ user, isAuthenticated: Boolean(user), isLoading, login, register, logout, updateUser }}>
+    <AuthContext.Provider value={{
+      user, isAuthenticated: Boolean(user), isLoading, login, register, completeSession,
+      requestPasswordReset, resetPassword, logout, updateUser,
+    }}>
       {children}
     </AuthContext.Provider>
   );

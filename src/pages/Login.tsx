@@ -147,6 +147,10 @@ export default function Login() {
             </Button>
           </Box>
 
+          <Typography variant="body2" align="right" sx={{ mt: -2, mb: 2.5 }}>
+            <Link component={RouterLink} to="/forgot-password" sx={{ fontWeight: 600 }}>Forgot Password?</Link>
+          </Typography>
+
           <Typography variant="body2" align="center" color="text.secondary" sx={{ mt: 3 }}>
             Don't have an account?{' '}
             <Link
