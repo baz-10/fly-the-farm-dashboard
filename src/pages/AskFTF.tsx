@@ -548,9 +548,9 @@ const AskFTF: React.FC = () => {
 
   return (
     <div style={pageStyle}>
-      <h1 style={h1Style}>Ask Fly The Farm</h1>
+      <h1 style={h1Style}>Legacy Ask Fly The Farm</h1>
       <p style={introStyle}>
-        Ask Fly The Farm a spray, compliance, or execution question. You can
+        Legacy Spray Command advisory only — not Project KEN or Clare. Ask a spray, compliance, or execution question. You can
         type naturally and review the auto-filled job details below.
       </p>
 

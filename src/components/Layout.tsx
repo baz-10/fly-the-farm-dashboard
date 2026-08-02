@@ -46,7 +46,7 @@ const ROLE_LABELS: Record<string, string> = {
   client: 'Client',
 };
 
-const NAV_ITEMS = [
+const NAV_ITEMS: Array<{ label: string; shortLabel: string; path: string; icon: React.ReactNode; roles: string[]; entitlement?: string }> = [
   { label: 'Operations', shortLabel: 'Operations', path: '/', icon: <HomeIcon />, roles: ['admin', 'contractor'] },
   { label: 'Database', shortLabel: 'Database', path: '/database', icon: <GrassIcon />, roles: ['admin', 'contractor', 'client'] },
   { label: 'Calculator', shortLabel: 'Calculator', path: '/calculator', icon: <CalculateIcon />, roles: ['admin', 'contractor'] },
@@ -57,7 +57,7 @@ const NAV_ITEMS = [
   { label: 'JSA System', shortLabel: 'JSA', path: '/jsa', icon: <SecurityIcon />, roles: ['admin', 'contractor'] },
   { label: 'Quotes', shortLabel: 'Quotes', path: '/quotes', icon: <ReceiptLongIcon />, roles: ['admin', 'contractor'] },
   { label: 'Financials', shortLabel: 'Financials', path: '/financials', icon: <AccountBalanceIcon />, roles: ['admin', 'contractor'] },
-  { label: 'Ask FTF', shortLabel: 'Ask FTF', path: '/ask-ftf', icon: <SmartToyIcon />, roles: ['admin', 'contractor'] },
+  { label: 'Legacy Ask FTF', shortLabel: 'Legacy Ask FTF', path: '/ask-ftf', icon: <SmartToyIcon />, roles: ['admin', 'contractor'], entitlement: 'legacyAskFtf' },
   { label: 'Compliance', shortLabel: 'Compliance', path: '/compliance', icon: <GavelIcon />, roles: ['admin', 'contractor'] },
   { label: 'Settings', shortLabel: 'Settings', path: '/license-settings', icon: <SettingsIcon />, roles: ['admin', 'contractor'] },
   { label: 'Admin', shortLabel: 'Admin', path: '/admin', icon: <AdminPanelSettingsIcon />, roles: ['admin'] },
@@ -77,7 +77,10 @@ export default function Layout() {
   const [accountAnchor, setAccountAnchor] = React.useState<null | HTMLElement>(null);
   const [search, setSearch] = React.useState('');
 
-  const navItems = NAV_ITEMS.filter((item) => !user?.role || item.roles.includes(user.role));
+  const navItems = NAV_ITEMS.filter((item) =>
+    (!user?.role || item.roles.includes(user.role))
+    && (!item.entitlement || Boolean(user?.entitlements?.includes(item.entitlement)))
+  );
 
   const navigateAndClose = (path: string) => {
     setDrawerOpen(false);

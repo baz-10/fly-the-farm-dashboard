@@ -117,7 +117,7 @@ function App() {
           <Route path="/financials" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><FinancialsList /></ProtectedRoute>} />
           <Route path="/financials/new" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><ActualCreate /></ProtectedRoute>} />
           <Route path="/financials/:actualId" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><ActualDetail /></ProtectedRoute>} />
-          <Route path="/ask-ftf" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><AskFTF /></ProtectedRoute>} />
+          <Route path="/ask-ftf" element={<ProtectedRoute allowedRoles={['admin', 'contractor']} requiredEntitlement="legacyAskFtf"><AskFTF /></ProtectedRoute>} />
           <Route path="/aircraft" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><AircraftManagement /></ProtectedRoute>} />
           <Route path="/fleet-work-packs" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><FleetWorkPacks /></ProtectedRoute>} />
           <Route path="/jsa" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><JSAManagement /></ProtectedRoute>} />

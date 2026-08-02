@@ -69,6 +69,31 @@ describe('Supabase authentication API', () => {
     expect(global.fetch).not.toHaveBeenCalled();
   });
 
+  test('grants legacy Ask FTF only to the authenticated Production Beta owner', async () => {
+    global.fetch = jest.fn(async (url: string) => {
+      if (url.includes('/auth/v1/user')) {
+        return response(200, { id: 'owner-auth-id', email: 'ben@flythefarm.com.au', user_metadata: {} });
+      }
+      if (url.includes('/rest/v1/ftf_profiles')) {
+        return response(200, [{
+          user_id: 'owner-auth-id', tenant_id: 'tenant-a', role: 'contractor', name: 'Ben', tier: 'free',
+        }]);
+      }
+      return response(500, { message: 'unexpected request' });
+    }) as any;
+
+    const ownerResponse = createResponse();
+    await authHandler({ method: 'GET', headers: { cookie: 'ftf_access_token=owner-token' } }, ownerResponse);
+
+    expect(ownerResponse.body.user.entitlements).toEqual(['legacyAskFtf']);
+
+    process.env.PRODUCTION_BETA_OWNER_EMAILS = 'someone-else@flythefarm.com.au';
+    const ordinaryResponse = createResponse();
+    await authHandler({ method: 'GET', headers: { cookie: 'ftf_access_token=ordinary-token' } }, ordinaryResponse);
+
+    expect(ordinaryResponse.body.user.entitlements).toEqual([]);
+  });
+
   test('rejects cross-origin authentication changes', async () => {
     global.fetch = jest.fn() as any;
     const res = createResponse();

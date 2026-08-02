@@ -53,6 +53,11 @@ async function loadProfile(userId) {
 }
 
 function toPublicUser(authUser, profile) {
+  const ownerEmails = new Set(String(process.env.PRODUCTION_BETA_OWNER_EMAILS || '')
+    .split(',').map((email) => email.trim().toLowerCase()).filter(Boolean));
+  const entitlements = ownerEmails.has(String(authUser.email || '').trim().toLowerCase())
+    ? ['legacyAskFtf']
+    : [];
   return {
     id: authUser.id,
     email: authUser.email,
@@ -63,6 +68,7 @@ function toPublicUser(authUser, profile) {
     clientRecordId: profile.client_record_id || undefined,
     inviteCode: profile.invite_code || undefined,
     tier: profile.tier || 'free',
+    entitlements,
   };
 }
 

@@ -13,6 +13,7 @@ export interface User {
   clientRecordId?: string;
   inviteCode?: string;
   tier: 'free' | 'pro';
+  entitlements?: string[];
 }
 
 interface StoredUser {
@@ -25,6 +26,7 @@ interface StoredUser {
   contractorId?: string;
   clientRecordId?: string;
   inviteCode?: string;
+  entitlements?: string[];
 }
 
 interface RegistrationResult {
@@ -92,6 +94,7 @@ function cacheUser(user: User | null, cacheLocalAccount: boolean): void {
     contractorId: user.contractorId,
     clientRecordId: user.clientRecordId,
     inviteCode: user.inviteCode,
+    entitlements: user.entitlements,
   };
   saveStoredUsers(users);
 }
@@ -231,6 +234,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       clientRecordId: stored.clientRecordId,
       inviteCode: stored.inviteCode,
       tier: 'free',
+      entitlements: stored.entitlements || [],
     };
     setUser(authenticatedUser);
     cacheUser(authenticatedUser, true);

@@ -5,7 +5,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { setCurrentUser } from '../services/fieldManagementStore';
 import { UserRole } from '../contexts/AuthContext';
 
-export default function ProtectedRoute({ children, allowedRoles }: { children: React.ReactNode; allowedRoles?: UserRole[] }) {
+export default function ProtectedRoute({ children, allowedRoles, requiredEntitlement }: { children: React.ReactNode; allowedRoles?: UserRole[]; requiredEntitlement?: string }) {
   const { isAuthenticated, isLoading, user } = useAuth();
   const userScopeKey = user
     ? [user.id, user.role, user.contractorId || '', user.clientRecordId || ''].join(':')
@@ -35,5 +35,6 @@ export default function ProtectedRoute({ children, allowedRoles }: { children: R
   }
   if (!isAuthenticated) return <Navigate to="/login" replace />;
   if (allowedRoles && (!user || !allowedRoles.includes(user.role))) return <Navigate to="/" replace />;
+  if (requiredEntitlement && (!user || !user.entitlements?.includes(requiredEntitlement))) return <Navigate to="/" replace />;
   return <>{children}</>;
 }
