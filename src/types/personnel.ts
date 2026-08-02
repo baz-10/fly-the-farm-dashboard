@@ -1,0 +1,8 @@
+export type PersonnelRole='pilot_in_command'|'pilot'|'observer'|'ground_crew'|'chemical_operator'|'loader'|'supervisor'|'maintenance_support'|'other';
+export type MissionPersonnelRole='pilot_in_command'|'additional_pilot'|'observer'|'ground_crew'|'chemical_operator'|'loader'|'supervisor'|'maintenance_support'|'other';
+export interface PersonnelCredential{id:string;credential_type:string;credential_kind:string;identifier?:string;issuer?:string;issue_date?:string;expiry_date?:string;status:string;verification_state:string;jurisdiction?:string;row_version:number;}
+export interface PersonnelRecord{id:string;internalUserId?:string|null;membershipId?:string|null;fullName:string;preferredName?:string|null;email?:string|null;phone?:string|null;engagementStatus:string;isActive:boolean;emergencyContact?:unknown;privateNotes?:string|null;notes?:string|null;startDate?:string|null;endDate?:string|null;operatingLocationIds:string[];operationalRoles:PersonnelRole[];credentials:PersonnelCredential[];rowVersion:number;createdAt?:string;updatedAt?:string;}
+export type PersonnelWriteInput=Pick<PersonnelRecord,'fullName'|'engagementStatus'|'isActive'|'operatingLocationIds'|'operationalRoles'>&Partial<Pick<PersonnelRecord,'preferredName'|'email'|'phone'|'emergencyContact'|'privateNotes'|'notes'|'startDate'|'endDate'>>;
+export interface MissionPersonnelAssignment{personnelId:string;assignmentRole:MissionPersonnelRole;snapshot?:Record<string,unknown>;}
+export interface PersonnelBlocker{code:string;message:string;}
+export interface MissionPersonnelRevision{id:string;mission_id:string;version_number:number;assignments:MissionPersonnelAssignment[];created_at:string;}
