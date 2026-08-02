@@ -146,6 +146,26 @@ class OperationalRepository {
     return { record: result?.record || result, fieldVersion: result?.field_version };
   }
 
+  async getMissionMap(context, missionId, history = false) {
+    const result = await supabaseRequest('rest/v1/rpc/ftf_read_mission_map', { method: 'POST', body: JSON.stringify({
+      p_organisation_id: context.organisation.id, p_mission_id: missionId, p_history: history,
+    }), publicMessage: 'Mission map could not be loaded.' });
+    return history ? (Array.isArray(result) ? result : []) : (Array.isArray(result) ? result[0] || null : result || null);
+  }
+
+  async saveMissionMap(context, missionId, values) {
+    const result = await supabaseRequest('rest/v1/rpc/ftf_save_mission_map', { method: 'POST', body: JSON.stringify({
+      p_organisation_id: context.organisation.id, p_actor_internal_user_id: context.internalUser.id,
+      p_mission_id: missionId, p_expected_version: values.expectedVersion, p_notes: values.notes,
+      p_source_field_boundary_version_id: values.sourceFieldBoundaryVersionId, p_geometries: values.geometries,
+    }), publicMessage: 'Mission map could not be saved.' });
+    if (result?.conflict) return { conflict: true, currentVersion: result.current_version };
+    if (result?.not_found) return { notFound: true };
+    if (result?.location_forbidden) return { locationForbidden: true };
+    if (result?.relationship_conflict) return { relationshipConflict: true };
+    return { record: result?.record || result };
+  }
+
   async relationshipExists(resource, context, id, filters = {}) {
     const extra = Object.entries(filters).map(([key, value]) => `${key}=eq.${encodeURIComponent(value)}`);
     const rows = await supabaseRequest(`rest/v1/${tableFor(resource)}?${tenantFilter(context)}&id=eq.${encodeURIComponent(id)}&${activeFilter()}&${extra.join('&')}&select=id&limit=1`, {

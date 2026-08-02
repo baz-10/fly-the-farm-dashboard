@@ -381,6 +381,51 @@ function mapBoundaryRecord(record, fieldVersion) {
   return mapped;
 }
 
+function mapMissionMapRecord(record) {
+  if (!record) return null;
+  return { missionId: record.mission_id, version: record.version_number, notes: record.notes || '',
+    sourceFieldBoundaryVersionId: record.source_field_boundary_version_id || null, geometries: record.geometries || [],
+    createdAt: record.created_at, createdBy: record.created_by_internal_user_id };
+}
+
+const MISSION_GEOMETRY_ROLES = new Set(['operational_boundary','treatment_area','exclusion_zone','no_fly_zone','obstacle','corridor','access_route','staging_area','launch_point','landing_point','water_point','point_annotation','line_annotation','polygon_annotation','imported_source_geometry','regulatory_overlay','safety_overlay']);
+function validateMissionGeometries(value) {
+  if (!Array.isArray(value) || value.length > 500) throw apiError(400,'VALIDATION_ERROR','geometries must be an array of at most 500 records.');
+  const ids = new Set();
+  return value.map((item) => {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) throw apiError(400,'VALIDATION_ERROR','Each geometry must be an object.');
+    const allowed = new Set(['id','role','geometryType','geometry','sourceCrs','canonicalCrs','provenance','validationState','areaHectares','lengthMetres','label','notes','sourceFileId']);
+    Object.keys(item).forEach((key)=>{if(!allowed.has(key))throw apiError(400,'VALIDATION_ERROR',`Unexpected geometry field: ${key}.`);});
+    assertUuid(item.id,'geometry.id'); if(ids.has(item.id))throw apiError(400,'VALIDATION_ERROR','Geometry IDs must be unique.'); ids.add(item.id);
+    if(!MISSION_GEOMETRY_ROLES.has(item.role))throw apiError(400,'VALIDATION_ERROR','Geometry role is invalid.');
+    if(!['Point','LineString','Polygon','MultiPolygon'].includes(item.geometryType)||item.geometry?.type!==item.geometryType||!Array.isArray(item.geometry?.coordinates))throw apiError(400,'VALIDATION_ERROR','Geometry type and canonical GeoJSON must agree.');
+    if(item.sourceCrs!=='EPSG:4326'||item.canonicalCrs!=='EPSG:4326')throw apiError(400,'VALIDATION_ERROR','Production Beta canonical geometry must use EPSG:4326.');
+    if(!['valid','requires_review','invalid'].includes(item.validationState))throw apiError(400,'VALIDATION_ERROR','Geometry validationState is invalid.');
+    return item;
+  });
+}
+
+function createMissionMapHandler(dependencies = {}) {
+  const repository = dependencies.repository || new OperationalRepository(); const getContext = dependencies.resolveContext || resolveRequestContext;
+  return async function handler(req,res){res.setHeader('Cache-Control','no-store');res.setHeader('Content-Type','application/json; charset=utf-8');
+    try { const context=await getContext(req,res); const missionId=assertUuid(req.query?.missionId,'missionId');
+      const mission=await repository.get('missions',context,missionId);
+      if(!mission||mission.archived_at||!hasAssignedLocationReadAccess('missions',context,mission))throw apiError(404,'NOT_FOUND','Mission map not found.');
+      if(req.method==='GET'){assertPermission(context,'mission_maps','read');const history=req.query?.history==='true';const record=await repository.getMissionMap(context,missionId,history);return res.status(200).json({data:history?(record||[]).map(mapMissionMapRecord):mapMissionMapRecord(record)});}
+      if(req.method!=='POST'){res.setHeader('Allow','GET,POST,OPTIONS');return res.status(405).json({error:{code:'METHOD_NOT_ALLOWED',message:'Method not allowed.'}});}
+      assertSameOrigin(req);assertPermission(context,'mission_maps','update');assertLocationAccess(context,mission.operating_location_id,'mission map');
+      const body=parseBody(req,MAX_BOUNDARY_BODY_BYTES);const allowed=new Set(['expectedVersion','notes','sourceFieldBoundaryVersionId','geometries']);Object.keys(body).forEach((k)=>{if(!allowed.has(k))throw apiError(400,'VALIDATION_ERROR',`Unexpected field: ${k}.`);});
+      const expectedVersion=Number(body.expectedVersion);if(!Number.isInteger(expectedVersion)||expectedVersion<0)throw apiError(400,'VALIDATION_ERROR','expectedVersion must be a non-negative integer.');
+      const geometries=validateMissionGeometries(body.geometries);if(!geometries.some((g)=>['operational_boundary','treatment_area'].includes(g.role)&&g.validationState==='valid'))throw apiError(400,'VALIDATION_ERROR','A valid operational boundary or treatment area is required.');
+      const sourceFieldBoundaryVersionId=body.sourceFieldBoundaryVersionId?assertUuid(body.sourceFieldBoundaryVersionId,'sourceFieldBoundaryVersionId'):null;
+      const result=await repository.saveMissionMap(context,missionId,{expectedVersion,notes:typeof body.notes==='string'?body.notes:'',sourceFieldBoundaryVersionId,geometries});
+      if(result.conflict)throw apiError(409,'VERSION_CONFLICT','This Mission map changed before your update.',{currentVersion:result.currentVersion});
+      if(result.notFound)throw apiError(404,'NOT_FOUND','Mission map not found.');if(result.locationForbidden)throw apiError(403,'LOCATION_FORBIDDEN','Mission location is not assigned.');if(result.relationshipConflict)throw apiError(409,'RELATIONSHIP_CONFLICT','Source Field boundary is invalid.');
+      return res.status(201).json({data:mapMissionMapRecord(result.record)});
+    } catch(error){const {status,response}=errorEnvelope(error);return res.status(status).json(response);}
+  };
+}
+
 function pagination(query) {
   const page = Number(query?.page || 1);
   const pageSize = Number(query?.pageSize || 25);
@@ -584,4 +629,4 @@ function createSessionHandler(dependencies = {}) {
   };
 }
 
-module.exports = { createFieldBoundaryVersionHandler, createOperationalHandler, createSessionHandler, errorEnvelope, mapBoundaryRecord, mapDatabaseRecord };
+module.exports = { createFieldBoundaryVersionHandler, createMissionMapHandler, createOperationalHandler, createSessionHandler, errorEnvelope, mapBoundaryRecord, mapDatabaseRecord };

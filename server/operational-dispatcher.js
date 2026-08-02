@@ -1,5 +1,6 @@
 const {
   createFieldBoundaryVersionHandler,
+  createMissionMapHandler,
   createOperationalHandler,
   createSessionHandler,
 } = require('./operational-api');
@@ -15,6 +16,7 @@ function createDefaultHandlers() {
     'equipment-kits': createOperationalHandler('equipment-kits'),
     'operating-locations': createOperationalHandler('operating_locations'),
     'field-boundary-versions': createFieldBoundaryVersionHandler(),
+    'mission-maps': createMissionMapHandler(),
     session: createSessionHandler(),
   });
 }

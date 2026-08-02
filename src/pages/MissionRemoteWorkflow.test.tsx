@@ -26,6 +26,8 @@ let mockOperational: any;
 let mockParams: Record<string, string> = {};
 let mockSearch = '';
 const mockNavigate = jest.fn();
+const mockMissionMapGet = jest.fn();
+const mockMissionMapSave = jest.fn();
 
 jest.mock('react-router-dom', () => ({
   useNavigate: () => mockNavigate,
@@ -33,6 +35,10 @@ jest.mock('react-router-dom', () => ({
   useSearchParams: () => [new URLSearchParams(mockSearch), jest.fn()],
 }), { virtual: true });
 jest.mock('../contexts/OperationalDataContext', () => ({ useOperationalData: () => mockOperational }));
+jest.mock('../services/missionMapsApi', () => ({
+  createMissionMapsApi: () => ({ get: mockMissionMapGet, save: mockMissionMapSave }),
+  MissionMapsApiError: class MissionMapsApiError extends Error {},
+}));
 jest.mock('../contexts/MissionContext', () => ({
   useMission: () => { throw new Error('Remote mission screens must not read MissionContext'); },
 }));
@@ -60,6 +66,8 @@ describe('remote authoritative mission workflow', () => {
     mockParams = {};
     mockSearch = '';
     mockNavigate.mockReset();
+    mockMissionMapGet.mockReset().mockResolvedValue(null);
+    mockMissionMapSave.mockReset();
   });
 
   test('lists only authoritative Planning missions with explicit not-ready language', () => {
@@ -102,6 +110,23 @@ describe('remote authoritative mission workflow', () => {
     expect(screen.getByText(/aircraft, equipment, personnel, chemicals, maps, weather, JSA, risk controls, authorisation, completion, pack and financials are unavailable/i)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Authorise|Authorize/i })).not.toBeInTheDocument();
     expect(screen.queryByText(/APVMA Compliant/i)).not.toBeInTheDocument();
+  });
+
+  test('opens the preserved map editor only after authoritative map load succeeds', async () => {
+    mockParams = { missionId: 'mission-1' };
+    render(<MissionPlanning />);
+    expect(await screen.findByText('Boundary editor')).toBeInTheDocument();
+    expect(mockMissionMapGet).toHaveBeenCalledWith('mission-1');
+    expect(screen.getByRole('button', { name: 'Save Mission Map' })).toBeInTheDocument();
+    expect(screen.queryByText(/Maps — unavailable/i)).not.toBeInTheDocument();
+  });
+
+  test('does not disguise a failed authoritative geometry load as an empty valid map', async () => {
+    mockMissionMapGet.mockRejectedValue(new Error('Database unavailable'));
+    mockParams = { missionId: 'mission-1' };
+    render(<MissionPlanning />);
+    expect(await screen.findByText(/No empty or browser-stored map has been substituted/i)).toBeInTheDocument();
+    expect(screen.queryByText('Boundary editor')).not.toBeInTheDocument();
   });
 
   test('creates a mission under the bookmarked authoritative job and waits for confirmation', async () => {

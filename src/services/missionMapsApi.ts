@@ -1,0 +1,11 @@
+export type MissionGeometryRole = 'operational_boundary'|'treatment_area'|'exclusion_zone'|'no_fly_zone'|'obstacle'|'corridor'|'access_route'|'staging_area'|'launch_point'|'landing_point'|'water_point'|'point_annotation'|'line_annotation'|'polygon_annotation'|'imported_source_geometry'|'regulatory_overlay'|'safety_overlay';
+export interface MissionGeometryRecord { id:string; role:MissionGeometryRole; geometryType:'Point'|'LineString'|'Polygon'|'MultiPolygon'; geometry:{type:string;coordinates:any}; sourceCrs:string; canonicalCrs:string; provenance:string; validationState:'valid'|'requires_review'|'invalid'; areaHectares:number|null; lengthMetres:number|null; label:string; notes:string; sourceFileId:string|null; }
+export interface MissionMapRevision { missionId:string; version:number; notes:string; sourceFieldBoundaryVersionId:string|null; geometries:MissionGeometryRecord[]; createdAt:string; createdBy:string; }
+export type MissionMapSave = Pick<MissionMapRevision,'notes'|'sourceFieldBoundaryVersionId'|'geometries'> & { expectedVersion:number };
+export class MissionMapsApiError extends Error { constructor(readonly status:number,readonly code:string,message:string,readonly currentVersion?:number){super(message);this.name='MissionMapsApiError';} }
+async function request(fetcher:typeof fetch,path:string,init:RequestInit={}){const response=await fetcher(path,{...init,credentials:'same-origin',headers:{'Content-Type':'application/json',...(init.headers||{})}});const body=await response.json().catch(()=>({}));if(!response.ok){const e=body?.error||{};throw new MissionMapsApiError(response.status,e.code||'MISSION_MAP_API_ERROR',e.message||'Mission map request failed.',e.meta?.currentVersion);}return body?.data as MissionMapRevision|null;}
+export function createMissionMapsApi(fetcher:typeof fetch=fetch){return{
+  get:(missionId:string)=>request(fetcher,`/api/v1/mission-maps?missionId=${encodeURIComponent(missionId)}`),
+  history:async(missionId:string)=>request(fetcher,`/api/v1/mission-maps?missionId=${encodeURIComponent(missionId)}&history=true`) as unknown as Promise<MissionMapRevision[]>,
+  save:(missionId:string,input:MissionMapSave)=>request(fetcher,`/api/v1/mission-maps?missionId=${encodeURIComponent(missionId)}`,{method:'POST',body:JSON.stringify(input)}) as Promise<MissionMapRevision>,
+};}
