@@ -12,6 +12,7 @@ function createDefaultHandlers() {
     jobs: createOperationalHandler('jobs'),
     missions: createOperationalHandler('missions'),
     aircraft: createOperationalHandler('aircraft'),
+    'equipment-kits': createOperationalHandler('equipment-kits'),
     'operating-locations': createOperationalHandler('operating_locations'),
     'field-boundary-versions': createFieldBoundaryVersionHandler(),
     session: createSessionHandler(),

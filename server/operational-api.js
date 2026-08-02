@@ -20,6 +20,7 @@ const SCHEMAS = {
     activationDate: 'activation_date', status: 'status', serviceabilityState: 'serviceability_state', missionReady: 'mission_ready',
     mtow: 'mtow', maxAltitude: 'max_altitude', maxWindSpeed: 'max_wind_speed', documentation: 'documentation', notes: 'notes',
   } },
+  'equipment-kits': { required: ['operatingLocationId', 'name', 'type'], fields: {} },
 };
 
 function apiError(statusCode, code, message, meta) {
@@ -60,7 +61,8 @@ function parseBody(req, maxBytes = MAX_BODY_BYTES) {
 
 function hasPermission(context, resource, action) {
   const permissions = new Set(context.permissions || []);
-  return permissions.has('*') || permissions.has(`${resource}.*`) || permissions.has(`${resource}.${action}`);
+  const permissionResource = resource === 'equipment-kits' ? 'equipment_kits' : resource;
+  return permissions.has('*') || permissions.has(`${permissionResource}.*`) || permissions.has(`${permissionResource}.${action}`);
 }
 
 function assertPermission(context, resource, action) {
@@ -93,6 +95,17 @@ function mapDatabaseRecord(resource, record) {
       createdAt: record.created_at, updatedAt: record.updated_at,
     };
   }
+  if (resource === 'equipment-kits') {
+    return {
+      id: record.id, operatingLocationId: record.operating_location_id, name: record.name,
+      type: record.kit_type, description: record.description || '', status: record.status,
+      specifications: record.specifications || {}, components: record.components || [],
+      operationalData: record.operational_data || {}, financialData: record.financial_data || {},
+      compatibleAircraft: record.compatible_aircraft_ids || [], notes: record.notes || '',
+      activeAssignment: record.active_assignment || null,
+      rowVersion: record.row_version, createdAt: record.created_at, updatedAt: record.updated_at,
+    };
+  }
   const schema = SCHEMAS[resource];
   const result = { id: record.id };
   Object.entries(schema.fields).forEach(([apiField, databaseField]) => {
@@ -106,6 +119,7 @@ function mapDatabaseRecord(resource, record) {
 
 function mapInput(resource, body, existing) {
   if (resource === 'aircraft') return mapAircraftInput(body, existing);
+  if (resource === 'equipment-kits') return mapEquipmentKitInput(body, existing);
   const schema = SCHEMAS[resource];
   const readOnly = new Set(schema.readOnly || []);
   const allowed = new Set([...Object.keys(schema.fields).filter((field) => !readOnly.has(field)), 'expectedVersion']);
@@ -167,6 +181,33 @@ function mapInput(resource, body, existing) {
   });
   if (resource === 'missions' && !data.status) data.status = 'planning';
   return { data, merged };
+}
+
+function mapEquipmentKitInput(body, existing) {
+  const allowed = new Set(['operatingLocationId','name','type','description','status','specifications','components','operationalData','financialData','compatibleAircraft','notes','expectedVersion']);
+  Object.keys(body).forEach((key) => { if (!allowed.has(key)) throw apiError(400,'VALIDATION_ERROR',`Unexpected field: ${key}.`); });
+  const baseline = existing ? mapDatabaseRecord('equipment-kits', existing) : {};
+  const merged = { ...baseline, ...body };
+  ['operatingLocationId','name','type'].forEach((field) => {
+    if (typeof merged[field] !== 'string' || !merged[field].trim()) throw apiError(400,'VALIDATION_ERROR',`${field} is required.`);
+  });
+  assertUuid(merged.operatingLocationId,'operatingLocationId');
+  ['specifications','operationalData','financialData'].forEach((field) => {
+    if (!merged[field] || typeof merged[field] !== 'object' || Array.isArray(merged[field])) throw apiError(400,'VALIDATION_ERROR',`${field} must be an object.`);
+  });
+  if (!Array.isArray(merged.components)) throw apiError(400,'VALIDATION_ERROR','components must be an array.');
+  if (!Array.isArray(merged.compatibleAircraft)) throw apiError(400,'VALIDATION_ERROR','compatibleAircraft must be an array.');
+  const compatibleAircraft = merged.compatibleAircraft.map((id) => assertUuid(id,'compatibleAircraft'));
+  if (new Set(compatibleAircraft).size !== compatibleAircraft.length) throw apiError(400,'VALIDATION_ERROR','compatibleAircraft must not contain duplicates.');
+  const status = merged.status || merged.operationalData.status;
+  if (!['available','assigned','maintenance','calibration','unavailable'].includes(status)) throw apiError(400,'VALIDATION_ERROR','status is invalid.');
+  return { merged: { ...merged, compatibleAircraft }, data: {
+    operating_location_id: merged.operatingLocationId, name: merged.name.trim(), kit_type: merged.type.trim(),
+    description: typeof merged.description === 'string' ? merged.description : '', status,
+    specifications: merged.specifications, components: merged.components, operational_data: merged.operationalData,
+    financial_data: merged.financialData, compatible_aircraft_ids: compatibleAircraft,
+    notes: typeof merged.notes === 'string' ? merged.notes : '',
+  } };
 }
 
 function assertAircraftNumber(value, field, { minimum = Number.NEGATIVE_INFINITY, integer = false } = {}) {
@@ -250,7 +291,7 @@ function assertLocationAccess(context, operatingLocationId, resource = 'record')
 }
 
 function hasAssignedLocationReadAccess(resource, context, record) {
-  if (!['missions', 'aircraft', 'operating_locations'].includes(resource)) return true;
+  if (!['missions', 'aircraft', 'equipment-kits', 'operating_locations'].includes(resource)) return true;
   const operatingLocationId = resource === 'operating_locations'
     ? record?.id : record?.operating_location_id ?? record?.operatingLocationId;
   return typeof operatingLocationId === 'string'
@@ -388,10 +429,33 @@ function createOperationalHandler(resource, dependencies = {}) {
       }
       assertSameOrigin(req);
       const body = parseBody(req);
+      if (resource === 'equipment-kits' && req.query?.action === 'assign' && req.method === 'POST') {
+        assertPermission(context, resource, 'assign');
+        const kitId = assertUuid(req.query?.id, 'id');
+        const aircraftId = assertUuid(body.aircraftId, 'aircraftId');
+        const existing = await repository.get(resource, context, kitId);
+        if (!existing || existing.archived_at || !hasAssignedLocationReadAccess(resource, context, existing)) throw apiError(404,'NOT_FOUND','Equipment Kit not found.');
+        const result = await repository.assignEquipmentKit(context, kitId, aircraftId, body.configurationName, body.configurationData);
+        if (result.incompatible) throw apiError(409,'INCOMPATIBLE','This Equipment Kit is not compatible with the selected aircraft.');
+        if (result.unavailable) throw apiError(409,'UNAVAILABLE','This Equipment Kit is not available.');
+        if (result.aircraftNotReady) throw apiError(409,'AIRCRAFT_NOT_READY','The selected aircraft is not mission ready.');
+        if (result.relationshipConflict) throw apiError(409,'RELATIONSHIP_CONFLICT','The assignment relationship is invalid.');
+        return res.status(201).json({ data: result.record });
+      }
+      if (resource === 'equipment-kits' && req.query?.action === 'unassign' && req.method === 'DELETE') {
+        assertPermission(context, resource, 'assign');
+        const assignmentId = assertUuid(req.query?.id, 'id');
+        const expectedVersion = Number(body.expectedVersion);
+        if (!Number.isInteger(expectedVersion) || expectedVersion < 1) throw apiError(400,'VALIDATION_ERROR','expectedVersion must be a positive integer.');
+        const result = await repository.unassignEquipmentKit(context, assignmentId, expectedVersion);
+        if (result.notFound) throw apiError(404,'NOT_FOUND','Equipment Kit assignment not found.');
+        if (result.conflict) throw apiError(409,'VERSION_CONFLICT','This assignment changed before your update.',{currentVersion:result.currentVersion});
+        return res.status(200).json({ data: result.record });
+      }
       if (req.method === 'POST') {
         assertPermission(context, resource, 'create');
         const { data, merged } = mapInput(resource, body);
-        if (['missions', 'aircraft'].includes(resource)) assertLocationAccess(context, merged.operatingLocationId, resource === 'missions' ? 'mission' : 'aircraft');
+        if (['missions', 'aircraft', 'equipment-kits'].includes(resource)) assertLocationAccess(context, merged.operatingLocationId, resource === 'missions' ? 'mission' : resource === 'aircraft' ? 'aircraft' : 'equipment kit');
         await assertRelationships(repository, resource, context, merged);
         const result = await repository.create(resource, context, data);
         if (result.relationshipConflict) throw apiError(409, 'RELATIONSHIP_CONFLICT', 'The related record is missing, archived, or belongs to another organisation.');
@@ -407,7 +471,7 @@ function createOperationalHandler(resource, dependencies = {}) {
         const existing = await repository.get(resource, context, id);
         if (!existing || existing.archived_at) throw apiError(404, 'NOT_FOUND', 'Operational record not found.');
         const { data, merged } = mapInput(resource, body, existing);
-        if (['missions', 'aircraft'].includes(resource)) assertLocationAccess(context, merged.operatingLocationId, resource === 'missions' ? 'mission' : 'aircraft');
+        if (['missions', 'aircraft', 'equipment-kits'].includes(resource)) assertLocationAccess(context, merged.operatingLocationId, resource === 'missions' ? 'mission' : resource === 'aircraft' ? 'aircraft' : 'equipment kit');
         if (resource === 'aircraft' && (merged.status !== existing.status || merged.serviceabilityState !== existing.serviceability_state || merged.missionReady !== existing.mission_ready)) {
           assertPermission(context, resource, 'serviceability');
         }
@@ -421,7 +485,7 @@ function createOperationalHandler(resource, dependencies = {}) {
         return res.status(200).json({ data: mapDatabaseRecord(resource, result.record) });
       }
       assertPermission(context, resource, 'archive');
-      if (['missions', 'aircraft'].includes(resource)) {
+      if (['missions', 'aircraft', 'equipment-kits'].includes(resource)) {
         const existing = await repository.get(resource, context, id);
         if (!existing || existing.archived_at || !hasAssignedLocationReadAccess(resource, context, existing)) {
           throw apiError(404, 'NOT_FOUND', 'Operational record not found.');

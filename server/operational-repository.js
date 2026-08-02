@@ -7,6 +7,7 @@ const TABLES = {
   jobs: 'jobs',
   missions: 'missions',
   aircraft: 'aircraft',
+  'equipment-kits': 'equipment_kits',
   operating_locations: 'operating_locations',
   field_boundary_versions: 'field_boundary_versions',
   job_fields: 'job_fields',
@@ -28,7 +29,7 @@ function activeFilter() {
 }
 
 function assignedLocationFilter(resource, context) {
-  const column = resource === 'operating_locations' ? 'id' : ['missions', 'aircraft'].includes(resource) ? 'operating_location_id' : null;
+  const column = resource === 'operating_locations' ? 'id' : ['missions', 'aircraft', 'equipment-kits'].includes(resource) ? 'operating_location_id' : null;
   if (!column) return null;
   const ids = Array.isArray(context.operatingLocationIds) ? context.operatingLocationIds.filter(Boolean) : [];
   if (ids.length === 0) return false;
@@ -36,6 +37,25 @@ function assignedLocationFilter(resource, context) {
 }
 
 class OperationalRepository {
+  async attachEquipmentKitRelationships(context, records) {
+    if (!Array.isArray(records) || records.length === 0) return records;
+    const kitIds = records.map((record) => record.id).filter(Boolean);
+    const encodedIds = kitIds.map(encodeURIComponent).join(',');
+    const [compatibility, assignments] = await Promise.all([
+      supabaseRequest(`rest/v1/equipment_kit_aircraft_compatibility?${tenantFilter(context)}&equipment_kit_id=in.(${encodedIds})&select=equipment_kit_id,aircraft_id`, {
+        publicMessage: 'Equipment Kit compatibility could not be loaded.',
+      }),
+      supabaseRequest(`rest/v1/aircraft_equipment_kit_assignments?${tenantFilter(context)}&equipment_kit_id=in.(${encodedIds})&unassigned_at=is.null&${activeFilter()}&select=*&order=assigned_at.desc`, {
+        publicMessage: 'Equipment Kit assignments could not be loaded.',
+      }),
+    ]);
+    return records.map((record) => ({
+      ...record,
+      compatible_aircraft_ids: (compatibility || []).filter((link) => link.equipment_kit_id === record.id).map((link) => link.aircraft_id),
+      active_assignment: (assignments || []).find((assignment) => assignment.equipment_kit_id === record.id) || null,
+    }));
+  }
+
   async attachJobFieldIds(context, records) {
     if (!Array.isArray(records) || records.length === 0) return records;
     const jobIds = records.map((record) => record.id).filter(Boolean);
@@ -55,7 +75,9 @@ class OperationalRepository {
     const records = await supabaseRequest(`rest/v1/${tableFor(resource)}?${tenantFilter(context)}&${activeFilter()}${locationFilter ? `&${locationFilter}` : ''}&select=*&order=updated_at.desc&offset=${offset}&limit=${pageSize}`, {
       publicMessage: 'Operational records could not be loaded.',
     });
-    return resource === 'jobs' ? this.attachJobFieldIds(context, records) : records;
+    if (resource === 'jobs') return this.attachJobFieldIds(context, records);
+    if (resource === 'equipment-kits') return this.attachEquipmentKitRelationships(context, records);
+    return records;
   }
 
   async get(resource, context, id) {
@@ -65,8 +87,10 @@ class OperationalRepository {
       publicMessage: 'Operational record could not be loaded.',
     });
     if (!Array.isArray(rows) || !rows[0]) return null;
-    if (resource !== 'jobs') return rows[0];
-    const [record] = await this.attachJobFieldIds(context, [rows[0]]);
+    if (!['jobs', 'equipment-kits'].includes(resource)) return rows[0];
+    const [record] = resource === 'jobs'
+      ? await this.attachJobFieldIds(context, [rows[0]])
+      : await this.attachEquipmentKitRelationships(context, [rows[0]]);
     return record || null;
   }
 
@@ -159,6 +183,14 @@ class OperationalRepository {
     return this.write('archive', resource, context, id, expectedVersion, {});
   }
 
+  async assignEquipmentKit(context, kitId, aircraftId, configurationName, configurationData) {
+    return this.write('assign','equipment-kits',context,kitId,null,{ aircraft_id: aircraftId, configuration_name: configurationName, configuration_data: configurationData || {} });
+  }
+
+  async unassignEquipmentKit(context, assignmentId, expectedVersion) {
+    return this.write('unassign','equipment-kits',context,assignmentId,expectedVersion,{});
+  }
+
   async write(operation, resource, context, entityId, expectedVersion, data) {
     const result = await supabaseRequest('rest/v1/rpc/ftf_write_operational_resource', {
       method: 'POST',
@@ -179,6 +211,10 @@ class OperationalRepository {
     if (result?.relationship_conflict) return { relationshipConflict: true };
     if (result?.location_forbidden) return { locationForbidden: true };
     if (result?.lifecycle_conflict) return { lifecycleConflict: true };
+    if (result?.assignment_conflict) return { archiveConflict: true };
+    if (result?.incompatible) return { incompatible: true };
+    if (result?.unavailable) return { unavailable: true };
+    if (result?.aircraft_not_ready) return { aircraftNotReady: true };
     return { record: result?.record || result };
   }
 }

@@ -30,6 +30,7 @@ import {
 // import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 // import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
 import { useAircraft } from '../contexts/AircraftContext';
+import { useOperationalData } from '../contexts/OperationalDataContext';
 import { EquipmentKit, EquipmentKitType, OperationalStatus } from '../types/aircraft';
 // import { enAU } from 'date-fns/locale';
 
@@ -51,6 +52,7 @@ interface ComponentData {
 }
 
 interface FormData {
+  operatingLocationId: string;
   name: string;
   type: EquipmentKitType;
   description: string;
@@ -95,6 +97,7 @@ interface FormData {
 }
 
 const initialFormData: FormData = {
+  operatingLocationId: '',
   name: '',
   type: 'spray-system',
   description: '',
@@ -149,6 +152,7 @@ export default function EquipmentKitForm({ kitId, onSave, onCancel }: EquipmentK
     aircraft,
     error
   } = useAircraft();
+  const { mode, operatingLocations } = useOperationalData();
 
   const [formData, setFormData] = useState<FormData>(initialFormData);
   const [errors, setErrors] = useState<FormErrors>({});
@@ -168,8 +172,7 @@ export default function EquipmentKitForm({ kitId, onSave, onCancel }: EquipmentK
     warrantyExpiry: '',
   });
 
-  // Get available aircraft models for compatibility
-  const aircraftModels = Array.from(new Set(aircraft.map(a => a.model)));
+  const compatibleAircraftOptions = aircraft.filter((item) => !formData.operatingLocationId || item.operatingLocationId === formData.operatingLocationId);
 
   // Load equipment kit data if editing
   useEffect(() => {
@@ -177,6 +180,7 @@ export default function EquipmentKitForm({ kitId, onSave, onCancel }: EquipmentK
       const kit = getEquipmentKitById(kitId);
       if (kit) {
         setFormData({
+          operatingLocationId: kit.operatingLocationId || '',
           name: kit.name,
           type: kit.type,
           description: kit.description,
@@ -216,10 +220,18 @@ export default function EquipmentKitForm({ kitId, onSave, onCancel }: EquipmentK
     }
   }, [kitId, getEquipmentKitById]);
 
+  useEffect(() => {
+    if (mode !== 'remote' || kitId || operatingLocations.length !== 1) return;
+    setFormData((previous) => ({ ...previous, operatingLocationId: operatingLocations[0].id }));
+  }, [kitId, mode, operatingLocations]);
+
   const validateForm = useCallback((): boolean => {
     const newErrors: FormErrors = {};
 
     // Required fields
+    if (!formData.operatingLocationId) {
+      newErrors.operatingLocationId = 'Operating location is required';
+    }
     if (!formData.name.trim()) {
       newErrors.name = 'Name is required';
     }
@@ -445,6 +457,7 @@ export default function EquipmentKitForm({ kitId, onSave, onCancel }: EquipmentK
 
     try {
       const kitData: Omit<EquipmentKit, 'id' | 'createdAt' | 'updatedAt'> = {
+        operatingLocationId: formData.operatingLocationId,
         name: formData.name.trim(),
         type: formData.type,
         description: formData.description.trim(),
@@ -520,17 +533,17 @@ export default function EquipmentKitForm({ kitId, onSave, onCancel }: EquipmentK
     value.map((option, index) => (
       <Chip
         variant="outlined"
-        label={option}
+        label={aircraft.find((item) => item.id === option)?.registration || option}
         {...getTagProps({ index })}
         key={option}
       />
-    )), []);
+    )), [aircraft]);
 
   const renderCompatibleAircraftInput = useCallback((params: any) => (
     <TextField
       {...params}
-      label="Compatible Aircraft Models"
-      helperText="Select aircraft models that can use this equipment kit"
+      label="Compatible Aircraft"
+      helperText="Select aircraft at this operating location that can use this equipment kit"
       inputProps={{
         ...params.inputProps,
         'aria-describedby': 'compatible-aircraft-help'
@@ -552,6 +565,14 @@ export default function EquipmentKitForm({ kitId, onSave, onCancel }: EquipmentK
             Basic Information
           </Typography>
           <Grid container spacing={2}>
+            <Grid size={{ xs: 12, sm: 6 }}>
+              <FormControl fullWidth error={!!errors.operatingLocationId}>
+                <InputLabel>Operating Location *</InputLabel>
+                <Select value={formData.operatingLocationId} onChange={handleInputChange('operatingLocationId')} label="Operating Location *">
+                  {operatingLocations.map((location) => <MenuItem key={location.id} value={location.id}>{location.name}</MenuItem>)}
+                </Select>
+              </FormControl>
+            </Grid>
             <Grid size={{ xs: 12, sm: 8 }}>
               <TextField
                 fullWidth
@@ -1111,9 +1132,13 @@ export default function EquipmentKitForm({ kitId, onSave, onCancel }: EquipmentK
           </Typography>
           <Autocomplete
             multiple
-            options={aircraftModels}
+            options={compatibleAircraftOptions.map((item) => item.id)}
             value={formData.compatibleAircraft}
             onChange={handleCompatibleAircraftChange}
+            getOptionLabel={(option) => {
+              const item = aircraft.find((candidate) => candidate.id === option);
+              return item ? `${item.registration} — ${item.manufacturer} ${item.model}` : option;
+            }}
             renderTags={renderCompatibleAircraftTags}
             renderInput={renderCompatibleAircraftInput}
           />

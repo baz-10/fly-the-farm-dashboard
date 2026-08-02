@@ -75,6 +75,8 @@ export interface Aircraft {
 // Equipment kit for aircraft configurations
 export interface EquipmentKit {
   id: string;
+  /** Authoritative Production Beta operating-location scope. */
+  operatingLocationId?: string;
   name: string;
   type: EquipmentKitType;
   description: string;
@@ -136,6 +138,15 @@ export interface EquipmentKit {
 
   // Aircraft compatibility
   compatibleAircraft: string[]; // Aircraft model strings or IDs
+  notes?: string;
+
+  rowVersion?: number;
+  activeAssignment?: {
+    id: string;
+    aircraft_id: string;
+    equipment_kit_id: string;
+    row_version: number;
+  } | null;
 
   createdAt: string;
   updatedAt: string;

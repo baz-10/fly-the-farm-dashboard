@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useCallback, useEffect, use
 import { Aircraft, EquipmentKit, AircraftKitConfiguration, AircraftStatus, EquipmentKitType, OperationalStatus } from '../types/aircraft';
 import { clearSharedValue, getPersistenceMode, PERSISTENCE_KEYS, readSharedValue, writeSharedValue } from '../services/persistence';
 import { AircraftApiError, AircraftWriteInput, createAircraftApiGateway } from '../services/aircraftApi';
+import { createEquipmentKitsApiGateway, EquipmentKitsApiError, EquipmentKitWriteInput } from '../services/equipmentKitsApi';
 import { getCompatibleAvailableKits, isKitCompatibleWithAircraft } from '../utils/aircraftKitCompatibility';
 
 // Context type definition
@@ -207,6 +208,7 @@ const validateStoredData = (data: unknown): boolean => {
 export function AircraftProvider({ children }: { children: React.ReactNode }) {
   const remoteMode = getPersistenceMode() === 'remote';
   const aircraftApi = useMemo(() => createAircraftApiGateway(), []);
+  const equipmentKitsApi = useMemo(() => createEquipmentKitsApiGateway(), []);
   const [aircraft, setAircraft] = useState<Aircraft[]>([]);
   const [equipmentKits, setEquipmentKits] = useState<EquipmentKit[]>([]);
   const [configurations, setConfigurations] = useState<AircraftKitConfiguration[]>([]);
@@ -237,9 +239,18 @@ export function AircraftProvider({ children }: { children: React.ReactNode }) {
 
     try {
       if (remoteMode) {
-        setAircraft(await aircraftApi.list());
-        setEquipmentKits([]);
-        setConfigurations([]);
+        const [authoritativeAircraft, authoritativeKits] = await Promise.all([aircraftApi.list(), equipmentKitsApi.list()]);
+        setAircraft(authoritativeAircraft);
+        setEquipmentKits(authoritativeKits);
+        setConfigurations(authoritativeKits.flatMap((kit) => {
+          const assignment = kit.activeAssignment as any;
+          if (!assignment) return [];
+          return [{
+            ...(assignment.configuration_data || {}), id: assignment.id, aircraftId: assignment.aircraft_id,
+            kitId: kit.id, configurationName: assignment.configuration_name,
+            createdAt: assignment.created_at || assignment.assigned_at, updatedAt: assignment.updated_at || assignment.assigned_at,
+          } as AircraftKitConfiguration];
+        }));
         return;
       }
       const data = await readSharedValue<AircraftStoreData | null>(STORAGE_KEY, null);
@@ -262,7 +273,7 @@ export function AircraftProvider({ children }: { children: React.ReactNode }) {
       hasLoadedRef.current = true;
       setIsLoading(false);
     }
-  }, [aircraftApi, remoteMode]);
+  }, [aircraftApi, equipmentKitsApi, remoteMode]);
 
   // Save data to localStorage with error handling
   const saveData = useCallback(async () => {
@@ -429,6 +440,19 @@ export function AircraftProvider({ children }: { children: React.ReactNode }) {
 
   // Equipment Kit CRUD operations with validation
   const createEquipmentKit = useCallback(async (kitData: Omit<EquipmentKit, 'id' | 'createdAt' | 'updatedAt'>): Promise<string> => {
+    if (remoteMode) {
+      try {
+        setError(null);
+        const { rowVersion: _rowVersion, activeAssignment: _activeAssignment, ...input } = kitData;
+        const created = await equipmentKitsApi.create(input as EquipmentKitWriteInput);
+        setEquipmentKits((previous) => [...previous, created]);
+        return created.id;
+      } catch (error) {
+        const message = error instanceof EquipmentKitsApiError ? error.message : 'The Equipment Kit could not be saved.';
+        setError(message);
+        throw error;
+      }
+    }
     return safeOperation(() => {
       // Validate input data
       if (!kitData.name || !kitData.type) {
@@ -452,9 +476,25 @@ export function AircraftProvider({ children }: { children: React.ReactNode }) {
       setEquipmentKits(prev => [...prev, newKit]);
       return id;
     }, 'Failed to create equipment kit') || '';
-  }, [safeOperation]);
+  }, [equipmentKitsApi, remoteMode, safeOperation]);
 
   const updateEquipmentKit = useCallback(async (id: string, updates: Partial<Omit<EquipmentKit, 'id' | 'createdAt' | 'updatedAt'>>) => {
+    if (remoteMode) {
+      try {
+        setError(null);
+        const current = equipmentKits.find((kit) => kit.id === id);
+        if (!current) throw new Error(`Equipment kit with ID ${id} not found`);
+        const merged = { ...current, ...updates };
+        const { id: _id, createdAt: _createdAt, updatedAt: _updatedAt, rowVersion, activeAssignment: _activeAssignment, ...input } = merged;
+        const confirmed = await equipmentKitsApi.update(id, input as EquipmentKitWriteInput, rowVersion || 1);
+        setEquipmentKits((previous) => previous.map((kit) => kit.id === id ? confirmed : kit));
+        return;
+      } catch (error) {
+        const message = error instanceof EquipmentKitsApiError ? error.message : error instanceof Error ? error.message : 'The Equipment Kit could not be updated.';
+        setError(message);
+        throw error;
+      }
+    }
     safeOperation(() => {
       if (!id) {
         throw new Error('Equipment kit ID is required');
@@ -473,9 +513,24 @@ export function AircraftProvider({ children }: { children: React.ReactNode }) {
         );
       });
     }, 'Failed to update equipment kit');
-  }, [safeOperation]);
+  }, [equipmentKits, equipmentKitsApi, remoteMode, safeOperation]);
 
   const deleteEquipmentKit = useCallback(async (id: string) => {
+    if (remoteMode) {
+      try {
+        setError(null);
+        const current = equipmentKits.find((kit) => kit.id === id);
+        if (!current) throw new Error(`Equipment kit with ID ${id} not found`);
+        await equipmentKitsApi.archive(id, current.rowVersion || 1);
+        setEquipmentKits((previous) => previous.filter((kit) => kit.id !== id));
+        setConfigurations((previous) => previous.filter((config) => config.kitId !== id));
+        return;
+      } catch (error) {
+        const message = error instanceof EquipmentKitsApiError ? error.message : error instanceof Error ? error.message : 'The Equipment Kit could not be archived.';
+        setError(message);
+        throw error;
+      }
+    }
     safeOperation(() => {
       if (!id) {
         throw new Error('Equipment kit ID is required');
@@ -500,7 +555,7 @@ export function AircraftProvider({ children }: { children: React.ReactNode }) {
         }))
       );
     }, 'Failed to delete equipment kit');
-  }, [safeOperation]);
+  }, [equipmentKits, equipmentKitsApi, remoteMode, safeOperation]);
 
   const getEquipmentKitById = useCallback((id: string): EquipmentKit | undefined => {
     return equipmentKits.find(k => k.id === id);
@@ -508,6 +563,20 @@ export function AircraftProvider({ children }: { children: React.ReactNode }) {
 
   // Configuration CRUD operations with validation
   const createConfiguration = useCallback(async (configData: Omit<AircraftKitConfiguration, 'id' | 'createdAt' | 'updatedAt'>): Promise<string> => {
+    if (remoteMode) {
+      try {
+        setError(null);
+        const assignment = await equipmentKitsApi.assign(configData.kitId, configData.aircraftId, configData.configurationName, configData);
+        const now = assignment.assigned_at || new Date().toISOString();
+        const confirmed = { ...configData, id: assignment.id, createdAt: now, updatedAt: assignment.updated_at || now };
+        setConfigurations((previous) => [...previous, confirmed]);
+        setEquipmentKits((previous) => previous.map((kit) => kit.id === configData.kitId ? { ...kit, activeAssignment: assignment } : kit));
+        return assignment.id;
+      } catch (error) {
+        const message = error instanceof EquipmentKitsApiError ? error.message : 'The Equipment Kit assignment could not be saved.';
+        setError(message); throw error;
+      }
+    }
     return safeOperation(() => {
       // Validate input data
       if (!configData.aircraftId || !configData.kitId || !configData.configurationName) {
@@ -531,7 +600,7 @@ export function AircraftProvider({ children }: { children: React.ReactNode }) {
       setConfigurations(prev => [...prev, newConfig]);
       return id;
     }, 'Failed to create configuration') || '';
-  }, [safeOperation]);
+  }, [equipmentKitsApi, remoteMode, safeOperation]);
 
   const updateConfiguration = useCallback(async (id: string, updates: Partial<Omit<AircraftKitConfiguration, 'id' | 'createdAt' | 'updatedAt'>>) => {
     safeOperation(() => {
@@ -555,6 +624,22 @@ export function AircraftProvider({ children }: { children: React.ReactNode }) {
   }, [safeOperation]);
 
   const deleteConfiguration = useCallback(async (id: string) => {
+    if (remoteMode) {
+      try {
+        setError(null);
+        const config = configurations.find((item) => item.id === id);
+        if (!config) throw new Error(`Configuration with ID ${id} not found`);
+        const kit = equipmentKits.find((item) => item.id === config.kitId);
+        const version = (kit?.activeAssignment as any)?.row_version || 1;
+        await equipmentKitsApi.unassign(id, version);
+        setConfigurations((previous) => previous.filter((item) => item.id !== id));
+        setEquipmentKits((previous) => previous.map((item) => item.id === config.kitId ? { ...item, activeAssignment: null } : item));
+        return;
+      } catch (error) {
+        const message = error instanceof EquipmentKitsApiError ? error.message : error instanceof Error ? error.message : 'The Equipment Kit assignment could not be removed.';
+        setError(message); throw error;
+      }
+    }
     safeOperation(() => {
       if (!id) {
         throw new Error('Configuration ID is required');
@@ -568,7 +653,7 @@ export function AircraftProvider({ children }: { children: React.ReactNode }) {
         return prev.filter(config => config.id !== id);
       });
     }, 'Failed to delete configuration');
-  }, [safeOperation]);
+  }, [configurations, equipmentKits, equipmentKitsApi, remoteMode, safeOperation]);
 
   const getConfigurationById = useCallback((id: string): AircraftKitConfiguration | undefined => {
     return configurations.find(c => c.id === id);
