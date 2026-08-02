@@ -426,6 +426,8 @@ function AuthoritativeMissionPlanning() {
       setDescription(selectedMission.description);
       setScheduledStart(selectedMission.scheduledStartAt
         ? formatDateTimeInput(new Date(selectedMission.scheduledStartAt)) : '');
+      setSelectedAircraftId(selectedMission.aircraftIds[0] || '');
+      setSelectedKitId(selectedMission.equipmentKitIds[0] || '');
       setActionError('');
       return;
     }
@@ -505,6 +507,8 @@ function AuthoritativeMissionPlanning() {
       title: title.trim(),
       description: description.trim(),
       scheduledStartAt: scheduledStart ? toIsoFromInput(scheduledStart) : null,
+      aircraftIds: selectedAircraftId ? [selectedAircraftId] : [],
+      equipmentKitIds: selectedKitId ? [selectedKitId] : [],
       status: 'Planning' as const,
     };
     try {
@@ -613,7 +617,7 @@ function AuthoritativeMissionPlanning() {
                 onAircraftChange={setSelectedAircraftId}
                 onKitChange={setSelectedKitId}
               />}
-              <Alert severity="warning" sx={{ mt: 1.5 }}>Assignments are selected from authoritative fleet records. Save persistence is being connected before this Draft can be treated as assigned.</Alert>
+              <Alert severity="info" sx={{ mt: 1.5 }}>Assignments are saved with the authoritative Draft and remain subject to readiness checks before authorisation.</Alert>
             </Panel>
             <Card variant="outlined" sx={{ borderRadius: 2.5 }}>
               <CardContent>

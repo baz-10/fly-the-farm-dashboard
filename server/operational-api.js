@@ -14,7 +14,7 @@ const SCHEMAS = {
   properties: { required: ['clientId', 'name', 'state'], fields: { clientId: 'client_id', name: 'name', address: 'address', state: 'state' } },
   fields: { required: ['propertyId', 'name'], readOnly: ['fieldBoundaryVersionId'], fields: { propertyId: 'property_id', fieldBoundaryVersionId: 'field_boundary_version_id', name: 'name', areaHectares: 'area_hectares' } },
   jobs: { required: ['clientId', 'propertyId', 'reference'], fields: { clientId: 'client_id', propertyId: 'property_id', fieldIds: 'field_ids', reference: 'reference', scope: 'scope', status: 'status', notes: 'notes', requestedDate: 'requested_date', scheduledDate: 'scheduled_date' } },
-  missions: { required: ['jobId', 'operatingLocationId', 'missionNumber'], fields: { jobId: 'job_id', operatingLocationId: 'operating_location_id', missionNumber: 'mission_number', title: 'title', description: 'description', status: 'status', scheduledStartAt: 'scheduled_start_at' } },
+  missions: { required: ['jobId', 'operatingLocationId', 'missionNumber'], fields: { jobId: 'job_id', operatingLocationId: 'operating_location_id', missionNumber: 'mission_number', title: 'title', description: 'description', status: 'status', scheduledStartAt: 'scheduled_start_at', aircraftIds: 'aircraft_ids', equipmentKitIds: 'equipment_kit_ids' } },
   aircraft: { required: ['operatingLocationId', 'registration', 'manufacturer', 'model', 'serialNumber'], fields: {
     operatingLocationId: 'operating_location_id', registration: 'registration', manufacturer: 'manufacturer', model: 'model', serialNumber: 'serial_number',
     activationDate: 'activation_date', status: 'status', serviceabilityState: 'serviceability_state', missionReady: 'mission_ready',
@@ -111,6 +111,10 @@ function mapDatabaseRecord(resource, record) {
   Object.entries(schema.fields).forEach(([apiField, databaseField]) => {
     if (record[databaseField] !== undefined) result[apiField] = record[databaseField];
   });
+  if (resource === 'missions') {
+    result.aircraftIds = Array.isArray(record.aircraft_ids) ? record.aircraft_ids : [];
+    result.equipmentKitIds = Array.isArray(record.equipment_kit_ids) ? record.equipment_kit_ids : [];
+  }
   if (record.row_version !== undefined) result.rowVersion = record.row_version;
   if (record.created_at !== undefined) result.createdAt = record.created_at;
   if (record.updated_at !== undefined) result.updatedAt = record.updated_at;
@@ -164,6 +168,15 @@ function mapInput(resource, body, existing) {
   });
   if (resource === 'missions' && merged.status && String(merged.status).toLowerCase() !== 'planning') {
     throw apiError(400, 'VALIDATION_ERROR', 'Mission API writes may only create or update Planning records.');
+  }
+  if (resource === 'missions') {
+    ['aircraftIds', 'equipmentKitIds'].forEach((field) => {
+      const source = merged[field] === undefined ? [] : merged[field];
+      if (!Array.isArray(source)) throw apiError(400, 'VALIDATION_ERROR', `${field} must be an array.`);
+      const ids = source.map((id) => assertUuid(id, field));
+      if (new Set(ids).size !== ids.length) throw apiError(400, 'VALIDATION_ERROR', `${field} must not contain duplicates.`);
+      merged[field] = ids;
+    });
   }
   if (resource === 'jobs') {
     if (!Array.isArray(merged.fieldIds) || merged.fieldIds.length < 1 || merged.fieldIds.length > 100) {
@@ -313,6 +326,12 @@ async function assertRelationships(repository, resource, context, values) {
   if (resource === 'missions') {
     required.push(['jobs', values.jobId]);
     required.push(['operating_locations', values.operatingLocationId]);
+    (values.aircraftIds || []).forEach((aircraftId) => required.push(['aircraft', aircraftId, {
+      operating_location_id: values.operatingLocationId, status: 'operational', mission_ready: true,
+    }]));
+    (values.equipmentKitIds || []).forEach((kitId) => required.push(['equipment-kits', kitId, {
+      operating_location_id: values.operatingLocationId, status: 'available',
+    }]));
   }
   for (const [relatedResource, id, filters] of required) {
     const exists = await repository.relationshipExists(relatedResource, context, id, filters);

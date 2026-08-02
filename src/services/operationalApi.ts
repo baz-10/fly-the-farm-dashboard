@@ -77,16 +77,20 @@ export interface OperationalMission {
   description: string;
   status: 'Planning';
   scheduledStartAt: string | null;
+  aircraftIds: string[];
+  equipmentKitIds: string[];
   rowVersion: number;
   createdAt: string;
   updatedAt: string;
 }
 
-export type OperationalMissionCreateInput = Omit<OperationalMission, 'id' | 'rowVersion' | 'createdAt' | 'updatedAt' | 'scheduledStartAt'> & {
+export type OperationalMissionCreateInput = Omit<OperationalMission, 'id' | 'rowVersion' | 'createdAt' | 'updatedAt' | 'scheduledStartAt' | 'aircraftIds' | 'equipmentKitIds'> & {
   scheduledStartAt?: string | null;
+  aircraftIds?: string[];
+  equipmentKitIds?: string[];
 };
 export type OperationalMissionUpdateInput = Partial<Pick<OperationalMission,
-  'jobId' | 'operatingLocationId' | 'missionNumber' | 'title' | 'description' | 'status' | 'scheduledStartAt'>>;
+  'jobId' | 'operatingLocationId' | 'missionNumber' | 'title' | 'description' | 'status' | 'scheduledStartAt' | 'aircraftIds' | 'equipmentKitIds'>>;
 
 export type ClientCreateInput = Omit<Client, 'id' | 'createdAt' | 'updatedAt' | 'rowVersion'>;
 export type PropertyCreateInput = Omit<Property, 'id' | 'createdAt' | 'updatedAt' | 'rowVersion'>;
@@ -324,6 +328,10 @@ export function mapApiMission(record: ApiRecord): OperationalMission {
     operatingLocationId: requiredText(record, 'operatingLocationId', 'operating_location_id'),
     missionNumber: requiredText(record, 'missionNumber', 'mission_number'),
     title: requiredText(record, 'title'), description: optionalText(record, 'description'), status: 'Planning',
+    aircraftIds: Array.isArray(value(record, 'aircraftIds', 'aircraft_ids'))
+      ? (value(record, 'aircraftIds', 'aircraft_ids') as unknown[]).map(String) : [],
+    equipmentKitIds: Array.isArray(value(record, 'equipmentKitIds', 'equipment_kit_ids'))
+      ? (value(record, 'equipmentKitIds', 'equipment_kit_ids') as unknown[]).map(String) : [],
     scheduledStartAt, rowVersion: versionValue(record), createdAt: timestamp(record, 'createdAt', 'created_at'),
     updatedAt: timestamp(record, 'updatedAt', 'updated_at'),
   };
@@ -493,6 +501,8 @@ export function createOperationalApi(options: ApiOptions = {}): OperationalApi {
       ...(input.description !== undefined ? { description: input.description } : {}),
       ...(input.status !== undefined ? { status: 'planning' } : {}),
       ...(input.scheduledStartAt !== undefined ? { scheduledStartAt: input.scheduledStartAt } : {}),
+      ...(input.aircraftIds !== undefined ? { aircraftIds: input.aircraftIds } : {}),
+      ...(input.equipmentKitIds !== undefined ? { equipmentKitIds: input.equipmentKitIds } : {}),
     };
   };
 

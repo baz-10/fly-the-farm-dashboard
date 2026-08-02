@@ -19,6 +19,7 @@ const mission = {
   id: 'mission-1', jobId: 'job-1', operatingLocationId: 'location-1', missionNumber: 'MSN-001',
   title: 'North block spray', description: 'Treat the creek boundary', status: 'Planning',
   scheduledStartAt: '2026-08-10T08:30:00Z', rowVersion: 3,
+  aircraftIds: ['aircraft-1'], equipmentKitIds: ['kit-1'],
   createdAt: '2026-08-01T00:00:00Z', updatedAt: '2026-08-02T00:00:00Z',
 };
 
@@ -199,6 +200,19 @@ describe('remote authoritative mission workflow', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Update Mission' }));
     expect(await screen.findByText(/record changed on the server/i)).toBeInTheDocument();
     expect(mockOperational.updateMission).toHaveBeenCalledWith('mission-1', expect.objectContaining({ title: 'Lost edit', status: 'Planning' }));
+  });
+
+  test('persists authoritative Aircraft and Equipment assignments with the Draft Mission version', async () => {
+    const updateMission = jest.fn().mockResolvedValue({ ...mission, rowVersion: 4 });
+    mockOperational = operational({ updateMission });
+    mockParams = { missionId: 'mission-1' };
+    render(<MissionPlanning />);
+    expect(screen.getByRole('combobox', { name: 'Aircraft' })).toHaveTextContent('VH-FTF1');
+    expect(screen.getByRole('combobox', { name: 'Equipment Kit' })).toHaveTextContent('T50 Spray Kit');
+    fireEvent.click(screen.getByRole('button', { name: 'Update Mission' }));
+    await waitFor(() => expect(updateMission).toHaveBeenCalledWith('mission-1', expect.objectContaining({
+      aircraftIds: ['aircraft-1'], equipmentKitIds: ['kit-1'],
+    })));
   });
 
   test('keeps an unscheduled existing mission blank and persists an explicitly cleared schedule as null', async () => {

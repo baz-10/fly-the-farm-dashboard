@@ -37,6 +37,24 @@ function assignedLocationFilter(resource, context) {
 }
 
 class OperationalRepository {
+  async attachMissionAssignments(context, records) {
+    if (!Array.isArray(records) || records.length === 0) return records;
+    const missionIds = records.map((record) => record.id).filter(Boolean).map(encodeURIComponent).join(',');
+    const [aircraftAssignments, kitAssignments] = await Promise.all([
+      supabaseRequest(`rest/v1/mission_aircraft_assignments?${tenantFilter(context)}&mission_id=in.(${missionIds})&unassigned_at=is.null&select=mission_id,aircraft_id&order=assigned_at.asc`, {
+        publicMessage: 'Mission Aircraft assignments could not be loaded.',
+      }),
+      supabaseRequest(`rest/v1/mission_equipment_kit_assignments?${tenantFilter(context)}&mission_id=in.(${missionIds})&unassigned_at=is.null&select=mission_id,equipment_kit_id&order=assigned_at.asc`, {
+        publicMessage: 'Mission Equipment assignments could not be loaded.',
+      }),
+    ]);
+    return records.map((record) => ({
+      ...record,
+      aircraft_ids: (aircraftAssignments || []).filter((assignment) => assignment.mission_id === record.id).map((assignment) => assignment.aircraft_id),
+      equipment_kit_ids: (kitAssignments || []).filter((assignment) => assignment.mission_id === record.id).map((assignment) => assignment.equipment_kit_id),
+    }));
+  }
+
   async attachEquipmentKitRelationships(context, records) {
     if (!Array.isArray(records) || records.length === 0) return records;
     const kitIds = records.map((record) => record.id).filter(Boolean);
@@ -76,6 +94,7 @@ class OperationalRepository {
       publicMessage: 'Operational records could not be loaded.',
     });
     if (resource === 'jobs') return this.attachJobFieldIds(context, records);
+    if (resource === 'missions') return this.attachMissionAssignments(context, records);
     if (resource === 'equipment-kits') return this.attachEquipmentKitRelationships(context, records);
     return records;
   }
@@ -87,9 +106,11 @@ class OperationalRepository {
       publicMessage: 'Operational record could not be loaded.',
     });
     if (!Array.isArray(rows) || !rows[0]) return null;
-    if (!['jobs', 'equipment-kits'].includes(resource)) return rows[0];
+    if (!['jobs', 'missions', 'equipment-kits'].includes(resource)) return rows[0];
     const [record] = resource === 'jobs'
       ? await this.attachJobFieldIds(context, [rows[0]])
+      : resource === 'missions'
+        ? await this.attachMissionAssignments(context, [rows[0]])
       : await this.attachEquipmentKitRelationships(context, [rows[0]]);
     return record || null;
   }
