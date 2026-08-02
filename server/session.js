@@ -89,7 +89,7 @@ async function refreshSession(refreshToken) {
   });
 }
 
-async function authenticateRequest(req, res) {
+async function authenticateAuthUser(req, res) {
   const cookies = parseCookies(req);
   let accessToken = cookies[ACCESS_COOKIE];
   let authUser;
@@ -116,6 +116,12 @@ async function authenticateRequest(req, res) {
     }
   }
 
+  return authUser;
+}
+
+async function authenticateRequest(req, res) {
+  const authUser = await authenticateAuthUser(req, res);
+
   const profile = await loadProfile(authUser.id);
   if (!profile?.tenant_id || !['admin', 'contractor', 'client'].includes(profile.role)) {
     throw createHttpError(403, 'Your account is not configured for Fly the Farm.');
@@ -125,6 +131,7 @@ async function authenticateRequest(req, res) {
 }
 
 module.exports = {
+  authenticateAuthUser,
   authenticateRequest,
   clearSessionCookies,
   loadProfile,

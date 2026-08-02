@@ -1,6 +1,5 @@
 const { createHttpError, supabaseRequest } = require('./supabase');
-
-const ACCESS_COOKIE = 'ftf_access_token';
+const { authenticateAuthUser } = require('./session');
 
 function parseCookies(req) {
   const cookies = {};
@@ -29,15 +28,8 @@ function accessError(code, message) {
   return error;
 }
 
-async function resolveRequestContext(req) {
-  const accessToken = parseCookies(req)[ACCESS_COOKIE];
-  if (!accessToken) throw createHttpError(401, 'Authentication is required.');
-
-  const authUser = await supabaseRequest('auth/v1/user', {
-    keyType: 'anon',
-    accessToken,
-    publicMessage: 'Authentication is required.',
-  });
+async function resolveRequestContext(req, res) {
+  const authUser = await authenticateAuthUser(req, res);
   if (!authUser?.id) throw createHttpError(401, 'Authentication is required.');
 
   const internalUsers = await query('internal_users', [

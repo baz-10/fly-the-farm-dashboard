@@ -15,6 +15,7 @@ function createResponse() {
     json(body) { this.body = body; return this; },
     end() { return this; },
     setHeader(name, value) { this.headers[name.toLowerCase()] = value; },
+    getHeader(name) { return this.headers[name.toLowerCase()]; },
   };
 }
 
@@ -48,6 +49,18 @@ function handlerFor(resource, repository, resolvedContext = context()) {
 }
 
 describe('trusted organisation operational API', () => {
+  test('passes the response to trusted context resolution so expired sessions can refresh cookies', async () => {
+    const resolveContext = jest.fn().mockResolvedValue(context());
+    const repository = { list: jest.fn().mockResolvedValue([]) };
+    const handler = createOperationalHandler('clients', { resolveContext, repository });
+    const req = request('GET');
+    const res = createResponse();
+
+    await handler(req, res);
+
+    expect(resolveContext).toHaveBeenCalledWith(req, res);
+  });
+
   test('returns a no-store unauthenticated envelope before any resource access', async () => {
     const repository = { list: jest.fn() };
     const handler = createOperationalHandler('clients', {
@@ -73,6 +86,10 @@ describe('trusted organisation operational API', () => {
       ok: true,
       status: 200,
       text: async () => {
+        if (url.includes('/auth/v1/token?grant_type=refresh_token')) return JSON.stringify({
+          access_token: 'refreshed-token', refresh_token: 'rotated-token', expires_in: 3600,
+          user: { id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', email: 'a@example.test' },
+        });
         if (url.endsWith('/auth/v1/user')) return JSON.stringify({ id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', email: 'a@example.test' });
         if (url.includes('/internal_users')) return JSON.stringify([{ id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', organisation_id: '11111111-1111-4111-8111-111111111111', display_name: 'A' }]);
         if (url.includes('/memberships')) return JSON.stringify([{ id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd', role_id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc' }]);
@@ -88,14 +105,19 @@ describe('trusted organisation operational API', () => {
       },
     }));
 
+    const refreshResponse = createResponse();
     const resolved = await resolveRequestContext({
-      headers: { cookie: 'ftf_access_token=trusted-token' },
+      headers: { cookie: 'ftf_refresh_token=trusted-refresh-token' },
       query: { organisationId: '99999999-9999-4999-8999-999999999999' },
       body: { organisationId: '99999999-9999-4999-8999-999999999999', role: 'admin' },
-    });
+    }, refreshResponse);
 
     expect(resolved.organisation.id).toBe('11111111-1111-4111-8111-111111111111');
     expect(resolved.roles).toEqual(['operator']);
+    expect(refreshResponse.headers['set-cookie']).toEqual(expect.arrayContaining([
+      expect.stringContaining('ftf_access_token=refreshed-token'),
+      expect.stringContaining('ftf_refresh_token=rotated-token'),
+    ]));
     expect(global.fetch.mock.calls.some(([url]) => String(url).includes('99999999-9999-4999-8999-999999999999'))).toBe(false);
     global.fetch = originalFetch;
   });
