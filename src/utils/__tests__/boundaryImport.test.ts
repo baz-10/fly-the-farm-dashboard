@@ -2,6 +2,7 @@ import {
   boundaryFromGeoJson,
   calculateBoundaryAreaHectares,
   parseKmlBoundary,
+  parseKmzBytes,
   toClosedGeoJsonRing,
 } from '../boundaryImport';
 
@@ -46,6 +47,14 @@ describe('boundary imports', () => {
 
     expect(result.polygonCount).toBe(2);
     expect(result.polygons).toHaveLength(2);
+    expect(result.areaHa).toBeGreaterThan(100);
+  });
+
+  test('imports KML geometry from a KMZ archive', async () => {
+    const { zipSync, strToU8 } = await import('fflate');
+    const kmz = zipSync({ 'doc.kml': strToU8(`<kml xmlns="http://www.opengis.net/kml/2.2"><Placemark><Polygon><outerBoundaryIs><LinearRing><coordinates>153,-27 153.01,-27 153.01,-27.01 153,-27.01 153,-27</coordinates></LinearRing></outerBoundaryIs></Polygon></Placemark></kml>`) });
+    const result = await parseKmzBytes(kmz);
+    expect(result.polygonCount).toBe(1);
     expect(result.areaHa).toBeGreaterThan(100);
   });
 

@@ -1,24 +1,11 @@
 import React from 'react';
 import { Box, Chip, Stack, Typography } from '@mui/material';
 import { MissionMapFeature, MissionMapFeatureType } from '../types/missionMap';
+import { MISSION_MAP_FEATURE_DEFINITIONS } from '../utils/missionMapFeatureCatalog';
 
-export const MAP_FEATURE_LABELS: Record<MissionMapFeatureType, string> = {
-  building: 'Buildings',
-  obstacle: 'Obstacles',
-  'point-of-interest': 'Points of interest',
-  'primary-landing-zone': 'Primary landing zone',
-  'secondary-landing-zone': 'Secondary landing zone',
-  signage: 'Signage',
-};
+export const MAP_FEATURE_LABELS = Object.fromEntries(Object.entries(MISSION_MAP_FEATURE_DEFINITIONS).map(([key,value])=>[key,value.label])) as Record<MissionMapFeatureType,string>;
 
-export const MAP_FEATURE_COLORS: Record<MissionMapFeatureType, string> = {
-  building: '#7b5e3b',
-  obstacle: '#c62828',
-  'point-of-interest': '#6a1b9a',
-  'primary-landing-zone': '#00897b',
-  'secondary-landing-zone': '#1565c0',
-  signage: '#ef6c00',
-};
+export const MAP_FEATURE_COLORS = Object.fromEntries(Object.entries(MISSION_MAP_FEATURE_DEFINITIONS).map(([key,value])=>[key,value.color])) as Record<MissionMapFeatureType,string>;
 
 export default function MissionMapLegend({ features }: { features: MissionMapFeature[] }) {
   return (

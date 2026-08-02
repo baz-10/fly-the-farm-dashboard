@@ -388,7 +388,7 @@ function mapMissionMapRecord(record) {
     createdAt: record.created_at, createdBy: record.created_by_internal_user_id };
 }
 
-const MISSION_GEOMETRY_ROLES = new Set(['operational_boundary','treatment_area','exclusion_zone','no_fly_zone','obstacle','corridor','access_route','staging_area','launch_point','landing_point','water_point','point_annotation','line_annotation','polygon_annotation','imported_source_geometry','regulatory_overlay','safety_overlay']);
+const MISSION_GEOMETRY_ROLES = new Set(['operational_boundary','treatment_area','exclusion_zone','no_fly_zone','obstacle','corridor','access_point','access_route','staging_area','launch_point','landing_point','water_point','point_annotation','line_annotation','polygon_annotation','imported_source_geometry','regulatory_overlay','safety_overlay']);
 function validateMissionGeometries(value) {
   if (!Array.isArray(value) || value.length > 500) throw apiError(400,'VALIDATION_ERROR','geometries must be an array of at most 500 records.');
   const ids = new Set();

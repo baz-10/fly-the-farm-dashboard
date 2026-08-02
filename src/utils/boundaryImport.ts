@@ -124,6 +124,15 @@ export function parseKmlBoundary(kmlText: string): BoundaryImportResult {
   return buildBoundaryResult(rings);
 }
 
+export async function parseKmzBytes(bytes: Uint8Array): Promise<BoundaryImportResult> {
+  const { unzipSync, strFromU8 } = await import('fflate');
+  let archive: Record<string,Uint8Array>;
+  try { archive=unzipSync(bytes); } catch { throw new Error('The KMZ archive is invalid or unreadable.'); }
+  const name=Object.keys(archive).find((entry)=>entry.toLowerCase().endsWith('.kml'));
+  if(!name) throw new Error('The KMZ archive does not contain a KML document.');
+  return parseKmlBoundary(strFromU8(archive[name]));
+}
+
 function collectGeometryRings(geometry: GeoJsonGeometry | null | undefined, rings: LatLng[][]) {
   if (!geometry) return;
 

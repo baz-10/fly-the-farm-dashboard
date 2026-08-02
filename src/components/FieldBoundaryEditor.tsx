@@ -23,16 +23,18 @@ import PolylineIcon from '@mui/icons-material/Polyline';
 import TouchAppIcon from '@mui/icons-material/TouchApp';
 import SquareFootIcon from '@mui/icons-material/SquareFoot';
 import SearchIcon from '@mui/icons-material/Search';
-import { MapContainer, TileLayer, Polygon, Marker, useMapEvents, useMap, LayersControl } from 'react-leaflet';
+import { MapContainer, TileLayer, Polygon, Polyline, Marker, useMapEvents, useMap, LayersControl } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { LatLng, BoundaryFileRef } from '../types/fieldManagement';
 import { MissionMapFeature, MissionMapFeatureType } from '../types/missionMap';
 import { removeMapFeature, upsertMapFeature } from '../utils/missionMapAnnotations';
 import MissionMapLegend, { MAP_FEATURE_COLORS, MAP_FEATURE_LABELS } from './MissionMapLegend';
+import { createMissionMapFeatureAt } from '../utils/missionMapFeatureCatalog';
 import {
   calculateBoundaryAreaHectares,
   parseKmlBoundary,
+  parseKmzBytes,
   parseShapefileBoundary,
 } from '../utils/boundaryImport';
 
@@ -212,10 +214,7 @@ export default function FieldBoundaryEditor({
   const handleMapClick = useCallback((lat: number, lng: number) => {
     if (activeFeatureType !== 'boundary' && onFeaturesChange) {
       const id = `${activeFeatureType}-${Date.now()}`;
-      const geometry: MissionMapFeature['geometry'] = activeFeatureType === 'building'
-        ? { type: 'Polygon', coordinates: [[[lng - 0.00008, lat - 0.00008], [lng + 0.00008, lat - 0.00008], [lng + 0.00008, lat + 0.00008], [lng - 0.00008, lat + 0.00008], [lng - 0.00008, lat - 0.00008]]] }
-        : { type: 'Point', coordinates: [lng, lat] };
-      onFeaturesChange(upsertMapFeature(features, { id, type: activeFeatureType, label: MAP_FEATURE_LABELS[activeFeatureType], geometry }));
+      onFeaturesChange(upsertMapFeature(features, createMissionMapFeatureAt(activeFeatureType,lat,lng,id)));
       return;
     }
     const updated = [...coords, [lat, lng] as LatLng];
@@ -245,17 +244,18 @@ export default function FieldBoundaryEditor({
     try {
       setImportNotice(null);
       const kml = files.find((file) => file.name.toLowerCase().endsWith('.kml'));
+      const kmz = files.find((file) => file.name.toLowerCase().endsWith('.kmz'));
       const result = kml
-        ? parseKmlBoundary(await kml.text())
+        ? parseKmlBoundary(await kml.text()) : kmz ? await parseKmzBytes(new Uint8Array(await kmz.arrayBuffer()))
         : await parseShapefileBoundary(files);
-      const primaryFile = kml || files.find((file) => file.name.toLowerCase().endsWith('.zip')) || files[0];
+      const primaryFile = kml || kmz || files.find((file) => file.name.toLowerCase().endsWith('.zip')) || files[0];
 
       onCoordsChange(result.coords);
       onPolygonsChange?.(result.polygons);
       const importedCoords = result.polygons.flat();
       onBoundaryFile?.({
         fileName: files.length === 1 ? primaryFile.name : files.map((file) => file.name).join(', '),
-        fileType: kml ? 'kml' : 'shp',
+        fileType: kml ? 'kml' : kmz ? 'kmz' : 'shp',
         sizeBytes: files.reduce((total, file) => total + file.size, 0),
         dataUrl: await new Promise<string>((resolve, reject) => {
           const reader = new FileReader();
@@ -404,8 +404,8 @@ export default function FieldBoundaryEditor({
               startIcon={<UploadFileIcon />}
               sx={{ borderRadius: '8px', fontWeight: 600, fontSize: '0.75rem' }}
             >
-              KML / SHP / ZIP
-              <input type="file" hidden multiple accept=".kml,.zip,.shp,.dbf,.prj,.cpg" onChange={handleFileUpload} />
+              KML / KMZ / SHP / ZIP
+              <input type="file" hidden multiple accept=".kml,.kmz,.zip,.shp,.dbf,.prj,.cpg" onChange={handleFileUpload} />
             </Button>
           )}
 
@@ -552,6 +552,10 @@ export default function FieldBoundaryEditor({
             const icon = L.divIcon({ className: '', html: `<div style="width:18px;height:18px;background:${MAP_FEATURE_COLORS[feature.type]};border:3px solid white;border-radius:50%;box-shadow:0 1px 5px rgba(0,0,0,.45)"></div>`, iconSize: [18, 18], iconAnchor: [9, 9] });
             return <Marker key={feature.id} position={[lat, lng]} icon={icon} />;
           })}
+
+          {features.filter((feature) => feature.geometry.type === 'LineString').map((feature) => (
+            <Polyline key={feature.id} positions={feature.geometry.type==='LineString'?feature.geometry.coordinates.map(([lng,lat])=>[lat,lng] as LatLng):[]} pathOptions={{color:MAP_FEATURE_COLORS[feature.type],weight:4}} />
+          ))}
 
           {/* Boundary points — draggable in edit mode */}
           {coords.map((c, idx) => (

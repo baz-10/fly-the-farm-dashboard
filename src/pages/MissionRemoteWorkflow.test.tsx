@@ -107,7 +107,8 @@ describe('remote authoritative mission workflow', () => {
     render(<MissionPlanning />);
     expect(screen.getByRole('heading', { name: 'North block spray' })).toBeInTheDocument();
     expect(screen.getByText(/Planning only · Not ready for operations/i)).toBeInTheDocument();
-    expect(screen.getByText(/aircraft, equipment, personnel, chemicals, maps, weather, JSA, risk controls, authorisation, completion, pack and financials are unavailable/i)).toBeInTheDocument();
+    expect(screen.getByText(/aircraft, equipment, personnel, chemicals, weather, JSA, risk controls, authorisation, completion, pack and financials are unavailable/i)).toBeInTheDocument();
+    expect(screen.getByText(/Mission maps are authoritative/i)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Authorise|Authorize/i })).not.toBeInTheDocument();
     expect(screen.queryByText(/APVMA Compliant/i)).not.toBeInTheDocument();
   });

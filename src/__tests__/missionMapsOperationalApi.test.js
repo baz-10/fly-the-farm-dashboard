@@ -31,4 +31,12 @@ describe('mission map operational API', () => {
     expect(res.statusCode).toBe(409);
     expect(res.body.error.code).toBe('VERSION_CONFLICT');
   });
+
+  test('accepts an access point alongside the required operational boundary', async () => {
+    const boundary = { id: '22222222-2222-4222-8222-222222222222', role: 'operational_boundary', geometryType: 'Polygon', geometry: { type: 'Polygon', coordinates: [[[153,-27],[153.01,-27],[153.01,-27.01],[153,-27]]] }, sourceCrs: 'EPSG:4326', canonicalCrs: 'EPSG:4326', provenance: 'drawn', validationState: 'valid', areaHectares: 10, lengthMetres: null, label: 'Block', notes: '', sourceFileId: null };
+    const access = { ...boundary, id: '33333333-3333-4333-8333-333333333333', role: 'access_point', geometryType: 'Point', geometry: {type:'Point',coordinates:[153,-27]}, areaHectares:null,label:'Gate' };
+    const repository = { get: jest.fn().mockResolvedValue({ id: missionId, operating_location_id: context.operatingLocationIds[0], status: 'planning' }), saveMissionMap: jest.fn().mockResolvedValue({ record: { mission_id: missionId, version_number: 1, notes: '', geometries: [boundary,access], created_at: '2026-08-02T00:00:00Z' } }) };
+    const res=response(); await createMissionMapHandler({repository,resolveContext:jest.fn().mockResolvedValue(context)})(request('POST',{expectedVersion:0,notes:'',sourceFieldBoundaryVersionId:null,geometries:[boundary,access]}),res);
+    expect(res.statusCode).toBe(201);
+  });
 });

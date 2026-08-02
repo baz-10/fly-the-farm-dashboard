@@ -89,6 +89,7 @@ import {
 import { MissionWorkPackDraft } from '../types/workPack';
 import { describeOperationalError } from '../services/operationalDataStore';
 import { createMissionMapsApi, MissionGeometryRecord, MissionMapsApiError } from '../services/missionMapsApi';
+import { missionMapFeatureRole, missionMapFeatureTypeForRole } from '../utils/missionMapFeatureCatalog';
 
 type MissionPayload = Omit<
   MissionRecord,
@@ -393,7 +394,7 @@ function AuthoritativeMissionPlanning() {
       setMapVersion(revision.version); setMapNotes(revision.notes);
       setMapGeometryIds(boundaries.map((g) => g.id));
       setMapPolygons(boundaries.map((g) => (g.geometry.coordinates[0] || []).slice(0, -1).map(([lng,lat]: [number,number]) => [lat,lng] as LatLng)));
-      setMapFeatures(revision.geometries.filter((g) => !['operational_boundary','treatment_area'].includes(g.role)).map((g) => ({ id:g.id, type: g.role === 'obstacle' ? 'obstacle' : g.role === 'launch_point' ? 'primary-landing-zone' : g.role === 'landing_point' ? 'secondary-landing-zone' : 'point-of-interest', label:g.label, notes:g.notes, geometry:g.geometry as MissionMapFeature['geometry'] })));
+      setMapFeatures(revision.geometries.filter((g) => !['operational_boundary','treatment_area'].includes(g.role)).map((g) => ({ id:g.id, type:missionMapFeatureTypeForRole(g.role), label:g.label, notes:g.notes, geometry:g.geometry as MissionMapFeature['geometry'] })));
       setMapStatus('ready');
     }).catch((error) => { if(active){setMapStatus('error');setMapError(error instanceof Error?error.message:'Mission map could not be loaded.');} });
     return () => { active=false; };
@@ -406,7 +407,7 @@ function AuthoritativeMissionPlanning() {
     try {
       const boundaryIds = mapPolygons.map((_,index) => mapGeometryIds[index] || crypto.randomUUID());
       const boundaries: MissionGeometryRecord[] = mapPolygons.filter((p)=>p.length>=3).map((polygon,index) => ({ id:boundaryIds[index], role:index===0?'operational_boundary':'treatment_area', geometryType:'Polygon', geometry:{type:'Polygon',coordinates:[toClosedGeoJsonRing(polygon)]}, sourceCrs:'EPSG:4326',canonicalCrs:'EPSG:4326',provenance:'drawn',validationState:'valid',areaHectares:index===0?mapArea:null,lengthMetres:null,label:index===0?'Operational boundary':`Treatment area ${index+1}`,notes:'',sourceFileId:null }));
-      const features: MissionGeometryRecord[] = mapFeatures.map((feature) => ({ id:feature.id,role:feature.type==='obstacle'?'obstacle':feature.type==='primary-landing-zone'?'launch_point':feature.type==='secondary-landing-zone'?'landing_point':feature.geometry.type==='Polygon'?'polygon_annotation':'point_annotation',geometryType:feature.geometry.type,geometry:feature.geometry,sourceCrs:'EPSG:4326',canonicalCrs:'EPSG:4326',provenance:'drawn',validationState:'valid',areaHectares:null,lengthMetres:null,label:feature.label,notes:feature.notes||'',sourceFileId:null }));
+      const features: MissionGeometryRecord[] = mapFeatures.map((feature) => ({ id:feature.id,role:missionMapFeatureRole(feature.type) as MissionGeometryRecord['role'],geometryType:feature.geometry.type,geometry:feature.geometry,sourceCrs:'EPSG:4326',canonicalCrs:'EPSG:4326',provenance:'drawn',validationState:'valid',areaHectares:null,lengthMetres:null,label:feature.label,notes:feature.notes||'',sourceFileId:null }));
       const saved=await missionMapsApi.save(selectedMission.id,{expectedVersion:mapVersion,notes:mapNotes,sourceFieldBoundaryVersionId:null,geometries:[...boundaries,...features]});
       setMapVersion(saved.version);setMapGeometryIds(boundaryIds);setMapStatus('ready');
     } catch(error) { setMapError(error instanceof MissionMapsApiError&&error.code==='VERSION_CONFLICT'?'This Mission map changed on the server. Refresh before saving again.':error instanceof Error?error.message:'Mission map save failed.'); }
@@ -567,7 +568,7 @@ function AuthoritativeMissionPlanning() {
             <Card variant="outlined" sx={{ borderRadius: 2.5 }}>
               <CardContent>
                 <Typography variant="h6" sx={{ fontWeight: 800 }}>Operational planning</Typography>
-                <Alert severity="info" sx={{ my: 2 }}>Aircraft, equipment, personnel, chemicals, maps, weather, JSA, risk controls, authorisation, completion, pack and financials are unavailable and are not persisted in this remote Planning slice.</Alert>
+                <Alert severity="info" sx={{ my: 2 }}>Aircraft, equipment, personnel, chemicals, weather, JSA, risk controls, authorisation, completion, pack and financials are unavailable and are not persisted in this remote Planning slice. Mission maps are authoritative.</Alert>
                 <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap" sx={{ mb: 2 }}>
                   {unavailableSections.map((section) => <Chip key={section} size="small" variant="outlined" label={`${section} — unavailable`} />)}
                 </Stack>
