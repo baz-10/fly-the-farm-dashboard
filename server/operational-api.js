@@ -1,10 +1,13 @@
 const { createHttpError } = require('./supabase');
+const crypto = require('crypto');
 const { resolveRequestContext } = require('./request-context');
 const { OperationalRepository } = require('./operational-repository');
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const MAX_BODY_BYTES = 64 * 1024;
 const MAX_BOUNDARY_BODY_BYTES = 256 * 1024;
+const MAX_IMPORT_SOURCE_BYTES = 3 * 1024 * 1024;
+const MAX_IMPORT_BODY_BYTES = Math.ceil(MAX_IMPORT_SOURCE_BYTES * 1.4);
 const MAX_PAGE_SIZE = 100;
 const AUSTRALIAN_STATES = new Set(['NSW', 'VIC', 'QLD', 'SA', 'WA', 'TAS', 'NT', 'ACT']);
 
@@ -407,6 +410,37 @@ function mapMissionMapRecord(record) {
     createdAt: record.created_at, createdBy: record.created_by_internal_user_id };
 }
 
+function mapMissionMapSourceFileRecord(record) {
+  if (!record) return null;
+  return {
+    id: record.id, missionId: record.mission_id, originalFilename: record.original_filename,
+    sourceFormat: record.source_format, fileSizeBytes: Number(record.file_size_bytes), checksum: record.sha256_checksum,
+    originalCrs: record.original_crs || null, transformationMetadata: record.transformation_metadata || {},
+    validationResult: record.validation_result || {}, importedAt: record.imported_at,
+    importedBy: record.imported_by_internal_user_id,
+  };
+}
+
+function parseMissionMapSourceFile(body) {
+  const allowed = new Set(['fileName','fileType','sizeBytes','dataUrl','sourceCrs','transformationMetadata','validationResult','importedAt']);
+  Object.keys(body).forEach((key) => { if (!allowed.has(key)) throw apiError(400,'VALIDATION_ERROR',`Unexpected source-file field: ${key}.`); });
+  if (typeof body.fileName !== 'string' || !body.fileName.trim() || body.fileName.length > 255 || /[\\/\0]/.test(body.fileName)) throw apiError(400,'VALIDATION_ERROR','fileName is invalid.');
+  if (!['kml','kmz','shp'].includes(body.fileType)) throw apiError(400,'VALIDATION_ERROR','fileType must be kml, kmz, or shp.');
+  const sourceFormat = body.fileType === 'shp' ? 'shapefile' : body.fileType;
+  const expectedExtension = body.fileType === 'shp' ? /\.(zip|shp)$/i : new RegExp(`\\.${body.fileType}$`,'i');
+  if (!expectedExtension.test(body.fileName)) throw apiError(400,'VALIDATION_ERROR','fileName extension does not match fileType.');
+  const match = typeof body.dataUrl === 'string' && body.dataUrl.match(/^data:([^;,]+);base64,([A-Za-z0-9+/=]+)$/);
+  if (!match) throw apiError(400,'VALIDATION_ERROR','dataUrl must contain a base64-encoded source file.');
+  const bytes = Buffer.from(match[2],'base64');
+  if (!bytes.length || bytes.length > MAX_IMPORT_SOURCE_BYTES || Number(body.sizeBytes) !== bytes.length) throw apiError(400,'VALIDATION_ERROR','Source-file size is invalid.');
+  if (body.sourceCrs !== null && body.sourceCrs !== undefined && (typeof body.sourceCrs !== 'string' || body.sourceCrs.length > 4096)) throw apiError(400,'VALIDATION_ERROR','sourceCrs is invalid.');
+  if (!body.transformationMetadata || typeof body.transformationMetadata !== 'object' || Array.isArray(body.transformationMetadata)) throw apiError(400,'VALIDATION_ERROR','transformationMetadata must be an object.');
+  if (!body.validationResult || typeof body.validationResult !== 'object' || Array.isArray(body.validationResult) || !['valid','requires_review'].includes(body.validationResult.state)) throw apiError(400,'VALIDATION_ERROR','validationResult is invalid.');
+  return { fileName: body.fileName, fileType: sourceFormat, contentType: match[1], bytes,
+    checksum: crypto.createHash('sha256').update(bytes).digest('hex'), sourceCrs: body.sourceCrs || null,
+    transformationMetadata: body.transformationMetadata, validationResult: body.validationResult };
+}
+
 const MISSION_GEOMETRY_ROLES = new Set(['operational_boundary','treatment_area','exclusion_zone','no_fly_zone','obstacle','corridor','access_point','access_route','staging_area','launch_point','landing_point','water_point','point_annotation','line_annotation','polygon_annotation','imported_source_geometry','regulatory_overlay','safety_overlay']);
 function validateMissionGeometries(value) {
   if (!Array.isArray(value) || value.length > 500) throw apiError(400,'VALIDATION_ERROR','geometries must be an array of at most 500 records.');
@@ -420,6 +454,7 @@ function validateMissionGeometries(value) {
     if(!['Point','LineString','Polygon','MultiPolygon'].includes(item.geometryType)||item.geometry?.type!==item.geometryType||!Array.isArray(item.geometry?.coordinates))throw apiError(400,'VALIDATION_ERROR','Geometry type and canonical GeoJSON must agree.');
     if(item.sourceCrs!=='EPSG:4326'||item.canonicalCrs!=='EPSG:4326')throw apiError(400,'VALIDATION_ERROR','Production Beta canonical geometry must use EPSG:4326.');
     if(!['valid','requires_review','invalid'].includes(item.validationState))throw apiError(400,'VALIDATION_ERROR','Geometry validationState is invalid.');
+    if(item.sourceFileId!==null&&item.sourceFileId!==undefined)assertUuid(item.sourceFileId,'geometry.sourceFileId');
     return item;
   });
 }
@@ -433,6 +468,12 @@ function createMissionMapHandler(dependencies = {}) {
       if(req.method==='GET'){assertPermission(context,'mission_maps','read');const history=req.query?.history==='true';const record=await repository.getMissionMap(context,missionId,history);return res.status(200).json({data:history?(record||[]).map(mapMissionMapRecord):mapMissionMapRecord(record)});}
       if(req.method!=='POST'){res.setHeader('Allow','GET,POST,OPTIONS');return res.status(405).json({error:{code:'METHOD_NOT_ALLOWED',message:'Method not allowed.'}});}
       assertSameOrigin(req);assertPermission(context,'mission_maps','update');assertLocationAccess(context,mission.operating_location_id,'mission map');
+      if(req.query?.action==='source-file'){
+        const source=parseMissionMapSourceFile(parseBody(req,MAX_IMPORT_BODY_BYTES));
+        const record=await repository.createMissionMapSourceFile(context,missionId,source);
+        if(record?.notFound||record?.relationshipConflict)throw apiError(409,'RELATIONSHIP_CONFLICT','The Mission cannot accept imported source files.');
+        return res.status(201).json({data:mapMissionMapSourceFileRecord(record)});
+      }
       const body=parseBody(req,MAX_BOUNDARY_BODY_BYTES);const allowed=new Set(['expectedVersion','notes','sourceFieldBoundaryVersionId','geometries']);Object.keys(body).forEach((k)=>{if(!allowed.has(k))throw apiError(400,'VALIDATION_ERROR',`Unexpected field: ${k}.`);});
       const expectedVersion=Number(body.expectedVersion);if(!Number.isInteger(expectedVersion)||expectedVersion<0)throw apiError(400,'VALIDATION_ERROR','expectedVersion must be a non-negative integer.');
       const geometries=validateMissionGeometries(body.geometries);if(!geometries.some((g)=>['operational_boundary','treatment_area'].includes(g.role)&&g.validationState==='valid'))throw apiError(400,'VALIDATION_ERROR','A valid operational boundary or treatment area is required.');
@@ -648,4 +689,4 @@ function createSessionHandler(dependencies = {}) {
   };
 }
 
-module.exports = { createFieldBoundaryVersionHandler, createMissionMapHandler, createOperationalHandler, createSessionHandler, errorEnvelope, mapBoundaryRecord, mapDatabaseRecord };
+module.exports = { createFieldBoundaryVersionHandler, createMissionMapHandler, createOperationalHandler, createSessionHandler, errorEnvelope, mapBoundaryRecord, mapDatabaseRecord, mapMissionMapSourceFileRecord };

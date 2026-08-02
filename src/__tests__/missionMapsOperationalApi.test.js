@@ -32,11 +32,61 @@ describe('mission map operational API', () => {
     expect(res.body.error.code).toBe('VERSION_CONFLICT');
   });
 
+  test('rejects a malformed source-file relationship before saving geometry', async () => {
+    const geometry = { id: '22222222-2222-4222-8222-222222222222', role: 'operational_boundary', geometryType: 'Polygon', geometry: { type: 'Polygon', coordinates: [[[153,-27],[153.01,-27],[153.01,-27.01],[153,-27]]] }, sourceCrs: 'EPSG:4326', canonicalCrs: 'EPSG:4326', provenance: 'imported', validationState: 'valid', areaHectares: 10, lengthMetres: null, label: 'Block', notes: '', sourceFileId: 'not-a-uuid' };
+    const repository = { get: jest.fn().mockResolvedValue({ id: missionId, operating_location_id: context.operatingLocationIds[0], status: 'planning' }), saveMissionMap: jest.fn() };
+    const res = response();
+    await createMissionMapHandler({ repository, resolveContext: jest.fn().mockResolvedValue(context) })(request('POST', { expectedVersion: 0, notes: '', sourceFieldBoundaryVersionId: null, geometries: [geometry] }), res);
+    expect(res.statusCode).toBe(400);
+    expect(res.body.error.code).toBe('VALIDATION_ERROR');
+    expect(repository.saveMissionMap).not.toHaveBeenCalled();
+  });
+
   test('accepts an access point alongside the required operational boundary', async () => {
     const boundary = { id: '22222222-2222-4222-8222-222222222222', role: 'operational_boundary', geometryType: 'Polygon', geometry: { type: 'Polygon', coordinates: [[[153,-27],[153.01,-27],[153.01,-27.01],[153,-27]]] }, sourceCrs: 'EPSG:4326', canonicalCrs: 'EPSG:4326', provenance: 'drawn', validationState: 'valid', areaHectares: 10, lengthMetres: null, label: 'Block', notes: '', sourceFileId: null };
     const access = { ...boundary, id: '33333333-3333-4333-8333-333333333333', role: 'access_point', geometryType: 'Point', geometry: {type:'Point',coordinates:[153,-27]}, areaHectares:null,label:'Gate' };
     const repository = { get: jest.fn().mockResolvedValue({ id: missionId, operating_location_id: context.operatingLocationIds[0], status: 'planning' }), saveMissionMap: jest.fn().mockResolvedValue({ record: { mission_id: missionId, version_number: 1, notes: '', geometries: [boundary,access], created_at: '2026-08-02T00:00:00Z' } }) };
     const res=response(); await createMissionMapHandler({repository,resolveContext:jest.fn().mockResolvedValue(context)})(request('POST',{expectedVersion:0,notes:'',sourceFieldBoundaryVersionId:null,geometries:[boundary,access]}),res);
     expect(res.statusCode).toBe(201);
+  });
+
+  test('creates an internal Mission source-file record without returning a provider URL', async () => {
+    const sourceFileId = '44444444-4444-4444-8444-444444444444';
+    const repository = {
+      get: jest.fn().mockResolvedValue({ id: missionId, operating_location_id: context.operatingLocationIds[0], status: 'planning' }),
+      createMissionMapSourceFile: jest.fn().mockResolvedValue({
+        id: sourceFileId, mission_id: missionId, original_filename: 'boundary.kml', source_format: 'kml',
+        file_size_bytes: 24, sha256_checksum: 'a'.repeat(64), original_crs: 'EPSG:4326',
+        transformation_metadata: { canonicalCrs: 'EPSG:4326' }, validation_result: { state: 'valid' },
+        imported_at: '2026-08-02T00:00:00Z', imported_by_internal_user_id: context.internalUser.id,
+      }),
+    };
+    const res = response();
+    await createMissionMapHandler({ repository, resolveContext: jest.fn().mockResolvedValue(context) })(request('POST', {
+      fileName: 'boundary.kml', fileType: 'kml', sizeBytes: 11,
+      dataUrl: 'data:application/vnd.google-earth.kml+xml;base64,PGttbD48L2ttbD4=',
+      sourceCrs: 'EPSG:4326', transformationMetadata: { canonicalCrs: 'EPSG:4326' },
+      validationResult: { state: 'valid' }, importedAt: '2026-08-02T00:00:00Z',
+    }, { missionId, action: 'source-file' }), res);
+    expect(res.statusCode).toBe(201);
+    expect(repository.createMissionMapSourceFile).toHaveBeenCalledWith(context, missionId, expect.objectContaining({
+      fileName: 'boundary.kml', fileType: 'kml', bytes: expect.any(Buffer), checksum: expect.stringMatching(/^[a-f0-9]{64}$/),
+    }));
+    expect(res.body.data).toEqual(expect.objectContaining({ id: sourceFileId, originalFilename: 'boundary.kml', checksum: 'a'.repeat(64) }));
+    expect(JSON.stringify(res.body)).not.toMatch(/providerUrl|publicUrl|storageObjectKey/);
+  });
+
+  test('rejects invalid import payloads before creating source-file records', async () => {
+    const repository = {
+      get: jest.fn().mockResolvedValue({ id: missionId, operating_location_id: context.operatingLocationIds[0], status: 'planning' }),
+      createMissionMapSourceFile: jest.fn(),
+    };
+    const res = response();
+    await createMissionMapHandler({ repository, resolveContext: jest.fn().mockResolvedValue(context) })(request('POST', {
+      fileName: 'boundary.exe', fileType: 'exe', sizeBytes: 4, dataUrl: 'data:text/plain;base64,ZmFrZQ==',
+      sourceCrs: 'EPSG:4326', transformationMetadata: {}, validationResult: { state: 'valid' },
+    }, { missionId, action: 'source-file' }), res);
+    expect(res.statusCode).toBe(400);
+    expect(repository.createMissionMapSourceFile).not.toHaveBeenCalled();
   });
 });

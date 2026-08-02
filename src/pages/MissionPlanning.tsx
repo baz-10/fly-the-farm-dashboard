@@ -88,7 +88,7 @@ import {
 } from '../types/mission';
 import { MissionWorkPackDraft } from '../types/workPack';
 import { describeOperationalError } from '../services/operationalDataStore';
-import { createMissionMapsApi, MissionGeometryRecord, MissionMapsApiError } from '../services/missionMapsApi';
+import { createMissionMapsApi, MissionGeometryRecord, MissionMapRevision, MissionMapsApiError } from '../services/missionMapsApi';
 import { missionMapFeatureRole, missionMapFeatureTypeForRole } from '../utils/missionMapFeatureCatalog';
 
 type MissionPayload = Omit<
@@ -383,9 +383,14 @@ function AuthoritativeMissionPlanning() {
   const [mapFeatures, setMapFeatures] = React.useState<MissionMapFeature[]>([]);
   const [mapGeometryIds, setMapGeometryIds] = React.useState<string[]>([]);
   const [mapBoundarySources, setMapBoundarySources] = React.useState<Array<{ provenance: string; notes: string; sourceFileId: string | null }>>([]);
+  const [mapBoundaryFile, setMapBoundaryFile] = React.useState<BoundaryFileRef | null>(null);
+  const [mapUploadedSourceFileId, setMapUploadedSourceFileId] = React.useState<string | null>(null);
   const [mapArea, setMapArea] = React.useState(0);
   const [mapSaving, setMapSaving] = React.useState(false);
   const [mapError, setMapError] = React.useState('');
+  const [mapHistoryOpen, setMapHistoryOpen] = React.useState(false);
+  const [mapHistoryStatus, setMapHistoryStatus] = React.useState<'idle'|'loading'|'ready'|'error'>('idle');
+  const [mapHistory, setMapHistory] = React.useState<MissionMapRevision[]>([]);
   const missionMapsApi = React.useMemo(() => createMissionMapsApi(), []);
 
   React.useEffect(() => {
@@ -393,11 +398,13 @@ function AuthoritativeMissionPlanning() {
     let active = true; setMapStatus('loading'); setMapError('');
     missionMapsApi.get(selectedMission.id).then((revision) => {
       if (!active) return;
-      if (!revision) { setMapVersion(0); setMapNotes(''); setMapPolygons([]); setMapFeatures([]); setMapGeometryIds([]); setMapBoundarySources([]); setMapStatus('ready'); return; }
+      if (!revision) { setMapVersion(0); setMapNotes(''); setMapPolygons([]); setMapFeatures([]); setMapGeometryIds([]); setMapBoundarySources([]); setMapBoundaryFile(null); setMapUploadedSourceFileId(null); setMapStatus('ready'); return; }
       const boundaries = revision.geometries.filter((g) => ['operational_boundary','treatment_area'].includes(g.role) && g.geometryType === 'Polygon');
       setMapVersion(revision.version); setMapNotes(revision.notes);
       setMapGeometryIds(boundaries.map((g) => g.id));
       setMapBoundarySources(boundaries.map((g) => ({ provenance: g.provenance, notes: g.notes, sourceFileId: g.sourceFileId })));
+      setMapBoundaryFile(null);
+      setMapUploadedSourceFileId(boundaries.find((g) => g.sourceFileId)?.sourceFileId || null);
       setMapPolygons(boundaries.map((g) => (g.geometry.coordinates[0] || []).slice(0, -1).map(([lng,lat]: [number,number]) => [lat,lng] as LatLng)));
       setMapFeatures(revision.geometries.filter((g) => !['operational_boundary','treatment_area'].includes(g.role)).map((g) => ({ id:g.id, type:missionMapFeatureTypeForRole(g.role), label:g.label, notes:g.notes, geometry:g.geometry as MissionMapFeature['geometry'] })));
       setMapStatus('ready');
@@ -410,13 +417,39 @@ function AuthoritativeMissionPlanning() {
     if (!mapPolygons.some((polygon) => polygon.length >= 3)) { setMapError('Draw a valid operational boundary before saving the Mission map.'); return; }
     setMapSaving(true);
     try {
+      let importedSourceFileId = mapUploadedSourceFileId;
+      if (mapBoundaryFile && !importedSourceFileId) {
+        const sourceFile = await missionMapsApi.uploadSourceFile(selectedMission.id, {
+          fileName: mapBoundaryFile.fileName, fileType: mapBoundaryFile.fileType,
+          sizeBytes: mapBoundaryFile.sizeBytes, dataUrl: mapBoundaryFile.dataUrl,
+          sourceCrs: mapBoundaryFile.sourceCrs || null,
+          transformationMetadata: { canonicalCrs: 'EPSG:4326', coordinateOrder: 'longitude-latitude', transformedBy: 'Spray Command boundary importer' },
+          validationResult: { state: 'valid', polygonCount: mapPolygons.length, areaHectares: mapArea },
+          importedAt: mapBoundaryFile.uploadedAt,
+        });
+        importedSourceFileId = sourceFile.id;
+        setMapUploadedSourceFileId(sourceFile.id);
+      }
       const boundaryIds = mapPolygons.map((_,index) => mapGeometryIds[index] || crypto.randomUUID());
-      const boundaries: MissionGeometryRecord[] = mapPolygons.filter((p)=>p.length>=3).map((polygon,index) => { const source=mapBoundarySources[index] || (mapBoundarySources.length===1?mapBoundarySources[0]:undefined); return ({ id:boundaryIds[index], role:index===0?'operational_boundary':'treatment_area', geometryType:'Polygon', geometry:{type:'Polygon',coordinates:[toClosedGeoJsonRing(polygon)]}, sourceCrs:'EPSG:4326',canonicalCrs:'EPSG:4326',provenance:source?.provenance||'drawn',validationState:'valid',areaHectares:index===0?mapArea:null,lengthMetres:null,label:index===0?'Operational boundary':`Treatment area ${index+1}`,notes:source?.notes||'',sourceFileId:source?.sourceFileId||null }); });
+      const boundaries: MissionGeometryRecord[] = mapPolygons.filter((p)=>p.length>=3).map((polygon,index) => { const source=mapBoundarySources[index] || (mapBoundarySources.length===1?mapBoundarySources[0]:undefined); return ({ id:boundaryIds[index], role:index===0?'operational_boundary':'treatment_area', geometryType:'Polygon', geometry:{type:'Polygon',coordinates:[toClosedGeoJsonRing(polygon)]}, sourceCrs:'EPSG:4326',canonicalCrs:'EPSG:4326',provenance:source?.provenance||'drawn',validationState:'valid',areaHectares:index===0?mapArea:null,lengthMetres:null,label:index===0?'Operational boundary':`Treatment area ${index+1}`,notes:source?.notes||'',sourceFileId:source?.sourceFileId||importedSourceFileId||null }); });
       const features: MissionGeometryRecord[] = mapFeatures.map((feature) => ({ id:feature.id,role:missionMapFeatureRole(feature.type) as MissionGeometryRecord['role'],geometryType:feature.geometry.type,geometry:feature.geometry,sourceCrs:'EPSG:4326',canonicalCrs:'EPSG:4326',provenance:'drawn',validationState:'valid',areaHectares:null,lengthMetres:null,label:feature.label,notes:feature.notes||'',sourceFileId:null }));
       const saved=await missionMapsApi.save(selectedMission.id,{expectedVersion:mapVersion,notes:mapNotes,sourceFieldBoundaryVersionId:null,geometries:[...boundaries,...features]});
       setMapVersion(saved.version);setMapGeometryIds(boundaryIds);setMapStatus('ready');
     } catch(error) { setMapError(error instanceof MissionMapsApiError&&error.code==='VERSION_CONFLICT'?'This Mission map changed on the server. Refresh before saving again.':error instanceof Error?error.message:'Mission map save failed.'); }
     finally { setMapSaving(false); }
+  };
+
+  const openMapHistory = async () => {
+    if (!selectedMission) return;
+    setMapHistoryOpen(true);
+    setMapHistoryStatus('loading');
+    try {
+      setMapHistory(await missionMapsApi.history(selectedMission.id));
+      setMapHistoryStatus('ready');
+    } catch {
+      setMapHistory([]);
+      setMapHistoryStatus('error');
+    }
   };
 
   React.useEffect(() => {
@@ -593,9 +626,9 @@ function AuthoritativeMissionPlanning() {
               {mapStatus==='loading' && <Alert severity="info">Loading authoritative Mission geometry…</Alert>}
               {mapStatus==='error' && <Alert severity="error">Mission geometry could not be loaded. No empty or browser-stored map has been substituted. {mapError}</Alert>}
               {mapError && mapStatus!=='error' && <Alert severity="error" sx={{mb:2}}>{mapError}</Alert>}
-              {mapStatus==='ready' && <><FieldBoundaryEditor coords={mapPolygons[0]||[]} polygons={mapPolygons} onCoordsChange={(coords)=>{setMapPolygons((current)=>[coords,...current.slice(1)]);setMapBoundarySources([]);}} onPolygonsChange={(polygons)=>{setMapPolygons(polygons);setMapBoundarySources([]);}} onAreaChange={setMapArea} onBoundaryFile={(file)=>setMapBoundarySources(file?[{provenance:`imported_${file.fileType}`,notes:`Imported from ${file.fileName}`,sourceFileId:null}]:[])} features={mapFeatures} onFeaturesChange={setMapFeatures} mapHeight={580} />
+              {mapStatus==='ready' && <><FieldBoundaryEditor coords={mapPolygons[0]||[]} polygons={mapPolygons} onCoordsChange={(coords)=>{setMapPolygons((current)=>[coords,...current.slice(1)]);setMapBoundarySources((current)=>current.map((source)=>source.sourceFileId?{...source,provenance:'imported_modified'}:source));}} onPolygonsChange={(polygons)=>{setMapPolygons(polygons);setMapBoundarySources((current)=>current.map((source)=>source.sourceFileId?{...source,provenance:'imported_modified'}:source));}} onAreaChange={setMapArea} onBoundaryFile={(file)=>{setMapBoundaryFile(file);setMapUploadedSourceFileId(null);setMapBoundarySources(file?[{provenance:`imported_${file.fileType}`,notes:`Imported from ${file.fileName}`,sourceFileId:null}]:[]);}} features={mapFeatures} onFeaturesChange={setMapFeatures} mapHeight={580} />
                 <TextField fullWidth multiline minRows={2} label="Mission map notes" value={mapNotes} onChange={(e)=>setMapNotes(e.target.value)} sx={{mt:2}} />
-                <Stack direction="row" justifyContent="flex-end" sx={{mt:2}}><Button variant="contained" startIcon={<SaveIcon/>} disabled={mapSaving} onClick={()=>void saveMap()}>{mapSaving?'Saving authoritative map…':'Save Mission Map'}</Button></Stack></>}
+                <Stack direction="row" justifyContent="space-between" spacing={1} sx={{mt:2}}><Button variant="outlined" onClick={()=>void openMapHistory()}>View map revision history</Button><Button variant="contained" startIcon={<SaveIcon/>} disabled={mapSaving} onClick={()=>void saveMap()}>{mapSaving?'Saving authoritative map…':'Save Mission Map'}</Button></Stack></>}
             </Panel>}
 
             <Panel title="Downstream Mission Workflow" icon={<SecurityIcon />}>
@@ -648,6 +681,24 @@ function AuthoritativeMissionPlanning() {
           <Button onClick={() => setArchiveOpen(false)}>Cancel</Button>
           <Button color="error" variant="contained" disabled={operational.saving} onClick={() => void archive()}>Archive</Button>
         </DialogActions>
+      </Dialog>
+      <Dialog open={mapHistoryOpen} onClose={() => setMapHistoryOpen(false)} fullWidth maxWidth="md">
+        <DialogTitle>Mission Map Revision History</DialogTitle>
+        <DialogContent>
+          {mapHistoryStatus==='loading' && <LinearProgress />}
+          {mapHistoryStatus==='error' && <Alert severity="error">Mission map revision history could not be loaded.</Alert>}
+          {mapHistoryStatus==='ready' && mapHistory.length===0 && <Alert severity="info">No saved Mission map revisions.</Alert>}
+          {mapHistoryStatus==='ready' && <Stack spacing={1.5}>{mapHistory.map((revision) => {
+            const sourceFiles = Array.from(new Map(revision.geometries.filter((geometry)=>geometry.sourceFile).map((geometry)=>[geometry.sourceFile!.id,geometry.sourceFile!])).values());
+            return <Card key={revision.version} variant="outlined"><CardContent>
+              <Stack direction="row" justifyContent="space-between"><Typography fontWeight={800}>Version {revision.version}</Typography><Typography variant="caption">{new Date(revision.createdAt).toLocaleString()}</Typography></Stack>
+              <Typography variant="body2">{revision.geometries.length} geometry record{revision.geometries.length===1?'':'s'} · created by {revision.createdBy}</Typography>
+              {revision.notes && <Typography variant="body2" sx={{mt:0.5}}>{revision.notes}</Typography>}
+              {sourceFiles.map((source)=><Box key={source.id} sx={{mt:1,p:1,bgcolor:'action.hover',borderRadius:1}}><Typography variant="body2"><strong>Imported source:</strong> {source.originalFilename} ({source.sourceFormat})</Typography><Typography variant="caption" sx={{wordBreak:'break-all'}}>SHA-256 {source.checksum} · CRS {source.originalCrs||'Not supplied'}</Typography></Box>)}
+            </CardContent></Card>;
+          })}</Stack>}
+        </DialogContent>
+        <DialogActions><Button onClick={() => setMapHistoryOpen(false)}>Close</Button></DialogActions>
       </Dialog>
     </Box>
   );

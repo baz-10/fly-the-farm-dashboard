@@ -36,6 +36,7 @@ import {
   parseKmlBoundary,
   parseKmzBytes,
   parseShapefileBoundary,
+  prepareBoundarySourceFile,
 } from '../utils/boundaryImport';
 
 const TILE_LAYERS = {
@@ -248,21 +249,17 @@ export default function FieldBoundaryEditor({
       const result = kml
         ? parseKmlBoundary(await kml.text()) : kmz ? await parseKmzBytes(new Uint8Array(await kmz.arrayBuffer()))
         : await parseShapefileBoundary(files);
-      const primaryFile = kml || kmz || files.find((file) => file.name.toLowerCase().endsWith('.zip')) || files[0];
+      const preparedSource = await prepareBoundarySourceFile(files, kml ? 'kml' : kmz ? 'kmz' : 'shp');
 
       onCoordsChange(result.coords);
       onPolygonsChange?.(result.polygons);
       const importedCoords = result.polygons.flat();
       onBoundaryFile?.({
-        fileName: files.length === 1 ? primaryFile.name : files.map((file) => file.name).join(', '),
-        fileType: kml ? 'kml' : kmz ? 'kmz' : 'shp',
-        sizeBytes: files.reduce((total, file) => total + file.size, 0),
-        dataUrl: await new Promise<string>((resolve, reject) => {
-          const reader = new FileReader();
-          reader.onload = () => resolve(String(reader.result));
-          reader.onerror = () => reject(new Error('Could not read the selected boundary file.'));
-          reader.readAsDataURL(primaryFile);
-        }),
+        fileName: preparedSource.fileName,
+        fileType: preparedSource.fileType,
+        sizeBytes: preparedSource.sizeBytes,
+        dataUrl: preparedSource.dataUrl,
+        sourceCrs: preparedSource.sourceCrs,
         boundingBox: {
           north: Math.max(...importedCoords.map((coord) => coord[0])),
           south: Math.min(...importedCoords.map((coord) => coord[0])),

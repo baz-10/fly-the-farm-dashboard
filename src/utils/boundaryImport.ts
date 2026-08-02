@@ -26,6 +26,60 @@ export interface BoundaryImportResult {
   warning?: string;
 }
 
+export interface PreparedBoundarySourceFile {
+  fileName: string;
+  fileType: 'kml' | 'kmz' | 'shp';
+  sizeBytes: number;
+  dataUrl: string;
+  sourceCrs: string | null;
+}
+
+function bytesToDataUrl(bytes: Uint8Array, contentType: string) {
+  let binary = '';
+  const chunkSize = 0x8000;
+  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+    binary += String.fromCharCode(...Array.from(bytes.subarray(offset, Math.min(offset + chunkSize, bytes.length))));
+  }
+  return `data:${contentType};base64,${btoa(binary)}`;
+}
+
+export async function prepareBoundarySourceFile(files: File[], fileType: 'kml' | 'kmz' | 'shp'): Promise<PreparedBoundarySourceFile> {
+  if (!files.length) throw new Error('Select a boundary source file.');
+  if (fileType === 'kml' || fileType === 'kmz') {
+    const file = files.find((candidate) => candidate.name.toLowerCase().endsWith(`.${fileType}`)) || files[0];
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    return {
+      fileName: file.name, fileType, sizeBytes: bytes.length,
+      dataUrl: bytesToDataUrl(bytes, fileType === 'kml' ? 'application/vnd.google-earth.kml+xml' : 'application/vnd.google-earth.kmz'),
+      sourceCrs: 'EPSG:4326',
+    };
+  }
+
+  const { unzipSync, zipSync, strFromU8 } = await import('fflate');
+  const suppliedZip = files.find((file) => file.name.toLowerCase().endsWith('.zip'));
+  let archiveBytes: Uint8Array;
+  let fileName: string;
+  if (suppliedZip) {
+    archiveBytes = new Uint8Array(await suppliedZip.arrayBuffer());
+    fileName = suppliedZip.name;
+  } else {
+    const entries: Record<string, Uint8Array> = {};
+    await Promise.all(files.map(async (file) => { entries[file.name] = new Uint8Array(await file.arrayBuffer()); }));
+    archiveBytes = zipSync(entries);
+    const shpName = files.find((file) => file.name.toLowerCase().endsWith('.shp'))?.name || 'boundary.shp';
+    fileName = `${shpName.replace(/\.shp$/i, '')}.zip`;
+  }
+  let sourceCrs: string | null = null;
+  try {
+    const archive = unzipSync(archiveBytes);
+    const projectionName = Object.keys(archive).find((name) => name.toLowerCase().endsWith('.prj'));
+    if (projectionName) sourceCrs = strFromU8(archive[projectionName]).trim() || null;
+  } catch {
+    throw new Error('The shapefile source package is invalid or unreadable.');
+  }
+  return { fileName, fileType: 'shp', sizeBytes: archiveBytes.length, dataUrl: bytesToDataUrl(archiveBytes, 'application/zip'), sourceCrs };
+}
+
 export function toClosedGeoJsonRing(coords: LatLng[]): number[][] {
   const ring = coords.map(([lat, lng]) => [lng, lat]);
   if (coords.length > 0 && !samePosition(coords[0], coords[coords.length - 1])) {

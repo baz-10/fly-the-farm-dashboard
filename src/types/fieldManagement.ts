@@ -51,6 +51,7 @@ export interface BoundaryFileRef {
   fileType: 'kml' | 'shp' | 'kmz';
   sizeBytes: number;
   dataUrl: string;
+  sourceCrs?: string | null;
   boundingBox?: {
     north: number;
     south: number;

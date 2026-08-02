@@ -1,4 +1,5 @@
 const { supabaseRequest } = require('./supabase');
+const crypto = require('crypto');
 
 const TABLES = {
   clients: 'clients',
@@ -185,6 +186,32 @@ class OperationalRepository {
     if (result?.location_forbidden) return { locationForbidden: true };
     if (result?.relationship_conflict) return { relationshipConflict: true };
     return { record: result?.record || result };
+  }
+
+  async createMissionMapSourceFile(context, missionId, values) {
+    const bucket = 'mission-map-imports';
+    const safeName = values.fileName.replace(/[^A-Za-z0-9._-]/g, '_');
+    const objectKey = `${context.organisation.id}/${missionId}/${crypto.randomUUID()}/${safeName}`;
+    await supabaseRequest(`storage/v1/object/${bucket}/${objectKey}`, {
+      method: 'POST', body: values.bytes, headers: { 'Content-Type': values.contentType, 'x-upsert': 'false' },
+      publicMessage: 'Mission map source file could not be stored.',
+    });
+    const cleanup = () => supabaseRequest(`storage/v1/object/${bucket}/${objectKey}`, { method: 'DELETE', publicMessage: 'Mission map source cleanup failed.' }).catch(() => {});
+    try {
+      const result = await supabaseRequest('rest/v1/rpc/ftf_create_mission_map_source_file', { method: 'POST', body: JSON.stringify({
+        p_organisation_id: context.organisation.id, p_actor_internal_user_id: context.internalUser.id, p_mission_id: missionId,
+        p_storage_provider: 'supabase', p_storage_bucket: bucket, p_storage_object_key: objectKey,
+        p_original_filename: values.fileName, p_source_format: values.fileType, p_content_type: values.contentType,
+        p_file_size_bytes: values.bytes.length, p_sha256_checksum: values.checksum, p_original_crs: values.sourceCrs,
+        p_transformation_metadata: values.transformationMetadata, p_validation_result: values.validationResult,
+      }), publicMessage: 'Mission map source evidence could not be recorded.' });
+      if (result?.not_found) { await cleanup(); return { notFound: true }; }
+      if (result?.relationship_conflict) { await cleanup(); return { relationshipConflict: true }; }
+      return result;
+    } catch (error) {
+      await cleanup();
+      throw error;
+    }
   }
 
   async relationshipExists(resource, context, id, filters = {}) {

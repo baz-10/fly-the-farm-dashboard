@@ -29,6 +29,8 @@ let mockSearch = '';
 const mockNavigate = jest.fn();
 const mockMissionMapGet = jest.fn();
 const mockMissionMapSave = jest.fn();
+const mockMissionMapUploadSourceFile = jest.fn();
+const mockMissionMapHistory = jest.fn();
 const missionAircraft = {
   id: 'aircraft-1', operatingLocationId: 'location-1', registration: 'VH-FTF1', model: 'DJI Agras T50',
   status: 'operational', serviceabilityState: 'serviceable', missionReady: true,
@@ -52,7 +54,7 @@ jest.mock('../contexts/AircraftContext', () => ({
   }),
 }));
 jest.mock('../services/missionMapsApi', () => ({
-  createMissionMapsApi: () => ({ get: mockMissionMapGet, save: mockMissionMapSave }),
+  createMissionMapsApi: () => ({ get: mockMissionMapGet, save: mockMissionMapSave, history: mockMissionMapHistory, uploadSourceFile: mockMissionMapUploadSourceFile }),
   MissionMapsApiError: class MissionMapsApiError extends Error {},
 }));
 jest.mock('../contexts/MissionContext', () => ({
@@ -68,6 +70,7 @@ jest.mock('../components/FieldBoundaryEditor', () => (props: any) => <div>
     props.onBoundaryFile({
       fileName: 'mission-boundary.kml', fileType: 'kml', sizeBytes: 512,
       dataUrl: 'data:application/vnd.google-earth.kml+xml;base64,ZmFrZQ==',
+      sourceCrs: 'EPSG:4326',
       boundingBox: { north: -27, south: -27.01, east: 153.01, west: 153 },
       uploadedAt: '2026-08-02T00:00:00Z',
     });
@@ -98,6 +101,11 @@ describe('remote authoritative mission workflow', () => {
     mockNavigate.mockReset();
     mockMissionMapGet.mockReset().mockResolvedValue(null);
     mockMissionMapSave.mockReset();
+    mockMissionMapUploadSourceFile.mockReset().mockResolvedValue({
+      id: '44444444-4444-4444-8444-444444444444', originalFilename: 'mission-boundary.kml',
+      sourceFormat: 'kml', checksum: 'a'.repeat(64), originalCrs: 'EPSG:4326',
+    });
+    mockMissionMapHistory.mockReset().mockResolvedValue([]);
   });
 
   test('lists only authoritative Planning missions with explicit not-ready language', () => {
@@ -183,10 +191,15 @@ describe('remote authoritative mission workflow', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Simulate KML import' }));
     expect(await screen.findByText('Boundary points 4')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Save Mission Map' }));
+    await waitFor(() => expect(mockMissionMapUploadSourceFile).toHaveBeenCalledWith('mission-1', expect.objectContaining({
+      fileName: 'mission-boundary.kml', fileType: 'kml', sourceCrs: 'EPSG:4326',
+      validationResult: expect.objectContaining({ state: 'valid' }),
+    })));
     await waitFor(() => expect(mockMissionMapSave).toHaveBeenCalledWith('mission-1', expect.objectContaining({
       geometries: expect.arrayContaining([expect.objectContaining({
         provenance: 'imported_kml',
         notes: 'Imported from mission-boundary.kml',
+        sourceFileId: '44444444-4444-4444-8444-444444444444',
       })]),
     })));
   });
@@ -197,6 +210,22 @@ describe('remote authoritative mission workflow', () => {
     render(<MissionPlanning />);
     expect(await screen.findByText(/No empty or browser-stored map has been substituted/i)).toBeInTheDocument();
     expect(screen.queryByText('Boundary editor')).not.toBeInTheDocument();
+  });
+
+  test('shows immutable Mission-map revision and imported-source evidence', async () => {
+    mockParams = { missionId: 'mission-1' };
+    mockMissionMapHistory.mockResolvedValue([{ version: 2, createdAt: '2026-08-02T01:00:00Z', createdBy: 'user-1', notes: 'Imported west block', geometries: [{
+      role: 'operational_boundary', sourceFileId: '44444444-4444-4444-8444-444444444444',
+      sourceFile: { id: '44444444-4444-4444-8444-444444444444', originalFilename: 'west-block.kml', sourceFormat: 'kml', checksum: 'a'.repeat(64), originalCrs: 'EPSG:4326' },
+    }] }, { version: 1, createdAt: '2026-08-02T00:00:00Z', createdBy: 'user-1', notes: '', geometries: [] }]);
+    render(<MissionPlanning />);
+    expect(await screen.findByText('Boundary editor')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'View map revision history' }));
+    expect(await screen.findByText('Mission Map Revision History')).toBeInTheDocument();
+    expect(await screen.findByText('Version 2')).toBeInTheDocument();
+    expect(screen.getByText('Version 1')).toBeInTheDocument();
+    expect(screen.getByText(/west-block\.kml/)).toBeInTheDocument();
+    expect(screen.getByText(new RegExp('a{64}'))).toBeInTheDocument();
   });
 
   test('creates a mission under the bookmarked authoritative job and waits for confirmation', async () => {

@@ -28,4 +28,24 @@ describe('mission maps API', () => {
     await expect(createMissionMapsApi(fetcher as any).save(revision.missionId, { expectedVersion: 2, notes: '', sourceFieldBoundaryVersionId: null, geometries: [] }))
       .rejects.toEqual(expect.objectContaining<Partial<MissionMapsApiError>>({ code: 'VERSION_CONFLICT', currentVersion: 3 }));
   });
+
+  test('uploads imported map evidence and receives an internal source-file ID', async () => {
+    const source = {
+      id: '44444444-4444-4444-8444-444444444444', missionId: revision.missionId,
+      originalFilename: 'boundary.kml', sourceFormat: 'kml', fileSizeBytes: 11,
+      checksum: 'a'.repeat(64), originalCrs: 'EPSG:4326', transformationMetadata: { canonicalCrs: 'EPSG:4326' },
+      validationResult: { state: 'valid' }, importedAt: '2026-08-02T00:00:00Z', createdBy: 'user-1',
+    };
+    const fetcher = jest.fn().mockResolvedValue({ ok: true, json: async () => ({ data: source }) });
+    await expect(createMissionMapsApi(fetcher as any).uploadSourceFile(revision.missionId, {
+      fileName: 'boundary.kml', fileType: 'kml', sizeBytes: 11,
+      dataUrl: 'data:application/vnd.google-earth.kml+xml;base64,PGttbD48L2ttbD4=',
+      sourceCrs: 'EPSG:4326', transformationMetadata: { canonicalCrs: 'EPSG:4326' },
+      validationResult: { state: 'valid' }, importedAt: '2026-08-02T00:00:00Z',
+    })).resolves.toEqual(source);
+    expect(fetcher).toHaveBeenCalledWith(
+      `/api/v1/mission-maps?missionId=${revision.missionId}&action=source-file`,
+      expect.objectContaining({ method: 'POST' }),
+    );
+  });
 });
