@@ -214,8 +214,7 @@ export default function FieldBoundaryEditor({
 
   const handleMapClick = useCallback((lat: number, lng: number) => {
     if (activeFeatureType !== 'boundary' && onFeaturesChange) {
-      const id = `${activeFeatureType}-${Date.now()}`;
-      onFeaturesChange(upsertMapFeature(features, createMissionMapFeatureAt(activeFeatureType,lat,lng,id)));
+      onFeaturesChange(upsertMapFeature(features, createMissionMapFeatureAt(activeFeatureType,lat,lng)));
       return;
     }
     const updated = [...coords, [lat, lng] as LatLng];

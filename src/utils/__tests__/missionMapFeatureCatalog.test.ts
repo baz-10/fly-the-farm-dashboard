@@ -17,6 +17,11 @@ describe('Mission map operational feature catalogue', () => {
     expect(feature).toEqual(expect.objectContaining({ id: 'feature-id', type: role, geometry: expect.objectContaining({ type: geometryType }) }));
   });
 
+  test('assigns an API-safe UUID when a feature is created interactively', () => {
+    const feature = createMissionMapFeatureAt('obstacle', -27, 153);
+    expect(feature.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+  });
+
   test.each([
     ['exclusion-zone','exclusion_zone'],['restricted-area','no_fly_zone'],['access-route','access_route'],
     ['launch-point','launch_point'],['landing-point','landing_point'],['water-point','water_point'],

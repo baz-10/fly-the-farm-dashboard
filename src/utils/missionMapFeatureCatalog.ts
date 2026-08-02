@@ -13,7 +13,14 @@ export const MISSION_MAP_FEATURE_DEFINITIONS: Record<MissionMapFeatureType,{labe
   'railway-corridor':{label:'Railway corridors',color:'#37474f',geometry:'LineString'},
 };
 
-export function createMissionMapFeatureAt(type:MissionMapFeatureType,lat:number,lng:number,id:string):MissionMapFeature {
+function createFeatureId():string {
+  if (typeof globalThis.crypto?.randomUUID === 'function') return globalThis.crypto.randomUUID();
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g,(character)=>{
+    const random=Math.floor(Math.random()*16); const value=character==='x'?random:(random&0x3)|0x8; return value.toString(16);
+  });
+}
+
+export function createMissionMapFeatureAt(type:MissionMapFeatureType,lat:number,lng:number,id:string=createFeatureId()):MissionMapFeature {
   const definition=MISSION_MAP_FEATURE_DEFINITIONS[type]; const delta=0.00008;
   const geometry = definition.geometry==='Point' ? {type:'Point' as const,coordinates:[lng,lat] as [number,number]}
     : definition.geometry==='LineString' ? {type:'LineString' as const,coordinates:[[lng-delta,lat],[lng+delta,lat]] as Array<[number,number]>}
