@@ -121,7 +121,26 @@ export function parseKmlBoundary(kmlText: string): BoundaryImportResult {
     });
   }
 
-  return buildBoundaryResult(rings);
+  let importedClosedLineString = false;
+  if (rings.length === 0) {
+    const lineStrings = Array.from(document.getElementsByTagNameNS('*', 'LineString'));
+    lineStrings.forEach((lineString) => {
+      const coordinates = firstDescendant(lineString, 'coordinates');
+      if (!coordinates?.textContent) return;
+      const positions = coordinates.textContent.trim().split(/\s+/).map((point) => point.split(',').map(Number));
+      const first = positions[0];
+      const last = positions[positions.length - 1];
+      if (first?.length >= 2 && last?.length >= 2 && first[0] === last[0] && first[1] === last[1]) {
+        rings.push(normaliseRing(positions));
+        importedClosedLineString = true;
+      }
+    });
+  }
+
+  const result = buildBoundaryResult(rings);
+  return importedClosedLineString
+    ? { ...result, warning: 'A closed KML LineString was imported as a polygon boundary.' }
+    : result;
 }
 
 export async function parseKmzBytes(bytes: Uint8Array): Promise<BoundaryImportResult> {

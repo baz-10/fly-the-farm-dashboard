@@ -58,6 +58,18 @@ describe('boundary imports', () => {
     expect(result.areaHa).toBeGreaterThan(100);
   });
 
+  test('imports a closed KML LineString exported as a boundary', () => {
+    const kml = `<kml xmlns="http://www.opengis.net/kml/2.2"><Placemark><LineString><coordinates>
+      153,-27,0 153.01,-27,0 153.01,-27.01,0 153,-27.01,0 153,-27,0
+    </coordinates></LineString></Placemark></kml>`;
+
+    const result = parseKmlBoundary(kml);
+
+    expect(result.polygonCount).toBe(1);
+    expect(result.coords).toHaveLength(4);
+    expect(result.warning).toMatch(/LineString/i);
+  });
+
   test('extracts every polygon from shapefile GeoJSON output', () => {
     const result = boundaryFromGeoJson({
       type: 'FeatureCollection',

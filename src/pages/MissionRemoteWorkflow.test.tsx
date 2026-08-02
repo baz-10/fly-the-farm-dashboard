@@ -58,7 +58,21 @@ jest.mock('../services/missionMapsApi', () => ({
 jest.mock('../contexts/MissionContext', () => ({
   useMission: () => { throw new Error('Remote mission screens must not read MissionContext'); },
 }));
-jest.mock('../components/FieldBoundaryEditor', () => () => <div>Boundary editor</div>);
+jest.mock('../components/FieldBoundaryEditor', () => (props: any) => <div>
+  Boundary editor
+  <span>Boundary points {props.coords.length}</span>
+  {props.onBoundaryFile && <button onClick={() => {
+    const polygon = [[-27, 153], [-27, 153.01], [-27.01, 153.01], [-27.01, 153]];
+    props.onCoordsChange(polygon);
+    props.onPolygonsChange([polygon]);
+    props.onBoundaryFile({
+      fileName: 'mission-boundary.kml', fileType: 'kml', sizeBytes: 512,
+      dataUrl: 'data:application/vnd.google-earth.kml+xml;base64,ZmFrZQ==',
+      boundingBox: { north: -27, south: -27.01, east: 153.01, west: 153 },
+      uploadedAt: '2026-08-02T00:00:00Z',
+    });
+  }}>Simulate KML import</button>}
+</div>);
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -151,6 +165,30 @@ describe('remote authoritative mission workflow', () => {
     expect(mockMissionMapGet).toHaveBeenCalledWith('mission-1');
     expect(screen.getByRole('button', { name: 'Save Mission Map' })).toBeInTheDocument();
     expect(screen.queryByText(/Maps — unavailable/i)).not.toBeInTheDocument();
+  });
+
+  test('preserves KML import provenance when saving authoritative Mission geometry', async () => {
+    mockParams = { missionId: 'mission-1' };
+    mockMissionMapGet.mockResolvedValue({
+      version: 1, notes: '', geometries: [{
+        id: 'geometry-1', role: 'operational_boundary', geometryType: 'Polygon',
+        geometry: { type: 'Polygon', coordinates: [[[153, -27], [153.01, -27], [153.01, -27.01], [153, -27.01], [153, -27]]] },
+        sourceCrs: 'EPSG:4326', canonicalCrs: 'EPSG:4326', provenance: 'drawn',
+        validationState: 'valid', areaHectares: 100, lengthMetres: null, label: 'Operational boundary', notes: '', sourceFileId: null,
+      }],
+    });
+    mockMissionMapSave.mockResolvedValue({ version: 1, notes: '', geometries: [] });
+    render(<MissionPlanning />);
+    expect(await screen.findByText('Boundary editor')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Simulate KML import' }));
+    expect(await screen.findByText('Boundary points 4')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Save Mission Map' }));
+    await waitFor(() => expect(mockMissionMapSave).toHaveBeenCalledWith('mission-1', expect.objectContaining({
+      geometries: expect.arrayContaining([expect.objectContaining({
+        provenance: 'imported_kml',
+        notes: 'Imported from mission-boundary.kml',
+      })]),
+    })));
   });
 
   test('does not disguise a failed authoritative geometry load as an empty valid map', async () => {

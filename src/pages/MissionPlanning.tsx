@@ -382,6 +382,7 @@ function AuthoritativeMissionPlanning() {
   const [mapPolygons, setMapPolygons] = React.useState<LatLng[][]>([]);
   const [mapFeatures, setMapFeatures] = React.useState<MissionMapFeature[]>([]);
   const [mapGeometryIds, setMapGeometryIds] = React.useState<string[]>([]);
+  const [mapBoundarySources, setMapBoundarySources] = React.useState<Array<{ provenance: string; notes: string; sourceFileId: string | null }>>([]);
   const [mapArea, setMapArea] = React.useState(0);
   const [mapSaving, setMapSaving] = React.useState(false);
   const [mapError, setMapError] = React.useState('');
@@ -392,10 +393,11 @@ function AuthoritativeMissionPlanning() {
     let active = true; setMapStatus('loading'); setMapError('');
     missionMapsApi.get(selectedMission.id).then((revision) => {
       if (!active) return;
-      if (!revision) { setMapVersion(0); setMapNotes(''); setMapPolygons([]); setMapFeatures([]); setMapGeometryIds([]); setMapStatus('ready'); return; }
+      if (!revision) { setMapVersion(0); setMapNotes(''); setMapPolygons([]); setMapFeatures([]); setMapGeometryIds([]); setMapBoundarySources([]); setMapStatus('ready'); return; }
       const boundaries = revision.geometries.filter((g) => ['operational_boundary','treatment_area'].includes(g.role) && g.geometryType === 'Polygon');
       setMapVersion(revision.version); setMapNotes(revision.notes);
       setMapGeometryIds(boundaries.map((g) => g.id));
+      setMapBoundarySources(boundaries.map((g) => ({ provenance: g.provenance, notes: g.notes, sourceFileId: g.sourceFileId })));
       setMapPolygons(boundaries.map((g) => (g.geometry.coordinates[0] || []).slice(0, -1).map(([lng,lat]: [number,number]) => [lat,lng] as LatLng)));
       setMapFeatures(revision.geometries.filter((g) => !['operational_boundary','treatment_area'].includes(g.role)).map((g) => ({ id:g.id, type:missionMapFeatureTypeForRole(g.role), label:g.label, notes:g.notes, geometry:g.geometry as MissionMapFeature['geometry'] })));
       setMapStatus('ready');
@@ -409,7 +411,7 @@ function AuthoritativeMissionPlanning() {
     setMapSaving(true);
     try {
       const boundaryIds = mapPolygons.map((_,index) => mapGeometryIds[index] || crypto.randomUUID());
-      const boundaries: MissionGeometryRecord[] = mapPolygons.filter((p)=>p.length>=3).map((polygon,index) => ({ id:boundaryIds[index], role:index===0?'operational_boundary':'treatment_area', geometryType:'Polygon', geometry:{type:'Polygon',coordinates:[toClosedGeoJsonRing(polygon)]}, sourceCrs:'EPSG:4326',canonicalCrs:'EPSG:4326',provenance:'drawn',validationState:'valid',areaHectares:index===0?mapArea:null,lengthMetres:null,label:index===0?'Operational boundary':`Treatment area ${index+1}`,notes:'',sourceFileId:null }));
+      const boundaries: MissionGeometryRecord[] = mapPolygons.filter((p)=>p.length>=3).map((polygon,index) => { const source=mapBoundarySources[index] || (mapBoundarySources.length===1?mapBoundarySources[0]:undefined); return ({ id:boundaryIds[index], role:index===0?'operational_boundary':'treatment_area', geometryType:'Polygon', geometry:{type:'Polygon',coordinates:[toClosedGeoJsonRing(polygon)]}, sourceCrs:'EPSG:4326',canonicalCrs:'EPSG:4326',provenance:source?.provenance||'drawn',validationState:'valid',areaHectares:index===0?mapArea:null,lengthMetres:null,label:index===0?'Operational boundary':`Treatment area ${index+1}`,notes:source?.notes||'',sourceFileId:source?.sourceFileId||null }); });
       const features: MissionGeometryRecord[] = mapFeatures.map((feature) => ({ id:feature.id,role:missionMapFeatureRole(feature.type) as MissionGeometryRecord['role'],geometryType:feature.geometry.type,geometry:feature.geometry,sourceCrs:'EPSG:4326',canonicalCrs:'EPSG:4326',provenance:'drawn',validationState:'valid',areaHectares:null,lengthMetres:null,label:feature.label,notes:feature.notes||'',sourceFileId:null }));
       const saved=await missionMapsApi.save(selectedMission.id,{expectedVersion:mapVersion,notes:mapNotes,sourceFieldBoundaryVersionId:null,geometries:[...boundaries,...features]});
       setMapVersion(saved.version);setMapGeometryIds(boundaryIds);setMapStatus('ready');
@@ -591,7 +593,7 @@ function AuthoritativeMissionPlanning() {
               {mapStatus==='loading' && <Alert severity="info">Loading authoritative Mission geometry…</Alert>}
               {mapStatus==='error' && <Alert severity="error">Mission geometry could not be loaded. No empty or browser-stored map has been substituted. {mapError}</Alert>}
               {mapError && mapStatus!=='error' && <Alert severity="error" sx={{mb:2}}>{mapError}</Alert>}
-              {mapStatus==='ready' && <><FieldBoundaryEditor coords={mapPolygons[0]||[]} polygons={mapPolygons} onCoordsChange={(coords)=>setMapPolygons((current)=>[coords,...current.slice(1)])} onPolygonsChange={setMapPolygons} onAreaChange={setMapArea} features={mapFeatures} onFeaturesChange={setMapFeatures} mapHeight={580} />
+              {mapStatus==='ready' && <><FieldBoundaryEditor coords={mapPolygons[0]||[]} polygons={mapPolygons} onCoordsChange={(coords)=>{setMapPolygons((current)=>[coords,...current.slice(1)]);setMapBoundarySources([]);}} onPolygonsChange={(polygons)=>{setMapPolygons(polygons);setMapBoundarySources([]);}} onAreaChange={setMapArea} onBoundaryFile={(file)=>setMapBoundarySources(file?[{provenance:`imported_${file.fileType}`,notes:`Imported from ${file.fileName}`,sourceFileId:null}]:[])} features={mapFeatures} onFeaturesChange={setMapFeatures} mapHeight={580} />
                 <TextField fullWidth multiline minRows={2} label="Mission map notes" value={mapNotes} onChange={(e)=>setMapNotes(e.target.value)} sx={{mt:2}} />
                 <Stack direction="row" justifyContent="flex-end" sx={{mt:2}}><Button variant="contained" startIcon={<SaveIcon/>} disabled={mapSaving} onClick={()=>void saveMap()}>{mapSaving?'Saving authoritative map…':'Save Mission Map'}</Button></Stack></>}
             </Panel>}
