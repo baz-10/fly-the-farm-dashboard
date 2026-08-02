@@ -1,4 +1,4 @@
-const { mapLegacyAircraft, migrateAircraftRecords } = require('../../scripts/migrate-aircraft');
+const { mapLegacyAircraft, migrateAircraftRecords, readLegacyAircraftSource } = require('../../scripts/migrate-aircraft');
 
 const legacy = (overrides = {}) => ({
   id: 'aircraft_legacy_1', registration: 'vh-ftf1', manufacturer: 'DJI', model: 'Agras T100', serialNumber: 'T100-001', activationDate: '2026-08-02T00:00:00.000Z',
@@ -33,4 +33,8 @@ test('apply is idempotent and reconciles confirmed source IDs', async () => {
   const second = await migrateAircraftRecords([legacy()], { defaultLocationId: '33333333-3333-4333-8333-333333333333', existing: [{ source_record_id: 'aircraft_legacy_1' }], write, apply: true });
   expect(second).toEqual(expect.objectContaining({ createdCount: 0, skippedCount: 1, reconciled: true }));
   expect(write).toHaveBeenCalledTimes(1);
+});
+
+test('missing legacy Aircraft storage produces an empty governed source instead of aborting', () => {
+  expect(readLegacyAircraftSource([])).toEqual({ records: [], sourcePresent: false });
 });

@@ -108,14 +108,20 @@ async function supabaseRequest(path, options = {}) {
   return body;
 }
 
+function readLegacyAircraftSource(sourceRows) {
+  const records = Array.isArray(sourceRows) && Array.isArray(sourceRows[0]?.payload?.aircraft)
+    ? sourceRows[0].payload.aircraft
+    : [];
+  return { records, sourcePresent: records.length > 0 };
+}
+
 async function run() {
   const apply = process.argv.includes('--apply');
   const organisationId = text(process.env.FTF_ORGANISATION_ID, 'FTF_ORGANISATION_ID');
   const actorId = text(process.env.FTF_ACTOR_INTERNAL_USER_ID, 'FTF_ACTOR_INTERNAL_USER_ID');
   const defaultLocationId = text(process.env.FTF_DEFAULT_OPERATING_LOCATION_ID, 'FTF_DEFAULT_OPERATING_LOCATION_ID');
   const sourceRows = await supabaseRequest(`rest/v1/ftf_store?tenant_id=eq.${encodeURIComponent(organisationId)}&collection=eq.ftf_aircraft_data&record_id=eq.__value__&select=payload`);
-  const sourceRecords = Array.isArray(sourceRows) && sourceRows[0]?.payload?.aircraft;
-  if (!Array.isArray(sourceRecords)) throw new Error('No valid ftf_aircraft_data Aircraft source was found');
+  const { records: sourceRecords, sourcePresent } = readLegacyAircraftSource(sourceRows);
   const existing = await supabaseRequest(`rest/v1/aircraft?organisation_id=eq.${encodeURIComponent(organisationId)}&source_system=eq.ftf_aircraft_data&select=source_record_id`);
   const report = await migrateAircraftRecords(sourceRecords, {
     defaultLocationId, existing, apply,
@@ -126,9 +132,10 @@ async function run() {
       return result?.record || result;
     },
   });
+  report.sourcePresent = sourcePresent;
   process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
   if (report.errorCount > 0 || (apply && !report.reconciled)) process.exitCode = 1;
 }
 
-module.exports = { mapLegacyAircraft, migrateAircraftRecords };
+module.exports = { mapLegacyAircraft, migrateAircraftRecords, readLegacyAircraftSource };
 if (require.main === module) run().catch((error) => { process.stderr.write(`${error.message}\n`); process.exitCode = 1; });
