@@ -259,6 +259,49 @@ class OperationalRepository {
     return this.write('unassign','equipment-kits',context,assignmentId,expectedVersion,{});
   }
 
+  async listPersonnel(context, { operatingLocationId = null, includePrivate = false } = {}) {
+    return supabaseRequest('rest/v1/rpc/ftf_list_personnel', { method: 'POST', body: JSON.stringify({
+      p_organisation_id: context.organisation.id, p_operating_location_id: operatingLocationId, p_include_private: includePrivate,
+    }), publicMessage: 'Personnel could not be loaded.' });
+  }
+
+  async writePersonnel(context, operation, personnelId, expectedVersion, payload) {
+    const result = await supabaseRequest('rest/v1/rpc/ftf_write_personnel', { method: 'POST', body: JSON.stringify({
+      p_organisation_id: context.organisation.id, p_actor_internal_user_id: context.internalUser.id,
+      p_operation: operation, p_personnel_id: personnelId, p_expected_version: expectedVersion, p_payload: payload,
+    }), publicMessage: 'Personnel could not be saved.' });
+    if (result?.conflict) return { conflict: true, currentVersion: result.current_version };
+    if (result?.not_found) return { notFound: true };
+    return { record: result?.record || result };
+  }
+
+  async linkPersonnelMember(context, personnelId, expectedVersion, internalUserId, membershipId) {
+    const result = await supabaseRequest('rest/v1/rpc/ftf_link_personnel_member', { method: 'POST', body: JSON.stringify({
+      p_organisation_id: context.organisation.id, p_actor_internal_user_id: context.internalUser.id, p_personnel_id: personnelId,
+      p_expected_version: expectedVersion, p_internal_user_id: internalUserId, p_membership_id: membershipId,
+    }), publicMessage: 'Personnel member link could not be saved.' });
+    if (result?.conflict) return { conflict: true, currentVersion: result.current_version };
+    if (result?.not_found) return { notFound: true };
+    if (result?.relationship_conflict || result?.duplicate_conflict) return { relationshipConflict: true };
+    return { record: result?.record || result };
+  }
+
+  async addPersonnelCredential(context, personnelId, payload) { return this.personnelChildWrite('ftf_write_personnel_credential', context, personnelId, payload); }
+  async addPersonnelEvidence(context, personnelId, payload) { return this.personnelChildWrite('ftf_write_personnel_evidence', context, personnelId, payload); }
+  async personnelChildWrite(rpc, context, personnelId, payload) {
+    const result = await supabaseRequest(`rest/v1/rpc/${rpc}`, { method: 'POST', body: JSON.stringify({ p_organisation_id: context.organisation.id, p_actor_internal_user_id: context.internalUser.id, p_personnel_id: personnelId, p_payload: payload }), publicMessage: 'Personnel evidence could not be saved.' });
+    if (result?.not_found) return { notFound: true }; return { record: result?.record || result };
+  }
+
+  async readMissionPersonnel(context, missionId, history = false) { return supabaseRequest('rest/v1/rpc/ftf_read_mission_personnel', { method: 'POST', body: JSON.stringify({ p_organisation_id: context.organisation.id, p_mission_id: missionId, p_history: history }), publicMessage: 'Mission Personnel could not be loaded.' }); }
+  async saveMissionPersonnel(context, missionId, expectedVersion, assignments) {
+    const result = await supabaseRequest('rest/v1/rpc/ftf_save_mission_personnel', { method: 'POST', body: JSON.stringify({ p_organisation_id: context.organisation.id, p_actor_internal_user_id: context.internalUser.id, p_mission_id: missionId, p_expected_version: expectedVersion, p_assignments: assignments }), publicMessage: 'Mission Personnel could not be saved.' });
+    if (result?.conflict) return { conflict: true, currentVersion: result.current_version };
+    if (result?.not_found) return { notFound: true };
+    if (result?.qualification_blockers) return { qualificationBlockers: result.qualification_blockers };
+    return { record: result?.record || result };
+  }
+
   async write(operation, resource, context, entityId, expectedVersion, data) {
     const result = await supabaseRequest('rest/v1/rpc/ftf_write_operational_resource', {
       method: 'POST',
