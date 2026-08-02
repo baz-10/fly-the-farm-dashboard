@@ -50,6 +50,7 @@ import FieldBoundaryEditor from '../components/FieldBoundaryEditor';
 import MissionJsaDialog from '../components/MissionJsaDialog';
 import MissionEquipmentSelector from '../components/mission/MissionEquipmentSelector';
 import MissionPersonnelSelector from '../components/mission/MissionPersonnelSelector';
+import MissionWeatherEvidence from '../components/mission/MissionWeatherEvidence';
 import MissionDeploymentWorkPack from '../components/mission/MissionDeploymentWorkPack';
 import { useAircraft } from '../contexts/AircraftContext';
 import { useAuth } from '../contexts/AuthContext';
@@ -572,7 +573,7 @@ function AuthoritativeMissionPlanning() {
   };
 
   const unavailableSections = [
-    'Chemicals', 'Weather', 'JSA',
+    'Chemicals', 'JSA',
     'Risk controls', 'Authorisation', 'Completion', 'Pack', 'Financials',
   ];
 
@@ -595,7 +596,7 @@ function AuthoritativeMissionPlanning() {
       </Stack>
 
       <Alert severity="warning" sx={{ mb: 2 }}>
-        This Draft is unauthorised and not ready to fly. Mission maps and Personnel assignments are authoritative; chemicals, weather, JSA, risk controls, authorisation, completion, pack and financials remain gated.
+        This Draft is unauthorised and not ready to fly. Mission maps, Personnel assignments and Weather evidence are authoritative; chemicals, JSA, risk controls, authorisation, completion, pack and financials remain gated.
       </Alert>
       {!hasActiveLocation && <Alert severity="error" sx={{ mb: 2 }}>No active authorised operating location is available for this session.</Alert>}
       {actionError && <Alert severity="error" sx={{ mb: 2 }}>{actionError}</Alert>}
@@ -658,6 +659,9 @@ function AuthoritativeMissionPlanning() {
             {selectedMission && <Panel title="Personnel" icon={<SecurityIcon />}>
               <MissionPersonnelSelector missionId={selectedMission.id} operatingLocationId={selectedMission.operatingLocationId} scheduledStartAt={selectedMission.scheduledStartAt} />
               <Alert severity="info" sx={{ mt: 1.5 }}>The saved PIC and crew revision is authoritative and qualification-checked for this Mission.</Alert>
+            </Panel>}
+            {selectedMission && <Panel title="Mission Weather" icon={<CloudQueueIcon />}>
+              <MissionWeatherEvidence missionId={selectedMission.id} operatingLocationId={selectedMission.operatingLocationId} />
             </Panel>}
             <Card variant="outlined" sx={{ borderRadius: 2.5 }}>
               <CardContent>
