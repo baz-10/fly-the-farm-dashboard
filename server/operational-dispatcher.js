@@ -2,6 +2,7 @@ const {
   createFieldBoundaryVersionHandler,
   createMissionMapHandler,
   createMissionPersonnelHandler,
+  createMissionWeatherHandler,
   createOperationalHandler,
   createPersonnelHandler,
   createSessionHandler,
@@ -21,6 +22,7 @@ function createDefaultHandlers() {
     'mission-maps': createMissionMapHandler(),
     personnel: createPersonnelHandler(),
     'mission-personnel': createMissionPersonnelHandler(),
+    'mission-weather': createMissionWeatherHandler(),
     session: createSessionHandler(),
   });
 }
