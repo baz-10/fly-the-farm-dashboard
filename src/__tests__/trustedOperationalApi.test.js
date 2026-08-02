@@ -335,7 +335,10 @@ describe('trusted organisation operational API', () => {
       status: 'planning',
       financial_payload: { margin: 50 },
       row_version: 1,
-    })).toEqual({ id: '33333333-3333-4333-8333-333333333333', missionNumber: 'M-1', status: 'planning', rowVersion: 1 });
+    })).toEqual({
+      id: '33333333-3333-4333-8333-333333333333', missionNumber: 'M-1', status: 'planning', rowVersion: 1,
+      aircraftIds: [], equipmentKitIds: [],
+    });
   });
 
   test('returns a validation envelope for malformed JSON request bodies', async () => {
