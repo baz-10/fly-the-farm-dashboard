@@ -399,6 +399,7 @@ function AuthoritativeMissionPlanning() {
   const [mapHistoryOpen, setMapHistoryOpen] = React.useState(false);
   const [mapHistoryStatus, setMapHistoryStatus] = React.useState<'idle'|'loading'|'ready'|'error'>('idle');
   const [mapHistory, setMapHistory] = React.useState<MissionMapRevision[]>([]);
+  const [authorisationRefreshToken, setAuthorisationRefreshToken] = React.useState(0);
   const missionMapsApi = React.useMemo(() => createMissionMapsApi(), []);
   const planningForecastCoordinates = React.useMemo(() => {
     const points = mapPolygons.flat();
@@ -671,14 +672,14 @@ function AuthoritativeMissionPlanning() {
               <Alert severity="info" sx={{ mt: 1.5 }}>The saved PIC and crew revision is authoritative and qualification-checked for this Mission.</Alert>
             </Panel>}
             {selectedMission && <Panel title="Mission Weather" icon={<CloudQueueIcon />}>
-              <MissionWeatherEvidence missionId={selectedMission.id} operatingLocationId={selectedMission.operatingLocationId} scheduledStartAt={selectedMission.scheduledStartAt || undefined} plannedCoordinates={planningForecastCoordinates} authoritativeBoundary={mapRevisionId&&mapBoundaryGeometry?{revisionId:mapRevisionId,revisionVersion:mapVersion,geometryId:mapBoundaryGeometry.id,geometry:mapBoundaryGeometry.geometry}:undefined} />
+              <MissionWeatherEvidence missionId={selectedMission.id} operatingLocationId={selectedMission.operatingLocationId} scheduledStartAt={selectedMission.scheduledStartAt || undefined} plannedCoordinates={planningForecastCoordinates} authoritativeBoundary={mapRevisionId&&mapBoundaryGeometry?{revisionId:mapRevisionId,revisionVersion:mapVersion,geometryId:mapBoundaryGeometry.id,geometry:mapBoundaryGeometry.geometry}:undefined} onEvidenceChanged={()=>setAuthorisationRefreshToken((current)=>current+1)} />
             </Panel>}
             {selectedMission && <Panel title="JSA & Risk Controls" icon={<SecurityIcon />}>
               <Alert severity="info" sx={{ mb: 1.5 }}>Mission Checks, triggered hazards, controls and PIC approval are retained as authoritative versioned evidence.</Alert>
               <Button fullWidth variant="contained" startIcon={<SecurityIcon />} onClick={() => setAuthoritativeJsaOpen(true)}>Complete Mission JSA</Button>
             </Panel>}
             {selectedMission && <Panel title="Mission Readiness & Authorisation" icon={<GavelIcon />}>
-              <MissionAuthorisation missionId={selectedMission.id} />
+              <MissionAuthorisation missionId={selectedMission.id} refreshToken={authorisationRefreshToken} />
             </Panel>}
             <Card variant="outlined" sx={{ borderRadius: 2.5 }}>
               <CardContent>
