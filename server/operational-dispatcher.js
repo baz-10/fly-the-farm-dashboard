@@ -4,6 +4,7 @@ const {
   createMissionMapHandler,
   createMissionChemicalsHandler,
   createMissionJsaHandler,
+  createMissionAuthorisationHandler,
   createMissionPersonnelHandler,
   createMissionWeatherHandler,
   createOperationalHandler,
@@ -30,6 +31,7 @@ function createDefaultHandlers() {
     'mission-weather': createMissionWeatherHandler(),
     'mission-chemicals': createMissionChemicalsHandler(),
     'mission-jsa': createMissionJsaHandler(),
+    'mission-authorisation': createMissionAuthorisationHandler(),
     'chemical-reviews': createChemicalReviewsHandler(),
     session: createSessionHandler(),
   });

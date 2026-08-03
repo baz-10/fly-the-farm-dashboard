@@ -53,6 +53,7 @@ import MissionEquipmentSelector from '../components/mission/MissionEquipmentSele
 import MissionPersonnelSelector from '../components/mission/MissionPersonnelSelector';
 import MissionWeatherEvidence from '../components/mission/MissionWeatherEvidence';
 import MissionChemicalPlanning from '../components/mission/MissionChemicalPlanning';
+import MissionAuthorisation from '../components/mission/MissionAuthorisation';
 import MissionDeploymentWorkPack from '../components/mission/MissionDeploymentWorkPack';
 import { useAircraft } from '../contexts/AircraftContext';
 import { useAuth } from '../contexts/AuthContext';
@@ -580,7 +581,7 @@ function AuthoritativeMissionPlanning() {
     }
   };
 
-  const unavailableSections = ['Authorisation', 'Completion', 'Pack', 'Financials'];
+  const unavailableSections = ['Completion', 'Financials'];
 
   return (
     <Box sx={{ maxWidth: 1500, mx: 'auto' }}>
@@ -673,6 +674,9 @@ function AuthoritativeMissionPlanning() {
             {selectedMission && <Panel title="JSA & Risk Controls" icon={<SecurityIcon />}>
               <Alert severity="info" sx={{ mb: 1.5 }}>Mission Checks, triggered hazards, controls and PIC approval are retained as authoritative versioned evidence.</Alert>
               <Button fullWidth variant="contained" startIcon={<SecurityIcon />} onClick={() => setAuthoritativeJsaOpen(true)}>Complete Mission JSA</Button>
+            </Panel>}
+            {selectedMission && <Panel title="Mission Readiness & Authorisation" icon={<GavelIcon />}>
+              <MissionAuthorisation missionId={selectedMission.id} />
             </Panel>}
             <Card variant="outlined" sx={{ borderRadius: 2.5 }}>
               <CardContent>

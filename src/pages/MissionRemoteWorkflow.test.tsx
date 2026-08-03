@@ -77,6 +77,10 @@ jest.mock('../components/FieldBoundaryEditor', () => (props: any) => <div>
   }}>Simulate KML import</button>}
 </div>);
 jest.mock('../components/mission/MissionChemicalPlanning', () => () => <div>Authoritative chemical planning</div>);
+jest.mock('../services/missionAuthorisationApi', () => ({ createMissionAuthorisationApi: () => ({
+  readiness: jest.fn().mockResolvedValue({ ready: false, blockers: [{ code: 'WEATHER_EXPIRED', message: 'Observed Weather expired.' }], warnings: [], categories: {} }),
+  read: jest.fn().mockResolvedValue(null), readPack: jest.fn().mockResolvedValue(null), authorise: jest.fn(), generatePack: jest.fn(),
+}) }));
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -154,7 +158,7 @@ describe('remote authoritative mission workflow', () => {
     expect(screen.queryByText(/JSA — unavailable/i)).not.toBeInTheDocument();
     expect(screen.getByRole('combobox', { name: 'Aircraft' })).toBeInTheDocument();
     expect(screen.getByRole('combobox', { name: 'Equipment Kit' })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /Authorise|Authorize/i })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Authorise|Authorize/i })).toBeDisabled();
     expect(screen.queryByText(/APVMA Compliant/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/Aircraft — unavailable/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/Equipment — unavailable/i)).not.toBeInTheDocument();
