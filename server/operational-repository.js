@@ -293,6 +293,18 @@ class OperationalRepository {
     if (result?.not_found) return { notFound: true }; return { record: result?.record || result };
   }
 
+  async listPersonnelIdentityCandidates(context, personnelId) {
+    return supabaseRequest('rest/v1/rpc/ftf_list_personnel_identity_candidates', { method:'POST', body:JSON.stringify({p_organisation_id:context.organisation.id,p_actor_internal_user_id:context.internalUser.id,p_personnel_id:personnelId}), publicMessage:'Personnel identity candidates could not be loaded.' });
+  }
+  async linkPersonnelIdentity(context,personnelId,expectedVersion,internalUserId,membershipId,reason){
+    const result=await supabaseRequest('rest/v1/rpc/ftf_link_personnel_identity',{method:'POST',body:JSON.stringify({p_organisation_id:context.organisation.id,p_actor_internal_user_id:context.internalUser.id,p_personnel_id:personnelId,p_expected_version:expectedVersion,p_internal_user_id:internalUserId,p_membership_id:membershipId,p_reason:reason}),publicMessage:'Personnel identity link could not be saved.'});
+    if(result?.conflict)return{conflict:true,currentVersion:result.current_version};if(result?.not_found)return{notFound:true};if(result?.relationship_conflict||result?.duplicate_conflict)return{relationshipConflict:true};return{record:result?.record||result};
+  }
+  async unlinkPersonnelIdentity(context,personnelId,expectedVersion,reason){
+    const result=await supabaseRequest('rest/v1/rpc/ftf_unlink_personnel_identity',{method:'POST',body:JSON.stringify({p_organisation_id:context.organisation.id,p_actor_internal_user_id:context.internalUser.id,p_personnel_id:personnelId,p_expected_version:expectedVersion,p_reason:reason}),publicMessage:'Personnel identity link could not be removed.'});
+    if(result?.conflict)return{conflict:true,currentVersion:result.current_version};if(result?.not_found)return{notFound:true};return{record:result?.record||result};
+  }
+
   async readMissionPersonnel(context, missionId, history = false) { return supabaseRequest('rest/v1/rpc/ftf_read_mission_personnel', { method: 'POST', body: JSON.stringify({ p_organisation_id: context.organisation.id, p_mission_id: missionId, p_history: history }), publicMessage: 'Mission Personnel could not be loaded.' }); }
   async saveMissionPersonnel(context, missionId, expectedVersion, assignments) {
     const result = await supabaseRequest('rest/v1/rpc/ftf_save_mission_personnel', { method: 'POST', body: JSON.stringify({ p_organisation_id: context.organisation.id, p_actor_internal_user_id: context.internalUser.id, p_mission_id: missionId, p_expected_version: expectedVersion, p_assignments: assignments }), publicMessage: 'Mission Personnel could not be saved.' });

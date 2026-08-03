@@ -8,6 +8,7 @@ const {
   createMissionWeatherHandler,
   createOperationalHandler,
   createPersonnelHandler,
+  createPersonnelIdentityHandler,
   createSessionHandler,
 } = require('./operational-api');
 
@@ -24,6 +25,7 @@ function createDefaultHandlers() {
     'field-boundary-versions': createFieldBoundaryVersionHandler(),
     'mission-maps': createMissionMapHandler(),
     personnel: createPersonnelHandler(),
+    'personnel-identity': createPersonnelIdentityHandler(),
     'mission-personnel': createMissionPersonnelHandler(),
     'mission-weather': createMissionWeatherHandler(),
     'mission-chemicals': createMissionChemicalsHandler(),
