@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 
 const migrationPath = path.join(__dirname, '../../supabase/migrations/20260803090000_personnel_identity_resolution.sql');
+const comparisonMigrationPath = path.join(__dirname, '../../supabase/migrations/20260803091000_personnel_identity_candidate_email.sql');
 
 test('identity resolution migration defines explicit permission and authoritative RPCs', () => {
   const migration = fs.readFileSync(migrationPath, 'utf8');
@@ -35,3 +36,5 @@ test('candidate comparison includes duplicate indicators and never mutates missi
   expect(migration).not.toMatch(/delete from public\.mission_(personnel|jsa)/);
   expect(migration).toContain('force row level security');
 });
+
+test('identity comparison exposes the existing login email without storing it on Personnel',()=>{const comparison=fs.readFileSync(comparisonMigrationPath,'utf8');expect(comparison).toContain('auth.users');expect(comparison).toContain("'email',to_jsonb(au)->>'email'");expect(comparison).toContain('create or replace function public.ftf_list_personnel_identity_candidates');});
