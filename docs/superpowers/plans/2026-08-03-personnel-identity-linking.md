@@ -21,7 +21,7 @@
 ### Task 1: Authoritative database commands
 
 **Files:**
-- Create: `supabase/migrations/20260803020000_personnel_identity_resolution.sql`
+- Create: `supabase/migrations/20260803090000_personnel_identity_resolution.sql`
 - Create: `scripts/verifyPersonnelIdentityResolutionPostgres.mjs`
 - Test: `src/__tests__/personnelIdentityResolutionMigration.test.js`
 

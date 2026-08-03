@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 
-const migrationPath = path.join(__dirname, '../../supabase/migrations/20260803020000_personnel_identity_resolution.sql');
+const migrationPath = path.join(__dirname, '../../supabase/migrations/20260803090000_personnel_identity_resolution.sql');
 
 test('identity resolution migration defines explicit permission and authoritative RPCs', () => {
   const migration = fs.readFileSync(migrationPath, 'utf8');
