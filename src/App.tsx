@@ -52,6 +52,7 @@ import FleetWorkPacks from './pages/FleetWorkPacks';
 import { useAuth } from './contexts/AuthContext';
 import OperationalFeatureGate from './components/OperationalFeatureGate';
 import Personnel from './pages/Personnel';
+import CustomerAcceptancePublic from './pages/CustomerAcceptancePublic';
 
 function WorkflowProviders({ children }: { children: React.ReactNode }) {
   const { user } = useAuth();
@@ -88,6 +89,7 @@ function App() {
         <Route path="/auth/callback" element={<AuthCallback />} />
         <Route path="/forgot-password" element={<ForgotPassword />} />
         <Route path="/reset-password" element={<ResetPassword />} />
+        <Route path="/customer-acceptance/:token" element={<CustomerAcceptancePublic />} />
         <Route
           element={
             <ProtectedRoute>

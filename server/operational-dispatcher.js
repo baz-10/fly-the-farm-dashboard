@@ -1,5 +1,7 @@
 const {
   createChemicalReviewsHandler,
+  createCustomerAcceptanceHandler,
+  createCustomerAcceptancePublicHandler,
   createFieldBoundaryVersionHandler,
   createMissionMapHandler,
   createMissionChemicalsHandler,
@@ -36,6 +38,8 @@ function createDefaultHandlers() {
     'mission-authorisation': createMissionAuthorisationHandler(),
     'mission-operational-closeout': createMissionOperationalCloseoutHandler(),
     'mission-outcomes': createMissionOutcomesHandler(),
+    'customer-acceptance': createCustomerAcceptanceHandler(),
+    'customer-acceptance-public': createCustomerAcceptancePublicHandler(),
     'chemical-reviews': createChemicalReviewsHandler(),
     session: createSessionHandler(),
   });

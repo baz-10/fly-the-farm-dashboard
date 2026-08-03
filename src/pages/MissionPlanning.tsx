@@ -56,6 +56,7 @@ import MissionChemicalPlanning from '../components/mission/MissionChemicalPlanni
 import MissionAuthorisation from '../components/mission/MissionAuthorisation';
 import MissionOperationalCloseout from '../components/mission/MissionOperationalCloseout';
 import MissionOutcomes from '../components/mission/MissionOutcomes';
+import CustomerAcceptance from '../components/mission/CustomerAcceptance';
 import MissionDeploymentWorkPack from '../components/mission/MissionDeploymentWorkPack';
 import { useAircraft } from '../contexts/AircraftContext';
 import { useAuth } from '../contexts/AuthContext';
@@ -686,6 +687,7 @@ function AuthoritativeMissionPlanning() {
             {selectedMission && <Panel title="Operational Closeout" icon={<FlightTakeoffIcon />}>
               <MissionOperationalCloseout missionId={selectedMission.id} />
               <MissionOutcomes missionId={selectedMission.id} />
+              <CustomerAcceptance missionId={selectedMission.id} />
             </Panel>}
             <Card variant="outlined" sx={{ borderRadius: 2.5 }}>
               <CardContent>
