@@ -1,0 +1,8 @@
+import {render,screen,waitFor} from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import MissionOutcomes from '../MissionOutcomes';
+
+const api={read:jest.fn(),createObservation:jest.fn(),stagePhoto:jest.fn(),writeFollowUp:jest.fn()};
+beforeEach(()=>{jest.clearAllMocks();api.read.mockResolvedValue({observations:[],followUps:[],catalogues:{types:[{code:'INITIAL',display_name:'Initial'}],methods:[{code:'GROUND_INSPECTION',display_name:'Ground inspection'}],confidence:[{code:'HIGH',display_name:'High',definition:'direct, clear and sufficient evidence with minimal uncertainty'}]},personnel:[{id:'p1',label:'Ben'}]});});
+test('keeps outcomes optional and offers one obvious longitudinal workflow',async()=>{render(<MissionOutcomes missionId="m1" api={api as any}/>);expect(await screen.findByText('Mission Outcomes')).toBeInTheDocument();expect(screen.getByText(/optional/i)).toBeInTheDocument();expect(screen.getByRole('button',{name:/record follow-up observation/i})).toBeInTheDocument();expect(screen.queryByRole('button',{name:/edit observation/i})).not.toBeInTheDocument();});
+test('submits append-only outcome evidence and reloads the timeline',async()=>{api.createObservation.mockResolvedValue({id:'o1'});render(<MissionOutcomes missionId="m1" api={api as any}/>);await userEvent.click(await screen.findByRole('button',{name:/record follow-up observation/i}));await userEvent.type(screen.getByLabelText(/operator notes/i),'Strong initial control.');await userEvent.click(screen.getByRole('button',{name:/save immutable observation/i}));await waitFor(()=>expect(api.createObservation).toHaveBeenCalledWith('m1',expect.objectContaining({operatorNotes:'Strong initial control.'})));});
