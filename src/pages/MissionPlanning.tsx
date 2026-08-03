@@ -397,6 +397,11 @@ function AuthoritativeMissionPlanning() {
   const [mapHistoryStatus, setMapHistoryStatus] = React.useState<'idle'|'loading'|'ready'|'error'>('idle');
   const [mapHistory, setMapHistory] = React.useState<MissionMapRevision[]>([]);
   const missionMapsApi = React.useMemo(() => createMissionMapsApi(), []);
+  const planningForecastCoordinates = React.useMemo(() => {
+    const points = mapPolygons.flat();
+    if (!points.length) return undefined;
+    return { latitude: points.reduce((sum, point) => sum + point[0], 0) / points.length, longitude: points.reduce((sum, point) => sum + point[1], 0) / points.length };
+  }, [mapPolygons]);
 
   React.useEffect(() => {
     if (!selectedMission) { setMapStatus('idle'); return; }
@@ -663,7 +668,7 @@ function AuthoritativeMissionPlanning() {
               <Alert severity="info" sx={{ mt: 1.5 }}>The saved PIC and crew revision is authoritative and qualification-checked for this Mission.</Alert>
             </Panel>}
             {selectedMission && <Panel title="Mission Weather" icon={<CloudQueueIcon />}>
-              <MissionWeatherEvidence missionId={selectedMission.id} operatingLocationId={selectedMission.operatingLocationId} />
+              <MissionWeatherEvidence missionId={selectedMission.id} operatingLocationId={selectedMission.operatingLocationId} scheduledStartAt={selectedMission.scheduledStartAt || undefined} plannedCoordinates={planningForecastCoordinates} />
             </Panel>}
             {selectedMission && <Panel title="JSA & Risk Controls" icon={<SecurityIcon />}>
               <Alert severity="info" sx={{ mb: 1.5 }}>Mission Checks, triggered hazards, controls and PIC approval are retained as authoritative versioned evidence.</Alert>
