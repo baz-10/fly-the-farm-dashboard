@@ -12,6 +12,7 @@ const {
   createMissionPersonnelHandler,
   createMissionWeatherHandler,
   createOperationalHandler,
+  createOrganisationBrandingHandler,
   createPersonnelHandler,
   createPersonnelIdentityHandler,
   createSessionHandler,
@@ -41,6 +42,7 @@ function createDefaultHandlers() {
     'customer-acceptance': createCustomerAcceptanceHandler(),
     'customer-acceptance-public': createCustomerAcceptancePublicHandler(),
     'chemical-reviews': createChemicalReviewsHandler(),
+    'organisation-branding': createOrganisationBrandingHandler(),
     session: createSessionHandler(),
   });
 }
