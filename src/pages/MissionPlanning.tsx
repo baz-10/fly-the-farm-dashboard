@@ -47,6 +47,7 @@ import ScienceIcon from '@mui/icons-material/Science';
 import SecurityIcon from '@mui/icons-material/Security';
 import WarningAmberIcon from '@mui/icons-material/WarningAmber';
 import FieldBoundaryEditor from '../components/FieldBoundaryEditor';
+import AuthoritativeMissionJsa from '../components/mission/AuthoritativeMissionJsa';
 import MissionJsaDialog from '../components/MissionJsaDialog';
 import MissionEquipmentSelector from '../components/mission/MissionEquipmentSelector';
 import MissionPersonnelSelector from '../components/mission/MissionPersonnelSelector';
@@ -379,6 +380,7 @@ function AuthoritativeMissionPlanning() {
   const [selectedKitId, setSelectedKitId] = React.useState('');
   const [actionError, setActionError] = React.useState('');
   const [archiveOpen, setArchiveOpen] = React.useState(false);
+  const [authoritativeJsaOpen, setAuthoritativeJsaOpen] = React.useState(false);
   const [mapStatus, setMapStatus] = React.useState<'idle'|'loading'|'ready'|'error'>('idle');
   const [mapVersion, setMapVersion] = React.useState(0);
   const [mapNotes, setMapNotes] = React.useState('');
@@ -573,10 +575,7 @@ function AuthoritativeMissionPlanning() {
     }
   };
 
-  const unavailableSections = [
-    'JSA',
-    'Risk controls', 'Authorisation', 'Completion', 'Pack', 'Financials',
-  ];
+  const unavailableSections = ['Authorisation', 'Completion', 'Pack', 'Financials'];
 
   return (
     <Box sx={{ maxWidth: 1500, mx: 'auto' }}>
@@ -597,7 +596,7 @@ function AuthoritativeMissionPlanning() {
       </Stack>
 
       <Alert severity="warning" sx={{ mb: 2 }}>
-        This Draft is unauthorised and not ready to fly. Mission maps, Personnel assignments, Weather evidence and Chemical planning are authoritative; JSA, risk controls, authorisation, completion, pack and financials remain gated.
+        This Draft is unauthorised and not ready to fly. Mission maps, Personnel assignments, Weather evidence, Chemical planning, JSA and triggered risk controls are authoritative; authorisation, completion, pack and financials remain gated.
       </Alert>
       {!hasActiveLocation && <Alert severity="error" sx={{ mb: 2 }}>No active authorised operating location is available for this session.</Alert>}
       {actionError && <Alert severity="error" sx={{ mb: 2 }}>{actionError}</Alert>}
@@ -666,6 +665,10 @@ function AuthoritativeMissionPlanning() {
             {selectedMission && <Panel title="Mission Weather" icon={<CloudQueueIcon />}>
               <MissionWeatherEvidence missionId={selectedMission.id} operatingLocationId={selectedMission.operatingLocationId} />
             </Panel>}
+            {selectedMission && <Panel title="JSA & Risk Controls" icon={<SecurityIcon />}>
+              <Alert severity="info" sx={{ mb: 1.5 }}>Mission Checks, triggered hazards, controls and PIC approval are retained as authoritative versioned evidence.</Alert>
+              <Button fullWidth variant="contained" startIcon={<SecurityIcon />} onClick={() => setAuthoritativeJsaOpen(true)}>Complete Mission JSA</Button>
+            </Panel>}
             <Card variant="outlined" sx={{ borderRadius: 2.5 }}>
               <CardContent>
                 <Typography variant="h6" sx={{ fontWeight: 800, mb: 1.5 }}>Authoritative parent chain</Typography>
@@ -712,6 +715,7 @@ function AuthoritativeMissionPlanning() {
         </DialogContent>
         <DialogActions><Button onClick={() => setMapHistoryOpen(false)}>Close</Button></DialogActions>
       </Dialog>
+      {selectedMission && <AuthoritativeMissionJsa open={authoritativeJsaOpen} missionId={selectedMission.id} missionName={selectedMission.title} operatingLocationId={selectedMission.operatingLocationId} onClose={() => setAuthoritativeJsaOpen(false)} />}
     </Box>
   );
 }
@@ -3318,12 +3322,7 @@ function LocalMissionPlanning() {
         onClose={() => setJsaDialogOpen(false)}
         onSave={(record) => {
           setJsaRecord(record);
-          showNotice(
-            record.status === 'approved' ? 'success' : 'info',
-            record.status === 'approved'
-              ? 'CASA JSA and risk assessment approved. The mission can now be authorized.'
-              : 'CASA JSA draft updated. Save the mission draft to persist it.'
-          );
+          showNotice(record.status === 'approved' ? 'success' : 'info', record.status === 'approved' ? 'CASA JSA and risk assessment approved. The mission can now be authorized.' : 'CASA JSA draft updated. Save the mission draft to persist it.');
         }}
       />
 

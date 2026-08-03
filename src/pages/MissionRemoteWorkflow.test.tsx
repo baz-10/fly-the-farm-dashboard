@@ -149,7 +149,9 @@ describe('remote authoritative mission workflow', () => {
     expect(screen.getByText('Mission Boundary')).toBeInTheDocument();
     expect(screen.getByText('Mission Details')).toBeInTheDocument();
     expect(screen.getByText('Aircraft & Equipment')).toBeInTheDocument();
-    expect(screen.getByText(/Mission maps, Personnel assignments, Weather evidence and Chemical planning are authoritative/i)).toBeInTheDocument();
+    expect(screen.getByText(/Mission maps, Personnel assignments, Weather evidence, Chemical planning, JSA and triggered risk controls are authoritative/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Complete Mission JSA' })).toBeInTheDocument();
+    expect(screen.queryByText(/JSA — unavailable/i)).not.toBeInTheDocument();
     expect(screen.getByRole('combobox', { name: 'Aircraft' })).toBeInTheDocument();
     expect(screen.getByRole('combobox', { name: 'Equipment Kit' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Authorise|Authorize/i })).not.toBeInTheDocument();
