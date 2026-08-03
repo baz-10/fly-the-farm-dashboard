@@ -54,6 +54,7 @@ import MissionPersonnelSelector from '../components/mission/MissionPersonnelSele
 import MissionWeatherEvidence from '../components/mission/MissionWeatherEvidence';
 import MissionChemicalPlanning from '../components/mission/MissionChemicalPlanning';
 import MissionAuthorisation from '../components/mission/MissionAuthorisation';
+import MissionOperationalCloseout from '../components/mission/MissionOperationalCloseout';
 import MissionDeploymentWorkPack from '../components/mission/MissionDeploymentWorkPack';
 import { useAircraft } from '../contexts/AircraftContext';
 import { useAuth } from '../contexts/AuthContext';
@@ -680,6 +681,9 @@ function AuthoritativeMissionPlanning() {
             </Panel>}
             {selectedMission && <Panel title="Mission Readiness & Authorisation" icon={<GavelIcon />}>
               <MissionAuthorisation missionId={selectedMission.id} refreshToken={authorisationRefreshToken} />
+            </Panel>}
+            {selectedMission && <Panel title="Operational Closeout" icon={<FlightTakeoffIcon />}>
+              <MissionOperationalCloseout missionId={selectedMission.id} />
             </Panel>}
             <Card variant="outlined" sx={{ borderRadius: 2.5 }}>
               <CardContent>
