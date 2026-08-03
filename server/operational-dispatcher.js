@@ -13,6 +13,7 @@ const {
   createMissionWeatherHandler,
   createOperationalHandler,
   createOrganisationBrandingHandler,
+  createReportsHandler,
   createPersonnelHandler,
   createPersonnelIdentityHandler,
   createSessionHandler,
@@ -43,6 +44,7 @@ function createDefaultHandlers() {
     'customer-acceptance-public': createCustomerAcceptancePublicHandler(),
     'chemical-reviews': createChemicalReviewsHandler(),
     'organisation-branding': createOrganisationBrandingHandler(),
+    reports: createReportsHandler(),
     session: createSessionHandler(),
   });
 }
