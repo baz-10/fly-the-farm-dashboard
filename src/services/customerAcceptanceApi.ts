@@ -8,6 +8,7 @@ export function createCustomerAcceptanceApi(fetcher:Fetcher=fetch){return{
  revokeLink:(missionId:string,input:Record<string,unknown>)=>request(fetcher,`/api/v1/customer-acceptance?missionId=${encodeURIComponent(missionId)}&action=link-revoke`,input),
  resolvePublic:(token:string)=>request(fetcher,`/api/v1/customer-acceptance-public?token=${encodeURIComponent(token)}`),
  stagePublicSignature:(token:string,input:Record<string,unknown>)=>request(fetcher,`/api/v1/customer-acceptance-public?token=${encodeURIComponent(token)}&action=signature`,input),
+ stagePublicFile:(token:string,input:Record<string,unknown>)=>request(fetcher,`/api/v1/customer-acceptance-public?token=${encodeURIComponent(token)}&action=file`,input),
  submitPublic:(token:string,input:Record<string,unknown>)=>request(fetcher,`/api/v1/customer-acceptance-public?token=${encodeURIComponent(token)}&action=submit`,input),
 };}
 export const customerAcceptanceApi=createCustomerAcceptanceApi();
