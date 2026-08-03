@@ -315,6 +315,24 @@ describe('operational data store', () => {
     }));
   });
 
+  test('loads completed Missions for immutable historical review without allowing Planning mutations', async () => {
+    const data = gateway({
+      listClients: jest.fn().mockResolvedValue([client('client-1')]),
+      listProperties: jest.fn().mockResolvedValue([property('property-1', 'client-1')]),
+      listFields: jest.fn().mockResolvedValue([field('field-1', 'property-1')]),
+      listJobs: jest.fn().mockResolvedValue([job('job-1')]),
+      listOperatingLocations: jest.fn().mockResolvedValue([location('location-1')]),
+      listMissions: jest.fn().mockResolvedValue([mission('mission-1', { status: 'Completed' })]),
+    } as any);
+    const store = createOperationalDataStore(data);
+    await store.setAuthenticatedUser('user-1');
+    expect(store.getSnapshot()).toEqual(expect.objectContaining({
+      status: 'ready', missions: [expect.objectContaining({ id: 'mission-1', status: 'Completed' })],
+    }));
+    await expect(store.updateMission('mission-1', { title: 'Rewrite history' })).rejects.toEqual(expect.objectContaining({ code: 'VALIDATION_ERROR' }));
+    expect(data.updateMission).not.toHaveBeenCalled();
+  });
+
   test('publishes create, update and archive mission changes only after server confirmation', async () => {
     const create = deferred<any>();
     const data = gateway({

@@ -75,7 +75,7 @@ export interface OperationalMission {
   missionNumber: string;
   title: string;
   description: string;
-  status: 'Planning';
+  status: 'Planning' | 'Completed';
   scheduledStartAt: string | null;
   aircraftIds: string[];
   equipmentKitIds: string[];
@@ -321,13 +321,13 @@ export function mapApiMission(record: ApiRecord): OperationalMission {
     ? null : optionalText(record, 'scheduledStartAt', 'scheduled_start_at');
   if (scheduledStartAt === '') return malformed('scheduledStartAt');
   if (scheduledStartAt && Number.isNaN(Date.parse(scheduledStartAt))) return malformed('scheduledStartAt');
-  const status = requiredText(record, 'status');
-  if (status.toLowerCase() !== 'planning') return malformed('status');
+  const status = requiredText(record, 'status').toLowerCase();
+  if (!['planning', 'completed'].includes(status)) return malformed('status');
   return {
     id: requiredText(record, 'id'), jobId: requiredText(record, 'jobId', 'job_id'),
     operatingLocationId: requiredText(record, 'operatingLocationId', 'operating_location_id'),
     missionNumber: requiredText(record, 'missionNumber', 'mission_number'),
-    title: requiredText(record, 'title'), description: optionalText(record, 'description'), status: 'Planning',
+    title: requiredText(record, 'title'), description: optionalText(record, 'description'), status: status === 'completed' ? 'Completed' : 'Planning',
     aircraftIds: Array.isArray(value(record, 'aircraftIds', 'aircraft_ids'))
       ? (value(record, 'aircraftIds', 'aircraft_ids') as unknown[]).map(String) : [],
     equipmentKitIds: Array.isArray(value(record, 'equipmentKitIds', 'equipment_kit_ids'))

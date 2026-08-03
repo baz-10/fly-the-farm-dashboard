@@ -5,6 +5,7 @@ import {
   mapApiField,
   mapApiFieldBoundaryVersion,
   mapApiJob,
+  mapApiMission,
   mapApiOperatingLocation,
   mapApiProperty,
 } from '../operationalApi';
@@ -132,6 +133,15 @@ describe('operational API adapter', () => {
         scheduledStartAt: '2026-08-10T08:30:00Z', rowVersion: 3,
       })],
     }));
+  });
+
+  test('maps completed Missions as read-only lifecycle records for historical review', () => {
+    expect(mapApiMission({
+      id: 'mission-1', job_id: 'job-1', operating_location_id: 'location-1', mission_number: 'MSN-001',
+      title: 'Completed spray', description: 'Authoritative history', status: 'completed',
+      scheduled_start_at: '2026-08-10T08:30:00Z', row_version: 4,
+      created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-10T12:00:00Z',
+    })).toEqual(expect.objectContaining({ id: 'mission-1', status: 'Completed', rowVersion: 4 }));
   });
 
   test('sends only supported mission metadata and forces the trusted Planning status spelling', async () => {

@@ -184,7 +184,7 @@ export function createOperationalDataStore(gateway: OperationalDataGateway): Ope
         return !clientIds.has(record.clientId) || !parent || parent.clientId !== record.clientId
           || record.fieldIds.some((fieldId) => fieldsById.get(fieldId)?.propertyId !== record.propertyId);
       });
-      const invalidMission = missions.some((record) => record.status !== 'Planning'
+      const invalidMission = missions.some((record) => !['Planning', 'Completed'].includes(record.status)
         || !jobIds.has(record.jobId) || !operatingLocationIds.has(record.operatingLocationId));
       if (invalidProperty || invalidField || invalidJob || invalidMission) {
         throw Object.assign(new Error('The operational API returned records outside the active parent chain.'), { code: 'MALFORMED_RESPONSE' });
