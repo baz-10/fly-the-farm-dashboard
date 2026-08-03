@@ -1,9 +1,11 @@
 import React from 'react';
-import {Alert,Box,Button,Card,CardContent,Chip,Divider,Grid as MuiGrid,MenuItem,Stack,TextField,Typography} from '@mui/material';
+import {Alert,Box,Button,Card,CardContent,Chip,Divider,MenuItem,Stack,TextField,Typography} from '@mui/material';
 import {missionOutcomesApi} from '../../services/missionOutcomesApi';
 
 const isoNow=()=>new Date().toISOString().slice(0,16);
-const Grid:any=MuiGrid;
+const Grid=({container,md=12,children}:any)=>container
+ ? <Box sx={{display:'grid',gridTemplateColumns:{xs:'minmax(0, 1fr)',md:'repeat(12, minmax(0, 1fr))'},gap:2,width:'100%',minWidth:0}}>{children}</Box>
+ : <Box sx={{gridColumn:{xs:'1 / -1',md:`span ${md}`},width:'100%',minWidth:0}}>{children}</Box>;
 const readFile=(file:File)=>new Promise<string>((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(String(reader.result));reader.onerror=reject;reader.readAsDataURL(file);});
 
 export default function MissionOutcomes({missionId,api=missionOutcomesApi}:{missionId:string;api?:any}){
