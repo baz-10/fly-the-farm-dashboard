@@ -14,6 +14,15 @@ describe('mission map operational API', () => {
     expect(repository.getMissionMap).not.toHaveBeenCalled();
   });
 
+  test('returns the immutable map revision ID needed by downstream evidence', async () => {
+    const revisionId = '99999999-9999-4999-8999-999999999999';
+    const repository = { get: jest.fn().mockResolvedValue({ id: missionId, operating_location_id: context.operatingLocationIds[0], status: 'planning' }), getMissionMap: jest.fn().mockResolvedValue({ id: revisionId, mission_id: missionId, version_number: 3, notes: '', geometries: [], created_at: '2026-08-02T00:00:00Z', created_by_internal_user_id: context.internalUser.id }) };
+    const res = response();
+    await createMissionMapHandler({ repository, resolveContext: jest.fn().mockResolvedValue(context) })(request('GET'), res);
+    expect(res.statusCode).toBe(200);
+    expect(res.body.data).toEqual(expect.objectContaining({ id: revisionId, version: 3 }));
+  });
+
   test('dispatches a valid versioned geometry save', async () => {
     const geometry = { id: '22222222-2222-4222-8222-222222222222', role: 'operational_boundary', geometryType: 'Polygon', geometry: { type: 'Polygon', coordinates: [[[153,-27],[153.01,-27],[153.01,-27.01],[153,-27]]] }, sourceCrs: 'EPSG:4326', canonicalCrs: 'EPSG:4326', provenance: 'drawn', validationState: 'valid', areaHectares: 10, lengthMetres: null, label: 'Block', notes: '', sourceFileId: null };
     const repository = { get: jest.fn().mockResolvedValue({ id: missionId, operating_location_id: context.operatingLocationIds[0], status: 'planning' }), saveMissionMap: jest.fn().mockResolvedValue({ record: { mission_id: missionId, version_number: 1, notes: '', source_field_boundary_version_id: null, geometries: [geometry], created_at: '2026-08-02T00:00:00Z', created_by_internal_user_id: context.internalUser.id } }) };

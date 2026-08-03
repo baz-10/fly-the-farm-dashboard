@@ -384,6 +384,8 @@ function AuthoritativeMissionPlanning() {
   const [authoritativeJsaOpen, setAuthoritativeJsaOpen] = React.useState(false);
   const [mapStatus, setMapStatus] = React.useState<'idle'|'loading'|'ready'|'error'>('idle');
   const [mapVersion, setMapVersion] = React.useState(0);
+  const [mapRevisionId, setMapRevisionId] = React.useState('');
+  const [mapBoundaryGeometry, setMapBoundaryGeometry] = React.useState<MissionGeometryRecord | null>(null);
   const [mapNotes, setMapNotes] = React.useState('');
   const [mapPolygons, setMapPolygons] = React.useState<LatLng[][]>([]);
   const [mapFeatures, setMapFeatures] = React.useState<MissionMapFeature[]>([]);
@@ -409,9 +411,9 @@ function AuthoritativeMissionPlanning() {
     let active = true; setMapStatus('loading'); setMapError('');
     missionMapsApi.get(selectedMission.id).then((revision) => {
       if (!active) return;
-      if (!revision) { setMapVersion(0); setMapNotes(''); setMapPolygons([]); setMapFeatures([]); setMapGeometryIds([]); setMapBoundarySources([]); setMapBoundaryFile(null); setMapUploadedSourceFileId(null); setMapStatus('ready'); return; }
+      if (!revision) { setMapVersion(0); setMapRevisionId(''); setMapBoundaryGeometry(null); setMapNotes(''); setMapPolygons([]); setMapFeatures([]); setMapGeometryIds([]); setMapBoundarySources([]); setMapBoundaryFile(null); setMapUploadedSourceFileId(null); setMapStatus('ready'); return; }
       const boundaries = revision.geometries.filter((g) => ['operational_boundary','treatment_area'].includes(g.role) && g.geometryType === 'Polygon');
-      setMapVersion(revision.version); setMapNotes(revision.notes);
+      setMapVersion(revision.version); setMapRevisionId(revision.id); setMapBoundaryGeometry(boundaries[0]||null); setMapNotes(revision.notes);
       setMapGeometryIds(boundaries.map((g) => g.id));
       setMapBoundarySources(boundaries.map((g) => ({ provenance: g.provenance, notes: g.notes, sourceFileId: g.sourceFileId })));
       setMapBoundaryFile(null);
@@ -445,7 +447,7 @@ function AuthoritativeMissionPlanning() {
       const boundaries: MissionGeometryRecord[] = mapPolygons.filter((p)=>p.length>=3).map((polygon,index) => { const source=mapBoundarySources[index] || (mapBoundarySources.length===1?mapBoundarySources[0]:undefined); return ({ id:boundaryIds[index], role:index===0?'operational_boundary':'treatment_area', geometryType:'Polygon', geometry:{type:'Polygon',coordinates:[toClosedGeoJsonRing(polygon)]}, sourceCrs:'EPSG:4326',canonicalCrs:'EPSG:4326',provenance:source?.provenance||'drawn',validationState:'valid',areaHectares:index===0?mapArea:null,lengthMetres:null,label:index===0?'Operational boundary':`Treatment area ${index+1}`,notes:source?.notes||'',sourceFileId:source?.sourceFileId||importedSourceFileId||null }); });
       const features: MissionGeometryRecord[] = mapFeatures.map((feature) => ({ id:feature.id,role:missionMapFeatureRole(feature.type) as MissionGeometryRecord['role'],geometryType:feature.geometry.type,geometry:feature.geometry,sourceCrs:'EPSG:4326',canonicalCrs:'EPSG:4326',provenance:'drawn',validationState:'valid',areaHectares:null,lengthMetres:null,label:feature.label,notes:feature.notes||'',sourceFileId:null }));
       const saved=await missionMapsApi.save(selectedMission.id,{expectedVersion:mapVersion,notes:mapNotes,sourceFieldBoundaryVersionId:null,geometries:[...boundaries,...features]});
-      setMapVersion(saved.version);setMapGeometryIds(boundaryIds);setMapStatus('ready');
+      const savedBoundary=saved.geometries.find((g)=>['operational_boundary','treatment_area'].includes(g.role)&&g.geometryType==='Polygon')||null;setMapVersion(saved.version);setMapRevisionId(saved.id);setMapBoundaryGeometry(savedBoundary);setMapGeometryIds(boundaryIds);setMapStatus('ready');
     } catch(error) { setMapError(error instanceof MissionMapsApiError&&error.code==='VERSION_CONFLICT'?'This Mission map changed on the server. Refresh before saving again.':error instanceof Error?error.message:'Mission map save failed.'); }
     finally { setMapSaving(false); }
   };
@@ -669,7 +671,7 @@ function AuthoritativeMissionPlanning() {
               <Alert severity="info" sx={{ mt: 1.5 }}>The saved PIC and crew revision is authoritative and qualification-checked for this Mission.</Alert>
             </Panel>}
             {selectedMission && <Panel title="Mission Weather" icon={<CloudQueueIcon />}>
-              <MissionWeatherEvidence missionId={selectedMission.id} operatingLocationId={selectedMission.operatingLocationId} scheduledStartAt={selectedMission.scheduledStartAt || undefined} plannedCoordinates={planningForecastCoordinates} />
+              <MissionWeatherEvidence missionId={selectedMission.id} operatingLocationId={selectedMission.operatingLocationId} scheduledStartAt={selectedMission.scheduledStartAt || undefined} plannedCoordinates={planningForecastCoordinates} authoritativeBoundary={mapRevisionId&&mapBoundaryGeometry?{revisionId:mapRevisionId,revisionVersion:mapVersion,geometryId:mapBoundaryGeometry.id,geometry:mapBoundaryGeometry.geometry}:undefined} />
             </Panel>}
             {selectedMission && <Panel title="JSA & Risk Controls" icon={<SecurityIcon />}>
               <Alert severity="info" sx={{ mb: 1.5 }}>Mission Checks, triggered hazards, controls and PIC approval are retained as authoritative versioned evidence.</Alert>
