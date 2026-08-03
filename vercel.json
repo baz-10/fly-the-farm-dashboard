@@ -18,6 +18,9 @@
     },
     "api/v1/[resource].js": {
       "maxDuration": 15
+    },
+    "api/report-worker.js": {
+      "maxDuration": 60
     }
   },
   "rewrites": [
