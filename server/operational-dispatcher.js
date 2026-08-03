@@ -3,6 +3,7 @@ const {
   createFieldBoundaryVersionHandler,
   createMissionMapHandler,
   createMissionChemicalsHandler,
+  createMissionJsaHandler,
   createMissionPersonnelHandler,
   createMissionWeatherHandler,
   createOperationalHandler,
@@ -26,6 +27,7 @@ function createDefaultHandlers() {
     'mission-personnel': createMissionPersonnelHandler(),
     'mission-weather': createMissionWeatherHandler(),
     'mission-chemicals': createMissionChemicalsHandler(),
+    'mission-jsa': createMissionJsaHandler(),
     'chemical-reviews': createChemicalReviewsHandler(),
     session: createSessionHandler(),
   });
