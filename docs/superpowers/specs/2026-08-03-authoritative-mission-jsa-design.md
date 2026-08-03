@@ -28,6 +28,21 @@ A platform-controlled template version contains:
 
 Published versions are immutable. Existing Mission revisions always resolve against the exact version referenced when saved.
 
+### Platform Hazard Library
+
+Platform-controlled, versioned hazard definitions provide stable operational hazard identity independently of JSA templates. Each hazard version contains:
+
+- stable Hazard ID and version number;
+- hazard name and description;
+- category;
+- typical controls;
+- applicable jurisdiction;
+- authoritative references;
+- related regulations where applicable;
+- provenance, publication and retirement metadata.
+
+Templates reference stable platform hazards and the exact minimum hazard version they were designed against. A Mission JSA revision creates a versioned Mission hazard instance containing the platform Hazard ID, hazard-version reference and a complete planning-time snapshot. Later platform corrections or improvements never rewrite the Mission instance.
+
 ### Mission JSA revisions
 
 Every Draft save creates an immutable Mission JSA revision. A revision references the Mission, organisation, operating location, template version, organisation policy version, creating user and creation time. It stores complete response, hazard, control, attachment and approval snapshots.
@@ -46,7 +61,7 @@ An applicable mandatory question must be answered. A hidden or inapplicable ques
 
 Each response snapshot records the question identifier, rendered question text, answer, notes, mandatory state, unsafe polarity, applicability result and rule evaluation provenance.
 
-Each unsafe response creates a hazard snapshot with a stable hazard ID, triggering question, risk category, initial likelihood, initial consequence and calculated initial score. Operators may add notes and assess the generated hazard, but do not manually recreate hazards already implied by the template.
+Each unsafe response creates a Mission hazard instance with its own stable ID, the referenced Platform Hazard ID and version, the complete platform hazard snapshot, triggering question, risk category, initial likelihood, initial consequence and calculated initial score. Operators may add notes and assess the generated hazard, but do not manually recreate hazards already implied by the template.
 
 ## Triggered risk controls
 
@@ -65,6 +80,12 @@ The server derives required controls from unsafe responses. Each control snapsho
 - derivation provenance.
 
 The client may submit assessments, ownership, mitigation, completion and evidence. It cannot suppress a required server-generated control or manufacture a template control that is not applicable.
+
+### Platform Operational Knowledge
+
+Mission controls and their mitigation text are immutable historical evidence owned by the Mission revision. They are never used as mutable shared templates.
+
+A separate Platform Operational Knowledge domain may receive proposed improvements derived from completed Mission controls. Promotion is an explicit platform research and approval workflow that stores provenance back to the originating Mission evidence where permitted. Approval publishes a new version of operational knowledge; it does not change the originating Mission, other historical Missions, platform hazard versions or published JSA template versions.
 
 ## Risk calculation and readiness threshold
 
@@ -94,7 +115,7 @@ JSA and control attachments use internal file IDs rather than provider URLs. Eac
 
 ## Mission Readiness contract
 
-The JSA readiness evaluator returns `ready`, structured `blockers`, structured `warnings`, the evaluated JSA revision, template version and policy version. It evaluates:
+The JSA readiness evaluator returns an overall readiness state, structured `blockers`, structured `warnings`, grouped readiness categories, outstanding sections, completed sections, the evaluated JSA revision, template version and policy version. The overall state is one of `NOT_STARTED`, `INCOMPLETE`, `BLOCKED`, `WARNING`, or `READY`. It evaluates:
 
 - a current JSA revision exists;
 - every applicable mandatory question is answered;
@@ -108,7 +129,7 @@ The JSA readiness evaluator returns `ready`, structured `blockers`, structured `
 - required approvals exist; and
 - every organisation policy rule is satisfied.
 
-Every blocker contains a stable code, human explanation and related question, hazard or control identifier where applicable. The evaluator never returns only “Ready” or “Not Ready.”
+Every blocker and warning contains a stable code, human explanation, readiness category and related question, hazard or control identifier where applicable. Categories group results under Questions, Hazards, Controls, Attachments, Risk and Approval. `outstandingSections` lists every category with unresolved blockers or warnings; `completedSections` lists every applicable category whose mandatory checks pass. The evaluator never returns only “Ready” or “Not Ready.”
 
 ## Mission Authorisation boundary
 
@@ -155,4 +176,4 @@ Invalid answers, incomplete mandatory data, unknown template items, missing owne
 
 ## Out of scope
 
-Overall Mission Authorisation, Mission Pack generation, enterprise reviewer assignment UI and automated external safety-regulation ingestion remain separate packages. The JSA data and readiness contracts must support them without schema redesign.
+Overall Mission Authorisation, Mission Pack generation, enterprise reviewer assignment UI, promotion into Platform Operational Knowledge and automated external safety-regulation ingestion remain separate packages. The JSA data and readiness contracts must support them without schema redesign.
