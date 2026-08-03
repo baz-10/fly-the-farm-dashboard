@@ -89,7 +89,7 @@ export function projectSelectedPlanningForecast(
     .map((raw: unknown, index: number) => ({ index, date: providerTime(raw, offsetSeconds) }))
     .filter((item: { index: number; date: Date | null }): item is { index: number; date: Date } => item.date !== null);
   const nearest = Number.isFinite(missionMs) && intervals.length
-    ? intervals.reduce((best, candidate) => Math.abs(candidate.date.getTime() - missionMs) < Math.abs(best.date.getTime() - missionMs) ? candidate : best)
+    ? intervals.reduce((best: { index: number; date: Date }, candidate: { index: number; date: Date }) => Math.abs(candidate.date.getTime() - missionMs) < Math.abs(best.date.getTime() - missionMs) ? candidate : best)
     : null;
   const index = nearest?.index ?? -1;
   const exact = Boolean(nearest && nearest.date.getTime() === missionMs);
@@ -128,4 +128,3 @@ export function projectSelectedPlanningForecast(
     cloudCoverPercent: at(hourly.cloud_cover, index),
   };
 }
-
