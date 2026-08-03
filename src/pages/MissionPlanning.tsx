@@ -673,7 +673,7 @@ function AuthoritativeMissionPlanning() {
               <Alert severity="info" sx={{ mt: 1.5 }}>The saved PIC and crew revision is authoritative and qualification-checked for this Mission.</Alert>
             </Panel>}
             {selectedMission && <Panel title="Mission Weather" icon={<CloudQueueIcon />}>
-              <MissionWeatherEvidence missionId={selectedMission.id} operatingLocationId={selectedMission.operatingLocationId} scheduledStartAt={selectedMission.scheduledStartAt || undefined} plannedCoordinates={planningForecastCoordinates} authoritativeBoundary={mapRevisionId&&mapBoundaryGeometry?{revisionId:mapRevisionId,revisionVersion:mapVersion,geometryId:mapBoundaryGeometry.id,geometry:mapBoundaryGeometry.geometry}:undefined} onEvidenceChanged={()=>setAuthorisationRefreshToken((current)=>current+1)} />
+              <MissionWeatherEvidence missionId={selectedMission.id} operatingLocationId={selectedMission.operatingLocationId} scheduledStartAt={scheduledStart?toIsoFromInput(scheduledStart):undefined} plannedCoordinates={planningForecastCoordinates} authoritativeBoundary={mapRevisionId&&mapBoundaryGeometry?{revisionId:mapRevisionId,revisionVersion:mapVersion,geometryId:mapBoundaryGeometry.id,geometry:mapBoundaryGeometry.geometry}:undefined} onEvidenceChanged={()=>setAuthorisationRefreshToken((current)=>current+1)} />
             </Panel>}
             {selectedMission && <Panel title="JSA & Risk Controls" icon={<SecurityIcon />}>
               <Alert severity="info" sx={{ mb: 1.5 }}>Mission Checks, triggered hazards, controls and PIC approval are retained as authoritative versioned evidence.</Alert>

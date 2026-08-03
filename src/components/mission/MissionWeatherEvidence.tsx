@@ -1,9 +1,10 @@
 import React from 'react';
-import { Alert, Button, Checkbox, Chip, Divider, FormControlLabel, Grid, LinearProgress, Stack, TextField, Typography } from '@mui/material';
+import { Alert, Button, Checkbox, Chip, Divider, FormControlLabel, Grid, LinearProgress, Paper, Stack, TextField, Typography } from '@mui/material';
 import { createMissionWeatherEvidenceApi } from '../../services/missionWeatherEvidenceApi';
 import { createPersonnelApi } from '../../services/personnelApi';
 import { PersonnelRecord } from '../../types/personnel';
 import { calculateMissionBoundaryCentroid, GeoJsonPolygon } from '../../utils/missionBoundaryCentroid';
+import { PlanningForecastProjection, projectSelectedPlanningForecast } from '../../utils/planningForecast';
 
 type WeatherRecord=Record<string,any>;
 type Readiness={ready:boolean;blockers?:Array<{code:string;message:string}>;warnings?:Array<{code:string;message:string}>};
@@ -15,6 +16,33 @@ const defaultGetCurrentPosition:Geolocation['getCurrentPosition']=(success,failu
 
 const localDateTime=()=>{const now=new Date(Date.now()-new Date().getTimezoneOffset()*60000);return now.toISOString().slice(0,16);};
 const value=(record:WeatherRecord,...keys:string[])=>keys.map((key)=>record?.[key]).find((item)=>item!==undefined&&item!==null);
+const formatForecastDateTime=(dateTime:string,timezone:string|null)=>{if(!dateTime)return 'Unavailable';try{return new Intl.DateTimeFormat('en-AU',{dateStyle:'medium',timeStyle:'short',...(timezone?{timeZone:timezone}:{})}).format(new Date(dateTime));}catch{return dateTime;}};
+const displayForecastValue=(item:number|null,suffix:string)=>item===null?'Unavailable':`${item}${suffix}`;
+const ForecastMetric=({label,value:display}:{label:string;value:string})=><Paper variant="outlined" sx={{p:1.25,height:'100%'}}><Typography variant="caption" color="text.secondary">{label}</Typography><Typography variant="subtitle2" fontWeight={800}>{display}</Typography></Paper>;
+const PlanningForecastDisplay=({forecast}:{forecast:PlanningForecastProjection})=><Stack spacing={1.5}>
+  <Stack direction={{xs:'column',sm:'row'}} spacing={1} alignItems={{sm:'center'}}><Typography variant="subtitle2" fontWeight={900}>Selected forecast · version {forecast.revisionVersion}</Typography><Chip size="small" color={forecast.freshness==='CURRENT'?'success':'warning'} label={forecast.freshness==='CURRENT'?'Current':forecast.freshness==='STALE'?'Stale':'Misaligned'}/></Stack>
+  {forecast.alignment==='OUTSIDE_VALID_PERIOD'&&<Alert severity="warning">Selected forecast no longer aligns with the planned Mission time. The saved revision remains visible and unchanged. Refresh Forecast to create and select a suitable revision.</Alert>}
+  {forecast.freshness==='STALE'&&<Alert severity="warning">This selected forecast is outside its valid period. It remains visible as historical Planning evidence. Refresh Forecast before relying on it.</Alert>}
+  {forecast.alignment==='NEAREST'&&<Alert severity="info">No exact hourly period was available. The nearest valid forecast interval is displayed.</Alert>}
+  <Grid container spacing={1}>
+    <Grid size={{xs:12,md:4}}><ForecastMetric label="Source" value={`${forecast.provider==='OPEN_METEO'?'Open-Meteo':forecast.provider}${forecast.providerModel?` · ${forecast.providerModel}`:''}`}/></Grid>
+    <Grid size={{xs:12,md:4}}><ForecastMetric label="Retrieved" value={formatForecastDateTime(forecast.issuedAt,forecast.timezone)}/></Grid>
+    <Grid size={{xs:12,md:4}}><ForecastMetric label="Forecast interval" value={forecast.alignment==='EXACT'?'Exact Mission-time interval':forecast.alignment==='NEAREST'?'Nearest available interval':'Outside selected valid period'}/></Grid>
+    <Grid size={{xs:12}}><ForecastMetric label="Valid period" value={`Valid from ${formatForecastDateTime(forecast.validFrom,forecast.timezone)} to ${formatForecastDateTime(forecast.validTo,forecast.timezone)}`}/></Grid>
+    <Grid size={{xs:12,md:6}}><ForecastMetric label="Mission location used" value={forecast.latitude===null||forecast.longitude===null?'Unavailable':`${forecast.latitude.toFixed(6)}, ${forecast.longitude.toFixed(6)}`}/></Grid>
+    <Grid size={{xs:12,md:6}}><ForecastMetric label="Forecast period displayed" value={forecast.matchedAt?formatForecastDateTime(forecast.matchedAt,forecast.timezone):'Unavailable'}/></Grid>
+    <Grid size={{xs:6,md:3}}><ForecastMetric label="Temperature" value={displayForecastValue(forecast.temperatureC,' °C')}/></Grid>
+    <Grid size={{xs:6,md:3}}><ForecastMetric label="Relative humidity" value={displayForecastValue(forecast.relativeHumidityPercent,'%')}/></Grid>
+    <Grid size={{xs:6,md:3}}><ForecastMetric label="Forecast Delta T" value={displayForecastValue(forecast.deltaTC,' °C')}/></Grid>
+    <Grid size={{xs:6,md:3}}><ForecastMetric label="Wind speed" value={displayForecastValue(forecast.windSpeedKmh,' km/h')}/></Grid>
+    <Grid size={{xs:6,md:3}}><ForecastMetric label="Wind gusts" value={displayForecastValue(forecast.windGustKmh,' km/h')}/></Grid>
+    <Grid size={{xs:6,md:3}}><ForecastMetric label="Wind direction" value={displayForecastValue(forecast.windDirectionDegrees,'°')}/></Grid>
+    <Grid size={{xs:6,md:3}}><ForecastMetric label="Rain probability" value={displayForecastValue(forecast.precipitationProbabilityPercent,'%')}/></Grid>
+    <Grid size={{xs:6,md:3}}><ForecastMetric label="Expected precipitation" value={displayForecastValue(forecast.expectedPrecipitationMm,' mm')}/></Grid>
+    <Grid size={{xs:6,md:3}}><ForecastMetric label="Cloud cover" value={displayForecastValue(forecast.cloudCoverPercent,'%')}/></Grid>
+  </Grid>
+  <Alert severity="info">Inversion guidance is not provided by this forecast provider. Record the authoritative inversion assessment in Observed Pre-flight Weather.</Alert>
+</Stack>;
 
 type AuthoritativeBoundary={revisionId:string;revisionVersion:number;geometryId:string;geometry:GeoJsonPolygon};
 export default function MissionWeatherEvidence({missionId,operatingLocationId,scheduledStartAt,plannedCoordinates,authoritativeBoundary,onEvidenceChanged,weatherApi=defaultWeatherApi,personnelApi=defaultPersonnelApi,getCurrentPosition=defaultGetCurrentPosition}:{missionId:string;operatingLocationId:string;scheduledStartAt?:string;plannedCoordinates?:{latitude:number;longitude:number};authoritativeBoundary?:AuthoritativeBoundary;onEvidenceChanged?:()=>void;weatherApi?:WeatherApi;personnelApi?:PersonnelApi;getCurrentPosition?:Geolocation['getCurrentPosition']}){
@@ -27,6 +55,7 @@ export default function MissionWeatherEvidence({missionId,operatingLocationId,sc
   const update=(key:string)=>(event:React.ChangeEvent<HTMLInputElement>)=>setForm((current)=>({...current,[key]:event.target.value}));
   const load=React.useCallback(async()=>{setLoading(true);setError('');try{const [weather,forecastHistory,assessment,people]=await Promise.all([weatherApi.read(missionId),weatherApi.forecasts(missionId),weatherApi.readiness(missionId),personnelApi.list(operatingLocationId)]);const history=Array.isArray(weather)?weather:(weather?.observations||weather?.records||[]),planning=Array.isArray(forecastHistory)?forecastHistory:[];setRecords(history);setForecasts(planning);setSelectionVersion(history.reduce((maximum:number,record:WeatherRecord)=>Math.max(maximum,Number(value(record,'selection_version','selectionVersion')||0)),Number(weather?.selection_version??weather?.selectionVersion??0)));setForecastSelectionVersion(planning.reduce((maximum:number,record:WeatherRecord)=>Math.max(maximum,Number(value(record,'selection_version','selectionVersion')||0)),0));setReadiness(assessment||{ready:false});setObservers(people.filter((person)=>person.isActive&&person.operatingLocationIds.includes(operatingLocationId)));}catch(caught){setError(caught instanceof Error?caught.message:'Mission Weather could not be loaded.');}finally{setLoading(false);}},[missionId,operatingLocationId,personnelApi,weatherApi]);
   React.useEffect(()=>{void load();},[load]);
+  const selectedPlanningForecast=React.useMemo(()=>projectSelectedPlanningForecast(forecasts,scheduledStartAt),[forecasts,scheduledStartAt]);
   const boundaryCentroid=React.useMemo(()=>authoritativeBoundary?calculateMissionBoundaryCentroid(authoritativeBoundary.geometry):null,[authoritativeBoundary]);
   const failLocation=(reason:string,message:string)=>{setForm((current)=>({...current,latitude:'',longitude:''}));setLocationAccuracy(null);setLocationSource(null);setLocationCapturedAt('');setLocationFailureReason(reason);setLocationState('error');setLocationError(message);};
   const captureLocation=()=>{setLocationState('capturing');setLocationError('');setLocationFailureReason('');getCurrentPosition((position)=>{const latitude=Number(position.coords.latitude),longitude=Number(position.coords.longitude),accuracy=Number(position.coords.accuracy);if(!Number.isFinite(latitude)||latitude< -90||latitude>90||!Number.isFinite(longitude)||longitude< -180||longitude>180){failLocation('Device returned invalid coordinates','Current location could not be captured because the device returned invalid coordinates.');return;}setForm((current)=>({...current,latitude:String(latitude),longitude:String(longitude)}));setLocationAccuracy(Number.isFinite(accuracy)?accuracy:null);setLocationSource('DEVICE_GPS');setLocationCapturedAt(new Date().toISOString());setLocationState('captured');},(failure)=>{const reason=failure?.message||({1:'Permission denied',2:'Position unavailable',3:'Location request timed out'}as Record<number,string>)[failure?.code]||'Device location unavailable';failLocation(reason,'Current location could not be captured. Check location permission and try again.');},{enableHighAccuracy:true,timeout:15000,maximumAge:0});};
@@ -36,13 +65,14 @@ export default function MissionWeatherEvidence({missionId,operatingLocationId,sc
   const save=async()=>{if(!locationSource)return;setSaving(true);setError('');try{const expectedVersion=records.reduce((maximum,record)=>Math.max(maximum,Number(value(record,'version_number','versionNumber')||0)),0);const observation=await weatherApi.createManual(missionId,{observerPersonnelId:form.observerPersonnelId,expectedVersion,observedAt:new Date(form.observedAt).toISOString(),observationLocation:form.observationLocation,latitude:Number(form.latitude),longitude:Number(form.longitude),locationSource,locationCapturedAt,locationAccuracyM:locationSource==='DEVICE_GPS'?locationAccuracy:undefined,locationFailureReason:locationSource==='MISSION_BOUNDARY'?locationFailureReason:undefined,...(locationSource==='MISSION_BOUNDARY'&&authoritativeBoundary?{missionMapRevisionId:authoritativeBoundary.revisionId,missionBoundaryGeometryId:authoritativeBoundary.geometryId,centroidCalculationVersion:'POLYGON_CENTROID_V1'}:{}),temperatureC:Number(form.temperatureC),relativeHumidity:Number(form.relativeHumidityPct),windSpeedKmh:Number(form.windSpeedKmh),windDirectionDegrees:Number(form.windDirectionDegrees),cloudDescription:form.cloudDescription,precipitationMm:Number(form.precipitationMm||0),manualReason:form.manualReason,inversionAssessment:form.inversionAssessment,notes:form.additionalNotes,deltaTMode:calculateDeltaT?'CALCULATED':'KESTREL_MEASURED',...(calculateDeltaT?{}:{deltaTC:Number(deltaT)})});setDeltaT(String(value(observation,'delta_t_c','deltaTC')??''));await weatherApi.select(missionId,String(value(observation,'id')),selectionVersion);setRecords((current)=>[{...observation,selected:true,selection_version:selectionVersion+1},...current.map((record)=>({...record,selected:false}))]);setSelectionVersion((current)=>current+1);setReadiness(await weatherApi.readiness(missionId));onEvidenceChanged?.();}catch(caught){setError(caught instanceof Error?caught.message:'Manual Weather could not be saved.');}finally{setSaving(false);}};
   return <Stack spacing={2}>
     {loading&&<LinearProgress/>}{error&&<Alert severity="error">{error} No browser-stored Weather has been substituted.</Alert>}
-    <Typography variant="subtitle1" fontWeight={900}>Planning Forecast Weather</Typography>
+    <Typography variant="subtitle1" fontWeight={900}>PLANNING FORECAST</Typography>
     <Alert severity="info">Forecast revisions support planning only. They never become observed Weather or Mission Authorisation evidence.</Alert>
-    <Button variant="outlined" disabled={loading||saving||!scheduledStartAt||!plannedCoordinates} onClick={()=>void retrieveForecast()}>Retrieve Planning Forecast</Button>
+    <Button variant="outlined" disabled={loading||saving||!scheduledStartAt||!plannedCoordinates} onClick={()=>void retrieveForecast()}>{selectedPlanningForecast?'Refresh Forecast':'Get Forecast'}</Button>
     {forecastNotice&&<Alert severity="success">{forecastNotice}</Alert>}
+    {selectedPlanningForecast&&<PlanningForecastDisplay forecast={selectedPlanningForecast}/>}
     {forecasts.length>0&&<Typography variant="body2">{forecasts.length} immutable Planning forecast revision{forecasts.length===1?'':'s'} retained.</Typography>}
     <Divider/>
-    <Typography variant="subtitle1" fontWeight={900}>Observed Pre-flight Weather</Typography>
+    <Typography variant="subtitle1" fontWeight={900}>OBSERVED PRE-FLIGHT WEATHER</Typography>
     <Alert severity={readiness.ready?'success':(readiness.blockers?.length?'warning':'info')}>{readiness.ready?'Mission Weather evidence is ready.':'Mission Weather is not ready.'}</Alert>
     {(readiness.blockers||[]).map((item)=><Alert key={item.code} severity="error">{item.message}</Alert>)}
     {(readiness.warnings||[]).map((item)=><Alert key={item.code} severity="warning">{item.message}</Alert>)}
