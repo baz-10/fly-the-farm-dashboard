@@ -1,6 +1,8 @@
 const {
+  createChemicalReviewsHandler,
   createFieldBoundaryVersionHandler,
   createMissionMapHandler,
+  createMissionChemicalsHandler,
   createMissionPersonnelHandler,
   createMissionWeatherHandler,
   createOperationalHandler,
@@ -23,6 +25,8 @@ function createDefaultHandlers() {
     personnel: createPersonnelHandler(),
     'mission-personnel': createMissionPersonnelHandler(),
     'mission-weather': createMissionWeatherHandler(),
+    'mission-chemicals': createMissionChemicalsHandler(),
+    'chemical-reviews': createChemicalReviewsHandler(),
     session: createSessionHandler(),
   });
 }

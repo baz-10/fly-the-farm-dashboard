@@ -1,0 +1,7 @@
+import {ChemicalIntelligenceResult,ChemicalPlanLineInput,MissionChemicalPlan} from '../types/missionChemicals';
+async function request(path:string,init:RequestInit={}){const response=await fetch(path,{...init,credentials:'same-origin',headers:init.body?{'Content-Type':'application/json',...(init.headers||{})}:init.headers});const envelope=await response.json().catch(()=>({}));if(!response.ok)throw new Error(envelope?.error?.message||'Mission chemical planning is unavailable.');return envelope;}
+export function createMissionChemicalApi(){return{
+ async read(missionId:string):Promise<MissionChemicalPlan|null>{const data=(await request(`/api/v1/mission-chemicals?missionId=${encodeURIComponent(missionId)}`)).data;return Array.isArray(data)?data[0]||null:data||null;},
+ async search(query:string):Promise<ChemicalIntelligenceResult[]>{return(await request(`/api/v1/mission-chemicals?action=search&q=${encodeURIComponent(query)}`)).data||[];},
+ async save(missionId:string,input:{expectedVersion:number;treatmentAreaHa:number;applicationVolumeLHa:number;tankCapacityL:number;notes?:string;lines:ChemicalPlanLineInput[]}):Promise<{record:MissionChemicalPlan;unmatchedReviewCreated:boolean}>{const envelope=await request(`/api/v1/mission-chemicals?missionId=${encodeURIComponent(missionId)}`,{method:'POST',body:JSON.stringify(input)});return{record:envelope.data,unmatchedReviewCreated:Boolean(envelope.meta?.unmatchedReviewCreated)};}
+};}

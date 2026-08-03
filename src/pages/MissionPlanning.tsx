@@ -51,6 +51,7 @@ import MissionJsaDialog from '../components/MissionJsaDialog';
 import MissionEquipmentSelector from '../components/mission/MissionEquipmentSelector';
 import MissionPersonnelSelector from '../components/mission/MissionPersonnelSelector';
 import MissionWeatherEvidence from '../components/mission/MissionWeatherEvidence';
+import MissionChemicalPlanning from '../components/mission/MissionChemicalPlanning';
 import MissionDeploymentWorkPack from '../components/mission/MissionDeploymentWorkPack';
 import { useAircraft } from '../contexts/AircraftContext';
 import { useAuth } from '../contexts/AuthContext';
@@ -573,7 +574,7 @@ function AuthoritativeMissionPlanning() {
   };
 
   const unavailableSections = [
-    'Chemicals', 'JSA',
+    'JSA',
     'Risk controls', 'Authorisation', 'Completion', 'Pack', 'Financials',
   ];
 
@@ -596,7 +597,7 @@ function AuthoritativeMissionPlanning() {
       </Stack>
 
       <Alert severity="warning" sx={{ mb: 2 }}>
-        This Draft is unauthorised and not ready to fly. Mission maps, Personnel assignments and Weather evidence are authoritative; chemicals, JSA, risk controls, authorisation, completion, pack and financials remain gated.
+        This Draft is unauthorised and not ready to fly. Mission maps, Personnel assignments, Weather evidence and Chemical planning are authoritative; JSA, risk controls, authorisation, completion, pack and financials remain gated.
       </Alert>
       {!hasActiveLocation && <Alert severity="error" sx={{ mb: 2 }}>No active authorised operating location is available for this session.</Alert>}
       {actionError && <Alert severity="error" sx={{ mb: 2 }}>{actionError}</Alert>}
@@ -632,6 +633,8 @@ function AuthoritativeMissionPlanning() {
                 <TextField fullWidth multiline minRows={2} label="Mission map notes" value={mapNotes} onChange={(e)=>setMapNotes(e.target.value)} sx={{mt:2}} />
                 <Stack direction="row" justifyContent="space-between" spacing={1} sx={{mt:2}}><Button variant="outlined" onClick={()=>void openMapHistory()}>View map revision history</Button><Button variant="contained" startIcon={<SaveIcon/>} disabled={mapSaving} onClick={()=>void saveMap()}>{mapSaving?'Saving authoritative map…':'Save Mission Map'}</Button></Stack></>}
             </Panel>}
+
+            {selectedMission && <Panel title="Chemical Planning" icon={<ScienceIcon />}><MissionChemicalPlanning missionId={selectedMission.id} defaultAreaHa={mapArea}/></Panel>}
 
             <Panel title="Downstream Mission Workflow" icon={<SecurityIcon />}>
                 <Alert severity="info" sx={{ mb: 2 }}>Incomplete capabilities remain gated and do not block a valid Draft Mission.</Alert>

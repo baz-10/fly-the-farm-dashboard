@@ -26,7 +26,7 @@ import {
 } from '../services/fieldManagementStore';
 import AdminSourceManager from '../components/AdminSourceManager';
 import AdminSourceExtraction from '../components/AdminSourceExtraction';
-import AdminChemicalIntake from '../components/AdminChemicalIntake';
+import AuthoritativeChemicalReviews from '../components/AuthoritativeChemicalReviews';
 import AdminDocumentSourcing from '../components/AdminDocumentSourcing';
 
 export default function Admin() {
@@ -198,7 +198,7 @@ export default function Admin() {
 
       {/* Chemical Intake */}
       <Box sx={{ mt: 6 }} className="ftf-animate-in-delay-1">
-        <AdminChemicalIntake />
+        <AuthoritativeChemicalReviews />
       </Box>
 
       {/* Document Sourcing */}

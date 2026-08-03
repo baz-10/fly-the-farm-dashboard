@@ -1,0 +1,5 @@
+export type ChemicalRateUnit='L_HA'|'ML_HA'|'KG_HA'|'G_HA';
+export interface ChemicalPlanLineInput{productName:string;matchState:'VERIFIED'|'UNMATCHED';platformProductId?:string;platformProductVersionId?:string;manufacturer?:string;apvmaNumber?:string;activeIngredient?:string;formulation?:string;rate:number;rateUnit:ChemicalRateUnit;}
+export interface ChemicalPlanLine extends ChemicalPlanLineInput{id:string;line_number:number;total_product_quantity:number;total_product_unit:string;product_per_batch:number;}
+export interface MissionChemicalPlan{id:string;version_number:number;treatment_area_ha:number;application_volume_l_ha:number;tank_capacity_l:number;total_spray_volume_l:number;water_required_l:number;hectares_per_batch:number;batch_count:number;lines:ChemicalPlanLine[];}
+export interface ChemicalIntelligenceResult{id:string;canonical_name:string;manufacturer?:string;apvma_number?:string;current_version:number;version:{id:string;display_name:string;active_ingredient?:string;formulation?:string};}

@@ -76,6 +76,7 @@ jest.mock('../components/FieldBoundaryEditor', () => (props: any) => <div>
     });
   }}>Simulate KML import</button>}
 </div>);
+jest.mock('../components/mission/MissionChemicalPlanning', () => () => <div>Authoritative chemical planning</div>);
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -148,7 +149,7 @@ describe('remote authoritative mission workflow', () => {
     expect(screen.getByText('Mission Boundary')).toBeInTheDocument();
     expect(screen.getByText('Mission Details')).toBeInTheDocument();
     expect(screen.getByText('Aircraft & Equipment')).toBeInTheDocument();
-    expect(screen.getByText(/Mission maps, Personnel assignments and Weather evidence are authoritative/i)).toBeInTheDocument();
+    expect(screen.getByText(/Mission maps, Personnel assignments, Weather evidence and Chemical planning are authoritative/i)).toBeInTheDocument();
     expect(screen.getByRole('combobox', { name: 'Aircraft' })).toBeInTheDocument();
     expect(screen.getByRole('combobox', { name: 'Equipment Kit' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Authorise|Authorize/i })).not.toBeInTheDocument();
