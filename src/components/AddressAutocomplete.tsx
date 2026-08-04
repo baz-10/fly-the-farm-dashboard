@@ -15,18 +15,9 @@ import {
 } from '@mui/material';
 import PlaceIcon from '@mui/icons-material/Place';
 import SearchIcon from '@mui/icons-material/Search';
-import { MapContainer, TileLayer, Marker, useMap } from 'react-leaflet';
-import L from 'leaflet';
-import 'leaflet/dist/leaflet.css';
 import { AustralianState } from '../types/chemical';
 
-// Fix Leaflet default marker icon issue with bundlers
-delete (L.Icon.Default.prototype as any)._getIconUrl;
-L.Icon.Default.mergeOptions({
-  iconRetinaUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png',
-  iconUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png',
-  shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
-});
+const AddressLocationMap = React.lazy(() => import('./AddressLocationMap'));
 
 // ─── Types ──────────────────────────────────────────────────
 
@@ -51,16 +42,6 @@ interface Props {
   mapHeight?: number;
   lat?: number;
   lng?: number;
-}
-
-// ─── Map Recenter Component ─────────────────────────────────
-
-function MapRecenter({ lat, lng }: { lat: number; lng: number }) {
-  const map = useMap();
-  useEffect(() => {
-    map.setView([lat, lng], 14, { animate: true });
-  }, [map, lat, lng]);
-  return null;
 }
 
 // ─── Component ──────────────────────────────────────────────
@@ -244,30 +225,9 @@ export default function AddressAutocomplete({
 
       {/* Map Display */}
       {showMap && mapCenter && (
-        <Box
-          sx={{
-            mt: 1.5,
-            borderRadius: '12px',
-            overflow: 'hidden',
-            border: `1px solid ${alpha(theme.palette.primary.main, 0.12)}`,
-            height: mapHeight,
-            '& .leaflet-container': { height: '100%', width: '100%', borderRadius: '12px' },
-          }}
-        >
-          <MapContainer
-            center={[mapCenter.lat, mapCenter.lng]}
-            zoom={14}
-            style={{ height: '100%', width: '100%' }}
-            scrollWheelZoom={false}
-          >
-            <TileLayer
-              attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-              url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-            />
-            <Marker position={[mapCenter.lat, mapCenter.lng]} />
-            <MapRecenter lat={mapCenter.lat} lng={mapCenter.lng} />
-          </MapContainer>
-        </Box>
+        <React.Suspense fallback={<Box sx={{ mt: 1.5, height: mapHeight }} />}>
+          <AddressLocationMap lat={mapCenter.lat} lng={mapCenter.lng} height={mapHeight} />
+        </React.Suspense>
       )}
     </Box>
   );
