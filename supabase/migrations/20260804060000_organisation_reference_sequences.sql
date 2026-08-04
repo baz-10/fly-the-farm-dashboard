@@ -11,6 +11,11 @@ language plpgsql immutable set search_path=public as $$declare v_prefix text;beg
 end$$;
 
 update public.organisations set reference_prefix=public.ftf_suggest_reference_prefix(name) where reference_prefix is null;
+create function public.ftf_assign_organisation_reference_prefix()returns trigger language plpgsql set search_path=public as $$begin
+ if new.reference_prefix is null then new.reference_prefix:=public.ftf_suggest_reference_prefix(new.name);end if;
+ return new;
+end$$;
+create trigger organisations_assign_reference_prefix before insert on public.organisations for each row execute function public.ftf_assign_organisation_reference_prefix();
 alter table public.organisations alter column reference_prefix set not null;
 alter table public.organisations add constraint organisations_reference_prefix_format check(reference_prefix~'^[A-Z0-9]{2,8}$');
 
@@ -48,6 +53,7 @@ language plpgsql security definer set search_path=public as $$declare v_data jso
 end$$;
 
 revoke all on function public.ftf_suggest_reference_prefix(text)from public,anon,authenticated;
+revoke all on function public.ftf_assign_organisation_reference_prefix()from public,anon,authenticated;
 revoke all on function public.ftf_allocate_operational_reference(uuid,text)from public,anon,authenticated;
 revoke all on function public.ftf_write_operational_resource_before_reference_sequences(uuid,uuid,text,text,uuid,integer,jsonb)from public,anon,authenticated,service_role;
 revoke all on function public.ftf_write_operational_resource(uuid,uuid,text,text,uuid,integer,jsonb)from public,anon,authenticated;
