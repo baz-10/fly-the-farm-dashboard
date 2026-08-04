@@ -9,6 +9,7 @@ import {
   Typography,
   Alert,
   Link,
+  Divider,
   alpha,
   useTheme,
 } from '@mui/material';
@@ -142,20 +143,26 @@ export default function Login() {
             </Button>
           </Box>
 
-          <Typography variant="body2" align="right" sx={{ mt: -2, mb: 2.5 }}>
-            <Link component={RouterLink} to="/forgot-password" sx={{ fontWeight: 600 }}>Forgot Password?</Link>
-          </Typography>
+          <Box sx={{ mt: 2, textAlign: 'center' }}>
+            <Link component={RouterLink} to="/forgot-password" sx={{ fontWeight: 650 }}>
+              Forgot password?
+            </Link>
+          </Box>
 
-          <Typography variant="body2" align="center" color="text.secondary" sx={{ mt: 3 }}>
-            Don't have an account?{' '}
+          <Divider sx={{ my: 3 }} />
+
+          <Box sx={{ textAlign: 'center' }}>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 0.75 }}>
+              New to Spray Command?
+            </Typography>
             <Link
               component={RouterLink}
               to="/register"
               sx={{ fontWeight: 700, color: 'primary.main', textDecoration: 'none', '&:hover': { textDecoration: 'underline' } }}
             >
-              Create one
+              Create account
             </Link>
-          </Typography>
+          </Box>
         </CardContent>
       </Card>
     </Box>
