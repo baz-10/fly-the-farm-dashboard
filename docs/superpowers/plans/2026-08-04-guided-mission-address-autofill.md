@@ -134,7 +134,7 @@ git commit -m "IMP-MIS-001 trust server address autocomplete"
 - Modify: `src/types/fieldManagement.ts`
 - Modify: `src/services/operationalApi.ts`
 - Modify: `server/operational-api.js`
-- Create: `supabase/migrations/20260804070000_property_address_source.sql`
+- Create: `supabase/migrations/20260804071000_property_address_source.sql`
 - Modify: `src/services/__tests__/operationalApi.test.ts`
 - Modify: `src/__tests__/trustedOperationalApi.test.js`
 - Create: `src/__tests__/property-address-source-migration.test.ts`
@@ -179,7 +179,7 @@ Expected: PASS, including a create/read/update round trip for both source values
 - [ ] **3.5 Commit authoritative persistence**
 
 ```bash
-git add src/types/fieldManagement.ts src/services/operationalApi.ts server/operational-api.js supabase/migrations/20260804070000_property_address_source.sql src/services/__tests__/operationalApi.test.ts src/__tests__/trustedOperationalApi.test.js src/__tests__/property-address-source-migration.test.ts
+git add src/types/fieldManagement.ts src/services/operationalApi.ts server/operational-api.js supabase/migrations/20260804071000_property_address_source.sql src/services/__tests__/operationalApi.test.ts src/__tests__/trustedOperationalApi.test.js src/__tests__/property-address-source-migration.test.ts
 git commit -m "IMP-MIS-001 retain authoritative property address source"
 ```
 
