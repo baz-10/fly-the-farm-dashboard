@@ -19,6 +19,14 @@ jest.mock('../../../contexts/OperationalDataContext', () => ({ useOperationalDat
 jest.mock('../../../contexts/AuthContext', () => ({ useAuth: () => ({ user: { id: 'user-1' } }) }));
 jest.mock('react-router-dom', () => ({ useNavigate: () => mockNavigate, useSearchParams: () => [new URLSearchParams()] }), { virtual: true });
 jest.mock('../../FieldBoundaryEditor', () => (props: any) => <button onClick={() => { props.onCoordsChange([[-27, 151], [-27, 151.01], [-27.01, 151.01]]); props.onAreaChange(10.5); }}>Draw test boundary</button>);
+jest.mock('../../AddressAutocomplete', () => (props: any) => <div>
+  <label htmlFor="guided-address">{props.label}</label>
+  <input id="guided-address" value={props.initialValue || ''} onChange={(event) => props.onInputChange?.(event.target.value)} />
+  <button type="button" onClick={() => props.onSelect({
+    address: '1 Queen Street', locality: 'Brisbane City', state: 'QLD', postcode: '4000',
+    lat: -27.4698, lng: 153.0251, displayName: '1 Queen Street, Brisbane City QLD 4000', type: 'commercial',
+  })}>Select address suggestion</button>
+</div>);
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -76,6 +84,43 @@ test('allows custom references and returning to every completed parent step', as
   expect(screen.getByRole('heading', { name: 'Who is this Mission for?' })).toBeInTheDocument();
   await user.click(screen.getByText('2 Property'));
   expect(screen.getByRole('heading', { name: 'Where is the work?' })).toBeInTheDocument();
+});
+
+test('saves a selected address with geocoded coordinates and provenance', async () => {
+  const user = userEvent.setup();
+  render(<GuidedMissionCreation />);
+  await user.click(screen.getByRole('button', { name: 'Add new Client' }));
+  await user.type(screen.getByRole('textbox', { name: /Client or business name/ }), 'New Client');
+  await user.click(screen.getByRole('button', { name: 'Save Client and continue' }));
+  await user.click(screen.getByRole('button', { name: 'Add new Property' }));
+  await user.type(screen.getByRole('textbox', { name: /Property name/ }), 'New Property');
+  await user.type(screen.getByRole('textbox', { name: 'Street address' }), '1 Queen');
+  await user.click(screen.getByRole('button', { name: 'Select address suggestion' }));
+
+  expect(screen.getByText(/Address verified from search/i)).toBeInTheDocument();
+  await user.click(screen.getByRole('button', { name: 'Save Property and continue' }));
+  expect(mockCreateProperty).toHaveBeenCalledWith(expect.objectContaining({
+    address: '1 Queen Street', locality: 'Brisbane City', state: 'QLD',
+    lat: -27.4698, lng: 153.0251, addressSource: 'GEOCODED',
+  }));
+});
+
+test('clears stale geocoded coordinates when the operator manually changes the address', async () => {
+  const user = userEvent.setup();
+  render(<GuidedMissionCreation />);
+  await user.click(screen.getByRole('button', { name: 'Add new Client' }));
+  await user.type(screen.getByRole('textbox', { name: /Client or business name/ }), 'New Client');
+  await user.click(screen.getByRole('button', { name: 'Save Client and continue' }));
+  await user.click(screen.getByRole('button', { name: 'Add new Property' }));
+  await user.type(screen.getByRole('textbox', { name: /Property name/ }), 'Manual Property');
+  await user.click(screen.getByRole('button', { name: 'Select address suggestion' }));
+  await user.type(screen.getByRole('textbox', { name: 'Street address' }), ' rear gate');
+
+  expect(screen.getByText(/entered manually/i)).toBeInTheDocument();
+  await user.click(screen.getByRole('button', { name: 'Save Property and continue' }));
+  expect(mockCreateProperty).toHaveBeenCalledWith(expect.objectContaining({
+    addressSource: 'MANUAL', lat: undefined, lng: undefined,
+  }));
 });
 
 test('creates the authoritative parent chain and Draft without leaving the workflow', async () => {
