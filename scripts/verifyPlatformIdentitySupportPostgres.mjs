@@ -38,7 +38,7 @@ try {
   const organisationAdminAuth='71000000-0000-4000-8000-000000000004';
   await db.exec(`
     insert into auth.users(id,email)values('${platformAuth}','ben@trollope.com.au'),('${conflictedAuth}','conflicted@example.test'),('${organisationAdminAuth}','ben@flythefarm.com.au');
-    insert into public.organisations(id,organisation_id,name)values('${org}','${org}','Test Organisation');
+    insert into public.organisations(id,organisation_id,name)values('${org}','${org}','Fly The Farm');
     insert into public.internal_users(id,organisation_id,auth_user_id,display_name)values('${internal}','${org}','${conflictedAuth}','Conflicted User');
     insert into public.roles(id,organisation_id,code,name)values('${role}','${org}','admin','Administrator');
     insert into public.memberships(organisation_id,internal_user_id,role_id)values('${org}','${internal}','${role}');
@@ -103,6 +103,9 @@ try {
     (select count(*)::int from public.memberships m join public.internal_users u on u.id=m.internal_user_id where u.auth_user_id='${platformAuth}') platform_memberships
   `)).rows[0];
   if(writeEvidence.clients!==1||writeEvidence.attributed_audits<2||writeEvidence.activities!==1||writeEvidence.platform_memberships!==0)throw new Error(`delegated write evidence invalid: ${JSON.stringify(writeEvidence)}`);
+  await db.exec(await readMigration('20260804162000_production_beta_platform_identity_reconciliation.sql'));
+  const reconciled=(await db.query(`select count(*)::int count from public.platform_users where auth_user_id='${platformAuth}'and email='ben@trollope.com.au'and is_active`)).rows[0].count;
+  if(reconciled!==1)throw new Error('Production Beta platform identity reconciliation was not unique');
 } finally {
   await db.close();
 }
