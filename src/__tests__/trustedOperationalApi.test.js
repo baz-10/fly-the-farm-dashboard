@@ -218,6 +218,39 @@ describe('trusted organisation operational API', () => {
     expect(res.body.error.code).toBe('RELATIONSHIP_CONFLICT');
   });
 
+  test('accepts and maps authoritative Property address provenance', async () => {
+    const repository = {
+      relationshipExists: jest.fn().mockResolvedValue(true),
+      create: jest.fn().mockResolvedValue({ record: {
+        id: '55555555-5555-4555-8555-555555555555', client_id: '33333333-3333-4333-8333-333333333333',
+        name: 'Geocoded property', state: 'QLD', address: '1 Queen Street', address_source: 'GEOCODED', row_version: 1,
+      } }),
+    };
+    const res = createResponse();
+
+    await handlerFor('properties', repository, context({ permissions: ['properties.create'] }))(request('POST', {
+      clientId: '33333333-3333-4333-8333-333333333333', name: 'Geocoded property', state: 'QLD',
+      address: '1 Queen Street', addressSource: 'GEOCODED', latitude: -27.4698, longitude: 153.0251,
+    }), res);
+
+    expect(res.statusCode).toBe(201);
+    expect(repository.create).toHaveBeenCalledWith('properties', expect.any(Object), expect.objectContaining({ address_source: 'GEOCODED' }));
+    expect(res.body.data.addressSource).toBe('GEOCODED');
+  });
+
+  test('rejects an unknown Property address source', async () => {
+    const repository = { relationshipExists: jest.fn().mockResolvedValue(true), create: jest.fn() };
+    const res = createResponse();
+
+    await handlerFor('properties', repository, context({ permissions: ['properties.create'] }))(request('POST', {
+      clientId: '33333333-3333-4333-8333-333333333333', name: 'Invalid source', state: 'QLD', addressSource: 'GUESSED',
+    }), res);
+
+    expect(res.statusCode).toBe(400);
+    expect(res.body.error.code).toBe('VALIDATION_ERROR');
+    expect(repository.create).not.toHaveBeenCalled();
+  });
+
   test('returns the current version when an update loses the optimistic concurrency race', async () => {
     const repository = { get: jest.fn().mockResolvedValue({ id: '33333333-3333-4333-8333-333333333333', name: 'Old', row_version: 4 }), update: jest.fn().mockResolvedValue({ conflict: true, currentVersion: 5 }) };
     const res = createResponse();

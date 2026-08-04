@@ -229,6 +229,7 @@ export function mapApiProperty(record: ApiRecord): Property {
     notes: optionalText(record, 'notes'),
     primaryContactName: optionalText(record, 'primaryContactName', 'primary_contact_name'),
     accessNotes: optionalText(record, 'accessNotes', 'access_notes'),
+    addressSource: value(record, 'addressSource', 'address_source') === 'GEOCODED' ? 'GEOCODED' : 'MANUAL',
     lat: value(record, 'latitude', 'latitude') == null ? undefined : Number(value(record, 'latitude', 'latitude')),
     lng: value(record, 'longitude', 'longitude') == null ? undefined : Number(value(record, 'longitude', 'longitude')),
     createdAt: timestamp(record, 'createdAt', 'created_at'),
@@ -487,6 +488,7 @@ export function createOperationalApi(options: ApiOptions = {}): OperationalApi {
     if (input.notes) payload.notes = input.notes;
     if (input.lat !== undefined) payload.latitude = input.lat;
     if (input.lng !== undefined) payload.longitude = input.lng;
+    if (input.addressSource !== undefined) payload.addressSource = input.addressSource;
     return payload;
   };
   const fieldWritable = (input: FieldCreateInput | FieldUpdateInput): ApiRecord => {

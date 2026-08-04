@@ -31,11 +31,12 @@ describe('operational API adapter', () => {
     });
     expect(mapApiProperty({
       id: 'property-1', client_id: 'client-1', name: 'Home Block', address: '1 Farm Rd',
-      state: 'QLD',
+      state: 'QLD', address_source: 'GEOCODED', latitude: '-27.4698', longitude: '153.0251',
       row_version: 2, created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-02T00:00:00Z',
     })).toEqual(expect.objectContaining({
       id: 'property-1', clientId: 'client-1', name: 'Home Block', address: '1 Farm Rd',
-      state: 'QLD', locality: '', lotPlan: '', notes: '', rowVersion: 2,
+      state: 'QLD', locality: '', lotPlan: '', notes: '', addressSource: 'GEOCODED',
+      lat: -27.4698, lng: 153.0251, rowVersion: 2,
     }));
     expect(mapApiField({
       id: 'field-1', property_id: 'property-1', name: 'North Paddock', area_hectares: '12.5',
@@ -50,17 +51,17 @@ describe('operational API adapter', () => {
   test('preserves Australian property state in trusted create payloads and responses', async () => {
     const fetchMock = jest.spyOn(global, 'fetch').mockImplementation(() => jsonResponse(201, {
       data: {
-        id: 'property-1', clientId: 'client-1', name: 'Home Block', address: '1 Farm Rd', state: 'QLD',
+        id: 'property-1', clientId: 'client-1', name: 'Home Block', address: '1 Farm Rd', state: 'QLD', addressSource: 'GEOCODED',
         rowVersion: 1, createdAt: '2026-08-01T00:00:00Z', updatedAt: '2026-08-01T00:00:00Z',
       },
     }));
     const property = await createOperationalApi().properties.create({
       clientId: 'client-1', name: 'Home Block', address: '1 Farm Rd', state: 'QLD',
-      locality: '', lotPlan: '', notes: '',
+      locality: '', lotPlan: '', notes: '', addressSource: 'GEOCODED',
     });
     expect(property.state).toBe('QLD');
     expect(fetchMock).toHaveBeenCalledWith('/api/v1/properties', expect.objectContaining({
-      body: JSON.stringify({ clientId: 'client-1', name: 'Home Block', address: '1 Farm Rd', state: 'QLD' }),
+      body: JSON.stringify({ clientId: 'client-1', name: 'Home Block', address: '1 Farm Rd', state: 'QLD', addressSource: 'GEOCODED' }),
     }));
   });
 

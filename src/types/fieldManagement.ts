@@ -12,6 +12,8 @@ export interface ClientAddress {
   lng?: number;
 }
 
+export type PropertyAddressSource = 'GEOCODED' | 'MANUAL';
+
 export interface Client {
   id: string;
   contractorUserId: string;  // The contractor user who owns this client
@@ -38,6 +40,7 @@ export interface Property {
   lotPlan: string;
   lat?: number;
   lng?: number;
+  addressSource?: PropertyAddressSource;
   notes: string;
   primaryContactName?: string;
   accessNotes?: string;

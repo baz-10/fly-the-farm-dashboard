@@ -15,7 +15,7 @@ const AUSTRALIAN_STATES = new Set(['NSW', 'VIC', 'QLD', 'SA', 'WA', 'TAS', 'NT',
 const SCHEMAS = {
   operating_locations: { required: ['name'], fields: { name: 'name', address: 'address', timezone: 'timezone' } },
   clients: { required: ['name'], fields: { name: 'name', contactName: 'contact_name', contactEmail: 'contact_email', contactPhone: 'contact_phone', notes: 'notes' } },
-  properties: { required: ['clientId', 'name', 'state'], fields: { clientId: 'client_id', name: 'name', address: 'address', state: 'state', locality: 'locality', primaryContactName: 'primary_contact_name', accessNotes: 'access_notes', notes: 'notes', latitude: 'latitude', longitude: 'longitude' } },
+  properties: { required: ['clientId', 'name', 'state'], fields: { clientId: 'client_id', name: 'name', address: 'address', state: 'state', locality: 'locality', primaryContactName: 'primary_contact_name', accessNotes: 'access_notes', notes: 'notes', latitude: 'latitude', longitude: 'longitude', addressSource: 'address_source' } },
   fields: { required: ['propertyId', 'name'], readOnly: ['fieldBoundaryVersionId'], fields: { propertyId: 'property_id', fieldBoundaryVersionId: 'field_boundary_version_id', name: 'name', areaHectares: 'area_hectares' } },
   jobs: { required: ['clientId', 'propertyId', 'reference'], fields: { clientId: 'client_id', propertyId: 'property_id', fieldIds: 'field_ids', reference: 'reference', scope: 'scope', status: 'status', notes: 'notes', requestedDate: 'requested_date', scheduledDate: 'scheduled_date' } },
   missions: { required: ['jobId', 'operatingLocationId', 'missionNumber'], fields: { jobId: 'job_id', operatingLocationId: 'operating_location_id', missionNumber: 'mission_number', title: 'title', description: 'description', status: 'status', scheduledStartAt: 'scheduled_start_at', aircraftIds: 'aircraft_ids', equipmentKitIds: 'equipment_kit_ids' } },
@@ -148,6 +148,9 @@ function mapInput(resource, body, existing) {
       throw apiError(400, 'VALIDATION_ERROR', `${field} is required.`);
     }
   });
+  if (resource === 'properties' && merged.addressSource !== undefined && !['GEOCODED', 'MANUAL'].includes(merged.addressSource)) {
+    throw apiError(400, 'VALIDATION_ERROR', 'addressSource must be GEOCODED or MANUAL.');
+  }
   ['contactName', 'contactEmail', 'contactPhone', 'address', 'timezone', 'state', 'scope', 'status', 'notes', 'title', 'description', 'requestedDate', 'scheduledDate', 'scheduledStartAt'].forEach((field) => {
     if (merged[field] !== undefined && merged[field] !== null && typeof merged[field] !== 'string') {
       throw apiError(400, 'VALIDATION_ERROR', `${field} must be a string.`);
