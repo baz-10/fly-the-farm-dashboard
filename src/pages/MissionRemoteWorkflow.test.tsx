@@ -149,6 +149,8 @@ describe('remote authoritative mission workflow', () => {
     mockParams = { missionId: 'mission-1' };
     render(<MissionPlanning />);
     expect(screen.getByRole('heading', { name: 'Mission Planner' })).toBeInTheDocument();
+    expect(screen.getByText('1 Customer')).toBeInTheDocument();
+    expect(screen.getByText('10 Review')).toBeInTheDocument();
     expect(screen.getByText(/Draft · Planning incomplete/i)).toBeInTheDocument();
     expect(screen.getByText('Mission Boundary')).toBeInTheDocument();
     expect(screen.getByText('Mission Details')).toBeInTheDocument();

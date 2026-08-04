@@ -17,6 +17,7 @@ export interface Client {
   contractorUserId: string;  // The contractor user who owns this client
   linkedUserId?: string;     // If this client has registered a user account
   name: string;
+  contactName?: string;
   phone: string;
   email: string;
   addresses?: ClientAddress[];
@@ -38,6 +39,8 @@ export interface Property {
   lat?: number;
   lng?: number;
   notes: string;
+  primaryContactName?: string;
+  accessNotes?: string;
   createdAt: string;
   updatedAt: string;
   /** Authoritative API optimistic-concurrency token in remote mode. */

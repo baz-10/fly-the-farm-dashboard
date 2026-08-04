@@ -244,13 +244,13 @@ describe('operational API adapter', () => {
     const api = createOperationalApi({ timeoutMs: 1000 });
 
     await api.clients.create({
-      name: 'North Farm', phone: '0400000000', email: 'ops@example.com', notes: 'private note',
+      name: 'North Farm', contactName: 'Pat Smith', phone: '0400000000', email: 'ops@example.com', notes: 'private note',
       addresses: [], contractorUserId: 'browser-user-id',
     });
 
     expect(fetchMock).toHaveBeenCalledWith('/api/v1/clients', expect.objectContaining({
       method: 'POST', credentials: 'same-origin', body: JSON.stringify({
-        name: 'North Farm', contactEmail: 'ops@example.com', contactPhone: '0400000000',
+        name: 'North Farm', contactName: 'Pat Smith', contactEmail: 'ops@example.com', contactPhone: '0400000000', notes: 'private note',
       }),
     }));
   });

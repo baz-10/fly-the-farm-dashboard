@@ -1,0 +1,2 @@
+const fs=require('fs'),path=require('path');
+test('guided Mission parent metadata is repository-controlled and retained by trusted writes',()=>{const sql=fs.readFileSync(path.join(__dirname,'../../supabase/migrations/20260804050000_guided_mission_parent_metadata.sql'),'utf8');for(const token of['primary_contact_name','access_notes','latitude','longitude','ftf_apply_guided_parent_metadata','client.notes','property.access_notes'])expect(sql).toContain(token);});

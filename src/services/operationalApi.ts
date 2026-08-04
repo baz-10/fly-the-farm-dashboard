@@ -196,13 +196,15 @@ function boundaryCoordinates(record: ApiRecord): LatLng[] | undefined {
 }
 
 export function mapApiClient(record: ApiRecord): Client {
+  const contactName = optionalText(record, 'contactName', 'contact_name');
   return {
     id: requiredText(record, 'id'),
     contractorUserId: '',
     name: requiredText(record, 'name'),
+    ...(contactName ? { contactName } : {}),
     phone: optionalText(record, 'contactPhone', 'contact_phone'),
     email: optionalText(record, 'contactEmail', 'contact_email'),
-    notes: '',
+    notes: optionalText(record, 'notes'),
     createdAt: timestamp(record, 'createdAt', 'created_at'),
     updatedAt: timestamp(record, 'updatedAt', 'updated_at'),
     rowVersion: versionValue(record),
@@ -218,7 +220,11 @@ export function mapApiProperty(record: ApiRecord): Property {
     state: propertyState(record),
     locality: '',
     lotPlan: '',
-    notes: '',
+    notes: optionalText(record, 'notes'),
+    primaryContactName: optionalText(record, 'primaryContactName', 'primary_contact_name'),
+    accessNotes: optionalText(record, 'accessNotes', 'access_notes'),
+    lat: value(record, 'latitude', 'latitude') == null ? undefined : Number(value(record, 'latitude', 'latitude')),
+    lng: value(record, 'longitude', 'longitude') == null ? undefined : Number(value(record, 'longitude', 'longitude')),
     createdAt: timestamp(record, 'createdAt', 'created_at'),
     updatedAt: timestamp(record, 'updatedAt', 'updated_at'),
     rowVersion: versionValue(record),
@@ -457,8 +463,10 @@ export function createOperationalApi(options: ApiOptions = {}): OperationalApi {
   const clientWritable = (input: ClientCreateInput | ClientUpdateInput): ApiRecord => {
     const payload: ApiRecord = {};
     if (input.name !== undefined) payload.name = input.name;
+    if (input.contactName !== undefined) payload.contactName = input.contactName;
     if (input.email !== undefined) payload.contactEmail = input.email;
     if (input.phone !== undefined) payload.contactPhone = input.phone;
+    if (input.notes !== undefined) payload.notes = input.notes;
     return payload;
   };
   const propertyWritable = (input: PropertyCreateInput | PropertyUpdateInput): ApiRecord => {
@@ -467,6 +475,12 @@ export function createOperationalApi(options: ApiOptions = {}): OperationalApi {
     if (input.name !== undefined) payload.name = input.name;
     if (input.address !== undefined) payload.address = input.address;
     if (input.state !== undefined) payload.state = input.state;
+    if (input.locality) payload.locality = input.locality;
+    if (input.primaryContactName) payload.primaryContactName = input.primaryContactName;
+    if (input.accessNotes) payload.accessNotes = input.accessNotes;
+    if (input.notes) payload.notes = input.notes;
+    if (input.lat !== undefined) payload.latitude = input.lat;
+    if (input.lng !== undefined) payload.longitude = input.lng;
     return payload;
   };
   const fieldWritable = (input: FieldCreateInput | FieldUpdateInput): ApiRecord => {
