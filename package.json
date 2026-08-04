@@ -41,6 +41,7 @@
     "build": "react-scripts build",
     "test": "react-scripts test",
     "verify:organisation-branding-reports": "node scripts/verifyOrganisationBrandingReportsPostgres.mjs",
+    "verify:platform-support": "node scripts/verifyPlatformIdentitySupportPostgres.mjs",
     "eject": "react-scripts eject"
   },
   "eslintConfig": {
