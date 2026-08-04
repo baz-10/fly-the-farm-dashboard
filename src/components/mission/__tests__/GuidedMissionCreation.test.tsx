@@ -17,7 +17,7 @@ jest.mock('../../../contexts/OperationalDataContext', () => ({ useOperationalDat
   saving: false, createClient: mockCreateClient, createProperty: mockCreateProperty, createField: mockCreateField, createFieldBoundaryVersion: mockCreateFieldBoundaryVersion, createJob: mockCreateJob, createMission: mockCreateMission,
 }) }));
 jest.mock('../../../contexts/AuthContext', () => ({ useAuth: () => ({ user: { id: 'user-1' } }) }));
-jest.mock('react-router-dom', () => ({ useNavigate: () => mockNavigate }), { virtual: true });
+jest.mock('react-router-dom', () => ({ useNavigate: () => mockNavigate, useSearchParams: () => [new URLSearchParams()] }), { virtual: true });
 jest.mock('../../FieldBoundaryEditor', () => (props: any) => <button onClick={() => { props.onCoordsChange([[-27, 151], [-27, 151.01], [-27.01, 151.01]]); props.onAreaChange(10.5); }}>Draw test boundary</button>);
 
 beforeEach(() => {

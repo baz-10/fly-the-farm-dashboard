@@ -266,6 +266,22 @@ class OperationalRepository {
     }), publicMessage: 'Personnel could not be loaded.' });
   }
 
+  async listMissionSetupDrafts(context) {
+    return supabaseRequest(`rest/v1/mission_setup_drafts?${tenantFilter(context)}&archived_at=is.null&select=*&order=updated_at.desc`, { publicMessage: 'Mission setup drafts could not be loaded.' });
+  }
+  async getMissionSetupDraft(context, id) {
+    const rows = await supabaseRequest(`rest/v1/mission_setup_drafts?${tenantFilter(context)}&id=eq.${encodeURIComponent(id)}&archived_at=is.null&select=*&limit=1`, { publicMessage: 'Mission setup draft could not be loaded.' });
+    return rows?.[0] || null;
+  }
+  async writeMissionSetupDraft(context, operation, id, expectedVersion, payload) {
+    const result = await supabaseRequest('rest/v1/rpc/ftf_write_mission_setup_draft', { method:'POST', body:JSON.stringify({ p_organisation_id:context.organisation.id, p_actor_internal_user_id:context.internalUser.id, p_operation:operation, p_draft_id:id, p_expected_version:expectedVersion, p_payload:payload }), publicMessage:'Mission setup draft could not be saved.' });
+    if(result?.conflict)return{conflict:true,currentVersion:result.current_version};
+    if(result?.not_found)return{notFound:true};
+    if(result?.location_forbidden)return{locationForbidden:true};
+    if(result?.relationship_conflict)return{relationshipConflict:true};
+    return{record:result?.record||result};
+  }
+
   async writePersonnel(context, operation, personnelId, expectedVersion, payload) {
     const result = await supabaseRequest('rest/v1/rpc/ftf_write_personnel', { method: 'POST', body: JSON.stringify({
       p_organisation_id: context.organisation.id, p_actor_internal_user_id: context.internalUser.id,

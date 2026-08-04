@@ -11,6 +11,7 @@ import { useMission } from '../contexts/MissionContext';
 import { useOperationalData } from '../contexts/OperationalDataContext';
 import { MissionRecord } from '../types/mission';
 import { getMissionNextAction, groupMissionsForRegister, MissionRegisterSectionDefinition } from '../utils/missionRegister';
+import { createMissionSetupDraftsApi, MissionSetupDraft } from '../services/missionSetupDraftsApi';
 
 interface MissionSectionProps extends MissionRegisterSectionDefinition {
   missions: MissionRecord[];
@@ -83,6 +84,9 @@ function AuthoritativeMissionRegister() {
   const navigate = useNavigate();
   const operational = useOperationalData();
   const [search, setSearch] = React.useState('');
+  const [setupDrafts,setSetupDrafts]=React.useState<MissionSetupDraft[]>([]);
+  const draftsApi=React.useMemo(()=>createMissionSetupDraftsApi(),[]);
+  React.useEffect(()=>{void draftsApi.list().then(setSetupDrafts).catch(()=>setSetupDrafts([]));},[draftsApi]);
   const normalizedSearch = search.trim().toLowerCase();
   const missions = operational.missions.filter((mission) => !normalizedSearch || [
     mission.title, mission.missionNumber, mission.description,
@@ -143,6 +147,7 @@ function AuthoritativeMissionRegister() {
         <Button variant="contained" startIcon={<AddIcon />} onClick={() => navigate('/missions/new')} sx={{ alignSelf: { xs: 'stretch', sm: 'center' } }}>New Mission</Button>
       </Stack>
       <Alert severity="warning" sx={{ mb: 2 }}>Remote missions remain Planning and not ready for operations until aircraft, crew, compliance and authorisation dependencies are connected.</Alert>
+      {setupDrafts.length>0&&<Paper component="section" variant="outlined" sx={{p:{xs:1.5,md:2},mb:2,borderRadius:2.5,borderLeft:'5px solid',borderLeftColor:'info.main'}}><Typography component="h2" sx={{fontWeight:900,mb:1}}>Mission setup drafts</Typography><Stack spacing={1}>{setupDrafts.map(draft=><Stack key={draft.id} direction={{xs:'column',sm:'row'}} justifyContent="space-between" alignItems={{sm:'center'}} spacing={1}><Box><Typography fontWeight={800}>Draft Mission setup</Typography><Typography variant="body2" color="text.secondary">Step {draft.currentStep+1} of 10 · Last saved {new Date(draft.updatedAt).toLocaleString('en-AU')}</Typography></Box><Stack direction="row" spacing={1}><Button variant="contained" onClick={()=>navigate(`/missions/new?draftId=${encodeURIComponent(draft.id)}`)}>Continue setup</Button><Button color="error" onClick={()=>void draftsApi.archive(draft.id,draft.rowVersion).then(()=>setSetupDrafts(values=>values.filter(x=>x.id!==draft.id)))}>Archive</Button></Stack></Stack>)}</Stack></Paper>}
       <Paper variant="outlined" sx={{ p: { xs: 1.5, md: 2 }, mb: 2, borderRadius: 2 }}>
         <TextField fullWidth size="small" label="Search missions" value={search} onChange={(event) => setSearch(event.target.value)} InputProps={{ startAdornment: <InputAdornment position="start"><SearchIcon fontSize="small" /></InputAdornment> }} />
       </Paper>
