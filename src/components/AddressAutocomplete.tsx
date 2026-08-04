@@ -38,25 +38,12 @@ export interface AddressResult {
   lat: number;
   lng: number;
   displayName: string;
-}
-
-interface PhotonFeature {
-  geometry: { coordinates: [number, number] };
-  properties: {
-    name?: string;
-    housenumber?: string;
-    street?: string;
-    city?: string;
-    state?: string;
-    postcode?: string;
-    country?: string;
-    osm_value?: string;
-    type?: string;
-  };
+  type?: string;
 }
 
 interface Props {
   onSelect: (result: AddressResult) => void;
+  onInputChange?: (value: string) => void;
   initialValue?: string;
   label?: string;
   size?: 'small' | 'medium';
@@ -64,31 +51,6 @@ interface Props {
   mapHeight?: number;
   lat?: number;
   lng?: number;
-}
-
-// ─── State Mapping ──────────────────────────────────────────
-
-const STATE_MAP: Record<string, AustralianState> = {
-  'new south wales': 'NSW',
-  'nsw': 'NSW',
-  'queensland': 'QLD',
-  'qld': 'QLD',
-  'victoria': 'VIC',
-  'vic': 'VIC',
-  'south australia': 'SA',
-  'sa': 'SA',
-  'western australia': 'WA',
-  'wa': 'WA',
-  'tasmania': 'TAS',
-  'tas': 'TAS',
-  'northern territory': 'NT',
-  'nt': 'NT',
-  'australian capital territory': 'ACT',
-  'act': 'ACT',
-};
-
-function mapState(raw: string): AustralianState {
-  return STATE_MAP[raw.toLowerCase()] || 'NSW';
 }
 
 // ─── Map Recenter Component ─────────────────────────────────
@@ -105,6 +67,7 @@ function MapRecenter({ lat, lng }: { lat: number; lng: number }) {
 
 export default function AddressAutocomplete({
   onSelect,
+  onInputChange,
   initialValue = '',
   label = 'Search Address',
   size = 'small',
@@ -118,10 +81,12 @@ export default function AddressAutocomplete({
   const [results, setResults] = useState<AddressResult[]>([]);
   const [loading, setLoading] = useState(false);
   const [open, setOpen] = useState(false);
+  const [feedback, setFeedback] = useState('');
   const [mapCenter, setMapCenter] = useState<{ lat: number; lng: number } | null>(
     lat && lng ? { lat, lng } : null
   );
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const requestRef = useRef(0);
   const containerRef = useRef<HTMLDivElement>(null);
 
   // Update map center when external lat/lng props change
@@ -134,81 +99,45 @@ export default function AddressAutocomplete({
   const searchAddress = useCallback(async (q: string) => {
     if (q.length < 3) {
       setResults([]);
+      setFeedback('');
       return;
     }
+    const requestNumber = ++requestRef.current;
     setLoading(true);
+    setFeedback('');
     try {
-      // Strip unit/lot prefixes that break Photon (e.g. "7/1", "Unit 3/", "Lot 5")
-      // We'll re-attach them to results afterwards
-      const unitMatch = q.match(/^(\d+[a-zA-Z]?\s*\/\s*\d+[a-zA-Z]?|[Uu]nit\s+\d+[a-zA-Z]?\s*\/?\s*\d*|[Ll]ot\s+\d+[a-zA-Z]?|[Ss]uite\s+\d+[a-zA-Z]?)\s*,?\s*/);
-      const unitPrefix = unitMatch ? unitMatch[1].trim() : '';
-      const cleanQuery = unitMatch ? q.substring(unitMatch[0].length) : q;
-
-      const params = new URLSearchParams({
-        q: (cleanQuery || q) + ', Australia',
-        limit: '8',
-        lat: '-25.0',
-        lon: '134.0',
-        lang: 'en',
-      });
-      const resp = await fetch(`https://photon.komoot.io/api/?${params}`);
+      const params = new URLSearchParams({ q });
+      const resp = await fetch(`/api/geocode?${params.toString()}`, { credentials: 'same-origin' });
+      if (!resp.ok) throw new Error('Address search failed');
       const data = await resp.json();
-      const features: PhotonFeature[] = data.features || [];
-
-      // Strict filter: must be in Australia (country match + coordinate bounds)
-      const AU_BOUNDS = { latMin: -44, latMax: -10, lngMin: 112, lngMax: 154 };
-      const mapped: AddressResult[] = features
-        .filter((f) => {
-          const [fLng, fLat] = f.geometry.coordinates;
-          const country = (f.properties.country || '').toLowerCase();
-          const inBounds = fLat >= AU_BOUNDS.latMin && fLat <= AU_BOUNDS.latMax
-            && fLng >= AU_BOUNDS.lngMin && fLng <= AU_BOUNDS.lngMax;
-          return (country === 'australia' || country === 'au') && inBounds;
-        })
-        .map((f) => {
-          const p = f.properties;
-          const [lng, lat] = f.geometry.coordinates;
-          const streetParts: string[] = [];
-          if (p.housenumber) streetParts.push(p.housenumber);
-          if (p.street) streetParts.push(p.street);
-          let street = streetParts.join(' ') || p.name || '';
-
-          // Re-attach the user's unit/lot number that we stripped for the API call
-          if (unitPrefix && !street.toLowerCase().startsWith(unitPrefix.toLowerCase())) {
-            street = `${unitPrefix} ${street}`;
-          }
-
-          const locality = p.city || p.name || '';
-          const state = mapState(p.state || '');
-          const postcode = p.postcode || '';
-
-          const displayParts = [street, locality, state, postcode].filter(Boolean);
-
-          return {
-            address: street,
-            locality,
-            state,
-            postcode,
-            lat,
-            lng,
-            displayName: displayParts.join(', '),
-          };
-        });
-
-      const limited = mapped.slice(0, 5);
+      if (requestNumber !== requestRef.current) return;
+      const limited: AddressResult[] = Array.isArray(data.results)
+        ? data.results.slice(0, 5).map((item: any) => ({
+            address: String(item.address || ''), locality: String(item.locality || ''),
+            state: item.state as AustralianState, postcode: String(item.postcode || ''),
+            lat: Number(item.lat), lng: Number(item.lng), displayName: String(item.label || ''),
+            type: item.type ? String(item.type) : undefined,
+          }))
+        : [];
       setResults(limited);
       setOpen(limited.length > 0);
+      setFeedback(limited.length ? '' : 'No matches—keep typing or enter the address manually.');
     } catch (err) {
       console.error('Address search error:', err);
+      if (requestNumber !== requestRef.current) return;
       setResults([]);
+      setOpen(false);
+      setFeedback('Address search is unavailable. Try again or enter the address manually.');
     } finally {
-      setLoading(false);
+      if (requestNumber === requestRef.current) setLoading(false);
     }
   }, []);
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const val = e.target.value;
     setQuery(val);
+    onInputChange?.(val);
+    setFeedback('');
     if (timerRef.current) clearTimeout(timerRef.current);
     timerRef.current = setTimeout(() => searchAddress(val), 350);
   };
@@ -306,6 +235,12 @@ export default function AddressAutocomplete({
           </Paper>
         )}
       </Box>
+
+      {feedback && (
+        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.75 }}>
+          {feedback}
+        </Typography>
+      )}
 
       {/* Map Display */}
       {showMap && mapCenter && (
