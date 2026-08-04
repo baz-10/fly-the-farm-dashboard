@@ -73,6 +73,10 @@ An authorised Organisation Administrator creates a support request containing:
 
 The Production Beta default duration is two hours. The server calculates and enforces the expiry. Future policy may configure permitted durations without changing the workflow.
 
+The support request and organisation approval are separate authoritative events. For Production Beta, the same authorised Organisation Administrator may request and approve access, including where the organisation has only one administrator. The authoritative records independently retain the requesting identity, approving identity, whether they are the same person, request timestamp, approval timestamp, approved organisation, access mode, scope, duration, expiry, decision and approval notes.
+
+Approval policy is repository-controlled and versioned. The model must support a future organisation policy requiring a different approver or multiple approvers without changing the request or session workflow. A session cannot begin until the applicable approval policy is satisfied.
+
 ### Support session
 
 A support session is a dedicated delegated-access record, not an organisation membership, role, seat or location assignment. It records:
@@ -114,7 +118,7 @@ Sessions expire automatically and may be revoked immediately by an authorised Or
 The platform records append-only evidence for:
 
 - request creation;
-- organisation approval or rejection;
+- each independent organisation approval or rejection;
 - session start;
 - records viewed;
 - mutations attempted and completed;
@@ -179,14 +183,16 @@ Slice 2 is accepted when:
 
 1. A platform administrator has no automatic Fly The Farm operational access.
 2. An Organisation Administrator can request and approve a scoped, time-limited support session.
-3. Read-only, read/write, whole-organisation, Mission, Job and module scopes are enforced server-side and by PostgreSQL.
-4. Automatic expiry and immediate revocation fail closed.
-5. Access does not create a membership, seat, role or location assignment.
-6. Views and mutations create attributable activity, audit and outbox evidence.
-7. Organisation administrators receive lifecycle notifications.
-8. Refresh, re-login and a second authorised session retain authoritative state without local or legacy persistence.
-9. Tenant and operating-location isolation remain enforced outside the delegated scope.
-10. Break Glass remains disabled.
+3. Request and approval persist as separate authoritative events, including same-person disclosure and independent timestamps.
+4. The Production Beta approval policy permits the same authorised administrator to request and approve, while the policy boundary supports different or multiple approvers later.
+5. Read-only, read/write, whole-organisation, Mission, Job and module scopes are enforced server-side and by PostgreSQL.
+6. Automatic expiry and immediate revocation fail closed.
+7. Access does not create a membership, seat, role or location assignment.
+8. Views and mutations create attributable activity, audit and outbox evidence.
+9. Organisation administrators receive lifecycle notifications.
+10. Refresh, re-login and a second authorised session retain authoritative state without local or legacy persistence.
+11. Tenant and operating-location isolation remain enforced outside the delegated scope.
+12. Break Glass remains disabled.
 
 ## Migration and rollback
 
