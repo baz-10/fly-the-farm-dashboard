@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useState, useCallback, useEffect } from 'react';
 import { getPersistenceMode } from '../services/persistence';
 
-export type UserRole = 'admin' | 'contractor' | 'client';
+export type UserRole = 'admin' | 'contractor' | 'client' | 'platform';
 
 export interface User {
   id: string;
@@ -14,6 +14,10 @@ export interface User {
   inviteCode?: string;
   tier: 'free' | 'pro';
   entitlements?: string[];
+  identityPlane?: 'organisation' | 'platform';
+  platformUserId?: string;
+  platformRoles?: string[];
+  permissions?: string[];
 }
 
 interface StoredUser {

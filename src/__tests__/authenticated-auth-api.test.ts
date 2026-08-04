@@ -149,6 +149,38 @@ describe('Supabase authentication API', () => {
     expect(res.headers['set-cookie'].every((cookie: string) => cookie.includes('HttpOnly'))).toBe(true);
   });
 
+  test('signs a platform identity into the platform plane without tenant context', async () => {
+    global.fetch = jest.fn(async (url: string) => {
+      if (url.includes('/auth/v1/token?grant_type=password')) {
+        return response(200, {
+          access_token: 'platform-access-token', refresh_token: 'platform-refresh-token', expires_in: 3600,
+          user: { id: 'platform-auth-id', email: 'ben@trollope.com.au', user_metadata: { name: 'Ben Trollope' } },
+        });
+      }
+      if (url.includes('/rest/v1/ftf_profiles')) return response(200, []);
+      if (url.includes('/rest/v1/platform_users')) return response(200, [{
+        id: 'platform-user-id', auth_user_id: 'platform-auth-id', email: 'ben@trollope.com.au', display_name: 'Ben Trollope',
+        platform_user_roles: [{ platform_roles: { code: 'PLATFORM_SUPER_ADMIN', platform_role_permissions: [
+          { platform_permissions: { code: 'platform.super_admin', enabled: true } },
+        ] } }],
+      }]);
+      return response(500, { message: 'unexpected request' });
+    }) as any;
+    const res = createResponse();
+
+    await authHandler({
+      method: 'POST', headers: { host: 'localhost:3001' },
+      body: { action: 'login', email: 'ben@trollope.com.au', password: 'password' },
+    }, res);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body.user).toMatchObject({
+      id: 'platform-auth-id', role: 'platform', identityPlane: 'platform', platformUserId: 'platform-user-id',
+    });
+    expect(res.body.user.tenantId).toBeUndefined();
+    expect(res.body.user.permissions).toEqual(['platform.super_admin']);
+  });
+
   test('does not send publishable or secret API keys as bearer JWTs', async () => {
     process.env.SUPABASE_ANON_KEY = 'sb_publishable_test';
     process.env.SUPABASE_SERVICE_ROLE_KEY = 'sb_secret_test';

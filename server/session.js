@@ -52,6 +52,15 @@ async function loadProfile(userId) {
   return Array.isArray(rows) && rows[0] ? rows[0] : null;
 }
 
+async function loadPlatformProfile(userId) {
+  const select = 'id,auth_user_id,email,display_name,platform_user_roles(platform_roles(code,platform_role_permissions(platform_permissions(code,enabled))))';
+  const rows = await supabaseRequest(
+    `rest/v1/platform_users?auth_user_id=eq.${encodeURIComponent(userId)}&is_active=is.true&archived_at=is.null&select=${encodeURIComponent(select)}&limit=1`,
+    { publicMessage: 'Platform identity could not be loaded.' },
+  );
+  return Array.isArray(rows) && rows[0] ? rows[0] : null;
+}
+
 function toPublicUser(authUser, profile) {
   const ownerEmails = new Set(String(process.env.PRODUCTION_BETA_OWNER_EMAILS || '')
     .split(',').map((email) => email.trim().toLowerCase()).filter(Boolean));
@@ -69,6 +78,30 @@ function toPublicUser(authUser, profile) {
     inviteCode: profile.invite_code || undefined,
     tier: profile.tier || 'free',
     entitlements,
+  };
+}
+
+function toPublicPlatformUser(authUser, profile) {
+  const roleRows = Array.isArray(profile.platform_user_roles) ? profile.platform_user_roles : [];
+  const roles = roleRows.map((entry) => entry.platform_roles?.code).filter(Boolean);
+  const permissions = [...new Set(roleRows.flatMap((entry) => {
+    const assignments = entry.platform_roles?.platform_role_permissions;
+    return Array.isArray(assignments) ? assignments
+      .filter((assignment) => assignment.platform_permissions?.enabled !== false)
+      .map((assignment) => assignment.platform_permissions?.code)
+      .filter(Boolean) : [];
+  }))];
+  return {
+    id: authUser.id,
+    email: authUser.email,
+    name: profile.display_name || authUser.user_metadata?.name || authUser.email,
+    role: 'platform',
+    identityPlane: 'platform',
+    platformUserId: profile.id,
+    platformRoles: roles,
+    permissions,
+    tier: 'free',
+    entitlements: [],
   };
 }
 
@@ -123,18 +156,21 @@ async function authenticateRequest(req, res) {
   const authUser = await authenticateAuthUser(req, res);
 
   const profile = await loadProfile(authUser.id);
-  if (!profile?.tenant_id || !['admin', 'contractor', 'client'].includes(profile.role)) {
-    throw createHttpError(403, 'Your account is not configured for Fly the Farm.');
+  if (profile?.tenant_id && ['admin', 'contractor', 'client'].includes(profile.role)) {
+    return toPublicUser(authUser, profile);
   }
-
-  return toPublicUser(authUser, profile);
+  const platformProfile = await loadPlatformProfile(authUser.id);
+  if (platformProfile) return toPublicPlatformUser(authUser, platformProfile);
+  throw createHttpError(403, 'Your account is not configured for Spray Command.');
 }
 
 module.exports = {
   authenticateAuthUser,
   authenticateRequest,
   clearSessionCookies,
+  loadPlatformProfile,
   loadProfile,
   setSessionCookies,
   toPublicUser,
+  toPublicPlatformUser,
 };

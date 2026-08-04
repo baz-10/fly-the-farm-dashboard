@@ -1,5 +1,5 @@
 const crypto = require('crypto');
-const { authenticateRequest, clearSessionCookies, loadProfile, setSessionCookies, toPublicUser } = require('../server/session');
+const { authenticateRequest, clearSessionCookies, loadPlatformProfile, loadProfile, setSessionCookies, toPublicPlatformUser, toPublicUser } = require('../server/session');
 const { createHttpError, supabaseRequest } = require('../server/supabase');
 
 function getJsonBody(req) {
@@ -257,9 +257,10 @@ module.exports = async function handler(req, res) {
     if (body.action === 'login') {
       const session = await signIn(normalizeEmail(body.email), String(body.password || ''));
       const profile = await loadProfile(session.user.id);
-      if (!profile) throw createHttpError(403, 'Your account is not configured for Spray Command.');
+      const platformProfile = profile ? null : await loadPlatformProfile(session.user.id);
+      if (!profile && !platformProfile) throw createHttpError(403, 'Your account is not configured for Spray Command.');
       setSessionCookies(req, res, session);
-      return res.status(200).json({ user: toPublicUser(session.user, profile) });
+      return res.status(200).json({ user: profile ? toPublicUser(session.user, profile) : toPublicPlatformUser(session.user, platformProfile) });
     }
 
     if (body.action === 'complete-session') {

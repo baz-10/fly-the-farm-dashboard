@@ -53,6 +53,9 @@ import { useAuth } from './contexts/AuthContext';
 import OperationalFeatureGate from './components/OperationalFeatureGate';
 import Personnel from './pages/Personnel';
 import CustomerAcceptancePublic from './pages/CustomerAcceptancePublic';
+import PlatformProtectedRoute from './components/PlatformProtectedRoute';
+import PlatformShell from './components/PlatformShell';
+import PlatformAdmin from './pages/PlatformAdmin';
 
 function WorkflowProviders({ children }: { children: React.ReactNode }) {
   const { user } = useAuth();
@@ -71,6 +74,7 @@ function WorkflowProviders({ children }: { children: React.ReactNode }) {
 
 function HomeRoute() {
   const { user } = useAuth();
+  if (user?.role === 'platform') return <Navigate to="/platform" replace />;
   if (user?.role === 'client') {
     const clientPath = user.clientRecordId
       ? `/jobs/client/${encodeURIComponent(user.clientRecordId)}`
@@ -90,6 +94,9 @@ function App() {
         <Route path="/forgot-password" element={<ForgotPassword />} />
         <Route path="/reset-password" element={<ResetPassword />} />
         <Route path="/customer-acceptance/:token" element={<CustomerAcceptancePublic />} />
+        <Route element={<PlatformProtectedRoute><PlatformShell /></PlatformProtectedRoute>}>
+          <Route path="/platform" element={<PlatformAdmin />} />
+        </Route>
         <Route
           element={
             <ProtectedRoute>
