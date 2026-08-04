@@ -46,14 +46,16 @@ class ReportWorkerRepository {
   }
 }
 
-async function processNextReportJob({ workerId, repository = new ReportWorkerRepository(), renderer = renderReportPdf }) {
+async function processNextReportJob({ workerId, repository = new ReportWorkerRepository(), renderer = renderReportPdf, logger = console }) {
   const job = await repository.claim(workerId);
   if (!job?.id) return { processed: false };
+  let stage = 'load_logo';
   try {
     const artefact = job.artefact;
     let branding = artefact.branding_snapshot || {};
     const logo = repository.loadLogo ? await repository.loadLogo(job) : null;
     if (logo) branding = { ...branding, logoData: logo.bytes, logoType: logo.contentType };
+    stage = 'render';
     const bytes = renderer({
       reportType: artefact.report_type,
       templateVersion: artefact.template_version,
@@ -61,10 +63,20 @@ async function processNextReportJob({ workerId, repository = new ReportWorkerRep
       evidence: artefact.evidence_manifest,
       artefact: { id: artefact.id, version: artefact.version_number, createdAt: artefact.created_at },
     });
+    stage = 'store';
     const file = await repository.store(job, bytes);
+    stage = 'complete';
     await repository.complete(job.id, artefact.id, file);
     return { processed: true, jobId: job.id, artefactId: artefact.id };
-  } catch {
+  } catch (error) {
+    logger.error('report_generation_failed', {
+      jobId: job.id,
+      artefactId: job.artefact.id,
+      reportType: job.artefact.report_type,
+      stage,
+      statusCode: error?.statusCode || null,
+      message: error?.publicMessage || `Report ${stage} failed.`,
+    });
     await repository.fail(job.id, job.artefact.id, 'RENDER_FAILED', 'Report generation failed.');
     return { processed: false, jobId: job.id, failed: true };
   }
