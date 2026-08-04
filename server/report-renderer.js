@@ -2,6 +2,8 @@ const { TextEncoder, TextDecoder } = require('util');
 if (!global.TextEncoder) global.TextEncoder = TextEncoder;
 if (!global.TextDecoder) global.TextDecoder = TextDecoder;
 const { jsPDF } = require('jspdf');
+const { renderMissionPackPdf } = require('./mission-pack-renderer');
+const { renderMissionSummaryPdf } = require('./mission-summary-renderer');
 
 const GREEN = [17, 68, 36];
 const GREEN_LIGHT = [237, 246, 239];
@@ -115,6 +117,8 @@ function brandingDetails(branding) {
 }
 
 function renderReportPdf({ reportType, templateVersion = 2, branding = {}, evidence = {}, artefact = {} }) {
+  if (reportType === 'MISSION_PACK') return renderMissionPackPdf({ reportType, templateVersion, branding, evidence, artefact });
+  if (reportType === 'MISSION_SUMMARY') return renderMissionSummaryPdf({ reportType, templateVersion, branding, evidence, artefact });
   const doc = new jsPDF({ unit: 'mm', format: 'a4', compress: false, putOnlyUsedFonts: true });
   doc.setFileId('00000000000000000000000000000000');
   doc.setCreationDate(new Date(artefact.createdAt || '2000-01-01T00:00:00.000Z'));
