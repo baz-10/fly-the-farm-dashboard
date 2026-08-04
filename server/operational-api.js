@@ -1,5 +1,6 @@
 const { createHttpError } = require('./supabase');
 const crypto = require('crypto');
+const { resolveOperationalActorContext } = require('./operational-actor-context');
 const { resolveRequestContext } = require('./request-context');
 const { OperationalRepository } = require('./operational-repository');
 const { fetchOpenMeteoPlanningForecast } = require('./weather-provider');
@@ -71,6 +72,23 @@ function hasPermission(context, resource, action) {
 
 function assertPermission(context, resource, action) {
   if (!hasPermission(context, resource, action)) throw apiError(403, 'FORBIDDEN', 'You do not have permission for this operation.');
+}
+
+function assertDelegatedSupportWrite(context) {
+  if (context.actorType !== 'PLATFORM_SUPPORT') return;
+  if (!context.supportSession?.id || !context.platformUser?.id) throw apiError(403,'SUPPORT_SESSION_NOT_FOUND','An active delegated Support Session is required.');
+  if (context.supportSession.accessMode !== 'READ_WRITE') throw apiError(403,'SUPPORT_READ_ONLY','This Support Session is read only.');
+  if (!['ORGANISATION','MODULE'].includes(context.supportSession.scopeType)) throw apiError(403,'SUPPORT_SCOPE_MISMATCH','This scoped Support Session does not authorise the requested resource command.');
+}
+
+function assertDelegatedSupportResource(context,resource,req) {
+  if(context.actorType!=='PLATFORM_SUPPORT')return;
+  const scope=context.supportSession?.scopeType;
+  if(scope==='ORGANISATION')return;
+  if(scope==='MODULE'&&context.supportSession.moduleCode===resource)return;
+  if(scope==='MISSION'&&resource==='missions'&&req.query?.id===context.supportSession.missionId)return;
+  if(scope==='JOB'&&resource==='jobs'&&req.query?.id===context.supportSession.jobId)return;
+  throw apiError(403,'SUPPORT_SCOPE_MISMATCH','This Support Session does not authorise the requested resource.');
 }
 
 function mapDatabaseRecord(resource, record) {
@@ -575,13 +593,14 @@ function createChemicalReviewsHandler(dependencies={}){const repository=dependen
 
 function createOperationalHandler(resource, dependencies = {}) {
   const repository = dependencies.repository || new OperationalRepository();
-  const getContext = dependencies.resolveContext || resolveRequestContext;
+  const getContext = dependencies.resolveContext || resolveOperationalActorContext;
   return async function handler(req, res) {
     res.setHeader('Cache-Control', 'no-store');
     res.setHeader('Content-Type', 'application/json; charset=utf-8');
     if (req.method === 'OPTIONS') { res.setHeader('Allow', 'GET,POST,PATCH,DELETE,OPTIONS'); return res.status(204).end(); }
     try {
       const context = await getContext(req, res);
+      assertDelegatedSupportResource(context,resource,req);
       if (req.method === 'GET') {
         assertPermission(context, resource, 'read');
         const id = req.query?.id;
@@ -591,11 +610,13 @@ function createOperationalHandler(resource, dependencies = {}) {
           if (!record || record.archived_at || !hasAssignedLocationReadAccess(resource, context, record)) {
             throw apiError(404, 'NOT_FOUND', 'Operational record not found.');
           }
+          if(context.actorType==='PLATFORM_SUPPORT')await repository.recordDelegatedActivity(context,'READ',resource,id,'SUCCEEDED');
           return res.status(200).json({ data: mapDatabaseRecord(resource, record) });
         }
         const bounds = pagination(req.query);
         const records = await repository.list(resource, context, bounds);
         const scopedRecords = (records || []).filter((record) => hasAssignedLocationReadAccess(resource, context, record));
+        if(context.actorType==='PLATFORM_SUPPORT')await repository.recordDelegatedActivity(context,'LIST',resource,null,'SUCCEEDED');
         return res.status(200).json({ data: scopedRecords.map((record) => mapDatabaseRecord(resource, record)), pagination: bounds });
       }
       if (!['POST', 'PATCH', 'DELETE'].includes(req.method)) {
@@ -603,6 +624,7 @@ function createOperationalHandler(resource, dependencies = {}) {
         return res.status(405).json({ error: { code: 'METHOD_NOT_ALLOWED', message: 'Method not allowed.' } });
       }
       assertSameOrigin(req);
+      assertDelegatedSupportWrite(context);
       const body = parseBody(req);
       if (resource === 'equipment-kits' && req.query?.action === 'assign' && req.method === 'POST') {
         assertPermission(context, resource, 'assign');
@@ -632,7 +654,7 @@ function createOperationalHandler(resource, dependencies = {}) {
         const { data, merged } = mapInput(resource, body);
         if (['missions', 'aircraft', 'equipment-kits'].includes(resource)) assertLocationAccess(context, merged.operatingLocationId, resource === 'missions' ? 'mission' : resource === 'aircraft' ? 'aircraft' : 'equipment kit');
         await assertRelationships(repository, resource, context, merged);
-        const result = await repository.create(resource, context, data);
+        const result = context.actorType === 'PLATFORM_SUPPORT' ? await repository.createDelegated(resource, context, data) : await repository.create(resource, context, data);
         if (result.relationshipConflict) throw apiError(409, 'RELATIONSHIP_CONFLICT', 'The related record is missing, archived, or belongs to another organisation.');
         if (result.locationForbidden) throw apiError(403, 'LOCATION_FORBIDDEN', 'This mission operating location is not assigned to your membership.');
         if (result.lifecycleConflict) throw apiError(409, 'LIFECYCLE_CONFLICT', 'Only Planning missions can be changed through this endpoint.');
@@ -651,7 +673,7 @@ function createOperationalHandler(resource, dependencies = {}) {
           assertPermission(context, resource, 'serviceability');
         }
         await assertRelationships(repository, resource, context, merged);
-        const result = await repository.update(resource, context, id, expectedVersion, data);
+        const result = context.actorType === 'PLATFORM_SUPPORT' ? await repository.updateDelegated(resource, context, id, expectedVersion, data) : await repository.update(resource, context, id, expectedVersion, data);
         if (result.notFound) throw apiError(404, 'NOT_FOUND', 'Operational record not found.');
         if (result.relationshipConflict) throw apiError(409, 'RELATIONSHIP_CONFLICT', 'The related record is missing, archived, or belongs to another organisation.');
         if (result.locationForbidden) throw apiError(403, 'LOCATION_FORBIDDEN', 'This mission operating location is not assigned to your membership.');
@@ -669,7 +691,7 @@ function createOperationalHandler(resource, dependencies = {}) {
       if (await repository.hasActiveDependencies(resource, context, id)) {
         throw apiError(409, 'ARCHIVE_CONFLICT', 'Archive dependent active records before archiving this record.');
       }
-      const result = await repository.archive(resource, context, id, expectedVersion);
+      const result = context.actorType === 'PLATFORM_SUPPORT' ? await repository.archiveDelegated(resource, context, id, expectedVersion) : await repository.archive(resource, context, id, expectedVersion);
       if (result.notFound) throw apiError(404, 'NOT_FOUND', 'Operational record not found.');
       if (result.archiveConflict) throw apiError(409, 'ARCHIVE_CONFLICT', 'Archive dependent active records before archiving this record.');
       if (result.conflict) throw apiError(409, 'VERSION_CONFLICT', 'This record changed before your update.', { currentVersion: result.currentVersion });

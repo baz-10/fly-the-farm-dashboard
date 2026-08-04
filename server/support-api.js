@@ -7,6 +7,8 @@ function parseBody(req) { if (req.body && typeof req.body === 'object') return r
 function requireOrganisationAdmin(context) { if (!context.roles?.includes('admin')) throw apiError(403, 'FORBIDDEN', 'Organisation Administrator permission is required.'); }
 function requirePlatformSupport(context) { if (!context.permissions?.includes('platform.support.session')) throw apiError(403, 'FORBIDDEN', 'Platform Support permission is required.'); }
 function envelope(error) { return { status: error.statusCode || 500, body: { error: { code: error.code || 'INTERNAL_ERROR', message: error.statusCode ? error.message : 'Assisted Support request failed.' } } }; }
+function appendCookie(res, value) { const current=res.getHeader?.('Set-Cookie');res.setHeader('Set-Cookie',[...(current?(Array.isArray(current)?current:[current]):[]),value]); }
+function supportCookie(req, sessionId, expiresAt) { const seconds=Math.max(0,Math.floor((new Date(expiresAt).getTime()-Date.now())/1000));const secure=String(req.headers?.['x-forwarded-proto']||'').split(',')[0].trim()==='https'||process.env.NODE_ENV==='production'?'; Secure':'';return `sc_support_session=${encodeURIComponent(sessionId)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${seconds}${secure}`; }
 
 function createSupportHandler(dependencies = {}) {
   const repository = dependencies.repository || new SupportRepository();
@@ -22,7 +24,7 @@ function createSupportHandler(dependencies = {}) {
       }
       if (req.method !== 'POST') throw apiError(405, 'METHOD_NOT_ALLOWED', 'Method not allowed.');
       const body = parseBody(req);
-      if (action === 'start') { const context = await getPlatformContext(req, res); requirePlatformSupport(context); return res.status(201).json({ data: await repository.startSession(context.platformUser.id, body.requestId) }); }
+      if (action === 'start') { const context = await getPlatformContext(req, res); requirePlatformSupport(context);const session=await repository.startSession(context.platformUser.id, body.requestId);if(session?.session_id)appendCookie(res,supportCookie(req,session.session_id,session.expires_at||new Date(Date.now()+7200000).toISOString()));return res.status(201).json({ data: session }); }
       const context = await getOrganisationContext(req, res); requireOrganisationAdmin(context);
       if (action === 'request') return res.status(201).json({ data: await repository.createRequest(context, body) });
       if (action === 'approve') return res.status(201).json({ data: await repository.decideRequest(context, body) });

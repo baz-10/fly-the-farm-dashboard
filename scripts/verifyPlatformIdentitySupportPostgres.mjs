@@ -18,6 +18,16 @@ try {
   await db.exec(await readMigration('20260801006000_live_chain_access_prerequisites.sql'));
   await db.exec(await readMigration('20260802024000_authoritative_personnel.sql'));
   await db.exec(await readMigration('20260804160000_platform_identity_assisted_support.sql'));
+  await db.exec(`
+    create or replace function public.ftf_write_operational_resource(p_organisation_id uuid,p_actor_internal_user_id uuid,p_resource text,p_operation text,p_entity_id uuid default null,p_expected_version integer default null,p_data jsonb default'{}'::jsonb)returns jsonb language plpgsql as $$declare v_record jsonb;begin
+      if p_resource<>'clients'or p_operation<>'create'then return jsonb_build_object('not_found',true);end if;
+      insert into public.clients(organisation_id,name)values(p_organisation_id,p_data->>'name')returning to_jsonb(clients)into v_record;
+      insert into public.audit_events(organisation_id,actor_internal_user_id,event_type,entity_type,entity_id,event_payload)values(p_organisation_id,p_actor_internal_user_id,'clients.create','clients',(v_record->>'id')::uuid,jsonb_build_object('record',v_record));
+      insert into public.transactional_outbox(organisation_id,topic,aggregate_type,aggregate_id,payload)values(p_organisation_id,'operational.clients.create','clients',(v_record->>'id')::uuid,jsonb_build_object('record',v_record));
+      return jsonb_build_object('record',v_record);
+    end$$;
+  `);
+  await db.exec(await readMigration('20260804161000_explicit_delegated_support_actor.sql'));
 
   const platformAuth='71000000-0000-4000-8000-000000000001';
   const conflictedAuth='71000000-0000-4000-8000-000000000002';
@@ -66,6 +76,8 @@ try {
   const read=(await db.query(`select public.support_access_allowed('${session.session_id}','${org}','READ','missions',null,null,now()) result`)).rows[0].result;
   const write=(await db.query(`select public.support_access_allowed('${session.session_id}','${org}','WRITE','missions',null,null,now()) result`)).rows[0].result;
   if(read.allowed!==true||write.allowed!==false||write.denial_code!=='SUPPORT_READ_ONLY')throw new Error('support access mode was not enforced');
+  const deniedWrite=(await db.query(`select public.ftf_delegated_support_write('${session.session_id}','${first.platform_user_id}','clients','create',null,null,'{"name":"Denied"}') result`)).rows[0].result;
+  if(deniedWrite.denial_code!=='SUPPORT_READ_ONLY')throw new Error('read-only delegated command was not denied atomically');
   const activity=(await db.query(`select public.record_delegated_support_activity('${session.session_id}','${first.platform_user_id}','READ','missions','mission',null,'SUCCESS','{}') result`)).rows[0].result;
   if(!activity.recorded||activity.audit_actor_type!=='PLATFORM_SUPPORT')throw new Error('explicit delegated actor activity was not recorded');
   const supportEvidence=(await db.query(`select
@@ -78,6 +90,19 @@ try {
     (select count(*)::int from public.organisation_notifications where event_type in('SUPPORT_GRANTED','SUPPORT_STARTED')) notifications
   `)).rows[0];
   if(supportEvidence.requests!==1||supportEvidence.approvals!==1||supportEvidence.sessions!==1||supportEvidence.audits<4||supportEvidence.delegated_actor_audits!==1||supportEvidence.outbox<4||supportEvidence.notifications!==2)throw new Error(`support lifecycle evidence invalid: ${JSON.stringify(supportEvidence)}`);
+
+  const writeRequest=(await db.query(`select public.create_support_request('${org}','${organisationAdmin}','Authorised correction','READ_WRITE','ORGANISATION',null,null,null,120) result`)).rows[0].result;
+  await db.query(`select public.decide_support_request('${org}','${organisationAdmin}','${writeRequest.request_id}',1,'APPROVE','Approved write support') result`);
+  const writeSession=(await db.query(`select public.start_support_session('${first.platform_user_id}','${writeRequest.request_id}') result`)).rows[0].result;
+  const delegatedWrite=(await db.query(`select public.ftf_delegated_support_write('${writeSession.session_id}','${first.platform_user_id}','clients','create',null,null,'{"name":"Delegated client"}') result`)).rows[0].result;
+  if(delegatedWrite.delegated_actor?.actorType!=='PLATFORM_SUPPORT')throw new Error('delegated write did not return explicit actor evidence');
+  const writeEvidence=(await db.query(`select
+    (select count(*)::int from public.clients where name='Delegated client') clients,
+    (select count(*)::int from public.audit_events where entity_id='${delegatedWrite.record.id}'and actor_internal_user_id is null and actor_type='PLATFORM_SUPPORT'and actor_platform_user_id='${first.platform_user_id}'and support_session_id='${writeSession.session_id}'and authority_snapshot->>'approvingOrganisationUserId'='${organisationAdmin}') attributed_audits,
+    (select count(*)::int from public.support_activity_events where resource_id='${delegatedWrite.record.id}'and operation='CREATE'and outcome='SUCCEEDED') activities,
+    (select count(*)::int from public.memberships m join public.internal_users u on u.id=m.internal_user_id where u.auth_user_id='${platformAuth}') platform_memberships
+  `)).rows[0];
+  if(writeEvidence.clients!==1||writeEvidence.attributed_audits<2||writeEvidence.activities!==1||writeEvidence.platform_memberships!==0)throw new Error(`delegated write evidence invalid: ${JSON.stringify(writeEvidence)}`);
 } finally {
   await db.close();
 }

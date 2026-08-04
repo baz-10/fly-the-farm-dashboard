@@ -59,7 +59,7 @@ import PlatformAdmin from './pages/PlatformAdmin';
 
 function WorkflowProviders({ children }: { children: React.ReactNode }) {
   const { user } = useAuth();
-  if (user?.role !== 'admin' && user?.role !== 'contractor') return <>{children}</>;
+  if (user?.role !== 'admin' && user?.role !== 'contractor' && !user?.delegatedSupport) return <>{children}</>;
 
   return (
     <UserLicenseProvider>
@@ -74,7 +74,7 @@ function WorkflowProviders({ children }: { children: React.ReactNode }) {
 
 function HomeRoute() {
   const { user } = useAuth();
-  if (user?.role === 'platform') return <Navigate to="/platform" replace />;
+  if (user?.role === 'platform') return <Navigate to={user.delegatedSupport?'/jobs':'/platform'} replace />;
   if (user?.role === 'client') {
     const clientPath = user.clientRecordId
       ? `/jobs/client/${encodeURIComponent(user.clientRecordId)}`

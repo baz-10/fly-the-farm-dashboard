@@ -28,4 +28,5 @@ test('platform session start does not resolve an organisation membership', async
   expect(res.statusCode).toBe(201);
   expect(resolveOrganisationContext).not.toHaveBeenCalled();
   expect(repository.startSession).toHaveBeenCalledWith('platform-1', 'request-1');
+  expect(res.headers['Set-Cookie']).toEqual(expect.arrayContaining([expect.stringContaining('sc_support_session=session-1')]));
 });

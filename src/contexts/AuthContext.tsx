@@ -18,6 +18,7 @@ export interface User {
   platformUserId?: string;
   platformRoles?: string[];
   permissions?: string[];
+  delegatedSupport?: { sessionId:string;organisationId:string;organisationName:string;accessMode:'READ_ONLY'|'READ_WRITE';scopeType:'ORGANISATION'|'MISSION'|'JOB'|'MODULE';missionId?:string;jobId?:string;moduleCode?:string;expiresAt:string };
 }
 
 interface StoredUser {

@@ -2,6 +2,7 @@ const { createHttpError, supabaseRequest } = require('./supabase');
 
 const ACCESS_COOKIE = 'ftf_access_token';
 const REFRESH_COOKIE = 'ftf_refresh_token';
+const SUPPORT_COOKIE = 'sc_support_session';
 
 function parseCookies(req) {
   const cookies = {};
@@ -42,6 +43,7 @@ function setSessionCookies(req, res, session) {
 function clearSessionCookies(req, res) {
   appendSetCookie(res, makeCookie(req, ACCESS_COOKIE, '', 0));
   appendSetCookie(res, makeCookie(req, REFRESH_COOKIE, '', 0));
+  appendSetCookie(res, makeCookie(req, SUPPORT_COOKIE, '', 0));
 }
 
 async function loadProfile(userId) {
@@ -160,7 +162,11 @@ async function authenticateRequest(req, res) {
     return toPublicUser(authUser, profile);
   }
   const platformProfile = await loadPlatformProfile(authUser.id);
-  if (platformProfile) return toPublicPlatformUser(authUser, platformProfile);
+  if (platformProfile) {
+    const result=toPublicPlatformUser(authUser,platformProfile),supportSessionId=parseCookies(req)[SUPPORT_COOKIE];
+    if(supportSessionId){const { SupportRepository }=require('./support-repository');const support=await new SupportRepository().resolveSession(supportSessionId,platformProfile.id);if(support?.state==='ACTIVE'&&Date.now()<new Date(support.expiresAt).getTime())result.delegatedSupport={sessionId:support.id,organisationId:support.organisationId,organisationName:support.organisationName,accessMode:support.accessMode,scopeType:support.scopeType,missionId:support.missionId,jobId:support.jobId,moduleCode:support.moduleCode,expiresAt:support.expiresAt};}
+    return result;
+  }
   throw createHttpError(403, 'Your account is not configured for Spray Command.');
 }
 

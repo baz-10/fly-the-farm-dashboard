@@ -252,6 +252,10 @@ class OperationalRepository {
     return this.write('archive', resource, context, id, expectedVersion, {});
   }
 
+  async createDelegated(resource, context, data) { return this.writeDelegated('create',resource,context,null,null,data); }
+  async updateDelegated(resource, context, id, expectedVersion, data) { return this.writeDelegated('update',resource,context,id,expectedVersion,data); }
+  async archiveDelegated(resource, context, id, expectedVersion) { return this.writeDelegated('archive',resource,context,id,expectedVersion,{}); }
+
   async assignEquipmentKit(context, kitId, aircraftId, configurationName, configurationData) {
     return this.write('assign','equipment-kits',context,kitId,null,{ aircraft_id: aircraftId, configuration_name: configurationName, configuration_data: configurationData || {} });
   }
@@ -415,6 +419,13 @@ class OperationalRepository {
     if (result?.aircraft_not_ready) return { aircraftNotReady: true };
     return { record: result?.record || result };
   }
+
+  async writeDelegated(operation,resource,context,entityId,expectedVersion,data){
+    const result=await supabaseRequest('rest/v1/rpc/ftf_delegated_support_write',{method:'POST',body:JSON.stringify({p_session_id:context.supportSession.id,p_platform_user_id:context.platformUser.id,p_resource:resource,p_operation:operation,p_entity_id:entityId,p_expected_version:expectedVersion,p_data:data}),publicMessage:'Delegated operational support action could not be completed.'});
+    if(result?.denial_code){const error=new Error(result.denial_code);error.statusCode=403;error.code=result.denial_code;error.publicMessage='The delegated Support Session does not authorise this operation.';throw error;}
+    if(result?.conflict)return{conflict:true,currentVersion:result.current_version};if(result?.not_found)return{notFound:true};if(result?.archive_conflict)return{archiveConflict:true};if(result?.relationship_conflict)return{relationshipConflict:true};if(result?.location_forbidden)return{locationForbidden:true};if(result?.lifecycle_conflict)return{lifecycleConflict:true};return{record:result?.record||result};
+  }
+  async recordDelegatedActivity(context,operation,resource,resourceId,outcome){return supabaseRequest('rest/v1/rpc/record_delegated_support_activity',{method:'POST',body:JSON.stringify({p_session_id:context.supportSession.id,p_platform_user_id:context.platformUser.id,p_operation:operation,p_module_code:resource,p_resource_type:resource,p_resource_id:resourceId,p_outcome:outcome,p_metadata:{}}),publicMessage:'Delegated support activity could not be recorded.'});}
 }
 
 module.exports = { OperationalRepository, TABLES, tableFor };

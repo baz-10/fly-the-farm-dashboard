@@ -34,7 +34,7 @@ export default function ProtectedRoute({ children, allowedRoles, requiredEntitle
     );
   }
   if (!isAuthenticated) return <Navigate to="/login" replace />;
-  if (allowedRoles && (!user || !allowedRoles.includes(user.role))) return <Navigate to="/" replace />;
+  if (allowedRoles && (!user || (!allowedRoles.includes(user.role) && !(user.role==='platform'&&user.delegatedSupport)))) return <Navigate to="/" replace />;
   if (requiredEntitlement && (!user || !user.entitlements?.includes(requiredEntitlement))) return <Navigate to="/" replace />;
   return <>{children}</>;
 }
