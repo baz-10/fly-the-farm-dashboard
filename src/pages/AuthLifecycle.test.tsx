@@ -70,6 +70,15 @@ describe('deployed authentication lifecycle pages', () => {
     expect(mockCompleteSession).not.toHaveBeenCalled();
   });
 
+  test('invitation callbacks open password choice without resolving an identity plane', async () => {
+    window.history.replaceState({}, '', '/auth/callback#access_token=invite&refresh_token=refresh&expires_in=3600&type=invite');
+    renderPage(<AuthCallback />);
+
+    expect(await screen.findByText('Choose a new password')).toBeInTheDocument();
+    expect(mockCompleteSession).not.toHaveBeenCalled();
+    expect(screen.queryByText(/Platform identity could not be loaded/i)).not.toBeInTheDocument();
+  });
+
   test('password reset requires matching passwords and submits the recovery session', async () => {
     mockResetPassword.mockResolvedValue({ success: true });
     window.history.replaceState({}, '', '/reset-password#access_token=recovery&refresh_token=refresh&expires_in=3600&type=recovery');

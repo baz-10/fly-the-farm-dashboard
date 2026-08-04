@@ -213,14 +213,26 @@ async function requestPasswordRecovery(email) {
 }
 
 async function resetPassword(body) {
-  const session = await completeSession(body);
   const password = String(body.password || '');
   if (password.length < 8) throw createHttpError(400, 'Password must be at least 8 characters.');
+  const accessToken = String(body.accessToken || '');
+  const refreshToken = String(body.refreshToken || '');
+  const expiresIn = Number(body.expiresIn || 3600);
+  if (!accessToken || !refreshToken) throw createHttpError(400, 'The authentication link is incomplete or expired.');
+  await supabaseRequest('auth/v1/user', {
+    keyType: 'anon', accessToken, publicMessage: 'The authentication link is invalid or expired.',
+  });
   const authUser = await supabaseRequest('auth/v1/user', {
-    method: 'PUT', keyType: 'anon', accessToken: String(body.accessToken),
+    method: 'PUT', keyType: 'anon', accessToken,
     body: JSON.stringify({ password }), publicMessage: 'Password could not be updated.',
   });
-  return { ...session, authUser };
+  const profile = await loadProfile(authUser.id);
+  const platformProfile = profile ? null : await loadPlatformProfile(authUser.id);
+  if (!profile && !platformProfile) throw createHttpError(403, 'Your account setup is incomplete. Contact support with the displayed reference.');
+  return {
+    authUser, profile, platformProfile,
+    session: { access_token: accessToken, refresh_token: refreshToken, expires_in: expiresIn },
+  };
 }
 
 module.exports = async function handler(req, res) {

@@ -55,6 +55,6 @@ function ConfirmationCallback() {
 
 export default function AuthCallback() {
   const parameters = new URLSearchParams(window.location.hash.replace(/^#/, ''));
-  if (parameters.get('type') === 'recovery') return <ResetPassword />;
+  if (['invite', 'recovery'].includes(parameters.get('type') || '')) return <ResetPassword />;
   return <ConfirmationCallback />;
 }

@@ -386,6 +386,10 @@ describe('Supabase authentication API', () => {
     expect(res.body.user).toMatchObject({ id: 'owner-auth-id', tenantId: 'tenant-a' });
     const update = requests.find(({ url, options }) => url.includes('/auth/v1/user') && options.method === 'PUT');
     expect(JSON.parse(String(update?.options.body))).toEqual({ password: 'new-password' });
+    const passwordUpdateIndex = requests.findIndex(({ url, options }) => url.includes('/auth/v1/user') && options.method === 'PUT');
+    const identityLookupIndex = requests.findIndex(({ url }) => url.includes('/rest/v1/ftf_profiles'));
+    expect(passwordUpdateIndex).toBeGreaterThanOrEqual(0);
+    expect(identityLookupIndex).toBeGreaterThan(passwordUpdateIndex);
   });
 });
 
