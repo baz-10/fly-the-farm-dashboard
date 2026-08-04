@@ -23,7 +23,7 @@ The Mission Pack is a concise operational planning document generated only while
 5. JSA and Risk: material hazards, risk ratings, critical controls, emergency contacts and unresolved blockers. Routine metadata is omitted.
 6. Pre-flight: readiness checklist, approvals, authorisation identity and sign-off from the exact selected evidence revisions.
 
-The layout uses compact tables, high-contrast section hierarchy, field-legible type, restrained Fly The Farm branding, repeated Mission identity in the header and page numbering in the footer. Overflow within a page is condensed or summarised; it must not silently create a database appendix. If material operational content cannot fit safely, generation fails visibly rather than producing an unbounded pack.
+The layout uses compact tables, high-contrast section hierarchy, field-legible type and restrained Fly The Farm branding. Every footer shows Mission Number, Client, Property, Report Version and Page X of Y. Overflow within a page is condensed or summarised; it must not silently create a database appendix. If material operational content cannot fit safely, generation fails visibly rather than producing an unbounded pack.
 
 ### Mission Summary - summarise the completed Mission
 
@@ -31,6 +31,8 @@ Mission Summary is a new immutable two-page completion report generated only aft
 
 1. Actual Operations: actual weather, aircraft, personnel, chemicals, water, area treated, start and finish times, and operational notes.
 2. Outcome and Coverage: completed flight-line visual, final KML and coverage summary, Customer Outcome, and a human-readable link plus QR code to the authorised Mission Record workflow.
+
+The first page displays one plain-language completion status near the top: either `Mission completed successfully.` or `Mission completed with operational exceptions.` The status is derived from immutable Completion and Operational Evidence, never entered as decorative report copy.
 
 Every Mission Summary artefact captures exact Completion and post-Mission evidence references at request time. Later evidence creates a new report version and never rewrites an existing PDF.
 
