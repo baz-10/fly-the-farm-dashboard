@@ -24,8 +24,10 @@ try {
   const org='71000000-0000-4000-8000-000000000101';
   const internal='71000000-0000-4000-8000-000000000102';
   const role='71000000-0000-4000-8000-000000000103';
+  const organisationAdmin='71000000-0000-4000-8000-000000000104';
+  const organisationAdminAuth='71000000-0000-4000-8000-000000000004';
   await db.exec(`
-    insert into auth.users(id,email)values('${platformAuth}','ben@trollope.com.au'),('${conflictedAuth}','conflicted@example.test');
+    insert into auth.users(id,email)values('${platformAuth}','ben@trollope.com.au'),('${conflictedAuth}','conflicted@example.test'),('${organisationAdminAuth}','ben@flythefarm.com.au');
     insert into public.organisations(id,organisation_id,name)values('${org}','${org}','Test Organisation');
     insert into public.internal_users(id,organisation_id,auth_user_id,display_name)values('${internal}','${org}','${conflictedAuth}','Conflicted User');
     insert into public.roles(id,organisation_id,code,name)values('${role}','${org}','admin','Administrator');
@@ -50,6 +52,29 @@ try {
     (select count(*)::int from public.platform_permissions where code='platform.break_glass' and enabled=false) break_glass_disabled
   `)).rows[0];
   for(const [key,value] of Object.entries(evidence))if(value!==1)throw new Error(`${key} expected 1, received ${value}`);
+
+  await db.exec(`
+    insert into public.internal_users(id,organisation_id,auth_user_id,display_name)values('${organisationAdmin}','${org}','${organisationAdminAuth}','Organisation Administrator');
+    insert into public.memberships(organisation_id,internal_user_id,role_id)values('${org}','${organisationAdmin}','${role}');
+  `);
+  const request=(await db.query(`select public.create_support_request('${org}','${organisationAdmin}','Production support','READ_ONLY','ORGANISATION',null,null,null,120) result`)).rows[0].result;
+  if(!request.request_id||request.state!=='PENDING')throw new Error('support request was not recorded independently');
+  const approval=(await db.query(`select public.decide_support_request('${org}','${organisationAdmin}','${request.request_id}',1,'APPROVE','Approved for investigation') result`)).rows[0].result;
+  if(!approval.approval_id||approval.requester_is_approver!==true||approval.state!=='APPROVED')throw new Error('same-person approval disclosure is missing');
+  const session=(await db.query(`select public.start_support_session('${first.platform_user_id}','${request.request_id}') result`)).rows[0].result;
+  if(!session.session_id||session.state!=='ACTIVE')throw new Error('approved support session did not start');
+  const read=(await db.query(`select public.support_access_allowed('${session.session_id}','${org}','READ','missions',null,null,now()) result`)).rows[0].result;
+  const write=(await db.query(`select public.support_access_allowed('${session.session_id}','${org}','WRITE','missions',null,null,now()) result`)).rows[0].result;
+  if(read.allowed!==true||write.allowed!==false||write.denial_code!=='SUPPORT_READ_ONLY')throw new Error('support access mode was not enforced');
+  const supportEvidence=(await db.query(`select
+    (select count(*)::int from public.support_requests) requests,
+    (select count(*)::int from public.support_approval_events) approvals,
+    (select count(*)::int from public.support_sessions) sessions,
+    (select count(*)::int from public.audit_events where event_type like 'support.%') audits,
+    (select count(*)::int from public.transactional_outbox where topic like 'platform.support.%') outbox,
+    (select count(*)::int from public.organisation_notifications where event_type in('SUPPORT_GRANTED','SUPPORT_STARTED')) notifications
+  `)).rows[0];
+  if(supportEvidence.requests!==1||supportEvidence.approvals!==1||supportEvidence.sessions!==1||supportEvidence.audits<3||supportEvidence.outbox<3||supportEvidence.notifications!==2)throw new Error(`support lifecycle evidence invalid: ${JSON.stringify(supportEvidence)}`);
 } finally {
   await db.close();
 }
