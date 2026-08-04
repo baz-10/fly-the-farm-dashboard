@@ -115,6 +115,25 @@ describe('operational API adapter', () => {
     })]);
   });
 
+  test('sends server-authoritative automatic Job and Mission reference commands', async () => {
+    const fetchMock = jest.spyOn(global, 'fetch')
+      .mockImplementationOnce(() => jsonResponse(201, { data: {
+        id: 'job-1', clientId: 'client-1', propertyId: 'property-1', fieldIds: ['field-1'], reference: 'FTF-JOB-000001',
+        scope: 'Spray', status: 'open', notes: '', rowVersion: 1,
+        createdAt: '2026-08-01T00:00:00Z', updatedAt: '2026-08-01T00:00:00Z',
+      } }))
+      .mockImplementationOnce(() => jsonResponse(201, { data: {
+        id: 'mission-1', jobId: 'job-1', operatingLocationId: 'location-1', missionNumber: 'FTF-MIS-000001',
+        title: 'Spray', description: '', status: 'planning', scheduledStartAt: null, rowVersion: 1,
+        createdAt: '2026-08-01T00:00:00Z', updatedAt: '2026-08-01T00:00:00Z',
+      } }));
+    const api = createOperationalApi();
+    await api.jobs.create({ clientId: 'client-1', propertyId: 'property-1', fieldIds: ['field-1'], autoGenerateReference: true, scope: 'Spray', status: 'open', notes: '' });
+    await api.missions.create({ jobId: 'job-1', operatingLocationId: 'location-1', autoGenerateReference: true, title: 'Spray', description: '', status: 'Planning' });
+    expect(fetchMock.mock.calls[0][1]).toEqual(expect.objectContaining({ body: expect.stringContaining('"autoGenerateReference":true') }));
+    expect(fetchMock.mock.calls[1][1]).toEqual(expect.objectContaining({ body: expect.stringContaining('"autoGenerateReference":true') }));
+  });
+
   test('maps complete authoritative mission metadata and normalises the only supported lifecycle state', async () => {
     jest.spyOn(global, 'fetch').mockImplementation(() => jsonResponse(200, {
       data: [{

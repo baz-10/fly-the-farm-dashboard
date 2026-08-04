@@ -38,6 +38,46 @@ test('shows the complete follow-the-bouncing-ball Mission journey', () => {
   expect(screen.getByRole('heading', { name: 'Who is this Mission for?' })).toBeInTheDocument();
 });
 
+test('defaults Job and Mission identifiers to organisation-owned automatic references', async () => {
+  const user = userEvent.setup();
+  render(<GuidedMissionCreation />);
+  await user.click(screen.getByRole('button', { name: 'Add new Client' }));
+  await user.type(screen.getByRole('textbox', { name: /Client or business name/ }), 'New Client');
+  await user.click(screen.getByRole('button', { name: 'Save Client and continue' }));
+  await user.click(screen.getByRole('button', { name: 'Add new Property' }));
+  await user.type(screen.getByRole('textbox', { name: /Property name/ }), 'New Property');
+  await user.type(screen.getByRole('textbox', { name: /Street address/ }), '1 Farm Road');
+  await user.click(screen.getByRole('button', { name: 'Save Property and continue' }));
+  await user.click(screen.getByRole('button', { name: 'Create new Field' }));
+  await user.type(screen.getByRole('textbox', { name: /Field name/ }), 'North Field');
+  await user.click(screen.getByRole('button', { name: 'Draw test boundary' }));
+  await user.click(screen.getByRole('button', { name: 'Save Field and boundary' }));
+  await user.click(screen.getByRole('button', { name: 'Create new Job' }));
+
+  expect(screen.getByRole('checkbox', { name: 'Auto-generate Job reference' })).toBeChecked();
+  expect(screen.queryByRole('textbox', { name: 'Custom Job reference' })).not.toBeInTheDocument();
+  await user.type(screen.getByRole('textbox', { name: /Job scope/ }), 'Spray thistles');
+  await user.click(screen.getByRole('button', { name: 'Save Job and continue' }));
+  expect(mockCreateJob).toHaveBeenCalledWith(expect.objectContaining({ autoGenerateReference: true }));
+
+  expect(screen.getByRole('checkbox', { name: 'Auto-generate Mission reference' })).toBeChecked();
+  await user.type(screen.getByRole('textbox', { name: /Mission title/ }), 'North Field thistles');
+  await user.click(screen.getByRole('button', { name: 'Create Draft Mission' }));
+  expect(mockCreateMission).toHaveBeenCalledWith(expect.objectContaining({ autoGenerateReference: true }));
+});
+
+test('allows custom references and returning to every completed parent step', async () => {
+  const user = userEvent.setup();
+  render(<GuidedMissionCreation />);
+  await user.click(screen.getByRole('button', { name: 'Add new Client' }));
+  await user.type(screen.getByRole('textbox', { name: /Client or business name/ }), 'New Client');
+  await user.click(screen.getByRole('button', { name: 'Save Client and continue' }));
+  await user.click(screen.getByText('1 Customer'));
+  expect(screen.getByRole('heading', { name: 'Who is this Mission for?' })).toBeInTheDocument();
+  await user.click(screen.getByText('2 Property'));
+  expect(screen.getByRole('heading', { name: 'Where is the work?' })).toBeInTheDocument();
+});
+
 test('creates the authoritative parent chain and Draft without leaving the workflow', async () => {
   const user = userEvent.setup();
   render(<GuidedMissionCreation />);
@@ -57,11 +97,13 @@ test('creates the authoritative parent chain and Draft without leaving the workf
   await user.click(screen.getByRole('button', { name: 'Save Field and boundary' }));
 
   await user.click(screen.getByRole('button', { name: 'Create new Job' }));
-  await user.type(screen.getByRole('textbox', { name: /Job reference/ }), 'JOB-001');
+  await user.click(screen.getByRole('checkbox', { name: 'Auto-generate Job reference' }));
+  await user.type(screen.getByRole('textbox', { name: 'Custom Job reference' }), 'JOB-001');
   await user.type(screen.getByRole('textbox', { name: /Job scope/ }), 'Spray thistles');
   await user.click(screen.getByRole('button', { name: 'Save Job and continue' }));
 
-  await user.type(screen.getByRole('textbox', { name: /Mission number/ }), 'MIS-001');
+  await user.click(screen.getByRole('checkbox', { name: 'Auto-generate Mission reference' }));
+  await user.type(screen.getByRole('textbox', { name: 'Custom Mission reference' }), 'MIS-001');
   await user.type(screen.getByRole('textbox', { name: /Mission title/ }), 'North Field thistles');
   await user.click(screen.getByRole('button', { name: 'Create Draft Mission' }));
 

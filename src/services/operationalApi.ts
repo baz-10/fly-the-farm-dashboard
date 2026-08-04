@@ -64,7 +64,10 @@ export interface FieldBoundaryVersionCreateInput {
   capturedAt?: string;
 }
 
-export type OperationalJobCreateInput = Omit<OperationalJob, 'id' | 'rowVersion' | 'createdAt' | 'updatedAt'>;
+type OperationalJobCreateBase = Omit<OperationalJob, 'id' | 'reference' | 'rowVersion' | 'createdAt' | 'updatedAt'>;
+export type OperationalJobCreateInput = OperationalJobCreateBase & (
+  { autoGenerateReference: true; reference?: never } | { autoGenerateReference?: false; reference: string }
+);
 export type OperationalJobUpdateInput = Partial<Pick<OperationalJob, 'fieldIds' | 'reference' | 'scope' | 'status' | 'notes' | 'requestedDate' | 'scheduledDate'>>;
 export type OperationalJobArchiveConfirmation = Omit<OperationalJob, 'fieldIds'>;
 
@@ -84,11 +87,14 @@ export interface OperationalMission {
   updatedAt: string;
 }
 
-export type OperationalMissionCreateInput = Omit<OperationalMission, 'id' | 'rowVersion' | 'createdAt' | 'updatedAt' | 'scheduledStartAt' | 'aircraftIds' | 'equipmentKitIds'> & {
+type OperationalMissionCreateBase = Omit<OperationalMission, 'id' | 'missionNumber' | 'rowVersion' | 'createdAt' | 'updatedAt' | 'scheduledStartAt' | 'aircraftIds' | 'equipmentKitIds'> & {
   scheduledStartAt?: string | null;
   aircraftIds?: string[];
   equipmentKitIds?: string[];
 };
+export type OperationalMissionCreateInput = OperationalMissionCreateBase & (
+  { autoGenerateReference: true; missionNumber?: never } | { autoGenerateReference?: false; missionNumber: string }
+);
 export type OperationalMissionUpdateInput = Partial<Pick<OperationalMission,
   'jobId' | 'operatingLocationId' | 'missionNumber' | 'title' | 'description' | 'status' | 'scheduledStartAt' | 'aircraftIds' | 'equipmentKitIds'>>;
 
@@ -497,6 +503,7 @@ export function createOperationalApi(options: ApiOptions = {}): OperationalApi {
     ...('propertyId' in input && input.propertyId !== undefined ? { propertyId: input.propertyId } : {}),
     ...(input.fieldIds !== undefined ? { fieldIds: input.fieldIds } : {}),
     ...(input.reference !== undefined ? { reference: input.reference } : {}),
+    ...('autoGenerateReference' in input && input.autoGenerateReference !== undefined ? { autoGenerateReference: input.autoGenerateReference } : {}),
     ...(input.scope !== undefined ? { scope: input.scope } : {}),
     ...(input.status !== undefined ? { status: input.status } : {}),
     ...(input.notes !== undefined ? { notes: input.notes } : {}),
@@ -511,6 +518,7 @@ export function createOperationalApi(options: ApiOptions = {}): OperationalApi {
       ...(input.jobId !== undefined ? { jobId: input.jobId } : {}),
       ...(input.operatingLocationId !== undefined ? { operatingLocationId: input.operatingLocationId } : {}),
       ...(input.missionNumber !== undefined ? { missionNumber: input.missionNumber } : {}),
+      ...('autoGenerateReference' in input && input.autoGenerateReference !== undefined ? { autoGenerateReference: input.autoGenerateReference } : {}),
       ...(input.title !== undefined ? { title: input.title } : {}),
       ...(input.description !== undefined ? { description: input.description } : {}),
       ...(input.status !== undefined ? { status: 'planning' } : {}),

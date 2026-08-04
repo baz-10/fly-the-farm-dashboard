@@ -131,6 +131,7 @@ function mapInput(resource, body, existing) {
   const schema = SCHEMAS[resource];
   const readOnly = new Set(schema.readOnly || []);
   const allowed = new Set([...Object.keys(schema.fields).filter((field) => !readOnly.has(field)), 'expectedVersion']);
+  if (!existing && ['jobs', 'missions'].includes(resource)) allowed.add('autoGenerateReference');
   Object.keys(body).forEach((key) => {
     if (allowed.has(key)) return;
     if (/financial|cost|margin|price|revenue|payload/i.test(key)) {
@@ -140,7 +141,9 @@ function mapInput(resource, body, existing) {
   });
   const baseline = existing ? mapDatabaseRecord(resource, existing) : {};
   const merged = { ...baseline, ...body };
+  const automaticReference = !existing && body.autoGenerateReference === true;
   schema.required.forEach((field) => {
+    if (automaticReference && ((resource === 'jobs' && field === 'reference') || (resource === 'missions' && field === 'missionNumber'))) return;
     if (typeof merged[field] !== 'string' || merged[field].trim() === '') {
       throw apiError(400, 'VALIDATION_ERROR', `${field} is required.`);
     }
@@ -196,6 +199,7 @@ function mapInput(resource, body, existing) {
   Object.entries(schema.fields).forEach(([apiField, databaseField]) => {
     if (!readOnly.has(apiField) && merged[apiField] !== undefined) data[databaseField] = merged[apiField];
   });
+  if (automaticReference) data.auto_generate_reference = true;
   if (resource === 'missions' && !data.status) data.status = 'planning';
   return { data, merged };
 }
