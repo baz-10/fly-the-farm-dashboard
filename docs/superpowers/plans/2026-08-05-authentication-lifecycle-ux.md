@@ -69,4 +69,3 @@
 - [ ] Verify login layout at desktop, tablet, and mobile sizes.
 - [ ] Verify recovery request and callback behavior without exposing tokens.
 - [ ] Verify Platform and Organisation routing and confirm no platform tenant linkage was created.
-

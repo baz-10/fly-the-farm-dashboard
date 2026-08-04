@@ -33,4 +33,3 @@ Ordinary platform administrators require no manual database intervention after t
 - API tests prove password update occurs before identity resolution.
 - Callback tests prove invitation and recovery callbacks both open password choice without calling identity resolution.
 - Deployed acceptance covers recovery request, callback routing, password replacement, Platform routing, Organisation routing, and identity-plane isolation.
-
