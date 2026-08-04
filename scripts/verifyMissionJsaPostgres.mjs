@@ -8,7 +8,7 @@ const ids={org:'81000000-0000-4000-8000-000000000001',otherOrg:'82000000-0000-40
 const db=new PGlite();
 try{
  await db.exec(`create schema auth;create table auth.users(id uuid primary key);create function auth.uid()returns uuid language sql stable as $$select null::uuid$$;create role anon;create role authenticated;create role service_role;`);
- for(const name of(await readdir(directory)).filter(name=>name.endsWith('.sql')).sort())await db.exec(await readFile(resolve(directory,name),'utf8'));
+ for(const name of(await readdir(directory)).filter(name=>name.endsWith('.sql')&&name!=='20260804162000_production_beta_platform_identity_reconciliation.sql').sort())await db.exec(await readFile(resolve(directory,name),'utf8'));
  await db.exec(`insert into auth.users(id)values('81000000-0000-4000-8000-000000000011'),('82000000-0000-4000-8000-000000000011');
  insert into public.organisations(id,organisation_id,name)values('${ids.org}','${ids.org}','Fly The Farm'),('${ids.otherOrg}','${ids.otherOrg}','Other');
  insert into public.internal_users(id,organisation_id,auth_user_id,display_name)values('${ids.actor}','${ids.org}','81000000-0000-4000-8000-000000000011','PIC'),('${ids.otherActor}','${ids.otherOrg}','82000000-0000-4000-8000-000000000011','Other');

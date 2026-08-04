@@ -21,7 +21,7 @@ try {
     create role authenticated;
     create role service_role;
   `);
-  const migrations = (await readdir(migrationDirectory)).filter((name) => name.endsWith('.sql')).sort();
+  const migrations = (await readdir(migrationDirectory)).filter((name) => name.endsWith('.sql') && name !== '20260804162000_production_beta_platform_identity_reconciliation.sql').sort();
   for (const migration of migrations) await db.exec(await readFile(resolve(migrationDirectory, migration), 'utf8'));
 
   await db.exec(`

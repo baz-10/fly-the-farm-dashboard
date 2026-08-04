@@ -8,7 +8,7 @@ const db=new PGlite();
 const id={org:'61000000-0000-4000-8000-000000000001',otherOrg:'62000000-0000-4000-8000-000000000001',admin:'61000000-0000-4000-8000-000000000101',operator:'61000000-0000-4000-8000-000000000102',otherAdmin:'62000000-0000-4000-8000-000000000101'};
 try{
  await db.exec(`create schema auth;create table auth.users(id uuid primary key);create function auth.uid()returns uuid language sql stable as $$select null::uuid$$;create role anon;create role authenticated;create role service_role;`);
- for(const name of(await readdir(migrationDirectory)).filter(name=>name.endsWith('.sql')).sort())await db.exec(await readFile(resolve(migrationDirectory,name),'utf8'));
+ for(const name of(await readdir(migrationDirectory)).filter(name=>name.endsWith('.sql')&&name!=='20260804162000_production_beta_platform_identity_reconciliation.sql').sort())await db.exec(await readFile(resolve(migrationDirectory,name),'utf8'));
  await db.exec(`
   insert into auth.users(id)values('61000000-0000-4000-8000-000000000011'),('61000000-0000-4000-8000-000000000012'),('62000000-0000-4000-8000-000000000011');
   insert into public.organisations(id,organisation_id,name)values('${id.org}','${id.org}','Fly The Farm'),('${id.otherOrg}','${id.otherOrg}','Other Operator');

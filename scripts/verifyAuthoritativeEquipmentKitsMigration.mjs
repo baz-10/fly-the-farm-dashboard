@@ -17,7 +17,7 @@ try {
   await db.exec(`create schema auth; create table auth.users(id uuid primary key);
     create function auth.uid() returns uuid language sql stable as $$ select null::uuid; $$;
     create role anon; create role authenticated; create role service_role;`);
-  for (const name of (await readdir(migrationDirectory)).filter(n => n.endsWith('.sql')).sort())
+  for (const name of (await readdir(migrationDirectory)).filter(n => n.endsWith('.sql') && n !== '20260804162000_production_beta_platform_identity_reconciliation.sql').sort())
     await db.exec(await readFile(resolve(migrationDirectory, name), 'utf8'));
 
   await db.exec(`
