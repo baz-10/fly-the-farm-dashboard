@@ -77,7 +77,7 @@ async function createProfile(profile) {
     method: 'POST',
     headers: { Prefer: 'return=representation' },
     body: JSON.stringify(profile),
-    publicMessage: 'Fly the Farm profile could not be created.',
+    publicMessage: 'Spray Command profile could not be created.',
   });
   return Array.isArray(rows) ? rows[0] : null;
 }
@@ -257,7 +257,7 @@ module.exports = async function handler(req, res) {
     if (body.action === 'login') {
       const session = await signIn(normalizeEmail(body.email), String(body.password || ''));
       const profile = await loadProfile(session.user.id);
-      if (!profile) throw createHttpError(403, 'Your account is not configured for Fly the Farm.');
+      if (!profile) throw createHttpError(403, 'Your account is not configured for Spray Command.');
       setSessionCookies(req, res, session);
       return res.status(200).json({ user: toPublicUser(session.user, profile) });
     }

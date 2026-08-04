@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Alert, Box, Button, Card, CardContent, Link, TextField, Typography } from '@mui/material';
 import { Link as RouterLink } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
+import PlatformBrand from '../brand/PlatformBrand';
 
 const SAFE_MESSAGE = 'If an account exists for that email, a password reset link has been sent.';
 
@@ -24,7 +25,7 @@ export default function ForgotPassword() {
     <Box className="ftf-topo-bg" sx={{ minHeight: '100vh', display: 'grid', placeItems: 'center', bgcolor: 'primary.dark', p: 2 }}>
       <Card sx={{ maxWidth: 440, width: '100%' }}><CardContent sx={{ p: 4 }}>
         <Box sx={{ textAlign: 'center', mb: 3 }}>
-          <Box component="img" src="/logo.png" alt="Fly the Farm" sx={{ height: 56, mb: 2 }} />
+          <Box sx={{ mb: 2.5 }}><PlatformBrand /></Box>
           <Typography variant="h5" fontWeight={700} color="primary.dark">Reset your password</Typography>
           <Typography variant="body2" color="text.secondary">We’ll email a secure recovery link.</Typography>
         </Box>

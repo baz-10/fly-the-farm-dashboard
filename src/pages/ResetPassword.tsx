@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Alert, Box, Button, Card, CardContent, TextField, Typography } from '@mui/material';
 import { Link as RouterLink } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
+import PlatformBrand from '../brand/PlatformBrand';
 
 export default function ResetPassword() {
   const { resetPassword } = useAuth();
@@ -33,7 +34,7 @@ export default function ResetPassword() {
     <Box className="ftf-topo-bg" sx={{ minHeight: '100vh', display: 'grid', placeItems: 'center', bgcolor: 'primary.dark', p: 2 }}>
       <Card sx={{ maxWidth: 440, width: '100%' }}><CardContent sx={{ p: 4 }}>
         <Box sx={{ textAlign: 'center', mb: 3 }}>
-          <Box component="img" src="/logo.png" alt="Fly the Farm" sx={{ height: 56, mb: 2 }} />
+          <Box sx={{ mb: 2.5 }}><PlatformBrand /></Box>
           <Typography variant="h5" fontWeight={700} color="primary.dark">Choose a new password</Typography>
         </Box>
         {success ? (

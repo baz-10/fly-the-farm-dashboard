@@ -3,6 +3,7 @@ import { Alert, Box, Button, Card, CardContent, CircularProgress, Typography } f
 import { Link as RouterLink } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import ResetPassword from './ResetPassword';
+import PlatformBrand from '../brand/PlatformBrand';
 
 function ConfirmationCallback() {
   const { completeSession } = useAuth();
@@ -37,7 +38,7 @@ function ConfirmationCallback() {
   return (
     <Box className="ftf-topo-bg" sx={{ minHeight: '100vh', display: 'grid', placeItems: 'center', bgcolor: 'primary.dark', p: 2 }}>
       <Card sx={{ maxWidth: 460, width: '100%' }}><CardContent sx={{ p: 4, textAlign: 'center' }}>
-        <Box component="img" src="/logo.png" alt="Fly the Farm" sx={{ height: 56, mb: 2 }} />
+        <Box sx={{ mb: 2.5 }}><PlatformBrand /></Box>
         <Typography variant="h5" fontWeight={700} color="primary.dark" gutterBottom>Email confirmation</Typography>
         {state.loading ? <><CircularProgress sx={{ my: 2 }} /><Typography>{state.message}</Typography></> : (
           <>

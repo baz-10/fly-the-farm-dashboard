@@ -19,6 +19,7 @@ import ArrowForwardIcon from '@mui/icons-material/ArrowForward';
 import AgricultureIcon from '@mui/icons-material/Agriculture';
 import { useAuth } from '../contexts/AuthContext';
 import { UserRole } from '../contexts/AuthContext';
+import PlatformBrand from '../brand/PlatformBrand';
 
 export default function Register() {
   const [name, setName] = useState('');
@@ -95,17 +96,12 @@ export default function Register() {
       >
         <CardContent sx={{ p: { xs: 3, sm: 4.5 } }}>
           <Box sx={{ textAlign: 'center', mb: 3 }}>
-            <Box
-              component="img"
-              src="/logo.png"
-              alt="Fly the Farm"
-              sx={{ height: 56, width: 'auto', mb: 2 }}
-            />
+            <Box sx={{ mb: 2.5 }}><PlatformBrand /></Box>
             <Typography variant="h5" sx={{ fontWeight: 700, color: 'primary.dark', mb: 0.5 }}>
               Create Account
             </Typography>
             <Typography variant="body2" color="text.secondary">
-              Get started with Fly the Farm
+              Create your Spray Command account
             </Typography>
           </Box>
 

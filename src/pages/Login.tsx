@@ -14,6 +14,7 @@ import {
 } from '@mui/material';
 import ArrowForwardIcon from '@mui/icons-material/ArrowForward';
 import { useAuth } from '../contexts/AuthContext';
+import PlatformBrand from '../brand/PlatformBrand';
 
 export default function Login() {
   const [email, setEmail] = useState('');
@@ -90,16 +91,10 @@ export default function Login() {
         }}
       >
         <CardContent sx={{ p: { xs: 3, sm: 4.5 } }}>
-          {/* Logo */}
           <Box sx={{ textAlign: 'center', mb: 4 }}>
-            <Box
-              component="img"
-              src="/logo.png"
-              alt="Fly the Farm"
-              sx={{ height: 56, width: 'auto', mb: 2 }}
-            />
+            <Box sx={{ mb: 2.5 }}><PlatformBrand /></Box>
             <Typography variant="h5" sx={{ fontWeight: 700, color: 'primary.dark', mb: 0.5 }}>
-              Drone Chemical Reference
+              Operational Command Centre
             </Typography>
             <Typography variant="body2" color="text.secondary">
               Sign in to access your account

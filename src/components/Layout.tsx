@@ -1,4 +1,5 @@
 import React from 'react';
+import PlatformBrand from '../brand/PlatformBrand';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import {
   Avatar,
@@ -181,13 +182,9 @@ export default function Layout() {
           zIndex: 5,
         }}
       >
-        <Box
-          component="img"
-          src="/logo.png"
-          alt="Fly the Farm"
-          onClick={() => navigate('/')}
-          sx={{ width: 62, mx: 'auto', my: 1.5, cursor: 'pointer' }}
-        />
+        <Box onClick={() => navigate('/')} sx={{ mx: 'auto', my: 1.5, cursor: 'pointer' }}>
+          <PlatformBrand compact inverse />
+        </Box>
         {navList(false)}
         <Tooltip title="Sign out" placement="right">
           <IconButton onClick={handleLogout} aria-label="Sign out" sx={{ color: alpha(theme.palette.common.white, 0.68), m: 1 }}>
@@ -202,7 +199,7 @@ export default function Layout() {
         PaperProps={{ sx: { width: 280, bgcolor: '#062407', color: 'white' } }}
       >
         <Box sx={{ px: 2.5, py: 2 }}>
-          <Box component="img" src="/logo.png" alt="Fly the Farm" sx={{ height: 44, width: 'auto' }} />
+          <PlatformBrand inverse />
         </Box>
         <Divider sx={{ borderColor: alpha(theme.palette.common.white, 0.1) }} />
         {navList(true)}
@@ -232,7 +229,7 @@ export default function Layout() {
           <IconButton onClick={() => setDrawerOpen(true)} aria-label="Open navigation" sx={{ color: 'white', display: { lg: 'none' } }}>
             <MenuIcon />
           </IconButton>
-          <Box component="img" src="/logo.png" alt="Fly the Farm" sx={{ height: 38, display: { xs: 'block', lg: 'none' } }} />
+          <Box sx={{ display: { xs: 'block', lg: 'none' } }}><PlatformBrand compact inverse /></Box>
 
           <Box
             component="form"
