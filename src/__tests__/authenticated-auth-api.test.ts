@@ -150,6 +150,7 @@ describe('Supabase authentication API', () => {
   });
 
   test('signs a platform identity into the platform plane without tenant context', async () => {
+    let platformIdentityRequest = '';
     global.fetch = jest.fn(async (url: string) => {
       if (url.includes('/auth/v1/token?grant_type=password')) {
         return response(200, {
@@ -158,12 +159,15 @@ describe('Supabase authentication API', () => {
         });
       }
       if (url.includes('/rest/v1/ftf_profiles')) return response(200, []);
-      if (url.includes('/rest/v1/platform_users')) return response(200, [{
+      if (url.includes('/rest/v1/platform_users')) {
+        platformIdentityRequest = url;
+        return response(200, [{
         id: 'platform-user-id', auth_user_id: 'platform-auth-id', email: 'ben@trollope.com.au', display_name: 'Ben Trollope',
         platform_user_roles: [{ platform_roles: { code: 'PLATFORM_SUPER_ADMIN', platform_role_permissions: [
           { platform_permissions: { code: 'platform.super_admin', enabled: true } },
         ] } }],
-      }]);
+        }]);
+      }
       return response(500, { message: 'unexpected request' });
     }) as any;
     const res = createResponse();
@@ -179,6 +183,37 @@ describe('Supabase authentication API', () => {
     });
     expect(res.body.user.tenantId).toBeUndefined();
     expect(res.body.user.permissions).toEqual(['platform.super_admin']);
+    const decodedRequest = decodeURIComponent(platformIdentityRequest);
+    expect(decodedRequest).toContain('platform_user_roles!platform_user_roles_platform_user_id_fkey(');
+    expect(decodedRequest).not.toContain('platform_user_roles!platform_user_roles_assigned_by_platform_user_id_fkey(');
+    expect(res.headers['set-cookie']).toEqual(expect.arrayContaining([
+      expect.stringContaining('ftf_access_token=platform-access-token'),
+      expect.stringContaining('ftf_refresh_token=platform-refresh-token'),
+    ]));
+  });
+
+  test('fails closed without setting trusted cookies when the platform identity is missing or inactive', async () => {
+    global.fetch = jest.fn(async (url: string) => {
+      if (url.includes('/auth/v1/token?grant_type=password')) {
+        return response(200, {
+          access_token: 'untrusted-access-token', refresh_token: 'untrusted-refresh-token', expires_in: 3600,
+          user: { id: 'inactive-platform-auth-id', email: 'inactive@example.com', user_metadata: {} },
+        });
+      }
+      if (url.includes('/rest/v1/ftf_profiles')) return response(200, []);
+      if (url.includes('/rest/v1/platform_users')) return response(200, []);
+      return response(500, { message: 'unexpected request' });
+    }) as any;
+    const res = createResponse();
+
+    await authHandler({
+      method: 'POST', headers: { host: 'localhost:3001' },
+      body: { action: 'login', email: 'inactive@example.com', password: 'password' },
+    }, res);
+
+    expect(res.statusCode).toBe(403);
+    expect(res.body.error).toBe('Your account is not configured for Spray Command.');
+    expect(res.headers['set-cookie']).toBeUndefined();
   });
 
   test('does not send publishable or secret API keys as bearer JWTs', async () => {

@@ -55,7 +55,7 @@ async function loadProfile(userId) {
 }
 
 async function loadPlatformProfile(userId) {
-  const select = 'id,auth_user_id,email,display_name,platform_user_roles(platform_roles(code,platform_role_permissions(platform_permissions(code,enabled))))';
+  const select = 'id,auth_user_id,email,display_name,platform_user_roles!platform_user_roles_platform_user_id_fkey(platform_roles(code,platform_role_permissions(platform_permissions(code,enabled))))';
   const rows = await supabaseRequest(
     `rest/v1/platform_users?auth_user_id=eq.${encodeURIComponent(userId)}&is_active=is.true&archived_at=is.null&select=${encodeURIComponent(select)}&limit=1`,
     { publicMessage: 'Platform identity could not be loaded.' },
