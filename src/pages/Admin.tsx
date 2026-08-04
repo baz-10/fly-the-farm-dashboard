@@ -29,6 +29,7 @@ import AdminSourceExtraction from '../components/AdminSourceExtraction';
 import AuthoritativeChemicalReviews from '../components/AuthoritativeChemicalReviews';
 import AdminDocumentSourcing from '../components/AdminDocumentSourcing';
 import OrganisationBranding from '../components/admin/OrganisationBranding';
+import OrganisationSupportAccess from '../components/admin/OrganisationSupportAccess';
 
 export default function Admin() {
   const { user } = useAuth();
@@ -186,6 +187,11 @@ export default function Admin() {
           </Typography>
         </Box>
       )}
+
+      {/* Source Manager */}
+      <Box sx={{ mt: 6 }} className="ftf-animate-in-delay-1">
+        <OrganisationSupportAccess />
+      </Box>
 
       {/* Source Manager */}
       <Box sx={{ mt: 6 }} className="ftf-animate-in-delay-1">

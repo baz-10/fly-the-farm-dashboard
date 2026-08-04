@@ -200,8 +200,9 @@ async function completeSession(body) {
     keyType: 'anon', accessToken, publicMessage: 'The authentication link is invalid or expired.',
   });
   const profile = await loadProfile(authUser.id);
-  if (!profile) throw createHttpError(403, 'Your account setup is incomplete. Contact support with the displayed reference.');
-  return { authUser, profile, session: { access_token: accessToken, refresh_token: refreshToken, expires_in: expiresIn } };
+  const platformProfile = profile ? null : await loadPlatformProfile(authUser.id);
+  if (!profile && !platformProfile) throw createHttpError(403, 'Your account setup is incomplete. Contact support with the displayed reference.');
+  return { authUser, profile, platformProfile, session: { access_token: accessToken, refresh_token: refreshToken, expires_in: expiresIn } };
 }
 
 async function requestPasswordRecovery(email) {
@@ -266,7 +267,7 @@ module.exports = async function handler(req, res) {
     if (body.action === 'complete-session') {
       const completed = await completeSession(body);
       setSessionCookies(req, res, completed.session);
-      return res.status(200).json({ user: toPublicUser(completed.authUser, completed.profile) });
+      return res.status(200).json({ user: completed.profile ? toPublicUser(completed.authUser, completed.profile) : toPublicPlatformUser(completed.authUser, completed.platformProfile) });
     }
 
     if (body.action === 'forgot-password') {
@@ -281,7 +282,7 @@ module.exports = async function handler(req, res) {
     if (body.action === 'reset-password') {
       const completed = await resetPassword(body);
       setSessionCookies(req, res, completed.session);
-      return res.status(200).json({ user: toPublicUser(completed.authUser, completed.profile) });
+      return res.status(200).json({ user: completed.profile ? toPublicUser(completed.authUser, completed.profile) : toPublicPlatformUser(completed.authUser, completed.platformProfile) });
     }
 
     if (body.action === 'register') {

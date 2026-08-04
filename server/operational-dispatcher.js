@@ -19,6 +19,7 @@ const {
   createPersonnelIdentityHandler,
   createSessionHandler,
 } = require('./operational-api');
+const { createSupportHandler } = require('./support-api');
 
 function createDefaultHandlers() {
   return Object.freeze({
@@ -48,6 +49,7 @@ function createDefaultHandlers() {
     'organisation-branding': createOrganisationBrandingHandler(),
     reports: createReportsHandler(),
     session: createSessionHandler(),
+    'assisted-support': createSupportHandler(),
   });
 }
 
