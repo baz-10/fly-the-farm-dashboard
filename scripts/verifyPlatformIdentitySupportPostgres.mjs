@@ -66,15 +66,18 @@ try {
   const read=(await db.query(`select public.support_access_allowed('${session.session_id}','${org}','READ','missions',null,null,now()) result`)).rows[0].result;
   const write=(await db.query(`select public.support_access_allowed('${session.session_id}','${org}','WRITE','missions',null,null,now()) result`)).rows[0].result;
   if(read.allowed!==true||write.allowed!==false||write.denial_code!=='SUPPORT_READ_ONLY')throw new Error('support access mode was not enforced');
+  const activity=(await db.query(`select public.record_delegated_support_activity('${session.session_id}','${first.platform_user_id}','READ','missions','mission',null,'SUCCESS','{}') result`)).rows[0].result;
+  if(!activity.recorded||activity.audit_actor_type!=='PLATFORM_SUPPORT')throw new Error('explicit delegated actor activity was not recorded');
   const supportEvidence=(await db.query(`select
     (select count(*)::int from public.support_requests) requests,
     (select count(*)::int from public.support_approval_events) approvals,
     (select count(*)::int from public.support_sessions) sessions,
     (select count(*)::int from public.audit_events where event_type like 'support.%') audits,
+    (select count(*)::int from public.audit_events where actor_type='PLATFORM_SUPPORT'and actor_platform_user_id='${first.platform_user_id}'and support_session_id='${session.session_id}'and authority_snapshot->>'approvingOrganisationUserId'='${organisationAdmin}') delegated_actor_audits,
     (select count(*)::int from public.transactional_outbox where topic like 'platform.support.%') outbox,
     (select count(*)::int from public.organisation_notifications where event_type in('SUPPORT_GRANTED','SUPPORT_STARTED')) notifications
   `)).rows[0];
-  if(supportEvidence.requests!==1||supportEvidence.approvals!==1||supportEvidence.sessions!==1||supportEvidence.audits<3||supportEvidence.outbox<3||supportEvidence.notifications!==2)throw new Error(`support lifecycle evidence invalid: ${JSON.stringify(supportEvidence)}`);
+  if(supportEvidence.requests!==1||supportEvidence.approvals!==1||supportEvidence.sessions!==1||supportEvidence.audits<4||supportEvidence.delegated_actor_audits!==1||supportEvidence.outbox<4||supportEvidence.notifications!==2)throw new Error(`support lifecycle evidence invalid: ${JSON.stringify(supportEvidence)}`);
 } finally {
   await db.close();
 }
