@@ -21,6 +21,7 @@ const {
 } = require('./operational-api');
 const { createSupportHandler } = require('./support-api');
 const { createComplianceHandler, createPersonnelCasaCredentialsHandler } = require('./compliance-api');
+const { createChecklistsHandler } = require('./checklists-api');
 
 function createDefaultHandlers() {
   return Object.freeze({
@@ -53,6 +54,7 @@ function createDefaultHandlers() {
     'assisted-support': createSupportHandler(),
     compliance: createComplianceHandler(),
     'personnel-casa-credentials': createPersonnelCasaCredentialsHandler(),
+    checklists: createChecklistsHandler(),
   });
 }
 
