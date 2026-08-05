@@ -13,11 +13,13 @@ The page lets an authorised Fly The Farm operator understand organisation compli
 - The highest-priority issue with one reason and one direct action.
 - A compact list of upcoming obligations.
 - Five category cards: ReOC and Organisation, Operations Manual, Personnel and Licences, Aircraft and Technical, and Checklists and Actions.
-- Each category shows score, status, concise meaning, assessed, missing, blocking and due-soon counts.
+- Each category answers three operator questions in order: status, why it matters and what to do next.
+- Category scoring fractions and assessment counts are excluded from the primary UI because their meaning is not self-evident.
+- Upcoming dated obligations use an exclusive operational state. A future obligation is shown as `Due soon` with days remaining, never simultaneously as `Missing`.
 
 ## Details layer
 
-Expandable details preserve source reason, relevant rule, source route and history-oriented metadata. Existing ReOC and Operations Manual capture forms remain available from their relevant actions, not as permanently dominant content.
+Expandable details preserve scoring mechanics, assessment counts, source reason, relevant rule, source route and history-oriented metadata. Existing ReOC and Operations Manual capture forms remain available from their relevant actions, not as permanently dominant content. Every primary action opens its workflow immediately.
 
 ## Technical diagnostics
 
