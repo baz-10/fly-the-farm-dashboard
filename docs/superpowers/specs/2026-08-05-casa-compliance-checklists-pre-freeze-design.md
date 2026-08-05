@@ -127,6 +127,12 @@ Extend the existing Personnel aggregate rather than creating a CASA person.
 - Mission eligibility uses the credential version and evidence state current at the planned operation time, returning exact reasons for ineligibility.
 - Existing Mission Personnel snapshots remain immutable; later credential changes never rewrite Mission history.
 
+RePL certificate capture explicitly includes ARN, RePL number, current certificate internal file ID/version/checksum/provenance, categories, ratings, aircraft type and weight eligibility, conditions, limitations, verification state, verification actor/time, evidence history, and supersession. RePL remains non-expiring.
+
+AROC certificate capture explicitly includes AROC number, current certificate internal file ID/version/checksum/provenance, issue date where available, verification state, verification actor/time, conditions, limitations, evidence history, supersession, and optional evidence-backed expiry. When the evidence supplies no expiry, the product displays **No expiry recorded**.
+
+Mission Personnel and PIC selection returns precise ineligibility reasons for missing certificate evidence, unverified evidence, suspended/cancelled credentials, incorrect category/rating, missing aircraft type or weight eligibility, required AROC unavailable, and expired time-limited credentials. Certificate files remain protected by Personnel privacy permissions.
+
 ### 5.6 Aircraft compliance
 
 Reference existing authoritative Aircraft records and add versioned compliance instruments/evidence for:
@@ -175,6 +181,7 @@ Non-expiring credentials do not enter expiry reminders. Evidence-driven credenti
 
 - acknowledgement, yes/no, pass/fail, text, number, date/time, single/multi select, Personnel, Aircraft, Equipment, file/photo, signature, instruction, and section
 - required state, help text, evidence requirement, conditional visibility, blocker/warning semantics
+- configured failure handling for required comment, photo/file evidence, corrective action, responsible Personnel, due date, resolution, reviewer/PIC sign-off, and repeat inspection/execution
 
 `mission_checklist_requirements`
 
@@ -189,6 +196,15 @@ Non-expiring credentials do not enter expiry reminders. Evidence-driven credenti
 - correction is a new linked execution/revision that supersedes the earlier execution without deleting it
 - completed evidence retains exact template/item versions, actor/Personnel snapshots, timestamps, attachments, and signatures
 
+`checklist_corrective_actions`
+
+- separate mutable work records linked to immutable execution/item evidence
+- owner Personnel, due date, resolution state, resolution evidence, reviewer/sign-off and row version
+- updates never alter the originating checklist answer or execution
+- unresolved mandatory actions block only the configured Mission readiness stage
+
+The no-exception path provides **All checks passed — continue** while still creating complete item-level evidence and satisfying required sign-off.
+
 Sign-off policy is organisation-configurable and initially supports self-sign-off, separate reviewer, dual approval, and risk/rule-driven approval without redesign.
 
 ## 6. Mission lifecycle and readiness
@@ -199,6 +215,7 @@ Checklists attach to the approved Mission lifecycle stages: Planning, Pre-flight
 - Operators see only applicable checklists and the reason each was selected.
 - Mission readiness receives checklist blockers and warnings through a stable adapter.
 - Every blocker identifies checklist, section/item, required action, and policy/rule source.
+- Checklist blockers distinguish mandatory checklist incomplete, unresolved failed item, required comment/evidence missing, corrective action open, sign-off missing, completing Personnel ineligible, and a superseded checklist version selected before execution.
 - Authorisation and completion snapshots reference exact submitted checklist executions and sign-offs.
 - Later checklist versions or corrections never rewrite authorised or completed Mission history.
 
@@ -222,7 +239,7 @@ The Administrator role may receive these through normal role provisioning. No us
 Replace the flat navigation presentation with responsive accordion groups while preserving routes:
 
 - **HOME**
-- **CLIENTS** — Clients (existing `/jobs` route and Job hierarchy)
+- **CLIENTS** — Clients, Properties, Fields, and Jobs as separately discoverable destinations; the existing `/jobs` hierarchy, domain, APIs, and routes remain authoritative
 - **OPERATIONS** — Missions, scheduling and operational workflows
 - **FLEET** — Aircraft, Equipment Kits, Fleet
 - **PEOPLE** — Personnel
@@ -234,10 +251,18 @@ Replace the flat navigation presentation with responsive accordion groups while 
 Rules:
 
 - Active group and active item are visually apparent.
+- The active Client, Property, Field, or Job route automatically expands **CLIENTS**.
+- Guided Mission Creation deep-links to the applicable Client, Property, Field, and Job workflows.
 - Desktop, tablet, mobile drawer, keyboard navigation, focus order, and accessible names are regression tested.
 - One user-facing **Checklists** entry opens a workspace with internal tabs rather than separate menu items for every checklist state.
 - Personnel visibly separates Identity, Roles, Licences, Qualifications, Evidence, and Mission Eligibility.
 - CASA Compliance is a workspace, not a collection of disconnected cards.
+
+### CASA Compliance Overview
+
+The landing dashboard is a compliance command centre backed by authoritative records. It displays ReOC status/number/expiry/days remaining, active Operations Manual version and review due date, outstanding Personnel acknowledgements, Personnel licence/qualification warnings, Aircraft registration and technical warnings, expiring approvals/permissions, training/competency warnings, checklist template reviews, missing evidence, overdue renewal actions, and records under retention or legal hold.
+
+Every result uses a consistent state catalogue: **Current**, **Due within 90 days**, **Due within 30 days**, **Expired**, **Missing**, **Under review**, **Superseded**, or **Not applicable**. Summary counts always drill into the authoritative source records that produced them.
 
 ## 9. APIs and event boundaries
 
@@ -299,6 +324,14 @@ The cleanup is operational only when:
 10. CASA Compliance Pack export is indexed, checksummed, branded, and reproducible.
 11. Navigation is grouped, responsive, accessible, and the Clients label preserves all existing Job routes and domain behaviour.
 12. No local or legacy persistence fallback occurs.
+13. **CLIENTS** expands to Clients, Properties, Fields, and Jobs and follows the active route.
+14. The CASA Compliance Overview displays real organisation status and all approved warning classes.
+15. RePL and AROC numbers and certificate evidence can be entered, reopened, and replaced through immutable evidence versions.
+16. RePL displays as non-expiring; AROC may display **No expiry recorded**.
+17. PIC eligibility evaluates category, rating, evidence, status, aircraft type/weight eligibility, required AROC, and time-limited expiry.
+18. A failed checklist item can require comment/photo evidence and create a separate corrective action.
+19. An unresolved mandatory corrective action blocks readiness; resolving it never changes the immutable execution.
+20. The operator can complete an all-clear checklist with minimal interaction while retaining item-level evidence and sign-off.
 
 ## 14. Implementation sequence after approval
 
@@ -320,4 +353,3 @@ Architecture freeze occurs only after this accepted cleanup is deployed and prov
 - CASA, *Get your remote pilot licence*: https://www.casa.gov.au/drones/remote-pilot-licence/get-your-remote-pilot-licence
 - CASA, *Get your ReOC*: https://www.casa.gov.au/drones/remotely-piloted-aircraft-operators-certificate/get-your-reoc
 - Federal Register of Legislation, *Part 101 (Unmanned Aircraft and Rockets) Manual of Standards 2019*: https://www.legislation.gov.au/F2019L00593/latest
-
