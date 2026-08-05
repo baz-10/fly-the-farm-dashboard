@@ -1,3 +1,4 @@
+const crypto = require('crypto');
 const { supabaseRequest } = require('./supabase');
 
 class ComplianceRepository {
@@ -20,6 +21,20 @@ class ComplianceRepository {
       }),
       publicMessage: 'CASA credential evidence could not be saved.',
     });
+  }
+
+  async stagePersonnelCertificate(context, personnelId, file) {
+    const match=typeof file?.dataUrl==='string'&&file.dataUrl.match(/^data:(application\/pdf|image\/(?:png|jpeg|webp));base64,([A-Za-z0-9+/=]+)$/);
+    if(!match)throw Object.assign(new Error('A PDF, PNG, JPEG or WebP certificate is required.'),{statusCode:400,code:'VALIDATION_ERROR'});
+    const bytes=Buffer.from(match[2],'base64');
+    if(!bytes.length||bytes.length>10485760||Number(file.sizeBytes)!==bytes.length||typeof file.fileName!=='string'||!file.fileName.trim()||/[\\/\0]/.test(file.fileName))throw Object.assign(new Error('Certificate file metadata is invalid.'),{statusCode:400,code:'VALIDATION_ERROR'});
+    const internalFileId=crypto.randomUUID(),fileVersion=1,checksumSha256=crypto.createHash('sha256').update(bytes).digest('hex'),bucket='personnel-compliance-evidence',safeName=file.fileName.replace(/[^A-Za-z0-9._-]/g,'_'),providerKey=`${context.organisation.id}/${personnelId}/${internalFileId}/v1/${safeName}`;
+    await supabaseRequest(`storage/v1/object/${bucket}/${providerKey}`,{method:'POST',body:bytes,headers:{'Content-Type':match[1],'x-upsert':'false'},publicMessage:'Personnel certificate could not be stored.'});
+    return {internalFileId,fileVersion,checksumSha256,originalFilename:file.fileName.trim(),contentType:match[1],sizeBytes:bytes.length,storageProvider:'supabase',storageBucket:bucket,providerKey,provenance:{source:'OPERATOR_UPLOAD',uploadedAt:new Date().toISOString(),uploadedByInternalUserId:context.internalUser.id}};
+  }
+
+  async removeStagedPersonnelCertificate(evidence) {
+    if(evidence?.storageBucket&&evidence?.providerKey)await supabaseRequest(`storage/v1/object/${evidence.storageBucket}/${evidence.providerKey}`,{method:'DELETE',publicMessage:'Personnel certificate cleanup failed.'}).catch(()=>{});
   }
 
   async verifyPersonnelCasaCredential(context, payload) {

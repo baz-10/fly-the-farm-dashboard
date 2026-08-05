@@ -84,7 +84,9 @@ function createPersonnelCasaCredentialsHandler(dependencies = {}) {
       if(req.method!=='POST')throw apiError(405,'METHOD_NOT_ALLOWED','Method not allowed.');assertSameOrigin(req);
       if(action==='create'){
         if(!hasPermission(context,'personnel.update'))throw apiError(403,'FORBIDDEN','You do not have permission for this operation.');
-        const result=await repository.writePersonnelCasaCredential(context,validateCredential(req.body||{}));return res.status(201).json({data:privateSafe(result,hasPermission(context,'personnel.private.read'))});
+        const body=req.body||{};let staged=null;
+        try{if(body.file){const personnelId=uuid(body.personnelId,'personnelId');staged=await repository.stagePersonnelCertificate(context,personnelId,body.file);}const result=await repository.writePersonnelCasaCredential(context,validateCredential({...body,evidence:staged||body.evidence}));return res.status(201).json({data:privateSafe(result,hasPermission(context,'personnel.private.read'))});}
+        catch(error){if(staged)await repository.removeStagedPersonnelCertificate(staged);throw error;}
       }
       if(action==='verify'){
         if(!hasPermission(context,'compliance.verify'))throw apiError(403,'FORBIDDEN','You do not have permission for this operation.');
