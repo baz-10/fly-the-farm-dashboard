@@ -3,6 +3,8 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event';
 import AddressAutocomplete from './AddressAutocomplete';
 
+jest.mock('./AddressLocationMap', () => (props: any) => <button onClick={() => props.onLocationChange(-27.5002, 153.1003)}>Move pin</button>);
+
 jest.mock('react-leaflet', () => ({
   MapContainer: ({ children }: any) => <div>{children}</div>,
   TileLayer: () => null,
@@ -67,6 +69,34 @@ describe('AddressAutocomplete', () => {
     await act(async () => { jest.advanceTimersByTime(350); });
 
     expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  test('marks a moved confirmed pin stale while retaining its address and allows reconfirmation without another search', async () => {
+    const onSelect = jest.fn();
+    render(<AddressAutocomplete
+      onSelect={onSelect}
+      initialValue="1 Queen Street"
+      lat={-27.4698}
+      lng={153.0251}
+      coordinateSource="GEOCODED"
+      locationConfirmedAt="2026-08-06T01:00:00.000Z"
+    />);
+
+    expect(await screen.findByRole('button', { name: 'Location confirmed' })).toBeVisible();
+    fireEvent.click(await screen.findByRole('button', { name: 'Move pin' }));
+
+    expect(screen.getByText('Location not confirmed')).toBeVisible();
+    expect(onSelect).toHaveBeenLastCalledWith(expect.objectContaining({
+      address: '1 Queen Street', lat: -27.5002, lng: 153.1003,
+      coordinateSource: 'MANUALLY_ADJUSTED', locationConfirmedAt: undefined,
+    }));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm location' }));
+    expect(screen.getByRole('button', { name: 'Location confirmed' })).toBeVisible();
+    expect(onSelect).toHaveBeenLastCalledWith(expect.objectContaining({
+      address: '1 Queen Street', lat: -27.5002, lng: 153.1003,
+      coordinateSource: 'MANUALLY_ADJUSTED', locationConfirmedAt: expect.any(String),
+    }));
   });
 
   test('keeps manual text and explains when no matching address is found', async () => {

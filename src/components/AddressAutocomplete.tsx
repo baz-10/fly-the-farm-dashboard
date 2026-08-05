@@ -78,6 +78,7 @@ export default function AddressAutocomplete({
     address: initialValue, locality: '', state: 'NSW' as AustralianState, postcode: '', displayName: initialValue,
     lat, lng, coordinateSource: coordinateSource || 'GEOCODED', locationConfirmedAt,
   } : null);
+  const [viewportResetKey, setViewportResetKey] = useState(0);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const requestRef = useRef(0);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -139,6 +140,7 @@ export default function AddressAutocomplete({
     const located = { ...result, coordinateSource: 'GEOCODED' as const, locationConfirmedAt: undefined };
     setQuery(result.displayName);
     setMapCenter({ lat: result.lat, lng: result.lng });
+    setViewportResetKey((current) => current + 1);
     setSelected(located);
     setOpen(false);
     setResults([]);
@@ -257,14 +259,19 @@ export default function AddressAutocomplete({
       {/* Map Display */}
       {showMap && mapCenter && (
         <React.Suspense fallback={<Box sx={{ mt: 1.5, height: mapHeight }} />}>
-          <AddressLocationMap lat={mapCenter.lat} lng={mapCenter.lng} height={mapHeight} onLocationChange={handleLocationChange} />
+          <AddressLocationMap lat={mapCenter.lat} lng={mapCenter.lng} height={mapHeight} onLocationChange={handleLocationChange} viewportResetKey={viewportResetKey} />
         </React.Suspense>
       )}
       {showMap && mapCenter && (
         <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} alignItems={{ sm: 'center' }} sx={{ mt: 1 }}>
-          <Typography variant="caption" color="text.secondary" sx={{ flex: 1 }}>
-            {selected?.coordinateSource === 'MANUALLY_ADJUSTED' ? 'Manually adjusted location' : 'Address-derived location'} · {mapCenter.lat.toFixed(6)}, {mapCenter.lng.toFixed(6)}
-          </Typography>
+          <Box sx={{ flex: 1 }}>
+            <Typography variant="body2" fontWeight={700} color={selected?.locationConfirmedAt ? 'success.main' : 'warning.main'}>
+              {selected?.locationConfirmedAt ? 'Location confirmed' : 'Location not confirmed'}
+            </Typography>
+            <Typography variant="caption" color="text.secondary">
+              {selected?.coordinateSource === 'MANUALLY_ADJUSTED' ? 'Manually adjusted location' : 'Address-derived location'} · {mapCenter.lat.toFixed(6)}, {mapCenter.lng.toFixed(6)}
+            </Typography>
+          </Box>
           <Button variant={selected?.locationConfirmedAt ? 'outlined' : 'contained'} size="small" onClick={confirmLocation}>
             {selected?.locationConfirmedAt ? 'Location confirmed' : 'Confirm location'}
           </Button>

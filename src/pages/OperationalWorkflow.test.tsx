@@ -37,7 +37,11 @@ jest.mock('react-router-dom', () => ({
 }), { virtual: true });
 jest.mock('../contexts/OperationalDataContext', () => ({ useOperationalData: () => mockOperational }));
 jest.mock('../contexts/AuthContext', () => ({ useAuth: () => ({ user: { id: 'user-1', role: 'contractor' } }) }));
-jest.mock('../components/AddressAutocomplete', () => () => <div>Address search</div>);
+jest.mock('../components/AddressAutocomplete', () => (props: any) => <div>
+  Address search
+  <button onClick={() => props.onSelect?.({ address: '1 Farm Road', locality: 'Roma', state: 'QLD', postcode: '4455', lat: -26.57, lng: 148.79, displayName: '1 Farm Road, Roma', coordinateSource: 'GEOCODED' })}>Choose test address</button>
+  <button onClick={() => props.onSelect?.({ address: '1 Farm Road', locality: 'Roma', state: 'QLD', postcode: '4455', lat: -26.5701, lng: 148.7901, displayName: '1 Farm Road, Roma', coordinateSource: 'MANUALLY_ADJUSTED', locationConfirmedAt: '2026-08-06T01:00:00.000Z' })}>Confirm adjusted location</button>
+</div>);
 jest.mock('../components/FieldBoundaryEditor', () => (props: any) => <div>
   Boundary editor
   <button onClick={() => props.onCoordsChange?.([[-27, 153], [-27, 154], [-28, 154]])}>Draw test boundary</button>
@@ -130,13 +134,35 @@ describe('authoritative client/property/field workflow screens', () => {
   });
 
   test('requires an explicitly confirmed authoritative client location before saving', async () => {
+    const scrollIntoView = jest.fn();
+    Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', { configurable: true, value: scrollIntoView });
     route('/jobs', <ClientList />);
     fireEvent.click(screen.getByRole('button', { name: 'Add Client' }));
     fireEvent.change(await screen.findByRole('textbox', { name: 'Client / Farmer Name' }), { target: { value: 'New Farm' } });
     const saveButtons = screen.getAllByRole('button', { name: 'Add Client' });
     fireEvent.click(saveButtons[saveButtons.length - 1]);
     expect(mockOperational.createClient).not.toHaveBeenCalled();
-    expect(screen.getByText(/confirm at least one client location/i)).toBeInTheDocument();
+    const locationSection = screen.getByRole('group', { name: 'Client locations' });
+    expect(screen.getByText('Location not confirmed')).toBeVisible();
+    expect(screen.getByText('Search for an address or place the pin on the map, then select Confirm location before saving the Client.')).toBeVisible();
+    expect(locationSection).toHaveFocus();
+    expect(scrollIntoView).toHaveBeenCalled();
+    expect(screen.getByRole('textbox', { name: 'Client / Farmer Name' })).toHaveValue('New Farm');
+  });
+
+  test('saves a searched and manually adjusted Client location after explicit confirmation', async () => {
+    mockOperational.createClient.mockResolvedValue({ ...client, id: 'client-new', name: 'New Farm' });
+    route('/jobs', <ClientList />);
+    fireEvent.click(screen.getByRole('button', { name: 'Add Client' }));
+    fireEvent.change(await screen.findByRole('textbox', { name: 'Client / Farmer Name' }), { target: { value: 'New Farm' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Choose test address' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm adjusted location' }));
+    const saveButtons = screen.getAllByRole('button', { name: 'Add Client' });
+    fireEvent.click(saveButtons[saveButtons.length - 1]);
+    await waitFor(() => expect(mockOperational.createClient).toHaveBeenCalledWith(expect.objectContaining({
+      name: 'New Farm',
+      addresses: [expect.objectContaining({ address: '1 Farm Road', lat: -26.5701, lng: 148.7901, coordinateSource: 'MANUALLY_ADJUSTED', locationConfirmedAt: '2026-08-06T01:00:00.000Z' })],
+    })));
   });
 
   test('reveals and requires a meaningful Custom client location label', async () => {

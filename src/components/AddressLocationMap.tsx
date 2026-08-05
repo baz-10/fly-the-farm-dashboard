@@ -11,9 +11,11 @@ L.Icon.Default.mergeOptions({
   shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
 });
 
-function MapRecenter({ lat, lng }: { lat: number; lng: number }) {
+function MapRecenter({ lat, lng, viewportResetKey }: { lat: number; lng: number; viewportResetKey: number }) {
   const map = useMap();
-  React.useEffect(() => { map.setView([lat, lng], 14, { animate: true }); }, [map, lat, lng]);
+  const target = React.useRef<[number, number]>([lat, lng]);
+  target.current = [lat, lng];
+  React.useEffect(() => { map.setView(target.current, 14, { animate: true }); }, [map, viewportResetKey]);
   return null;
 }
 
@@ -25,7 +27,7 @@ function MapClickHandler({ onLocationChange }: { onLocationChange: (lat: number,
   return null;
 }
 
-export default function AddressLocationMap({ lat, lng, height, onLocationChange }: { lat: number; lng: number; height: number; onLocationChange: (lat: number, lng: number) => void }) {
+export default function AddressLocationMap({ lat, lng, height, onLocationChange, viewportResetKey = 0 }: { lat: number; lng: number; height: number; onLocationChange: (lat: number, lng: number) => void; viewportResetKey?: number }) {
   const theme = useTheme();
   const [layer, setLayer] = React.useState<MapLayer>(() => {
     try {
@@ -60,7 +62,7 @@ export default function AddressLocationMap({ lat, lng, height, onLocationChange 
           onLocationChange(point.lat, point.lng);
         } }} />
         <MapClickHandler onLocationChange={onLocationChange} />
-        <MapRecenter lat={lat} lng={lng} />
+        <MapRecenter lat={lat} lng={lng} viewportResetKey={viewportResetKey} />
       </MapContainer>
     </Box>
   </Box>;

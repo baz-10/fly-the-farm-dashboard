@@ -65,10 +65,12 @@ export default function ClientList() {
   const [search, setSearch] = useState('');
   const [form, setForm] = useState({ name: '', phone: '', email: '', notes: '' });
   const [formAddresses, setFormAddresses] = useState<ClientAddressDraft[]>([emptyAddress()]);
+  const [locationError, setLocationError] = useState('');
   const [codeCopied, setCodeCopied] = useState(false);
   const [moreActionsOpen, setMoreActionsOpen] = useState(false);
   const [snackbar, setSnackbar] = useState<{ open: boolean; message: string; severity: 'success' | 'error' }>({ open: false, message: '', severity: 'success' });
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const locationSectionRef = useRef<HTMLDivElement>(null);
 
   const isContractor = user?.role === 'contractor';
   const isClient = user?.role === 'client';
@@ -82,11 +84,15 @@ export default function ClientList() {
     if (!form.name.trim()) return;
     const locations = formAddresses.filter((a) => a.address.trim() || a.locality.trim());
     if (!locations.length || locations.some((a) => !Number.isFinite(a.lat) || !Number.isFinite(a.lng) || !a.locationConfirmedAt)) {
-      setSnackbar({ open: true, message: 'Search for and confirm at least one client location before saving.', severity: 'error' });
+      setLocationError('Search for an address or place the pin on the map, then select Confirm location before saving the Client.');
+      locationSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      locationSectionRef.current?.focus({ preventScroll: true });
       return;
     }
     if (locations.some((a) => a.labelType === 'Custom' && (a.customLabel.trim().length < 2 || /^custom$/i.test(a.customLabel.trim())))) {
-      setSnackbar({ open: true, message: 'Enter a meaningful custom location label.', severity: 'error' });
+      setLocationError('Enter a meaningful Custom location label before saving the Client.');
+      locationSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      locationSectionRef.current?.focus({ preventScroll: true });
       return;
     }
     const addresses: ClientAddress[] = locations.map(({ labelType, customLabel, ...address }) => ({
@@ -101,6 +107,7 @@ export default function ClientList() {
       setDialogOpen(false);
       setForm({ name: '', phone: '', email: '', notes: '' });
       setFormAddresses([emptyAddress()]);
+      setLocationError('');
       setSnackbar({ open: true, message: 'Client saved.', severity: 'success' });
       navigate(`/jobs/client/${client.id}`);
     } catch (error) {
@@ -110,6 +117,7 @@ export default function ClientList() {
 
   const updateAddress = (index: number, updates: Partial<ClientAddressDraft>) => {
     setFormAddresses((prev) => prev.map((a, i) => i === index ? { ...a, ...updates } : a));
+    if (updates.locationConfirmedAt) setLocationError('');
   };
 
   const addAddress = () => {
@@ -533,11 +541,14 @@ export default function ClientList() {
               fullWidth
             />
 
-            <Divider sx={{ pt: 0.5 }}>
-              <Typography variant="caption" color="text.secondary" fontWeight={600}>
-                Addresses
-              </Typography>
-            </Divider>
+            <Box ref={locationSectionRef} role="group" aria-label="Client locations" tabIndex={-1} sx={{ outline: 'none' }}>
+              <Divider sx={{ pt: 0.5 }}>
+                <Typography variant="caption" color="text.secondary" fontWeight={600}>Client locations</Typography>
+              </Divider>
+              {locationError && <Alert severity="error" sx={{ mt: 1.5, alignItems: 'flex-start', '& .MuiAlert-message': { minWidth: 0, whiteSpace: 'normal', overflowWrap: 'anywhere' } }}>
+                <Typography variant="subtitle2" fontWeight={800}>Location not confirmed</Typography>
+                <Typography variant="body2">{locationError}</Typography>
+              </Alert>}
 
             {formAddresses.map((addr, idx) => (
               <Box key={idx} sx={{
@@ -623,6 +634,7 @@ export default function ClientList() {
             >
               Add Another Address
             </Button>
+            </Box>
 
             <TextField
               label="Notes"
