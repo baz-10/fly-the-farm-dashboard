@@ -103,10 +103,21 @@ describe('authoritative client/property/field workflow screens', () => {
 
   test('preserves navigation buttons for the explicitly gated remote job workflows', () => {
     route('/jobs', <ClientList />);
+    fireEvent.click(screen.getByRole('button', { name: 'More client actions' }));
     fireEvent.click(screen.getByRole('button', { name: 'Import Spray Rec' }));
     expect(mockNavigate).toHaveBeenCalledWith('/jobs/import');
     fireEvent.click(screen.getByRole('button', { name: 'Job History' }));
     expect(mockNavigate).toHaveBeenCalledWith('/jobs/history');
+  });
+
+  test('presents Clients around finding, opening and adding client work', () => {
+    route('/jobs', <ClientList />);
+    expect(screen.getByRole('heading', { name: 'Clients' })).toBeInTheDocument();
+    expect(screen.getByText('Find a client, then open their properties, fields and work history.')).toBeInTheDocument();
+    expect(screen.getByRole('searchbox', { name: 'Search clients' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Add Client' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Open North Farm' })).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Import CSV' })).not.toBeInTheDocument();
   });
 
   test('does not show a saved confirmation from an unrelated resource', () => {

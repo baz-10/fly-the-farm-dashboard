@@ -19,6 +19,7 @@ import {
   IconButton,
   MenuItem,
   Divider,
+  Collapse,
   alpha,
   useTheme,
 } from '@mui/material';
@@ -33,6 +34,7 @@ import UploadFileIcon from '@mui/icons-material/UploadFile';
 import DownloadIcon from '@mui/icons-material/Download';
 import DeleteIcon from '@mui/icons-material/Delete';
 import PlaceIcon from '@mui/icons-material/Place';
+import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import AddressAutocomplete, { AddressResult } from '../components/AddressAutocomplete';
 import {
   getClientSummary,
@@ -62,6 +64,7 @@ export default function ClientList() {
   const [form, setForm] = useState({ name: '', phone: '', email: '', notes: '' });
   const [formAddresses, setFormAddresses] = useState<ClientAddress[]>([emptyAddress()]);
   const [codeCopied, setCodeCopied] = useState(false);
+  const [moreActionsOpen, setMoreActionsOpen] = useState(false);
   const [snackbar, setSnackbar] = useState<{ open: boolean; message: string; severity: 'success' | 'error' }>({ open: false, message: '', severity: 'success' });
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -278,75 +281,48 @@ export default function ClientList() {
 
   return (
     <Box>
-      <Box className="ftf-animate-in" sx={{ mb: 4 }}>
-        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3, flexWrap: 'wrap', gap: 2 }}>
+      <Box className="ftf-animate-in" sx={{ mb: 3.5 }}>
+        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: { xs: 'flex-start', sm: 'flex-end' }, mb: 2.5, flexWrap: 'wrap', gap: 2 }}>
           <Box>
-            <Typography variant="h4" sx={{ fontWeight: 800, color: 'primary.dark', fontSize: { xs: '1.5rem', md: '2rem' } }}>
-              {isClient ? 'My Properties' : 'Your Clients'}
+            <Typography variant="overline" color="primary.main" fontWeight={900} letterSpacing={1.5}>CLIENT WORKSPACE</Typography>
+            <Typography variant="h3" sx={{ fontWeight: 900, color: 'primary.dark', fontSize: { xs: '1.8rem', md: '2.5rem' }, lineHeight: 1.05 }}>
+              {isClient ? 'My Properties' : 'Clients'}
             </Typography>
             <Typography variant="body2" color="text.secondary">
               {isClient
-                ? 'Manage your properties, fields, and spray jobs'
-                : 'Manage clients, properties, fields, and spray jobs'}
+                ? 'Open a property to view its fields and work history.'
+                : 'Find a client, then open their properties, fields and work history.'}
             </Typography>
           </Box>
-          <Stack direction="row" spacing={1.5} flexWrap="wrap" useFlexGap>
-            <Button
-              variant="contained"
-              color="secondary"
-              startIcon={<UploadFileIcon />}
-              onClick={() => navigate('/jobs/import')}
-              sx={{ borderRadius: '10px', fontWeight: 700 }}
-            >
-              Import Spray Rec
-            </Button>
-            <Button
-              variant="outlined"
-              startIcon={<HistoryIcon />}
-              onClick={() => navigate('/jobs/history')}
-              sx={{ borderRadius: '10px', fontWeight: 700 }}
-            >
-              Job History
-            </Button>
-            {!isClient && (
-              <>
-                <Button
-                  variant="outlined"
-                  startIcon={<DownloadIcon />}
-                  component="a"
-                  href="/client-import-template.csv"
-                  download="client-import-template.csv"
-                  sx={{ borderRadius: '10px', fontWeight: 700 }}
-                >
-                  CSV Template
-                </Button>
-                <Button
-                  variant="outlined"
-                  startIcon={<UploadFileIcon />}
-                  onClick={() => fileInputRef.current?.click()}
-                  sx={{ borderRadius: '10px', fontWeight: 700 }}
-                >
-                  Import CSV
-                </Button>
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept=".csv"
-                  hidden
-                  onChange={handleCSVImport}
-                />
-                <Button
-                  variant="contained"
-                  startIcon={<AddIcon />}
-                  onClick={() => setDialogOpen(true)}
-                  sx={{ borderRadius: '10px', px: 3, fontWeight: 700 }}
-                >
-                  Add Client
-                </Button>
-              </>
-            )}
-          </Stack>
+          {!isClient && <Button variant="contained" startIcon={<AddIcon />} onClick={() => setDialogOpen(true)} sx={{ borderRadius: '10px', px: 3, minHeight: 44, fontWeight: 800 }}>Add Client</Button>}
         </Box>
+
+        <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.25} alignItems={{ xs: 'stretch', sm: 'center' }}>
+          {clients.length > 0 && <TextField
+            type="search"
+            placeholder="Search by client name"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            size="small"
+            fullWidth
+            inputProps={{ 'aria-label': 'Search clients' }}
+            sx={{ maxWidth: 520, '& .MuiOutlinedInput-root': { bgcolor: 'white', borderRadius: '10px' } }}
+          />}
+          <Button variant="text" endIcon={<ExpandMoreIcon sx={{ transform: moreActionsOpen ? 'rotate(180deg)' : 'none', transition: 'transform .2s' }} />} onClick={() => setMoreActionsOpen((open) => !open)} aria-expanded={moreActionsOpen} aria-controls="client-secondary-actions" sx={{ whiteSpace: 'nowrap', fontWeight: 750 }}>
+            More client actions
+          </Button>
+        </Stack>
+        <Collapse in={moreActionsOpen}>
+          <Stack id="client-secondary-actions" direction="row" spacing={1} flexWrap="wrap" useFlexGap sx={{ pt: 1.5 }}>
+            <Button variant="outlined" startIcon={<UploadFileIcon />} onClick={() => navigate('/jobs/import')}>Import Spray Rec</Button>
+            <Button variant="outlined" startIcon={<HistoryIcon />} onClick={() => navigate('/jobs/history')}>Job History</Button>
+            {!isClient && <>
+              <Button variant="outlined" startIcon={<DownloadIcon />} component="a" href="/client-import-template.csv" download="client-import-template.csv">CSV Template</Button>
+              <Button variant="outlined" startIcon={<UploadFileIcon />} onClick={() => fileInputRef.current?.click()}>Import CSV</Button>
+              <input ref={fileInputRef} type="file" accept=".csv" hidden onChange={handleCSVImport} />
+            </>}
+          </Stack>
+        </Collapse>
 
         {/* Contractor invite code */}
         {isContractor && user?.inviteCode && (
@@ -375,16 +351,6 @@ export default function ClientList() {
           </Box>
         )}
 
-        {clients.length > 0 && (
-          <TextField
-            placeholder="Search clients..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            size="small"
-            fullWidth
-            sx={{ maxWidth: 400, mb: 3 }}
-          />
-        )}
       </Box>
 
       {operational.status === 'loading' && (
@@ -449,7 +415,7 @@ export default function ClientList() {
                   },
                 }}
               >
-                <CardActionArea onClick={() => navigate(`/jobs/client/${client.id}`)} sx={{ height: '100%' }}>
+                <CardActionArea aria-label={`Open ${client.name}`} onClick={() => navigate(`/jobs/client/${client.id}`)} sx={{ height: '100%' }}>
                   <CardContent sx={{ p: 3 }}>
                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 2 }}>
                       <Box sx={{

@@ -1,4 +1,4 @@
-import { CLIENT_RESOURCE_LINKS, ORGANISATION_NAV_GROUPS, findActiveNavigationGroup } from '../organisationNavigation';
+import { CLIENT_RESOURCE_LINKS, HOME_NAV_ITEM, ORGANISATION_NAV_GROUPS, findActiveNavigationGroup } from '../organisationNavigation';
 
 describe('organisation navigation', () => {
   test('exposes Clients, Properties, Fields and Jobs as distinct client resources', () => {
@@ -16,10 +16,12 @@ describe('organisation navigation', () => {
     expect(findActiveNavigationGroup(pathname)).toBe('clients');
   });
 
-  test('provides all approved top-level navigation groups in order', () => {
+  test('keeps Home standalone and provides the approved expandable groups in order', () => {
+    expect(HOME_NAV_ITEM).toMatchObject({ label: 'Home', path: '/' });
     expect(ORGANISATION_NAV_GROUPS.map((group) => group.label)).toEqual([
-      'HOME', 'CLIENTS', 'OPERATIONS', 'FLEET', 'PEOPLE', 'COMPLIANCE', 'INTELLIGENCE', 'REPORTS', 'ORGANISATION',
+      'CLIENTS', 'OPERATIONS', 'FLEET', 'PEOPLE', 'COMPLIANCE', 'INTELLIGENCE', 'REPORTS', 'ORGANISATION',
     ]);
+    expect(ORGANISATION_NAV_GROUPS.flatMap((group) => group.items)).not.toContainEqual(expect.objectContaining({ path: '/' }));
   });
 
   test('preserves existing operational route paths', () => {

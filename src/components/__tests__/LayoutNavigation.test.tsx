@@ -49,3 +49,24 @@ test('navigation groups expand through normal button interaction', () => {
   expect(screen.getByRole('button', { name: 'CASA Compliance' })).toBeVisible();
   expect(screen.getByRole('button', { name: 'Checklists' })).toBeVisible();
 });
+
+test('Home is a permanent standalone action outside every accordion group', () => {
+  renderLayout('/');
+  fireEvent.click(screen.getByRole('button', { name: 'Open navigation' }));
+
+  const navigation = screen.getByRole('navigation', { name: 'Organisation navigation' });
+  const home = within(navigation).getByRole('button', { name: 'Home' });
+  expect(home).toBeVisible();
+  expect(home).toHaveAttribute('aria-current', 'page');
+  expect(within(navigation).queryByRole('button', { name: 'HOME navigation group' })).not.toBeInTheDocument();
+  expect(within(navigation).getAllByRole('button', { name: 'Home' })).toHaveLength(1);
+});
+
+test('Home remains visible when every accordion group is collapsed', () => {
+  renderLayout('/jobs');
+  fireEvent.click(screen.getByRole('button', { name: 'Open navigation' }));
+  const clients = screen.getByRole('button', { name: 'CLIENTS navigation group' });
+  fireEvent.click(clients);
+  expect(clients).toHaveAttribute('aria-expanded', 'false');
+  expect(screen.getByRole('button', { name: 'Home' })).toBeVisible();
+});

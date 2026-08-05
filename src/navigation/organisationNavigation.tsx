@@ -34,6 +34,10 @@ export interface NavigationGroup {
 
 const organisationRoles: UserRole[] = ['admin', 'contractor'];
 
+export const HOME_NAV_ITEM: NavigationItem = {
+  label: 'Home', shortLabel: 'Home', path: '/', icon: <HomeIcon />, roles: organisationRoles,
+};
+
 export const CLIENT_RESOURCE_LINKS: NavigationItem[] = [
   { label: 'Clients', shortLabel: 'Clients', path: '/jobs', icon: <PeopleIcon />, roles: ['admin', 'contractor', 'client'], activePrefixes: ['/jobs/client'] },
   { label: 'Properties', shortLabel: 'Properties', path: '/jobs?view=properties', icon: <GrassIcon />, roles: ['admin', 'contractor', 'client'] },
@@ -42,7 +46,6 @@ export const CLIENT_RESOURCE_LINKS: NavigationItem[] = [
 ];
 
 export const ORGANISATION_NAV_GROUPS: NavigationGroup[] = [
-  { id: 'home', label: 'HOME', items: [{ label: 'Operations Command', shortLabel: 'Home', path: '/', icon: <HomeIcon />, roles: organisationRoles }] },
   { id: 'clients', label: 'CLIENTS', items: CLIENT_RESOURCE_LINKS },
   { id: 'operations', label: 'OPERATIONS', items: [
     { label: 'Missions', shortLabel: 'Missions', path: '/missions', icon: <FlightTakeoffIcon />, roles: organisationRoles },
@@ -83,6 +86,7 @@ export function isNavigationItemActive(pathname: string, item: NavigationItem) {
 }
 
 export function findActiveNavigationGroup(pathname: string) {
+  if (pathname === '/') return null;
   if (pathname.startsWith('/jobs')) return 'clients';
   return ORGANISATION_NAV_GROUPS.find((group) => group.items.some((item) => isNavigationItemActive(pathname, item)))?.id || null;
 }

@@ -30,7 +30,7 @@ import MenuIcon from '@mui/icons-material/Menu';
 import SearchIcon from '@mui/icons-material/Search';
 import SettingsIcon from '@mui/icons-material/Settings';
 import { useAuth } from '../contexts/AuthContext';
-import { findActiveNavigationGroup, isNavigationItemActive, ORGANISATION_NAV_GROUPS } from '../navigation/organisationNavigation';
+import { findActiveNavigationGroup, HOME_NAV_ITEM, isNavigationItemActive, ORGANISATION_NAV_GROUPS } from '../navigation/organisationNavigation';
 
 const ROLE_LABELS: Record<string, string> = {
   admin: 'Organisation Admin',
@@ -48,7 +48,7 @@ export default function Layout() {
   const [accountAnchor, setAccountAnchor] = React.useState<null | HTMLElement>(null);
   const [search, setSearch] = React.useState('');
   const activeGroup = findActiveNavigationGroup(location.pathname);
-  const [expandedGroups, setExpandedGroups] = React.useState<Set<string>>(() => new Set(activeGroup ? [activeGroup] : ['home']));
+  const [expandedGroups, setExpandedGroups] = React.useState<Set<string>>(() => new Set(activeGroup ? [activeGroup] : []));
 
   React.useEffect(() => {
     if (!activeGroup) return;
@@ -93,6 +93,27 @@ export default function Layout() {
 
   const navList = (expanded: boolean) => (
     <List component="nav" aria-label="Organisation navigation" sx={{ px: expanded ? 1.25 : 0.75, py: 1, flex: 1 }}>
+      {(() => {
+        const active = location.pathname === '/';
+        const homeButton = <ListItemButton
+          selected={active}
+          onClick={() => navigateAndClose(HOME_NAV_ITEM.path)}
+          aria-label="Home"
+          aria-current={active ? 'page' : undefined}
+          sx={{
+            minHeight: expanded ? 46 : 48, mb: 1.1, px: expanded ? 1.25 : 0.5,
+            borderRadius: '8px', color: active ? 'white' : alpha(theme.palette.common.white, 0.78),
+            justifyContent: expanded ? 'flex-start' : 'center', flexDirection: expanded ? 'row' : 'column',
+            gap: expanded ? 0 : 0.25, borderBottom: `1px solid ${alpha(theme.palette.common.white, 0.1)}`,
+            '&.Mui-selected': { bgcolor: alpha(theme.palette.common.white, 0.14), color: 'white' },
+            '&:hover': { bgcolor: alpha(theme.palette.common.white, 0.09), color: 'white' },
+          }}
+        >
+          <ListItemIcon sx={{ minWidth: expanded ? 34 : 0, color: 'inherit', justifyContent: 'center', '& .MuiSvgIcon-root': { fontSize: expanded ? 20 : 18 } }}>{HOME_NAV_ITEM.icon}</ListItemIcon>
+          {expanded ? <ListItemText primary="Home" primaryTypographyProps={{ fontSize: '0.84rem', fontWeight: active ? 850 : 700 }} /> : <Typography sx={{ fontSize: '0.52rem', fontWeight: 800, lineHeight: 1.05 }}>Home</Typography>}
+        </ListItemButton>;
+        return expanded ? homeButton : <Tooltip title="Home" placement="right">{homeButton}</Tooltip>;
+      })()}
       {navGroups.map((group) => {
         const open = expandedGroups.has(group.id);
         const groupActive = activeGroup === group.id;
