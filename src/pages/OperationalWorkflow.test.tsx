@@ -10,10 +10,11 @@ import JobHistory from './JobHistory';
 
 const client = {
   id: 'client-1', contractorUserId: '', name: 'North Farm', phone: '', email: '', notes: '', rowVersion: 1,
+  addresses: [{ label: 'Northern gate', address: '45 Farm Track', locality: 'Roma', state: 'QLD', postcode: '4455', lat: -26.57, lng: 148.79, coordinateSource: 'GEOCODED', locationConfirmedAt: '2026-08-05T00:00:00.000Z' }],
   createdAt: '2026-08-01T00:00:00Z', updatedAt: '2026-08-01T00:00:00Z',
 };
 const property = {
-  id: 'property-1', clientId: 'client-1', name: 'Home Block', address: '', state: 'NSW', locality: '', lotPlan: '', notes: '', rowVersion: 1,
+  id: 'property-1', clientId: 'client-1', name: 'Home Block', address: '45 Farm Track', state: 'QLD', locality: 'Roma', lotPlan: 'LOT-7', lat: -26.57, lng: 148.79, addressSource: 'GEOCODED', notes: '', rowVersion: 1,
   createdAt: '2026-08-01T00:00:00Z', updatedAt: '2026-08-01T00:00:00Z',
 };
 const field = {
@@ -28,17 +29,20 @@ const job = {
 
 let mockOperational: any;
 let mockParams: Record<string, string> = {};
+let mockSearchParams = new URLSearchParams();
 const mockNavigate = jest.fn();
 
 jest.mock('react-router-dom', () => ({
   useNavigate: () => mockNavigate,
   useParams: () => mockParams,
+  useSearchParams: () => [mockSearchParams],
   Navigate: () => null,
 }), { virtual: true });
 jest.mock('../contexts/OperationalDataContext', () => ({ useOperationalData: () => mockOperational }));
 jest.mock('../contexts/AuthContext', () => ({ useAuth: () => ({ user: { id: 'user-1', role: 'contractor' } }) }));
 jest.mock('../components/AddressAutocomplete', () => (props: any) => <div>
   Address search
+  {props.lat !== undefined && props.lng !== undefined && <span>Map location {props.lat}, {props.lng}</span>}
   <button onClick={() => props.onSelect?.({ address: '1 Farm Road', locality: 'Roma', state: 'QLD', postcode: '4455', lat: -26.57, lng: 148.79, displayName: '1 Farm Road, Roma', coordinateSource: 'GEOCODED' })}>Choose test address</button>
   <button onClick={() => props.onSelect?.({ address: '1 Farm Road', locality: 'Roma', state: 'QLD', postcode: '4455', lat: -26.5701, lng: 148.7901, displayName: '1 Farm Road, Roma', coordinateSource: 'MANUALLY_ADJUSTED', locationConfirmedAt: '2026-08-06T01:00:00.000Z' })}>Confirm adjusted location</button>
 </div>);
@@ -96,7 +100,11 @@ function route(path: string, element: React.ReactElement) {
 }
 
 describe('authoritative client/property/field workflow screens', () => {
-  beforeEach(() => { mockOperational = baseOperational(); });
+  beforeEach(() => {
+    mockSearchParams = new URLSearchParams();
+    mockNavigate.mockReset();
+    mockOperational = baseOperational();
+  });
 
   test('does not render a failed client load as the valid empty state', () => {
     mockOperational = baseOperational({ status: 'error', clients: [], properties: [], fields: [], error: { code: 'NETWORK_ERROR', message: 'Offline' } });
@@ -122,6 +130,80 @@ describe('authoritative client/property/field workflow screens', () => {
     expect(screen.getByRole('button', { name: 'Add Client' })).toBeVisible();
     expect(screen.getByRole('button', { name: 'Open North Farm' })).toBeVisible();
     expect(screen.queryByRole('button', { name: 'Import CSV' })).not.toBeInTheDocument();
+  });
+
+  test('presents a dedicated Properties workspace with dominant search, open and add actions', () => {
+    mockSearchParams = new URLSearchParams('view=properties');
+    route('/jobs?view=properties', <ClientList />);
+    expect(screen.getByRole('heading', { name: 'Properties' })).toBeInTheDocument();
+    expect(screen.getByText('Find a property, see who owns it and open its fields and work history.')).toBeInTheDocument();
+    expect(screen.getByRole('searchbox', { name: 'Search properties' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Add Property' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Open Home Block' })).toBeVisible();
+    expect(screen.getByText('North Farm')).toBeVisible();
+    expect(screen.getByText(/45 Farm Track/)).toBeVisible();
+    expect(screen.getByText('1 Field')).toBeVisible();
+    expect(screen.getByText('12.5 ha')).toBeVisible();
+    expect(screen.getByRole('button', { name: 'More property actions' })).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Add Client' })).not.toBeInTheDocument();
+  });
+
+  test.each(['home block', 'north farm', '45 farm track', 'roma', 'qld', '4455', 'lot-7'])(
+    'searches Properties using %s',
+    (query) => {
+      mockSearchParams = new URLSearchParams('view=properties');
+      route('/jobs?view=properties', <ClientList />);
+      fireEvent.change(screen.getByRole('searchbox', { name: 'Search properties' }), { target: { value: query } });
+      expect(screen.getByRole('button', { name: 'Open Home Block' })).toBeVisible();
+    },
+  );
+
+  test('opens a Property directly from the workspace', () => {
+    mockSearchParams = new URLSearchParams('view=properties');
+    route('/jobs?view=properties', <ClientList />);
+    fireEvent.click(screen.getByRole('button', { name: 'Open Home Block' }));
+    expect(mockNavigate).toHaveBeenCalledWith('/jobs/client/client-1/property/property-1');
+  });
+
+  test('inherits a confirmed Client location without mutating the Client and saves authoritative Property context', async () => {
+    const created = { ...property, id: 'property-new', name: 'South Block' };
+    mockOperational.createProperty.mockResolvedValue(created);
+    mockSearchParams = new URLSearchParams('view=properties');
+    route('/jobs?view=properties', <ClientList />);
+    fireEvent.click(screen.getByRole('button', { name: 'Add Property' }));
+    fireEvent.mouseDown(await screen.findByRole('combobox', { name: 'Select Client' }));
+    fireEvent.click(await screen.findByRole('option', { name: 'North Farm' }));
+    expect(screen.getByRole('button', { name: /Northern gate/ })).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: /Northern gate/ }));
+    expect(screen.getByText(/Inherited from Client location/)).toBeVisible();
+    expect(screen.getByText('Map location -26.57, 148.79')).toBeVisible();
+    fireEvent.change(screen.getByRole('textbox', { name: 'Property name' }), { target: { value: 'South Block' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm adjusted location' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save Property' }));
+    await waitFor(() => expect(mockOperational.createProperty).toHaveBeenCalledWith(expect.objectContaining({
+      clientId: 'client-1', name: 'South Block', address: '1 Farm Road', locality: 'Roma', state: 'QLD',
+      lat: -26.5701, lng: 148.7901, addressSource: 'MANUAL',
+    })));
+    expect(mockOperational.updateClient).not.toHaveBeenCalled();
+    expect(mockNavigate).toHaveBeenCalledWith('/jobs/client/client-1/property/property-new');
+  });
+
+  test('keeps Property form state and focuses location guidance when confirmation is missing', async () => {
+    const scrollIntoView = jest.fn();
+    Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', { configurable: true, value: scrollIntoView });
+    mockSearchParams = new URLSearchParams('view=properties');
+    route('/jobs?view=properties', <ClientList />);
+    fireEvent.click(screen.getByRole('button', { name: 'Add Property' }));
+    fireEvent.mouseDown(await screen.findByRole('combobox', { name: 'Select Client' }));
+    fireEvent.click(await screen.findByRole('option', { name: 'North Farm' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Property name' }), { target: { value: 'South Block' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save Property' }));
+    expect(mockOperational.createProperty).not.toHaveBeenCalled();
+    expect(screen.getByText('Location not confirmed')).toBeVisible();
+    expect(screen.getByText('Choose a saved Client location or search for an address, then confirm the Property location before saving.')).toBeVisible();
+    expect(screen.getByRole('group', { name: 'Property location' })).toHaveFocus();
+    expect(scrollIntoView).toHaveBeenCalled();
+    expect(screen.getByRole('textbox', { name: 'Property name' })).toHaveValue('South Block');
   });
 
   test('does not show a saved confirmation from an unrelated resource', () => {

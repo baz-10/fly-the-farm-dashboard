@@ -233,8 +233,8 @@ export function mapApiProperty(record: ApiRecord): Property {
     name: requiredText(record, 'name'),
     address: optionalText(record, 'address'),
     state: propertyState(record),
-    locality: '',
-    lotPlan: '',
+    locality: optionalText(record, 'locality'),
+    lotPlan: optionalText(record, 'lotPlan', 'lot_plan'),
     notes: optionalText(record, 'notes'),
     primaryContactName: optionalText(record, 'primaryContactName', 'primary_contact_name'),
     accessNotes: optionalText(record, 'accessNotes', 'access_notes'),
@@ -493,6 +493,7 @@ export function createOperationalApi(options: ApiOptions = {}): OperationalApi {
     if (input.address !== undefined) payload.address = input.address;
     if (input.state !== undefined) payload.state = input.state;
     if (input.locality) payload.locality = input.locality;
+    if (input.lotPlan) payload.lotPlan = input.lotPlan;
     if (input.primaryContactName) payload.primaryContactName = input.primaryContactName;
     if (input.accessNotes) payload.accessNotes = input.accessNotes;
     if (input.notes) payload.notes = input.notes;

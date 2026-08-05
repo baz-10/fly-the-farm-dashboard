@@ -330,11 +330,11 @@ describe('trusted organisation operational API', () => {
     };
     const validResponse = createResponse();
     await handlerFor('properties', repository, context({ permissions: ['properties.create'] }))(request('POST', {
-      clientId: '33333333-3333-4333-8333-333333333333', name: 'Home Block', state: 'QLD',
+      clientId: '33333333-3333-4333-8333-333333333333', name: 'Home Block', state: 'QLD', lotPlan: 'LOT-7',
     }), validResponse);
     expect(validResponse.statusCode).toBe(201);
     expect(validResponse.body.data.state).toBe('QLD');
-    expect(repository.create).toHaveBeenCalledWith('properties', expect.anything(), expect.objectContaining({ state: 'QLD' }));
+    expect(repository.create).toHaveBeenCalledWith('properties', expect.anything(), expect.objectContaining({ state: 'QLD', lot_plan: 'LOT-7' }));
 
     const invalidResponse = createResponse();
     await handlerFor('properties', repository, context({ permissions: ['properties.create'] }))(request('POST', {

@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { Navigate, useNavigate } from 'react-router-dom';
+import { Navigate, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Typography,
   Box,
@@ -25,7 +25,6 @@ import {
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import PersonIcon from '@mui/icons-material/Person';
-import BusinessIcon from '@mui/icons-material/Business';
 import ArrowForwardIcon from '@mui/icons-material/ArrowForward';
 import AssignmentIcon from '@mui/icons-material/Assignment';
 import HistoryIcon from '@mui/icons-material/History';
@@ -44,6 +43,7 @@ import { AustralianState, ALL_STATES } from '../types/chemical';
 import { useAuth } from '../contexts/AuthContext';
 import { useOperationalData } from '../contexts/OperationalDataContext';
 import { describeOperationalError } from '../services/operationalDataStore';
+import PropertyWorkspace from './PropertyWorkspace';
 
 type ClientAddressDraft = ClientAddress & { labelType: string; customLabel: string };
 const LOCATION_LABELS = ['Primary address', 'Billing address', 'Site entrance', 'Loading area', 'Office', 'Workshop', 'Custom'];
@@ -57,6 +57,7 @@ const emptyAddress = (): ClientAddressDraft => ({
 
 export default function ClientList() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const theme = useTheme();
   const { user } = useAuth();
   const operational = useOperationalData();
@@ -74,7 +75,7 @@ export default function ClientList() {
 
   const isContractor = user?.role === 'contractor';
   const isClient = user?.role === 'client';
-  const isAdmin = user?.role === 'admin';
+  const isPropertiesView = searchParams.get('view') === 'properties';
 
   const filtered = clients.filter((c) =>
     c.name.toLowerCase().includes(search.toLowerCase())
@@ -290,6 +291,8 @@ export default function ClientList() {
     reader.readAsText(file);
     e.target.value = '';
   };
+
+  if (isPropertiesView) return <PropertyWorkspace />;
 
   // Client users go straight to their own area
   if (isClient && user?.clientRecordId && clients.length === 1) {
