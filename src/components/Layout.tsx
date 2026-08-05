@@ -5,6 +5,7 @@ import {
   Avatar,
   Box,
   Button,
+  Collapse,
   Divider,
   Drawer,
   IconButton,
@@ -22,53 +23,20 @@ import {
   useMediaQuery,
   useTheme,
 } from '@mui/material';
-import AccountBalanceIcon from '@mui/icons-material/AccountBalance';
-import AdminPanelSettingsIcon from '@mui/icons-material/AdminPanelSettings';
-import AirplanemodeActiveIcon from '@mui/icons-material/AirplanemodeActive';
-import AssignmentIcon from '@mui/icons-material/Assignment';
-import CalculateIcon from '@mui/icons-material/Calculate';
-import FlightTakeoffIcon from '@mui/icons-material/FlightTakeoff';
-import GavelIcon from '@mui/icons-material/Gavel';
-import GrassIcon from '@mui/icons-material/Grass';
-import HomeIcon from '@mui/icons-material/Home';
+import ExpandLessIcon from '@mui/icons-material/ExpandLess';
+import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import LogoutIcon from '@mui/icons-material/Logout';
 import MenuIcon from '@mui/icons-material/Menu';
-import PeopleIcon from '@mui/icons-material/People';
-import ReceiptLongIcon from '@mui/icons-material/ReceiptLong';
 import SearchIcon from '@mui/icons-material/Search';
-import SecurityIcon from '@mui/icons-material/Security';
 import SettingsIcon from '@mui/icons-material/Settings';
-import SmartToyIcon from '@mui/icons-material/SmartToy';
-import LocalShippingIcon from '@mui/icons-material/LocalShipping';
 import { useAuth } from '../contexts/AuthContext';
+import { findActiveNavigationGroup, isNavigationItemActive, ORGANISATION_NAV_GROUPS } from '../navigation/organisationNavigation';
 
 const ROLE_LABELS: Record<string, string> = {
-  admin: 'FTF Admin',
+  admin: 'Organisation Admin',
   contractor: 'Contractor',
   client: 'Client',
 };
-
-const NAV_ITEMS: Array<{ label: string; shortLabel: string; path: string; icon: React.ReactNode; roles: string[]; entitlement?: string }> = [
-  { label: 'Operations', shortLabel: 'Operations', path: '/', icon: <HomeIcon />, roles: ['admin', 'contractor'] },
-  { label: 'Database', shortLabel: 'Database', path: '/database', icon: <GrassIcon />, roles: ['admin', 'contractor', 'client'] },
-  { label: 'Calculator', shortLabel: 'Calculator', path: '/calculator', icon: <CalculateIcon />, roles: ['admin', 'contractor'] },
-  { label: 'Jobs', shortLabel: 'Jobs', path: '/jobs', icon: <AssignmentIcon />, roles: ['admin', 'contractor', 'client'] },
-  { label: 'Aircraft', shortLabel: 'Aircraft', path: '/aircraft', icon: <AirplanemodeActiveIcon />, roles: ['admin', 'contractor'] },
-  { label: 'Personnel', shortLabel: 'Personnel', path: '/personnel', icon: <PeopleIcon />, roles: ['admin', 'contractor'] },
-  { label: 'Fleet & Packs', shortLabel: 'Fleet', path: '/fleet-work-packs', icon: <LocalShippingIcon />, roles: ['admin', 'contractor'] },
-  { label: 'Missions', shortLabel: 'Missions', path: '/missions', icon: <FlightTakeoffIcon />, roles: ['admin', 'contractor'] },
-  { label: 'JSA System', shortLabel: 'JSA', path: '/jsa', icon: <SecurityIcon />, roles: ['admin', 'contractor'] },
-  { label: 'Quotes', shortLabel: 'Quotes', path: '/quotes', icon: <ReceiptLongIcon />, roles: ['admin', 'contractor'] },
-  { label: 'Financials', shortLabel: 'Financials', path: '/financials', icon: <AccountBalanceIcon />, roles: ['admin', 'contractor'] },
-  { label: 'Legacy Ask FTF', shortLabel: 'Legacy Ask FTF', path: '/ask-ftf', icon: <SmartToyIcon />, roles: ['admin', 'contractor'], entitlement: 'legacyAskFtf' },
-  { label: 'Compliance', shortLabel: 'Compliance', path: '/compliance', icon: <GavelIcon />, roles: ['admin', 'contractor'] },
-  { label: 'Settings', shortLabel: 'Settings', path: '/license-settings', icon: <SettingsIcon />, roles: ['admin', 'contractor'] },
-  { label: 'Admin', shortLabel: 'Admin', path: '/admin', icon: <AdminPanelSettingsIcon />, roles: ['admin'] },
-];
-
-function isRouteActive(pathname: string, path: string) {
-  return path === '/' ? pathname === '/' : pathname.startsWith(path);
-}
 
 export default function Layout() {
   const { user, logout } = useAuth();
@@ -79,11 +47,21 @@ export default function Layout() {
   const [drawerOpen, setDrawerOpen] = React.useState(false);
   const [accountAnchor, setAccountAnchor] = React.useState<null | HTMLElement>(null);
   const [search, setSearch] = React.useState('');
+  const activeGroup = findActiveNavigationGroup(location.pathname);
+  const [expandedGroups, setExpandedGroups] = React.useState<Set<string>>(() => new Set(activeGroup ? [activeGroup] : ['home']));
 
-  const navItems = NAV_ITEMS.filter((item) =>
-    (!user?.role || item.roles.includes(user.role))
-    && (!item.entitlement || Boolean(user?.entitlements?.includes(item.entitlement)))
-  );
+  React.useEffect(() => {
+    if (!activeGroup) return;
+    setExpandedGroups((current) => current.has(activeGroup) ? current : new Set([...Array.from(current), activeGroup]));
+  }, [activeGroup]);
+
+  const navGroups = ORGANISATION_NAV_GROUPS.map((group) => ({
+    ...group,
+    items: group.items.filter((item) =>
+      (!user?.role || item.roles.includes(user.role))
+      && (!item.entitlement || Boolean(user?.entitlements?.includes(item.entitlement)))
+    ),
+  })).filter((group) => group.items.length > 0);
 
   const navigateAndClose = (path: string) => {
     setDrawerOpen(false);
@@ -107,60 +85,52 @@ export default function Layout() {
     setSearch('');
   };
 
+  const toggleGroup = (groupId: string) => setExpandedGroups((current) => {
+    const next = new Set(current);
+    if (next.has(groupId)) next.delete(groupId); else next.add(groupId);
+    return next;
+  });
+
   const navList = (expanded: boolean) => (
-    <List sx={{ px: expanded ? 1.25 : 0.75, py: 1, flex: 1 }}>
-      {navItems.map((item) => {
-        const active = isRouteActive(location.pathname, item.path);
-        const button = (
+    <List component="nav" aria-label="Organisation navigation" sx={{ px: expanded ? 1.25 : 0.75, py: 1, flex: 1 }}>
+      {navGroups.map((group) => {
+        const open = expandedGroups.has(group.id);
+        const groupActive = activeGroup === group.id;
+        return <React.Fragment key={group.id}>
           <ListItemButton
-            key={item.path}
-            selected={active}
-            onClick={() => navigateAndClose(item.path)}
-            aria-label={item.label}
+            onClick={() => toggleGroup(group.id)}
+            aria-label={`${group.label} navigation group`}
+            aria-expanded={open}
             sx={{
-              minHeight: expanded ? 46 : 50,
-              mb: 0.4,
-              px: expanded ? 1.25 : 0.5,
+              minHeight: expanded ? 38 : 42,
+              mb: 0.2,
+              px: expanded ? 1.25 : 0.4,
               borderRadius: '8px',
-              color: active ? 'white' : alpha(theme.palette.common.white, 0.68),
+              color: groupActive ? 'white' : alpha(theme.palette.common.white, 0.68),
               justifyContent: expanded ? 'flex-start' : 'center',
-              flexDirection: expanded ? 'row' : 'column',
-              gap: expanded ? 0 : 0.3,
-              '&.Mui-selected': {
-                bgcolor: alpha(theme.palette.common.white, 0.12),
-                color: 'white',
-                '&:hover': { bgcolor: alpha(theme.palette.common.white, 0.14) },
-              },
-              '&:hover': {
-                bgcolor: alpha(theme.palette.common.white, 0.09),
-                color: 'white',
-              },
+              bgcolor: groupActive ? alpha(theme.palette.common.white, 0.08) : 'transparent',
+              '&:hover': { bgcolor: alpha(theme.palette.common.white, 0.09), color: 'white' },
             }}
           >
-            <ListItemIcon
-              sx={{
-                minWidth: expanded ? 38 : 0,
-                color: 'inherit',
-                justifyContent: 'center',
-                '& .MuiSvgIcon-root': { fontSize: expanded ? 20 : 18 },
-              }}
-            >
-              {item.icon}
-            </ListItemIcon>
             {expanded ? (
-              <ListItemText
-                primary={item.label}
-                primaryTypographyProps={{ fontSize: '0.86rem', fontWeight: active ? 800 : 650 }}
-              />
+              <><ListItemText primary={group.label} primaryTypographyProps={{ fontSize: '0.69rem', letterSpacing: '0.09em', fontWeight: 850 }} />{open ? <ExpandLessIcon fontSize="small" /> : <ExpandMoreIcon fontSize="small" />}</>
             ) : (
-              <Typography sx={{ fontSize: '0.56rem', fontWeight: 750, lineHeight: 1.05, textAlign: 'center' }}>
-                {item.shortLabel}
-              </Typography>
+              <Typography sx={{ fontSize: '0.48rem', fontWeight: 850, lineHeight: 1.05, textAlign: 'center' }}>{group.label}</Typography>
             )}
           </ListItemButton>
-        );
-
-        return expanded ? button : <Tooltip key={item.path} title={item.label} placement="right">{button}</Tooltip>;
+          <Collapse in={open} timeout="auto" unmountOnExit>
+            <List disablePadding>
+              {group.items.map((item) => {
+                const active = isNavigationItemActive(location.pathname, item);
+                const button = <ListItemButton key={item.path} selected={active} onClick={() => navigateAndClose(item.path)} aria-label={item.label} sx={{ minHeight: expanded ? 42 : 45, mb: 0.25, pl: expanded ? 2 : 0.5, pr: expanded ? 1 : 0.5, borderRadius: '8px', color: active ? 'white' : alpha(theme.palette.common.white, 0.68), justifyContent: expanded ? 'flex-start' : 'center', flexDirection: expanded ? 'row' : 'column', gap: expanded ? 0 : 0.25, '&.Mui-selected': { bgcolor: alpha(theme.palette.common.white, 0.14), color: 'white' }, '&:hover': { bgcolor: alpha(theme.palette.common.white, 0.09), color: 'white' } }}>
+                  <ListItemIcon sx={{ minWidth: expanded ? 34 : 0, color: 'inherit', justifyContent: 'center', '& .MuiSvgIcon-root': { fontSize: expanded ? 19 : 17 } }}>{item.icon}</ListItemIcon>
+                  {expanded ? <ListItemText primary={item.label} primaryTypographyProps={{ fontSize: '0.82rem', fontWeight: active ? 800 : 650 }} /> : <Typography sx={{ fontSize: '0.52rem', fontWeight: 750, lineHeight: 1.05, textAlign: 'center' }}>{item.shortLabel}</Typography>}
+                </ListItemButton>;
+                return expanded ? button : <Tooltip key={item.path} title={item.label} placement="right">{button}</Tooltip>;
+              })}
+            </List>
+          </Collapse>
+        </React.Fragment>;
       })}
     </List>
   );
@@ -170,7 +140,7 @@ export default function Layout() {
       <Box
         component="aside"
         sx={{
-          width: 88,
+          width: 104,
           display: { xs: 'none', lg: 'flex' },
           flexDirection: 'column',
           position: 'sticky',
