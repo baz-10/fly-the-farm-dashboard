@@ -1,0 +1,28 @@
+import { readFile, readdir } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
+import { dirname, resolve } from 'node:path';
+import { PGlite } from '@electric-sql/pglite';
+
+const directory=resolve(dirname(fileURLToPath(import.meta.url)),'../supabase/migrations');
+const id={org:'51000000-0000-4000-8000-000000000001',otherOrg:'52000000-0000-4000-8000-000000000001',actor:'51000000-0000-4000-8000-000000000101',otherActor:'52000000-0000-4000-8000-000000000101',person:'51000000-0000-4000-8000-000000000201',doc:'51000000-0000-4000-8000-000000000301'};
+const db=new PGlite();
+try{
+ await db.exec(`create schema auth;create table auth.users(id uuid primary key);create function auth.uid()returns uuid language sql stable as $$select null::uuid$$;create role anon;create role authenticated;create role service_role;`);
+ for(const name of(await readdir(directory)).filter(name=>name.endsWith('.sql')&&name!=='20260804162000_production_beta_platform_identity_reconciliation.sql').sort())await db.exec(await readFile(resolve(directory,name),'utf8'));
+ await db.exec(`insert into auth.users(id)values('51000000-0000-4000-8000-000000000011'),('52000000-0000-4000-8000-000000000011');
+ insert into public.organisations(id,organisation_id,name)values('${id.org}','${id.org}','Fly The Farm'),('${id.otherOrg}','${id.otherOrg}','Other');
+ insert into public.internal_users(id,organisation_id,auth_user_id,display_name)values('${id.actor}','${id.org}','51000000-0000-4000-8000-000000000011','Admin'),('${id.otherActor}','${id.otherOrg}','52000000-0000-4000-8000-000000000011','Other');
+ insert into public.roles(id,organisation_id,code,name)values('51000000-0000-4000-8000-000000000111','${id.org}','admin','Admin'),('52000000-0000-4000-8000-000000000111','${id.otherOrg}','admin','Admin');
+ insert into public.memberships(id,organisation_id,internal_user_id,role_id)values('51000000-0000-4000-8000-000000000121','${id.org}','${id.actor}','51000000-0000-4000-8000-000000000111'),('52000000-0000-4000-8000-000000000121','${id.otherOrg}','${id.otherActor}','52000000-0000-4000-8000-000000000111');
+ insert into public.personnel(id,organisation_id,full_name,created_by_internal_user_id,updated_by_internal_user_id)values('${id.person}','${id.org}','Chief Remote Pilot','${id.actor}','${id.actor}');
+ insert into public.controlled_documents(id,organisation_id,document_type,title,created_by_internal_user_id,updated_by_internal_user_id)values('${id.doc}','${id.org}','OPERATIONS_MANUAL','RPAS Operations Manual','${id.actor}','${id.actor}');`);
+ const created=await db.query(`select public.ftf_write_compliance_instrument('${id.org}','${id.actor}','CREATE',null,0,$1::jsonb) result`,[JSON.stringify({instrumentType:'REOC',instrumentNumber:'CASA.REOC.001',issuer:'CASA',issueDate:'2026-01-01',expiryDate:'2027-01-01',status:'CURRENT',conditions:[],scope:{country:'AU'}})]);
+ const instrument=created.rows[0].result.record;if(!instrument?.id||instrument.row_version!==1)throw new Error('ReOC create failed');
+ const stale=await db.query(`select public.ftf_write_compliance_instrument('${id.org}','${id.actor}','UPDATE','${instrument.id}',99,$1::jsonb) result`,[JSON.stringify({instrumentNumber:'CASA.REOC.001',status:'CURRENT'})]);if(!stale.rows[0].result.conflict)throw new Error('stale instrument update accepted');
+ const published=await db.query(`select public.ftf_publish_controlled_document_version('${id.org}','${id.actor}','${id.doc}',1,$1::jsonb) result`,[JSON.stringify({effectiveDate:'2026-08-05',reviewDueDate:'2027-08-05',internalFileId:'51000000-0000-4000-8000-000000009001',fileVersion:1,originalFilename:'operations-manual.pdf',checksum:'a'.repeat(64),provenance:{source:'upload'},approvedByPersonnelId:id.person,approverSnapshot:{name:'Chief Remote Pilot'}})]);if(published.rows[0].result.record.version_number!==1)throw new Error('manual publication failed');
+ const overview=await db.query(`select public.ftf_read_casa_compliance_overview('${id.org}',now()) result`);if(overview.rows[0].result.reoc.instrument_number!=='CASA.REOC.001'||overview.rows[0].result.operationsManual.version_number!==1)throw new Error('overview did not use authoritative records');
+ const other=await db.query(`select public.ftf_read_casa_compliance_overview('${id.otherOrg}',now()) result`);if(other.rows[0].result.reoc!==null)throw new Error('cross-tenant overview leaked');
+ let immutable=false;try{await db.exec(`update public.controlled_document_versions set original_filename='changed.pdf'where organisation_id='${id.org}'`);}catch{immutable=true;}if(!immutable)throw new Error('published manual version mutated');
+ const evidence=await db.query(`select(select count(*)::int from public.audit_events where organisation_id='${id.org}'and event_type like'compliance.%')audits,(select count(*)::int from public.transactional_outbox where organisation_id='${id.org}'and topic like'compliance.%')outbox`);if(evidence.rows[0].audits<2||evidence.rows[0].outbox<2)throw new Error('compliance audit/outbox missing');
+ await db.exec('set role authenticated');let direct=false;try{await db.exec(`insert into public.organisation_compliance_instruments(organisation_id,instrument_type,issuer,status,created_by_internal_user_id,updated_by_internal_user_id)values('${id.org}','REOC','CASA','CURRENT','${id.actor}','${id.actor}')`);}catch{direct=true;}if(!direct)throw new Error('direct browser compliance write accepted');await db.exec('reset role');
+}finally{await db.close();}
