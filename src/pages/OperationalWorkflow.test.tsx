@@ -221,6 +221,64 @@ describe('authoritative client/property/field workflow screens', () => {
     expect(mockNavigate).toHaveBeenCalledWith('/jobs/client/client-1/property/property-1/field/field-new');
   });
 
+  test('presents a dedicated Jobs workspace with dominant search, open and add actions', () => {
+    mockSearchParams = new URLSearchParams('view=jobs');
+    route('/jobs?view=jobs', <ClientList />);
+    expect(screen.getByRole('heading', { name: 'Jobs' })).toBeInTheDocument();
+    expect(screen.getByText('Find current or past work, open it directly or start a new Job from known Field details.')).toBeInTheDocument();
+    expect(screen.getByRole('searchbox', { name: 'Search jobs' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Add Job' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Open JOB-42' })).toBeVisible();
+    expect(screen.getByText('North Farm')).toBeVisible();
+    expect(screen.getByText('Home Block')).toBeVisible();
+    expect(screen.getByText('North Paddock')).toBeVisible();
+    expect(screen.getByText('Spray lantana')).toBeVisible();
+    expect(screen.getByRole('button', { name: 'More job actions' })).toBeVisible();
+  });
+
+  test.each(['job-42', 'spray lantana', 'scheduled', 'north farm', 'home block', 'north paddock'])(
+    'searches Jobs using %s',
+    (query) => {
+      mockSearchParams = new URLSearchParams('view=jobs');
+      route('/jobs?view=jobs', <ClientList />);
+      fireEvent.change(screen.getByRole('searchbox', { name: 'Search jobs' }), { target: { value: query } });
+      expect(screen.getByRole('button', { name: 'Open JOB-42' })).toBeVisible();
+    },
+  );
+
+  test('opens a Job directly from the workspace', () => {
+    mockSearchParams = new URLSearchParams('view=jobs');
+    route('/jobs?view=jobs', <ClientList />);
+    fireEvent.click(screen.getByRole('button', { name: 'Open JOB-42' }));
+    expect(mockNavigate).toHaveBeenCalledWith('/jobs/client/client-1/property/property-1/field/field-1/job/job-1');
+  });
+
+  test('starts Job creation from inherited Client, Property and Field context', async () => {
+    mockSearchParams = new URLSearchParams('view=jobs');
+    route('/jobs?view=jobs', <ClientList />);
+    fireEvent.click(screen.getByRole('button', { name: 'Add Job' }));
+    fireEvent.mouseDown(screen.getByRole('combobox', { name: 'Select Client' }));
+    fireEvent.click(await screen.findByRole('option', { name: 'North Farm' }));
+    fireEvent.mouseDown(screen.getByRole('combobox', { name: 'Select Property' }));
+    fireEvent.click(await screen.findByRole('option', { name: 'Home Block' }));
+    fireEvent.mouseDown(screen.getByRole('combobox', { name: 'Select Field' }));
+    fireEvent.click(await screen.findByRole('option', { name: 'North Paddock' }));
+    expect(screen.getByText(/12\.5 ha · Known Field details/)).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Continue to Job details' }));
+    expect(mockNavigate).toHaveBeenCalledWith('/jobs/client/client-1/property/property-1/field/field-1/new-job');
+    expect(mockOperational.updateClient).not.toHaveBeenCalled();
+    expect(mockOperational.updateProperty).not.toHaveBeenCalled();
+    expect(mockOperational.updateField).not.toHaveBeenCalled();
+  });
+
+  test('does not render a failed Jobs load as an empty register', () => {
+    mockOperational = baseOperational({ status: 'error', jobs: [], error: { code: 'NETWORK_ERROR', message: 'Offline' } });
+    mockSearchParams = new URLSearchParams('view=jobs');
+    route('/jobs?view=jobs', <ClientList />);
+    expect(screen.getByText(/Jobs are unavailable/i)).toBeVisible();
+    expect(screen.queryByText('No Jobs yet')).not.toBeInTheDocument();
+  });
+
   test('inherits a confirmed Client location without mutating the Client and saves authoritative Property context', async () => {
     const created = { ...property, id: 'property-new', name: 'South Block' };
     mockOperational.createProperty.mockResolvedValue(created);
