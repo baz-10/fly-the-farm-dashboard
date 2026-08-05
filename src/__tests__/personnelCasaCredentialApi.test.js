@@ -11,7 +11,7 @@ const req=(method,query={},body={},headers={origin:'https://spray-command.test',
 test('creates non-expiring RePL evidence through the trusted command',async()=>{
  const repository={writePersonnelCasaCredential:jest.fn().mockResolvedValue({record:{id:credential,credential_type:'RePL',expiry_date:null},expiryDisplay:'Non-expiring'})};
  const res=response();
- await createPersonnelCasaCredentialsHandler({repository,resolveContext:jest.fn().mockResolvedValue(context)})(req('POST',{action:'create'},{personnelId:personnel,credentialType:'RePL',identifier:'REPL-1',issuer:'CASA',issueDate:'2026-01-01',categories:['MULTIROTOR'],ratings:['<150KG'],aircraftTypes:['AGRAS T100'],minimumWeightKg:0,maximumWeightKg:149.9,conditions:null,limitations:null,evidence:{internalFileId:'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',fileVersion:1,checksumSha256:'a'.repeat(64),originalFilename:'repl.pdf',contentType:'application/pdf',sizeBytes:123,provenance:{source:'OPERATOR_UPLOAD'}}}),res);
+ await createPersonnelCasaCredentialsHandler({repository,resolveContext:jest.fn().mockResolvedValue(context)})(req('POST',{action:'create'},{personnelId:personnel,arn:'1234567',credentialType:'RePL',identifier:'REPL-1',issuer:'CASA',issueDate:'2026-01-01',categories:['MULTIROTOR'],ratings:['<150KG'],aircraftTypes:['AGRAS T100'],minimumWeightKg:0,maximumWeightKg:149.9,conditions:null,limitations:null,evidence:{internalFileId:'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',fileVersion:1,checksumSha256:'a'.repeat(64),originalFilename:'repl.pdf',contentType:'application/pdf',sizeBytes:123,provenance:{source:'OPERATOR_UPLOAD'}}}),res);
  expect(res.statusCode).toBe(201);
  expect(repository.writePersonnelCasaCredential).toHaveBeenCalledWith(context,expect.objectContaining({personnelId:personnel,credentialType:'RePL',expiryDate:null}));
 });
@@ -19,7 +19,7 @@ test('creates non-expiring RePL evidence through the trusted command',async()=>{
 test('keeps AROC expiry optional and evidence private',async()=>{
  const repository={writePersonnelCasaCredential:jest.fn().mockResolvedValue({record:{id:credential,credential_type:'AROC',expiry_date:null},expiryDisplay:'No expiry recorded'})};
  const res=response();
- await createPersonnelCasaCredentialsHandler({repository,resolveContext:jest.fn().mockResolvedValue(context)})(req('POST',{action:'create'},{personnelId:personnel,credentialType:'AROC',identifier:'AROC-1',issuer:'CASA',issueDate:'2026-01-01',expiryDate:null,categories:[],ratings:[],aircraftTypes:[],conditions:null,limitations:null,evidence:{internalFileId:'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',fileVersion:1,checksumSha256:'b'.repeat(64),originalFilename:'aroc.pdf',contentType:'application/pdf',sizeBytes:123,provenance:{source:'OPERATOR_UPLOAD'}}}),res);
+ await createPersonnelCasaCredentialsHandler({repository,resolveContext:jest.fn().mockResolvedValue(context)})(req('POST',{action:'create'},{personnelId:personnel,arn:'1234567',credentialType:'AROC',identifier:'AROC-1',issuer:'CASA',issueDate:'2026-01-01',expiryDate:null,categories:[],ratings:[],aircraftTypes:[],conditions:null,limitations:null,evidence:{internalFileId:'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',fileVersion:1,checksumSha256:'b'.repeat(64),originalFilename:'aroc.pdf',contentType:'application/pdf',sizeBytes:123,provenance:{source:'OPERATOR_UPLOAD'}}}),res);
  expect(res.statusCode).toBe(201);expect(repository.writePersonnelCasaCredential.mock.calls[0][1].expiryDate).toBeNull();
 });
 

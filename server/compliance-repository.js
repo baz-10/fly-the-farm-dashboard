@@ -30,7 +30,7 @@ class ComplianceRepository {
     if(!bytes.length||bytes.length>10485760||Number(file.sizeBytes)!==bytes.length||typeof file.fileName!=='string'||!file.fileName.trim()||/[\\/\0]/.test(file.fileName))throw Object.assign(new Error('Certificate file metadata is invalid.'),{statusCode:400,code:'VALIDATION_ERROR'});
     const internalFileId=crypto.randomUUID(),fileVersion=1,checksumSha256=crypto.createHash('sha256').update(bytes).digest('hex'),bucket='personnel-compliance-evidence',safeName=file.fileName.replace(/[^A-Za-z0-9._-]/g,'_'),providerKey=`${context.organisation.id}/${personnelId}/${internalFileId}/v1/${safeName}`;
     await supabaseRequest(`storage/v1/object/${bucket}/${providerKey}`,{method:'POST',body:bytes,headers:{'Content-Type':match[1],'x-upsert':'false'},publicMessage:'Personnel certificate could not be stored.'});
-    return {internalFileId,fileVersion,checksumSha256,originalFilename:file.fileName.trim(),contentType:match[1],sizeBytes:bytes.length,storageProvider:'supabase',storageBucket:bucket,providerKey,provenance:{source:'OPERATOR_UPLOAD',uploadedAt:new Date().toISOString(),uploadedByInternalUserId:context.internalUser.id}};
+    return {internalFileId,fileVersion,checksumSha256,originalFilename:file.fileName.trim(),contentType:match[1],sizeBytes:bytes.length,storageProvider:'supabase',storageBucket:bucket,providerKey,provenance:{source:'OPERATOR_UPLOAD',uploadedAt:new Date().toISOString(),uploadedByInternalUserId:context.internalUser.id,storageProvider:'supabase',storageBucket:bucket,providerKey}};
   }
 
   async removeStagedPersonnelCertificate(evidence) {
@@ -58,7 +58,12 @@ class ComplianceRepository {
       body: JSON.stringify({
         p_organisation_id: context.organisation.id,
         p_personnel_id: personnelId,
-        p_requirements: requirements,
+        p_operation_date: requirements.operationDate || new Date().toISOString().slice(0,10),
+        p_required_category: requirements.requiredCategory || null,
+        p_required_rating: requirements.requiredRating || null,
+        p_aircraft_type: requirements.aircraftType || null,
+        p_aircraft_weight_kg: requirements.aircraftWeightKg ?? null,
+        p_aroc_required: Boolean(requirements.arocRequired),
       }),
       publicMessage: 'Personnel mission eligibility could not be evaluated.',
     });

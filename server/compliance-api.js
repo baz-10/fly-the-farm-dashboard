@@ -36,7 +36,7 @@ function privateSafe(value, permitted) {
 function validateCredential(body) {
   const credentialType = String(body.credentialType || '').toUpperCase();
   if (!['REPL','AROC'].includes(credentialType)) throw apiError(400, 'VALIDATION_ERROR', 'credentialType must be RePL or AROC.');
-  for (const field of ['identifier','issuer','issueDate']) if (typeof body[field] !== 'string' || !body[field].trim()) throw apiError(400, 'VALIDATION_ERROR', `${field} is required.`);
+  for (const field of ['arn','identifier','issuer','issueDate']) if (typeof body[field] !== 'string' || !body[field].trim()) throw apiError(400, 'VALIDATION_ERROR', `${field} is required.`);
   if (Number.isNaN(Date.parse(body.issueDate))) throw apiError(400, 'VALIDATION_ERROR', 'issueDate must be a valid date.');
   if (credentialType === 'AROC' && body.expiryDate && Number.isNaN(Date.parse(body.expiryDate))) throw apiError(400, 'VALIDATION_ERROR', 'expiryDate must be a valid date.');
   const evidence = body.evidence;

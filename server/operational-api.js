@@ -536,7 +536,7 @@ function errorEnvelope(error) {
 
 function mapPersonnelRecord(record) {
   if (!record) return null;
-  return { id:record.id,internalUserId:record.internal_user_id,membershipId:record.membership_id,fullName:record.full_name,preferredName:record.preferred_name,email:record.email,phone:record.phone,engagementStatus:record.engagement_status,isActive:record.is_active,emergencyContact:record.emergency_contact,privateNotes:record.private_notes,notes:record.notes,startDate:record.start_date,endDate:record.end_date,operatingLocationIds:record.operating_location_ids||[],operationalRoles:record.operational_roles||[],credentials:record.credentials||[],rowVersion:record.row_version,createdAt:record.created_at,updatedAt:record.updated_at };
+  return { id:record.id,arn:record.arn,internalUserId:record.internal_user_id,membershipId:record.membership_id,fullName:record.full_name,preferredName:record.preferred_name,email:record.email,phone:record.phone,engagementStatus:record.engagement_status,isActive:record.is_active,emergencyContact:record.emergency_contact,privateNotes:record.private_notes,notes:record.notes,startDate:record.start_date,endDate:record.end_date,operatingLocationIds:record.operating_location_ids||[],operationalRoles:record.operational_roles||[],credentials:record.credentials||[],rowVersion:record.row_version,createdAt:record.created_at,updatedAt:record.updated_at };
 }
 
 function validatePersonnelPayload(body) {
