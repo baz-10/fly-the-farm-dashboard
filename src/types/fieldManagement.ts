@@ -39,10 +39,12 @@ export interface Property {
   address: string;
   state: AustralianState;
   locality: string;
+  postcode?: string;
   lotPlan: string;
   lat?: number;
   lng?: number;
   addressSource?: PropertyAddressSource;
+  locationConfirmedAt?: string;
   notes: string;
   primaryContactName?: string;
   accessNotes?: string;

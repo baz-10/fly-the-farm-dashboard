@@ -76,6 +76,7 @@ export default function PropertyWorkspace() {
   const [draft, setDraft] = useState<PropertyDraft>(emptyDraft());
   const [locationError, setLocationError] = useState('');
   const [actionError, setActionError] = useState('');
+  const [actionReference, setActionReference] = useState('');
   const [mapKey, setMapKey] = useState(0);
   const locationSectionRef = useRef<HTMLDivElement>(null);
 
@@ -103,6 +104,7 @@ export default function PropertyWorkspace() {
     setDraft(emptyDraft());
     setLocationError('');
     setActionError('');
+    setActionReference('');
     setMoreDetailsOpen(false);
     setMapKey((current) => current + 1);
     setDialogOpen(true);
@@ -153,7 +155,12 @@ export default function PropertyWorkspace() {
   };
 
   const saveProperty = async () => {
-    if (!draft.clientId || !draft.name.trim()) return;
+    setActionError('');
+    setActionReference('');
+    if (!draft.clientId || !draft.name.trim()) {
+      setActionError('Select a Client and enter a Property name before saving.');
+      return;
+    }
     if (!Number.isFinite(draft.lat) || !Number.isFinite(draft.lng) || !draft.locationConfirmedAt) {
       setLocationError('Choose a saved Client location or search for an address, then confirm the Property location before saving.');
       focusLocation();
@@ -166,10 +173,12 @@ export default function PropertyWorkspace() {
         address: draft.address.trim(),
         state: draft.state,
         locality: draft.locality.trim(),
+        postcode: draft.postcode.trim(),
         lotPlan: draft.lotPlan.trim(),
         lat: draft.lat,
         lng: draft.lng,
         addressSource: draft.addressSource,
+        locationConfirmedAt: draft.locationConfirmedAt,
         primaryContactName: draft.primaryContactName.trim(),
         accessNotes: draft.accessNotes.trim(),
         notes: draft.notes.trim(),
@@ -179,6 +188,8 @@ export default function PropertyWorkspace() {
       navigate(`/jobs/client/${property.clientId}/property/${property.id}`);
     } catch (error) {
       setActionError(describeOperationalError(error));
+      const reference = (error as { details?: { correlationId?: unknown } })?.details?.correlationId;
+      setActionReference(typeof reference === 'string' ? reference : '');
     }
   };
 
@@ -205,7 +216,6 @@ export default function PropertyWorkspace() {
       </Collapse>
     </Box>
 
-    {actionError && <Alert severity="error" sx={{ mb: 2 }}>{actionError}</Alert>}
     {operational.status === 'loading' && <Alert severity="info" sx={{ mb: 3 }}>Loading operational data…</Alert>}
     {operational.status === 'unauthorised' && <Alert severity="error" sx={{ mb: 3 }}>You are not authorised to view this organisation's Properties.</Alert>}
     {operational.status === 'error' && <Alert severity="error" sx={{ mb: 3 }} action={<Button color="inherit" size="small" onClick={() => void operational.refresh()}>Retry</Button>}>Properties are unavailable. No cached business records are being shown.</Alert>}
@@ -248,6 +258,11 @@ export default function PropertyWorkspace() {
       <DialogTitle sx={{ fontWeight: 800 }}>Add Property</DialogTitle>
       <DialogContent>
         <Stack spacing={2.5} sx={{ mt: 1 }}>
+          {actionError && <Alert severity="error" sx={{ alignItems: 'flex-start' }}>
+            <Typography variant="subtitle2" fontWeight={800}>Property could not be saved</Typography>
+            <Typography variant="body2">{actionError}</Typography>
+            {actionReference && <details><summary>View technical details</summary><Typography variant="caption">Reference: {actionReference}</Typography></details>}
+          </Alert>}
           <TextField select label="Select Client" value={draft.clientId} onChange={(event) => selectClient(event.target.value)} required fullWidth>
             {operational.clients.map((client) => <MenuItem key={client.id} value={client.id}>{client.name}</MenuItem>)}
           </TextField>
@@ -255,7 +270,8 @@ export default function PropertyWorkspace() {
           {selectedClient && <>
             <TextField label="Property name" value={draft.name} onChange={(event) => setDraft((current) => ({ ...current, name: event.target.value }))} required autoFocus fullWidth />
             <Box ref={locationSectionRef} role="group" aria-label="Property location" tabIndex={-1} sx={{ outline: 'none' }}>
-              <Divider><Typography variant="caption" color="text.secondary" fontWeight={700}>Property location</Typography></Divider>
+              <Divider><Typography variant="caption" color="text.secondary" fontWeight={700}>Property location *</Typography></Divider>
+              <Typography variant="body2" color="text.secondary" sx={{ mt: 1.5 }}>Search for the Property, adjust the pin if needed, then confirm the final map location.</Typography>
               {locationError && <Alert severity="error" sx={{ mt: 1.5, alignItems: 'flex-start', '& .MuiAlert-message': { minWidth: 0, whiteSpace: 'normal', overflowWrap: 'anywhere' } }}>
                 <Typography variant="subtitle2" fontWeight={800}>Location not confirmed</Typography>
                 <Typography variant="body2">{locationError}</Typography>

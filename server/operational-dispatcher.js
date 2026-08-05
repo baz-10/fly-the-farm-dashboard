@@ -1,3 +1,4 @@
+const crypto = require('crypto');
 const {
   createChemicalReviewsHandler,
   createCustomerAcceptanceHandler,
@@ -62,6 +63,10 @@ function createDefaultHandlers() {
 
 function createVersionedApiDispatcher(handlerMap = createDefaultHandlers()) {
   return async function dispatchVersionedApiRequest(req, res) {
+    const suppliedRequestId = String(req.headers?.['x-request-id'] || '');
+    const correlationId = /^[A-Za-z0-9._:-]{8,100}$/.test(suppliedRequestId) ? suppliedRequestId : crypto.randomUUID();
+    req.correlationId = correlationId;
+    res.setHeader('X-Correlation-ID', correlationId);
     const resource = req.query?.resource;
     const handler = typeof resource === 'string' ? handlerMap[resource] : undefined;
 

@@ -25,6 +25,7 @@ jest.mock('../../AddressAutocomplete', () => (props: any) => <div>
   <button type="button" onClick={() => props.onSelect({
     address: '1 Queen Street', locality: 'Brisbane City', state: 'QLD', postcode: '4000',
     lat: -27.4698, lng: 153.0251, displayName: '1 Queen Street, Brisbane City QLD 4000', type: 'commercial',
+    coordinateSource: 'GEOCODED', locationConfirmedAt: '2026-08-06T01:00:00.000Z',
   })}>Select address suggestion</button>
 </div>);
 
@@ -44,6 +45,15 @@ test('shows the complete follow-the-bouncing-ball Mission journey', () => {
     expect(screen.getByText(label)).toBeInTheDocument();
   }
   expect(screen.getByRole('heading', { name: 'Who is this Mission for?' })).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: /1 Customer — CURRENT/i })).toBeEnabled();
+  expect(screen.getByRole('button', { name: /10 Review — BLOCKED/i })).toBeEnabled();
+});
+
+test('explains why a directly selected future step is unavailable', async () => {
+  const user = userEvent.setup();
+  render(<GuidedMissionCreation />);
+  await user.click(screen.getByRole('button', { name: /10 Review — BLOCKED/i }));
+  expect(screen.getByText(/Create the authoritative Draft Mission before final review/i)).toBeVisible();
 });
 
 test('defaults Job and Mission identifiers to organisation-owned automatic references', async () => {
@@ -54,7 +64,8 @@ test('defaults Job and Mission identifiers to organisation-owned automatic refer
   await user.click(screen.getByRole('button', { name: 'Save Client and continue' }));
   await user.click(screen.getByRole('button', { name: 'Add new Property' }));
   await user.type(screen.getByRole('textbox', { name: /Property name/ }), 'New Property');
-  await user.type(screen.getByRole('textbox', { name: /Street address/ }), '1 Farm Road');
+  await user.type(screen.getByRole('textbox', { name: /Property location/ }), '1 Farm Road');
+  await user.click(screen.getByRole('button', { name: 'Select address suggestion' }));
   await user.click(screen.getByRole('button', { name: 'Save Property and continue' }));
   await user.click(screen.getByRole('button', { name: 'Create new Field' }));
   await user.type(screen.getByRole('textbox', { name: /Field name/ }), 'North Field');
@@ -94,14 +105,14 @@ test('saves a selected address with geocoded coordinates and provenance', async 
   await user.click(screen.getByRole('button', { name: 'Save Client and continue' }));
   await user.click(screen.getByRole('button', { name: 'Add new Property' }));
   await user.type(screen.getByRole('textbox', { name: /Property name/ }), 'New Property');
-  await user.type(screen.getByRole('textbox', { name: 'Street address' }), '1 Queen');
+  await user.type(screen.getByRole('textbox', { name: 'Property location' }), '1 Queen');
   await user.click(screen.getByRole('button', { name: 'Select address suggestion' }));
 
-  expect(screen.getByText(/Address verified from search/i)).toBeInTheDocument();
+  expect(screen.getByText(/Property location confirmed/i)).toBeInTheDocument();
   await user.click(screen.getByRole('button', { name: 'Save Property and continue' }));
   expect(mockCreateProperty).toHaveBeenCalledWith(expect.objectContaining({
     address: '1 Queen Street', locality: 'Brisbane City', state: 'QLD',
-    lat: -27.4698, lng: 153.0251, addressSource: 'GEOCODED',
+    postcode: '4000', lat: -27.4698, lng: 153.0251, addressSource: 'GEOCODED', locationConfirmedAt: '2026-08-06T01:00:00.000Z',
   }));
 });
 
@@ -114,13 +125,11 @@ test('clears stale geocoded coordinates when the operator manually changes the a
   await user.click(screen.getByRole('button', { name: 'Add new Property' }));
   await user.type(screen.getByRole('textbox', { name: /Property name/ }), 'Manual Property');
   await user.click(screen.getByRole('button', { name: 'Select address suggestion' }));
-  await user.type(screen.getByRole('textbox', { name: 'Street address' }), ' rear gate');
+  await user.type(screen.getByRole('textbox', { name: 'Property location' }), ' rear gate');
 
-  expect(screen.getByText(/entered manually/i)).toBeInTheDocument();
-  await user.click(screen.getByRole('button', { name: 'Save Property and continue' }));
-  expect(mockCreateProperty).toHaveBeenCalledWith(expect.objectContaining({
-    addressSource: 'MANUAL', lat: undefined, lng: undefined,
-  }));
+  expect(screen.getByText(/confirm the final map location/i)).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Save Property and continue' })).toBeDisabled();
+  expect(mockCreateProperty).not.toHaveBeenCalled();
 });
 
 test('creates the authoritative parent chain and Draft without leaving the workflow', async () => {
@@ -133,7 +142,8 @@ test('creates the authoritative parent chain and Draft without leaving the workf
 
   await user.click(screen.getByRole('button', { name: 'Add new Property' }));
   await user.type(screen.getByRole('textbox', { name: /Property name/ }), 'New Property');
-  await user.type(screen.getByRole('textbox', { name: /Street address/ }), '1 Farm Road, Dalby QLD 4405');
+  await user.type(screen.getByRole('textbox', { name: /Property location/ }), '1 Farm Road, Dalby QLD 4405');
+  await user.click(screen.getByRole('button', { name: 'Select address suggestion' }));
   await user.click(screen.getByRole('button', { name: 'Save Property and continue' }));
 
   await user.click(screen.getByRole('button', { name: 'Create new Field' }));
@@ -153,7 +163,7 @@ test('creates the authoritative parent chain and Draft without leaving the workf
   await user.click(screen.getByRole('button', { name: 'Create Draft Mission' }));
 
   expect(mockCreateClient).toHaveBeenCalledWith(expect.objectContaining({ name: 'New Client' }));
-  expect(mockCreateProperty).toHaveBeenCalledWith(expect.objectContaining({ clientId: 'client-1', address: '1 Farm Road, Dalby QLD 4405' }));
+  expect(mockCreateProperty).toHaveBeenCalledWith(expect.objectContaining({ clientId: 'client-1', address: '1 Queen Street', locationConfirmedAt: expect.any(String) }));
   expect(mockCreateFieldBoundaryVersion).toHaveBeenCalledWith('field-1', expect.arrayContaining([[-27, 151]]));
   expect(mockCreateJob).toHaveBeenCalledWith(expect.objectContaining({ clientId: 'client-1', propertyId: 'property-1', fieldIds: ['field-1'] }));
   expect(mockCreateMission).toHaveBeenCalledWith(expect.objectContaining({ jobId: 'job-1', status: 'Planning' }));

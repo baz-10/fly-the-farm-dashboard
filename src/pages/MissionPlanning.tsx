@@ -25,7 +25,7 @@ import {
   Snackbar,
   Stack,
   Step,
-  StepLabel,
+  StepButton,
   Stepper,
   TextField,
   Tooltip,
@@ -103,6 +103,7 @@ import { MissionWorkPackDraft } from '../types/workPack';
 import { describeOperationalError } from '../services/operationalDataStore';
 import { createMissionMapsApi, MissionGeometryRecord, MissionMapRevision, MissionMapsApiError } from '../services/missionMapsApi';
 import { missionMapFeatureRole, missionMapFeatureTypeForRole } from '../utils/missionMapFeatureCatalog';
+import { deriveMissionPlannerStepStates } from '../utils/missionStepper';
 
 type MissionPayload = Omit<
   MissionRecord,
@@ -410,6 +411,10 @@ function AuthoritativeMissionPlanning() {
   const [mapHistoryStatus, setMapHistoryStatus] = React.useState<'idle'|'loading'|'ready'|'error'>('idle');
   const [mapHistory, setMapHistory] = React.useState<MissionMapRevision[]>([]);
   const [authorisationRefreshToken, setAuthorisationRefreshToken] = React.useState(0);
+  const [stepReadiness, setStepReadiness] = React.useState<any>(null);
+  const [invalidatedBy, setInvalidatedBy] = React.useState<'FIELD'|'AIRCRAFT'|null>(null);
+  const previousFieldKey = React.useRef('');
+  const initialAircraft = React.useRef('');
   const missionMapsApi = React.useMemo(() => createMissionMapsApi(), []);
   const planningForecastCoordinates = React.useMemo(() => {
     const points = mapPolygons.flat();
@@ -522,6 +527,39 @@ function AuthoritativeMissionPlanning() {
   const hasActiveLocation = operational.operatingLocations.length > 0;
   const canSave = Boolean(selectedJob && selectedLocation && missionNumber.trim() && title.trim()) && !operational.saving;
 
+  React.useEffect(() => {
+    const key = selectedFields.map((record) => record.id).sort().join(',');
+    if (previousFieldKey.current && previousFieldKey.current !== key) setInvalidatedBy('FIELD');
+    previousFieldKey.current = key;
+  }, [selectedFields]);
+
+  React.useEffect(() => {
+    if (!initialAircraft.current) { initialAircraft.current = selectedAircraftId; return; }
+    if (selectedAircraftId && initialAircraft.current !== selectedAircraftId) setInvalidatedBy('AIRCRAFT');
+  }, [selectedAircraftId]);
+
+  const stepStates = deriveMissionPlannerStepStates({
+    hasClient: Boolean(selectedClient), hasProperty: Boolean(selectedProperty), hasField: selectedFields.length > 0,
+    hasJob: Boolean(selectedJob), hasMission: Boolean(selectedMission), hasMap: mapVersion > 0,
+    hasResources: Boolean(selectedAircraftId && selectedKitId
+      && selectedMission?.aircraftIds.includes(selectedAircraftId)
+      && selectedMission?.equipmentKitIds.includes(selectedKitId)), readinessCategories: stepReadiness?.categories || {},
+    missionReady: Boolean(stepReadiness?.ready), invalidatedBy,
+  });
+  const currentStep = Math.max(0, stepStates.findIndex((status) => status.state === 'CURRENT'));
+  const openStep = (index:number) => {
+    const status = stepStates[index];
+    if (status.state === 'BLOCKED') { setActionError(status.reason); return; }
+    if (index === 0 && selectedClient) return navigate(`/jobs/client/${selectedClient.id}`);
+    if (index === 1 && selectedProperty) return navigate(`/jobs/client/${selectedProperty.clientId}/property/${selectedProperty.id}`);
+    if (index === 2 && selectedClient && selectedProperty && selectedFields[0]) return navigate(`/jobs/client/${selectedClient.id}/property/${selectedProperty.id}/field/${selectedFields[0].id}`);
+    if (index === 3 && selectedClient && selectedProperty && selectedFields[0] && selectedJob) return navigate(`/jobs/client/${selectedClient.id}/property/${selectedProperty.id}/field/${selectedFields[0].id}/job/${selectedJob.id}`);
+    const target = document.getElementById(['','','','','mission-step-mission','mission-step-map','mission-step-resources','mission-step-weather-chemicals','mission-step-jsa','mission-step-review'][index]);
+    target?.scrollIntoView({ behavior:'smooth', block:'start' });
+    target?.focus({ preventScroll:true });
+    setActionError(status.state === 'NEEDS_REVIEW' || status.state === 'CURRENT' ? status.reason : '');
+  };
+
   const availableAircraft = aircraft.filter((record) => (
     record.operatingLocationId === operatingLocationId
     && record.status === 'operational'
@@ -633,8 +671,8 @@ function AuthoritativeMissionPlanning() {
         This Draft is unauthorised and not ready to fly. Mission maps, Personnel assignments, Weather evidence, Chemical planning, JSA and triggered risk controls are authoritative; authorisation, completion, pack and financials remain gated.
       </Alert>
       <Box sx={{ overflowX: 'auto', mb: 2, pb: 1 }}>
-        <Stepper activeStep={!mapVersion?5:(!selectedAircraftId||!selectedKitId)?6:7} alternativeLabel sx={{ minWidth: 900 }}>
-          {GUIDED_MISSION_STAGES.map((label,index)=><Step key={label} completed={index<5||(index===5&&mapVersion>0)||(index===6&&Boolean(selectedAircraftId&&selectedKitId))}><StepLabel>{index+1} {label}</StepLabel></Step>)}
+        <Stepper activeStep={currentStep} alternativeLabel nonLinear sx={{ minWidth: 900 }}>
+          {GUIDED_MISSION_STAGES.map((label,index)=>{const status=stepStates[index];return <Step key={label} completed={status.state==='COMPLETE'}><StepButton onClick={()=>openStep(index)} aria-label={`${index+1} ${label} — ${status.state}. ${status.reason}`}><Stack alignItems="center" spacing={0.25}><span>{index+1} {label}</span><Typography variant="caption" color={status.state==='NEEDS_REVIEW'?'warning.main':status.state==='BLOCKED'?'error.main':'text.secondary'}>{status.state.replace('_',' ')}</Typography></Stack></StepButton></Step>;})}
         </Stepper>
       </Box>
       {!hasActiveLocation && <Alert severity="error" sx={{ mb: 2 }}>No active authorised operating location is available for this session.</Alert>}
@@ -644,7 +682,7 @@ function AuthoritativeMissionPlanning() {
       <Grid container spacing={2}>
         <Grid size={{ xs: 12, lg: 8 }}>
           <Stack spacing={2}>
-            <Panel title="Mission Details" icon={<GrassIcon />}>
+            <Box id="mission-step-mission" tabIndex={-1}><Panel title="Mission Details" icon={<GrassIcon />}>
                 <Grid container spacing={2}>
                   <Grid size={{ xs: 12, md: 6 }}>
                     <TextField select fullWidth label="Job" value={jobId} onChange={(event) => setJobId(event.target.value)} disabled={Boolean(routeJob)}>
@@ -661,18 +699,18 @@ function AuthoritativeMissionPlanning() {
                   <Grid size={{ xs: 12, md: 6 }}><TextField fullWidth type="datetime-local" label="Scheduled start" value={scheduledStart} onChange={(event) => setScheduledStart(event.target.value)} InputLabelProps={{ shrink: true }} /></Grid>
                   <Grid size={{ xs: 12 }}><TextField fullWidth multiline minRows={3} label="Description" value={description} onChange={(event) => setDescription(event.target.value)} /></Grid>
                 </Grid>
-            </Panel>
+            </Panel></Box>
 
-            {selectedMission && <Panel title="Mission Boundary" icon={<MapIcon />} action={<Chip label={`Authoritative version ${mapVersion}`} color={mapVersion?'success':'default'} variant="outlined" />}>
+            {selectedMission && <Box id="mission-step-map" tabIndex={-1}><Panel title="Mission Boundary" icon={<MapIcon />} action={<Chip label={`Authoritative version ${mapVersion}`} color={mapVersion?'success':'default'} variant="outlined" />}>
               {mapStatus==='loading' && <Alert severity="info">Loading authoritative Mission geometry…</Alert>}
               {mapStatus==='error' && <Alert severity="error">Mission geometry could not be loaded. No empty or browser-stored map has been substituted. {mapError}</Alert>}
               {mapError && mapStatus!=='error' && <Alert severity="error" sx={{mb:2}}>{mapError}</Alert>}
               {mapStatus==='ready' && <><Stack direction="row" justifyContent="flex-end" sx={{mb:1}}><Button variant="outlined" disabled={!selectedFields.length||mapVersion>0} onClick={()=>void applyFieldBoundary()}>Use Field boundary as starting point</Button></Stack><FieldBoundaryEditor coords={mapPolygons[0]||[]} polygons={mapPolygons} onCoordsChange={(coords)=>{setMapPolygons((current)=>[coords,...current.slice(1)]);setMapBoundarySources((current)=>current.map((source)=>source.sourceFileId?{...source,provenance:'imported_modified'}:source));}} onPolygonsChange={(polygons)=>{setMapPolygons(polygons);setMapBoundarySources((current)=>current.map((source)=>source.sourceFileId?{...source,provenance:'imported_modified'}:source));}} onAreaChange={setMapArea} onBoundaryFile={(file)=>{setMapBoundaryFile(file);setMapUploadedSourceFileId(null);setMapSourceFieldBoundaryVersionId(null);setMapBoundarySources(file?[{provenance:`imported_${file.fileType}`,notes:`Imported from ${file.fileName}`,sourceFileId:null}]:[]);}} features={mapFeatures} onFeaturesChange={setMapFeatures} mapHeight={580} />
                 <TextField fullWidth multiline minRows={2} label="Mission map notes" value={mapNotes} onChange={(e)=>setMapNotes(e.target.value)} sx={{mt:2}} />
                 <Stack direction="row" justifyContent="space-between" spacing={1} sx={{mt:2}}><Button variant="outlined" onClick={()=>void openMapHistory()}>View map revision history</Button><Button variant="contained" startIcon={<SaveIcon/>} disabled={mapSaving} onClick={()=>void saveMap()}>{mapSaving?'Saving authoritative map…':'Save Mission Map'}</Button></Stack></>}
-            </Panel>}
+            </Panel></Box>}
 
-            {selectedMission && <Panel title="Chemical Planning" icon={<ScienceIcon />}><MissionChemicalPlanning missionId={selectedMission.id} defaultAreaHa={mapArea}/></Panel>}
+            {selectedMission && <Box id="mission-step-weather-chemicals" tabIndex={-1}><Panel title="Chemical Planning" icon={<ScienceIcon />}><MissionChemicalPlanning missionId={selectedMission.id} defaultAreaHa={mapArea}/></Panel></Box>}
 
             <Panel title="Downstream Mission Workflow" icon={<SecurityIcon />}>
                 <Alert severity="info" sx={{ mb: 2 }}>Incomplete capabilities remain gated and do not block a valid Draft Mission.</Alert>
@@ -685,7 +723,7 @@ function AuthoritativeMissionPlanning() {
 
         <Grid size={{ xs: 12, lg: 4 }}>
           <Stack spacing={2}>
-            <Panel title="Aircraft & Equipment" icon={<AirplanemodeActiveIcon />}>
+            <Box id="mission-step-resources" tabIndex={-1}><Panel title="Aircraft & Equipment" icon={<AirplanemodeActiveIcon />}>
               {fleetError && <Alert severity="error" sx={{ mb: 1.5 }}>{fleetError}</Alert>}
               {fleetLoading ? <LinearProgress /> : <MissionEquipmentSelector
                 aircraft={availableAircraft}
@@ -696,7 +734,7 @@ function AuthoritativeMissionPlanning() {
                 onKitChange={setSelectedKitId}
               />}
               <Alert severity="info" sx={{ mt: 1.5 }}>Assignments are saved with the authoritative Draft and remain subject to readiness checks before authorisation.</Alert>
-            </Panel>
+            </Panel></Box>
             {selectedMission && <Panel title="Personnel" icon={<SecurityIcon />}>
               <MissionPersonnelSelector missionId={selectedMission.id} operatingLocationId={selectedMission.operatingLocationId} scheduledStartAt={selectedMission.scheduledStartAt} />
               <Alert severity="info" sx={{ mt: 1.5 }}>The saved PIC and crew revision is authoritative and qualification-checked for this Mission.</Alert>
@@ -704,16 +742,16 @@ function AuthoritativeMissionPlanning() {
             {selectedMission && <Panel title="Mission Weather" icon={<CloudQueueIcon />}>
               <MissionWeatherEvidence missionId={selectedMission.id} operatingLocationId={selectedMission.operatingLocationId} scheduledStartAt={scheduledStart?toIsoFromInput(scheduledStart):undefined} plannedCoordinates={planningForecastCoordinates} authoritativeBoundary={mapRevisionId&&mapBoundaryGeometry?{revisionId:mapRevisionId,revisionVersion:mapVersion,geometryId:mapBoundaryGeometry.id,geometry:mapBoundaryGeometry.geometry}:undefined} onEvidenceChanged={()=>setAuthorisationRefreshToken((current)=>current+1)} />
             </Panel>}
-            {selectedMission && <Panel title="JSA & Risk Controls" icon={<SecurityIcon />}>
+            {selectedMission && <Box id="mission-step-jsa" tabIndex={-1}><Panel title="JSA & Risk Controls" icon={<SecurityIcon />}>
               <Alert severity="info" sx={{ mb: 1.5 }}>Mission Checks, triggered hazards, controls and PIC approval are retained as authoritative versioned evidence.</Alert>
               <Button fullWidth variant="contained" startIcon={<SecurityIcon />} onClick={() => setAuthoritativeJsaOpen(true)}>Complete Mission JSA</Button>
-            </Panel>}
+            </Panel></Box>}
             {selectedMission && <Panel title="Controlled Checklists" icon={<CheckCircleIcon />}>
               <MissionChecklists missionId={selectedMission.id} operatingLocationId={selectedMission.operatingLocationId} onChanged={()=>setAuthorisationRefreshToken((current)=>current+1)} />
             </Panel>}
-            {selectedMission && <Panel title="Mission Readiness & Authorisation" icon={<GavelIcon />}>
-              <MissionAuthorisation missionId={selectedMission.id} refreshToken={authorisationRefreshToken} />
-            </Panel>}
+            {selectedMission && <Box id="mission-step-review" tabIndex={-1}><Panel title="Mission Readiness & Authorisation" icon={<GavelIcon />}>
+              <MissionAuthorisation missionId={selectedMission.id} refreshToken={authorisationRefreshToken} onReadinessChanged={setStepReadiness} />
+            </Panel></Box>}
             {selectedMission && <Panel title="Operational Closeout" icon={<FlightTakeoffIcon />}>
               <MissionOperationalCloseout missionId={selectedMission.id} />
               <MissionOutcomes missionId={selectedMission.id} />

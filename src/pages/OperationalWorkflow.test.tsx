@@ -320,6 +320,27 @@ describe('authoritative client/property/field workflow screens', () => {
     expect(screen.getByRole('textbox', { name: 'Property name' })).toHaveValue('South Block');
   });
 
+  test('keeps a rejected Property save visible inside the active dialog with operator work intact', async () => {
+    const failure = Object.assign(new Error('Property could not be saved.'), {
+      code: 'VALIDATION_ERROR', status: 400, details: { correlationId: 'property-save-reference' },
+    });
+    mockOperational.createProperty.mockRejectedValue(failure);
+    mockSearchParams = new URLSearchParams('view=properties');
+    route('/jobs?view=properties', <ClientList />);
+    fireEvent.click(screen.getByRole('button', { name: 'Add Property' }));
+    fireEvent.mouseDown(await screen.findByRole('combobox', { name: 'Select Client' }));
+    fireEvent.click(await screen.findByRole('option', { name: 'North Farm' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Property name' }), { target: { value: 'Genuine South Block' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm adjusted location' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save Property' }));
+
+    const dialog = screen.getByRole('dialog', { name: 'Add Property' });
+    expect(await screen.findByText('Property could not be saved.')).toBeVisible();
+    expect(dialog).toContainElement(screen.getByText('Property could not be saved.'));
+    expect(screen.getByRole('textbox', { name: 'Property name' })).toHaveValue('Genuine South Block');
+    expect(screen.getByText('Map location -26.5701, 148.7901')).toBeVisible();
+  });
+
   test('does not show a saved confirmation from an unrelated resource', () => {
     mockOperational = baseOperational({
       savedAt: '2026-08-01T01:00:00Z',

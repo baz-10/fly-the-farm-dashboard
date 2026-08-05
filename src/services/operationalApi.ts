@@ -234,6 +234,7 @@ export function mapApiProperty(record: ApiRecord): Property {
     address: optionalText(record, 'address'),
     state: propertyState(record),
     locality: optionalText(record, 'locality'),
+    postcode: optionalText(record, 'postcode'),
     lotPlan: optionalText(record, 'lotPlan', 'lot_plan'),
     notes: optionalText(record, 'notes'),
     primaryContactName: optionalText(record, 'primaryContactName', 'primary_contact_name'),
@@ -241,6 +242,7 @@ export function mapApiProperty(record: ApiRecord): Property {
     addressSource: value(record, 'addressSource', 'address_source') === 'GEOCODED' ? 'GEOCODED' : 'MANUAL',
     lat: value(record, 'latitude', 'latitude') == null ? undefined : Number(value(record, 'latitude', 'latitude')),
     lng: value(record, 'longitude', 'longitude') == null ? undefined : Number(value(record, 'longitude', 'longitude')),
+    locationConfirmedAt: optionalText(record, 'locationConfirmedAt', 'location_confirmed_at') || undefined,
     createdAt: timestamp(record, 'createdAt', 'created_at'),
     updatedAt: timestamp(record, 'updatedAt', 'updated_at'),
     rowVersion: versionValue(record),
@@ -392,6 +394,7 @@ export function createOperationalApi(options: ApiOptions = {}): OperationalApi {
   async function request(path: string, init: RequestInit = {}): Promise<any> {
     const controller = new AbortController();
     const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
+    const requestId = typeof globalThis.crypto?.randomUUID === 'function' ? globalThis.crypto.randomUUID() : `request-${Date.now()}-${Math.random().toString(16).slice(2)}`;
     try {
       let response: Response;
       try {
@@ -399,7 +402,7 @@ export function createOperationalApi(options: ApiOptions = {}): OperationalApi {
           ...init,
           credentials: 'same-origin',
           signal: controller.signal,
-          headers: init.body ? { 'Content-Type': 'application/json', ...(init.headers || {}) } : init.headers,
+          headers: init.body ? { 'Content-Type': 'application/json', 'X-Request-ID': requestId, ...(init.headers || {}) } : { 'X-Request-ID': requestId, ...(init.headers || {}) },
         });
       } catch (error) {
         if (error instanceof DOMException && error.name === 'AbortError') {
@@ -414,7 +417,7 @@ export function createOperationalApi(options: ApiOptions = {}): OperationalApi {
           response.status,
           typeof apiError.code === 'string' ? apiError.code : `HTTP_${response.status}`,
           typeof apiError.message === 'string' ? apiError.message : 'Operational API request failed.',
-          apiError.meta && typeof apiError.meta === 'object' ? apiError.meta : undefined,
+          { ...(apiError.meta && typeof apiError.meta === 'object' ? apiError.meta : {}), correlationId: response.headers?.get?.('X-Correlation-ID') || requestId },
         );
       }
       return envelope;
@@ -493,6 +496,7 @@ export function createOperationalApi(options: ApiOptions = {}): OperationalApi {
     if (input.address !== undefined) payload.address = input.address;
     if (input.state !== undefined) payload.state = input.state;
     if (input.locality) payload.locality = input.locality;
+    if (input.postcode) payload.postcode = input.postcode;
     if (input.lotPlan) payload.lotPlan = input.lotPlan;
     if (input.primaryContactName) payload.primaryContactName = input.primaryContactName;
     if (input.accessNotes) payload.accessNotes = input.accessNotes;
@@ -500,6 +504,7 @@ export function createOperationalApi(options: ApiOptions = {}): OperationalApi {
     if (input.lat !== undefined) payload.latitude = input.lat;
     if (input.lng !== undefined) payload.longitude = input.lng;
     if (input.addressSource !== undefined) payload.addressSource = input.addressSource;
+    if (input.locationConfirmedAt !== undefined) payload.locationConfirmedAt = input.locationConfirmedAt;
     return payload;
   };
   const fieldWritable = (input: FieldCreateInput | FieldUpdateInput): ApiRecord => {

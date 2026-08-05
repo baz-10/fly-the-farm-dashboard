@@ -100,6 +100,7 @@ function operational(overrides: Record<string, unknown> = {}) {
 
 describe('remote authoritative mission workflow', () => {
   beforeEach(() => {
+    Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', { configurable: true, value: jest.fn() });
     mockOperational = operational();
     mockParams = {};
     mockSearch = '';
@@ -164,6 +165,19 @@ describe('remote authoritative mission workflow', () => {
     expect(screen.queryByText(/APVMA Compliant/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/Aircraft — unavailable/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/Equipment — unavailable/i)).not.toBeInTheDocument();
+  });
+
+  test('labels authoritative Mission steps truthfully and makes every step an explicit action', async () => {
+    mockParams = { missionId: 'mission-1' };
+    render(<MissionPlanning />);
+    expect(screen.getByRole('button', { name: /1 Customer — COMPLETE/i })).toBeEnabled();
+    expect(screen.getByRole('button', { name: /5 Mission — COMPLETE/i })).toBeEnabled();
+    expect(screen.getByRole('button', { name: /6 Map — CURRENT/i })).toBeEnabled();
+    expect(screen.getByRole('button', { name: /8 Weather & Chemicals — BLOCKED/i })).toBeEnabled();
+    fireEvent.click(screen.getByRole('button', { name: /8 Weather & Chemicals — BLOCKED/i }));
+    expect(screen.getByText(/Save the Mission map and resources before reviewing Weather and Chemicals/i)).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: /1 Customer — COMPLETE/i }));
+    expect(mockNavigate).toHaveBeenCalledWith('/jobs/client/client-1');
   });
 
   test('resolves authoritative parent records instead of asking for duplicate entry', () => {

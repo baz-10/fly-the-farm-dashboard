@@ -212,6 +212,7 @@ describe('trusted organisation operational API', () => {
       clientId: '33333333-3333-4333-8333-333333333333',
       name: 'Race-safe property',
       state: 'NSW',
+      address: '1 Farm Road', latitude: -27, longitude: 153, addressSource: 'GEOCODED', locationConfirmedAt: '2026-08-06T01:00:00.000Z',
     }), res);
 
     expect(res.statusCode).toBe(409);
@@ -230,7 +231,7 @@ describe('trusted organisation operational API', () => {
 
     await handlerFor('properties', repository, context({ permissions: ['properties.create'] }))(request('POST', {
       clientId: '33333333-3333-4333-8333-333333333333', name: 'Geocoded property', state: 'QLD',
-      address: '1 Queen Street', addressSource: 'GEOCODED', latitude: -27.4698, longitude: 153.0251,
+      address: '1 Queen Street', addressSource: 'GEOCODED', latitude: -27.4698, longitude: 153.0251, locationConfirmedAt: '2026-08-06T01:00:00.000Z',
     }), res);
 
     expect(res.statusCode).toBe(201);
@@ -248,6 +249,18 @@ describe('trusted organisation operational API', () => {
 
     expect(res.statusCode).toBe(400);
     expect(res.body.error.code).toBe('VALIDATION_ERROR');
+    expect(repository.create).not.toHaveBeenCalled();
+  });
+
+  test('rejects Property coordinates that were not explicitly confirmed', async () => {
+    const repository = { relationshipExists: jest.fn().mockResolvedValue(true), create: jest.fn() };
+    const res = createResponse();
+    await handlerFor('properties', repository, context({ permissions: ['properties.create'] }))(request('POST', {
+      clientId: '33333333-3333-4333-8333-333333333333', name: 'Unconfirmed property', state: 'QLD',
+      address: '1 Farm Road', latitude: -27, longitude: 153, addressSource: 'GEOCODED',
+    }), res);
+    expect(res.statusCode).toBe(400);
+    expect(res.body.error.code).toBe('PROPERTY_LOCATION_CONFIRMATION_REQUIRED');
     expect(repository.create).not.toHaveBeenCalled();
   });
 
@@ -331,6 +344,7 @@ describe('trusted organisation operational API', () => {
     const validResponse = createResponse();
     await handlerFor('properties', repository, context({ permissions: ['properties.create'] }))(request('POST', {
       clientId: '33333333-3333-4333-8333-333333333333', name: 'Home Block', state: 'QLD', lotPlan: 'LOT-7',
+      address: '1 Farm Road', latitude: -27, longitude: 153, addressSource: 'GEOCODED', locationConfirmedAt: '2026-08-06T01:00:00.000Z',
     }), validResponse);
     expect(validResponse.statusCode).toBe(201);
     expect(validResponse.body.data.state).toBe('QLD');

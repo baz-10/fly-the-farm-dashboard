@@ -45,6 +45,17 @@ describe('v1 operational API dispatcher', () => {
     expect(() => require('../../api/v1/[resource].js')).not.toThrow();
   });
 
+  test('retains a safe request reference as the response correlation ID', async () => {
+    const { createVersionedApiDispatcher } = loadDispatcherModule();
+    const dispatcher = createVersionedApiDispatcher({ clients: jest.fn(async (_req, res) => res.status(204).end()) });
+    const req = request('clients');
+    req.headers['x-request-id'] = 'property-save-reference';
+    const res = createResponse();
+    await dispatcher(req, res);
+    expect(req.correlationId).toBe('property-save-reference');
+    expect(res.headers['x-correlation-id']).toBe('property-save-reference');
+  });
+
   test.each([
     'clients',
     'properties',

@@ -40,12 +40,13 @@ describe('operational API adapter', () => {
     });
     expect(mapApiProperty({
       id: 'property-1', client_id: 'client-1', name: 'Home Block', address: '1 Farm Rd',
-      state: 'QLD', locality: 'Roma', lot_plan: 'LOT-7', address_source: 'GEOCODED', latitude: '-27.4698', longitude: '153.0251',
+      state: 'QLD', locality: 'Roma', postcode: '4455', lot_plan: 'LOT-7', address_source: 'MANUAL', latitude: '-27.4698', longitude: '153.0251',
+      location_confirmed_at: '2026-08-06T01:00:00.000Z',
       row_version: 2, created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-02T00:00:00Z',
     })).toEqual(expect.objectContaining({
       id: 'property-1', clientId: 'client-1', name: 'Home Block', address: '1 Farm Rd',
-      state: 'QLD', locality: 'Roma', lotPlan: 'LOT-7', notes: '', addressSource: 'GEOCODED',
-      lat: -27.4698, lng: 153.0251, rowVersion: 2,
+      state: 'QLD', locality: 'Roma', postcode: '4455', lotPlan: 'LOT-7', notes: '', addressSource: 'MANUAL',
+      lat: -27.4698, lng: 153.0251, locationConfirmedAt: '2026-08-06T01:00:00.000Z', rowVersion: 2,
     }));
     expect(mapApiField({
       id: 'field-1', property_id: 'property-1', name: 'North Paddock', area_hectares: '12.5',
@@ -66,11 +67,12 @@ describe('operational API adapter', () => {
     }));
     const property = await createOperationalApi().properties.create({
       clientId: 'client-1', name: 'Home Block', address: '1 Farm Rd', state: 'QLD',
-      locality: 'Roma', lotPlan: 'LOT-7', notes: '', addressSource: 'GEOCODED',
+      locality: 'Roma', postcode: '4455', lotPlan: 'LOT-7', notes: '', addressSource: 'GEOCODED',
+      lat: -27.4698, lng: 153.0251, locationConfirmedAt: '2026-08-06T01:00:00.000Z',
     });
     expect(property.state).toBe('QLD');
     expect(fetchMock).toHaveBeenCalledWith('/api/v1/properties', expect.objectContaining({
-      body: JSON.stringify({ clientId: 'client-1', name: 'Home Block', address: '1 Farm Rd', state: 'QLD', locality: 'Roma', lotPlan: 'LOT-7', addressSource: 'GEOCODED' }),
+      body: JSON.stringify({ clientId: 'client-1', name: 'Home Block', address: '1 Farm Rd', state: 'QLD', locality: 'Roma', postcode: '4455', lotPlan: 'LOT-7', latitude: -27.4698, longitude: 153.0251, addressSource: 'GEOCODED', locationConfirmedAt: '2026-08-06T01:00:00.000Z' }),
     }));
   });
 
@@ -292,7 +294,7 @@ describe('operational API adapter', () => {
     await expect(createOperationalApi().clients.update('client-1', { name: 'Changed' }, 7))
       .rejects.toEqual(expect.objectContaining<Partial<OperationalApiError>>({
         name: 'OperationalApiError', status: 409, code: 'VERSION_CONFLICT',
-        details: { currentVersion: 8 }, currentVersion: 8,
+        details: expect.objectContaining({ currentVersion: 8, correlationId: expect.any(String) }), currentVersion: 8,
       }));
   });
 
