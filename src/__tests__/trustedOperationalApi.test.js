@@ -301,6 +301,24 @@ describe('trusted organisation operational API', () => {
     expect(repository.create).not.toHaveBeenCalled();
   });
 
+  test('accepts confirmed authoritative Client locations and preserves provenance', async () => {
+    const repository = { create: jest.fn().mockResolvedValue({ record: { id: '33333333-3333-4333-8333-333333333333', name: 'Client A', addresses: [], row_version: 1 } }) };
+    const res = createResponse();
+    const location = { label: 'Primary address', address: '1 Farm Road', locality: 'Roma', state: 'QLD', postcode: '4455', lat: -26.57, lng: 148.79, coordinateSource: 'MANUALLY_ADJUSTED', locationConfirmedAt: '2026-08-06T01:00:00.000Z' };
+    await handlerFor('clients', repository)(request('POST', { name: 'Client A', addresses: [location] }), res);
+    expect(res.statusCode).toBe(201);
+    expect(repository.create).toHaveBeenCalledWith('clients', expect.anything(), expect.objectContaining({ addresses: [location] }));
+  });
+
+  test('rejects unconfirmed or placeholder-labelled Client locations', async () => {
+    const repository = { create: jest.fn() };
+    const res = createResponse();
+    await handlerFor('clients', repository)(request('POST', { name: 'Client A', addresses: [{ label: 'Custom', lat: -26.57, lng: 148.79, coordinateSource: 'GEOCODED' }] }), res);
+    expect(res.statusCode).toBe(400);
+    expect(res.body.error.code).toBe('VALIDATION_ERROR');
+    expect(repository.create).not.toHaveBeenCalled();
+  });
+
   test('maps and validates Australian property state at the trusted API boundary', async () => {
     const repository = {
       relationshipExists: jest.fn().mockResolvedValue(true),

@@ -12,6 +12,8 @@ import {
   alpha,
   useTheme,
   InputAdornment,
+  Button,
+  Stack,
 } from '@mui/material';
 import PlaceIcon from '@mui/icons-material/Place';
 import SearchIcon from '@mui/icons-material/Search';
@@ -30,6 +32,8 @@ export interface AddressResult {
   lng: number;
   displayName: string;
   type?: string;
+  coordinateSource?: 'GEOCODED' | 'MANUALLY_ADJUSTED';
+  locationConfirmedAt?: string;
 }
 
 interface Props {
@@ -42,6 +46,8 @@ interface Props {
   mapHeight?: number;
   lat?: number;
   lng?: number;
+  coordinateSource?: 'GEOCODED' | 'MANUALLY_ADJUSTED';
+  locationConfirmedAt?: string;
 }
 
 // ─── Component ──────────────────────────────────────────────
@@ -56,6 +62,8 @@ export default function AddressAutocomplete({
   mapHeight = 220,
   lat,
   lng,
+  coordinateSource,
+  locationConfirmedAt,
 }: Props) {
   const theme = useTheme();
   const [query, setQuery] = useState(initialValue);
@@ -64,15 +72,19 @@ export default function AddressAutocomplete({
   const [open, setOpen] = useState(false);
   const [feedback, setFeedback] = useState('');
   const [mapCenter, setMapCenter] = useState<{ lat: number; lng: number } | null>(
-    lat && lng ? { lat, lng } : null
+    lat !== undefined && lng !== undefined ? { lat, lng } : null
   );
+  const [selected, setSelected] = useState<AddressResult | null>(() => lat !== undefined && lng !== undefined ? {
+    address: initialValue, locality: '', state: 'NSW' as AustralianState, postcode: '', displayName: initialValue,
+    lat, lng, coordinateSource: coordinateSource || 'GEOCODED', locationConfirmedAt,
+  } : null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const requestRef = useRef(0);
   const containerRef = useRef<HTMLDivElement>(null);
 
   // Update map center when external lat/lng props change
   useEffect(() => {
-    if (lat && lng) {
+    if (lat !== undefined && lng !== undefined) {
       setMapCenter({ lat, lng });
     }
   }, [lat, lng]);
@@ -124,11 +136,30 @@ export default function AddressAutocomplete({
   };
 
   const handleSelect = (result: AddressResult) => {
+    const located = { ...result, coordinateSource: 'GEOCODED' as const, locationConfirmedAt: undefined };
     setQuery(result.displayName);
     setMapCenter({ lat: result.lat, lng: result.lng });
+    setSelected(located);
     setOpen(false);
     setResults([]);
-    onSelect(result);
+    onSelect(located);
+  };
+
+  const handleLocationChange = (nextLat: number, nextLng: number) => {
+    const adjusted: AddressResult = {
+      ...(selected || { address: query, locality: '', state: 'NSW' as AustralianState, postcode: '', displayName: query }),
+      lat: nextLat, lng: nextLng, coordinateSource: 'MANUALLY_ADJUSTED', locationConfirmedAt: undefined,
+    };
+    setMapCenter({ lat: nextLat, lng: nextLng });
+    setSelected(adjusted);
+    onSelect(adjusted);
+  };
+
+  const confirmLocation = () => {
+    if (!selected || !mapCenter) return;
+    const confirmed = { ...selected, lat: mapCenter.lat, lng: mapCenter.lng, locationConfirmedAt: new Date().toISOString() };
+    setSelected(confirmed);
+    onSelect(confirmed);
   };
 
   // Close dropdown on outside click
@@ -226,8 +257,18 @@ export default function AddressAutocomplete({
       {/* Map Display */}
       {showMap && mapCenter && (
         <React.Suspense fallback={<Box sx={{ mt: 1.5, height: mapHeight }} />}>
-          <AddressLocationMap lat={mapCenter.lat} lng={mapCenter.lng} height={mapHeight} />
+          <AddressLocationMap lat={mapCenter.lat} lng={mapCenter.lng} height={mapHeight} onLocationChange={handleLocationChange} />
         </React.Suspense>
+      )}
+      {showMap && mapCenter && (
+        <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} alignItems={{ sm: 'center' }} sx={{ mt: 1 }}>
+          <Typography variant="caption" color="text.secondary" sx={{ flex: 1 }}>
+            {selected?.coordinateSource === 'MANUALLY_ADJUSTED' ? 'Manually adjusted location' : 'Address-derived location'} · {mapCenter.lat.toFixed(6)}, {mapCenter.lng.toFixed(6)}
+          </Typography>
+          <Button variant={selected?.locationConfirmedAt ? 'outlined' : 'contained'} size="small" onClick={confirmLocation}>
+            {selected?.locationConfirmedAt ? 'Location confirmed' : 'Confirm location'}
+          </Button>
+        </Stack>
       )}
     </Box>
   );

@@ -129,16 +129,23 @@ describe('authoritative client/property/field workflow screens', () => {
     expect(screen.queryByText('Saved.')).not.toBeInTheDocument();
   });
 
-  test('does not silently discard legacy-only client fields in remote mode', async () => {
+  test('requires an explicitly confirmed authoritative client location before saving', async () => {
     route('/jobs', <ClientList />);
     fireEvent.click(screen.getByRole('button', { name: 'Add Client' }));
     fireEvent.change(await screen.findByRole('textbox', { name: 'Client / Farmer Name' }), { target: { value: 'New Farm' } });
-    fireEvent.change(screen.getByRole('textbox', { name: 'Notes' }), { target: { value: 'Must be retained' } });
     const saveButtons = screen.getAllByRole('button', { name: 'Add Client' });
     fireEvent.click(saveButtons[saveButtons.length - 1]);
-
     expect(mockOperational.createClient).not.toHaveBeenCalled();
-    expect(screen.getByText(/does not yet support client addresses or notes/i)).toBeInTheDocument();
+    expect(screen.getByText(/confirm at least one client location/i)).toBeInTheDocument();
+  });
+
+  test('reveals and requires a meaningful Custom client location label', async () => {
+    route('/jobs', <ClientList />);
+    fireEvent.click(screen.getByRole('button', { name: 'Add Client' }));
+    fireEvent.mouseDown(screen.getByLabelText('Location label'));
+    fireEvent.click(await screen.findByRole('option', { name: 'Custom' }));
+    expect(screen.getByRole('textbox', { name: 'Custom location label' })).toBeRequired();
+    expect(screen.queryByText('Other')).not.toBeInTheDocument();
   });
 
   test('preserves the client to property detail path using authoritative records', () => {

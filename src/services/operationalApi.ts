@@ -203,6 +203,14 @@ function boundaryCoordinates(record: ApiRecord): LatLng[] | undefined {
 
 export function mapApiClient(record: ApiRecord): Client {
   const contactName = optionalText(record, 'contactName', 'contact_name');
+  const rawAddresses = value(record, 'addresses');
+  const addresses = Array.isArray(rawAddresses) ? rawAddresses.filter((entry): entry is ApiRecord => Boolean(entry && typeof entry === 'object' && !Array.isArray(entry))).map((entry) => ({
+    label: optionalText(entry, 'label'), address: optionalText(entry, 'address'), locality: optionalText(entry, 'locality'),
+    state: optionalText(entry, 'state') as any, postcode: optionalText(entry, 'postcode'),
+    lat: Number(entry.lat), lng: Number(entry.lng),
+    coordinateSource: optionalText(entry, 'coordinateSource') as any,
+    locationConfirmedAt: optionalText(entry, 'locationConfirmedAt'),
+  })) : [];
   return {
     id: requiredText(record, 'id'),
     contractorUserId: '',
@@ -211,6 +219,7 @@ export function mapApiClient(record: ApiRecord): Client {
     phone: optionalText(record, 'contactPhone', 'contact_phone'),
     email: optionalText(record, 'contactEmail', 'contact_email'),
     notes: optionalText(record, 'notes'),
+    ...(addresses.length ? { addresses } : {}),
     createdAt: timestamp(record, 'createdAt', 'created_at'),
     updatedAt: timestamp(record, 'updatedAt', 'updated_at'),
     rowVersion: versionValue(record),
@@ -474,6 +483,7 @@ export function createOperationalApi(options: ApiOptions = {}): OperationalApi {
     if (input.email !== undefined) payload.contactEmail = input.email;
     if (input.phone !== undefined) payload.contactPhone = input.phone;
     if (input.notes !== undefined) payload.notes = input.notes;
+    if (input.addresses?.length) payload.addresses = input.addresses;
     return payload;
   };
   const propertyWritable = (input: PropertyCreateInput | PropertyUpdateInput): ApiRecord => {

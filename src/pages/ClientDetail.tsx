@@ -42,6 +42,13 @@ import { useOperationalData } from '../contexts/OperationalDataContext';
 import { describeOperationalError } from '../services/operationalDataStore';
 
 const defaultPropertyForm = { name: '', address: '', state: 'NSW' as AustralianState, locality: '', lotPlan: '', notes: '', lat: undefined as number | undefined, lng: undefined as number | undefined };
+type ClientAddressDraft = ClientAddress & { labelType: string; customLabel: string };
+const LOCATION_LABELS = ['Primary address', 'Billing address', 'Site entrance', 'Loading area', 'Office', 'Workshop', 'Custom'];
+const addressDraft = (address?: ClientAddress): ClientAddressDraft => {
+  const label = address?.label || 'Primary address';
+  const standard = LOCATION_LABELS.includes(label) && label !== 'Custom';
+  return { label, labelType: standard ? label : 'Custom', customLabel: standard ? '' : label, address: address?.address || '', locality: address?.locality || '', state: address?.state || 'NSW', postcode: address?.postcode || '', lat: address?.lat, lng: address?.lng, coordinateSource: address?.coordinateSource, locationConfirmedAt: address?.locationConfirmedAt };
+};
 
 export default function ClientDetail() {
   const { clientId } = useParams<{ clientId: string }>();
@@ -53,7 +60,7 @@ export default function ClientDetail() {
   const properties = operational.properties.filter((record) => record.clientId === clientId);
   const [editing, setEditing] = useState(false);
   const [editForm, setEditForm] = useState({ name: '', phone: '', email: '', notes: '' });
-  const [editAddresses, setEditAddresses] = useState<ClientAddress[]>([]);
+  const [editAddresses, setEditAddresses] = useState<ClientAddressDraft[]>([]);
   const [propDialogOpen, setPropDialogOpen] = useState(false);
   const [propForm, setPropForm] = useState(defaultPropertyForm);
   const [deleteConfirm, setDeleteConfirm] = useState(false);
@@ -85,16 +92,18 @@ export default function ClientDetail() {
 
   const handleStartEdit = () => {
     setEditForm({ name: client.name, phone: client.phone, email: client.email, notes: client.notes });
-    setEditAddresses(client.addresses?.length ? [...client.addresses] : [{ label: 'Home', address: '', locality: '', state: 'NSW' as AustralianState, postcode: '' }]);
+    setEditAddresses(client.addresses?.length ? client.addresses.map(addressDraft) : [addressDraft()]);
     setEditing(true);
   };
 
   const handleSaveEdit = async () => {
-    const addresses = editAddresses.filter((a) => a.address.trim() || a.locality.trim());
-    if (operational.mode === 'remote' && (addresses.length > 0 || editForm.notes.trim())) {
-      setActionError('Production Beta does not yet support client addresses or notes. Remove them before saving.');
+    const locations = editAddresses.filter((a) => a.address.trim() || a.locality.trim());
+    if (!locations.length || locations.some((a) => !Number.isFinite(a.lat) || !Number.isFinite(a.lng) || !a.locationConfirmedAt)) {
+      setActionError('Search for and confirm at least one client location before saving.');
       return;
     }
+    if (locations.some((a) => a.labelType === 'Custom' && (a.customLabel.trim().length < 2 || /^custom$/i.test(a.customLabel.trim())))) { setActionError('Enter a meaningful custom location label.'); return; }
+    const addresses: ClientAddress[] = locations.map(({ labelType, customLabel, ...address }) => ({ ...address, label: labelType === 'Custom' ? customLabel.trim() : labelType }));
     try {
       await operational.updateClient(client.id, { ...editForm, addresses: addresses.length > 0 ? addresses : undefined });
       setEditing(false);
@@ -104,7 +113,7 @@ export default function ClientDetail() {
     }
   };
 
-  const updateEditAddress = (index: number, updates: Partial<ClientAddress>) => {
+  const updateEditAddress = (index: number, updates: Partial<ClientAddressDraft>) => {
     setEditAddresses((prev) => prev.map((a, i) => i === index ? { ...a, ...updates } : a));
   };
 
@@ -378,14 +387,14 @@ export default function ClientDetail() {
               }}>
                 <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1.5 }}>
                   <TextField
-                    label="Label"
-                    value={addr.label}
-                    onChange={(e) => updateEditAddress(idx, { label: e.target.value })}
+                    label="Location label"
+                    value={addr.labelType}
+                    onChange={(e) => updateEditAddress(idx, { labelType: e.target.value })}
                     size="small"
                     sx={{ width: 140 }}
                     select
                   >
-                    {['Home', 'Office', 'Farm', 'Postal', 'Other'].map((l) => (
+                    {LOCATION_LABELS.map((l) => (
                       <MenuItem key={l} value={l}>{l}</MenuItem>
                     ))}
                   </TextField>
@@ -396,11 +405,14 @@ export default function ClientDetail() {
                   )}
                 </Box>
                 <Stack spacing={1.5}>
+                  {addr.labelType === 'Custom' && <TextField label="Custom location label" required value={addr.customLabel} onChange={(e) => updateEditAddress(idx, { customLabel: e.target.value })} size="small" fullWidth />}
                   <AddressAutocomplete
                     label="Search Address"
                     initialValue={addr.address}
                     lat={addr.lat}
                     lng={addr.lng}
+                    coordinateSource={addr.coordinateSource}
+                    locationConfirmedAt={addr.locationConfirmedAt}
                     onSelect={(result: AddressResult) => {
                       updateEditAddress(idx, {
                         address: result.address,
@@ -409,9 +421,11 @@ export default function ClientDetail() {
                         postcode: result.postcode,
                         lat: result.lat,
                         lng: result.lng,
+                        coordinateSource: result.coordinateSource,
+                        locationConfirmedAt: result.locationConfirmedAt,
                       });
                     }}
-                    mapHeight={180}
+                    mapHeight={220}
                   />
                   <Stack direction="row" spacing={1.5}>
                     <TextField
@@ -446,7 +460,7 @@ export default function ClientDetail() {
             <Button
               size="small"
               startIcon={<AddIcon />}
-              onClick={() => setEditAddresses((prev) => [...prev, { label: 'Farm', address: '', locality: '', state: 'NSW' as AustralianState, postcode: '' }])}
+              onClick={() => setEditAddresses((prev) => [...prev, addressDraft()])}
               sx={{ alignSelf: 'flex-start', fontWeight: 600 }}
             >
               Add Another Address

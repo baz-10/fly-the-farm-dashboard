@@ -3,13 +3,15 @@ import { AustralianState } from './chemical';
 // ─── Client / Property ───────────────────────────────────────
 
 export interface ClientAddress {
-  label: string;       // e.g. "Home", "Office", "Farm"
+  label: string;
   address: string;     // Full street address
   locality: string;    // Town / suburb
   state: AustralianState;
   postcode: string;
   lat?: number;
   lng?: number;
+  coordinateSource?: 'GEOCODED' | 'MANUALLY_ADJUSTED';
+  locationConfirmedAt?: string;
 }
 
 export type PropertyAddressSource = 'GEOCODED' | 'MANUAL';

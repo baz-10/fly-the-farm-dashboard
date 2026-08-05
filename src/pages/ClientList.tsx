@@ -45,8 +45,10 @@ import { useAuth } from '../contexts/AuthContext';
 import { useOperationalData } from '../contexts/OperationalDataContext';
 import { describeOperationalError } from '../services/operationalDataStore';
 
-const emptyAddress = (): ClientAddress => ({
-  label: 'Home',
+type ClientAddressDraft = ClientAddress & { labelType: string; customLabel: string };
+const LOCATION_LABELS = ['Primary address', 'Billing address', 'Site entrance', 'Loading area', 'Office', 'Workshop', 'Custom'];
+const emptyAddress = (): ClientAddressDraft => ({
+  label: 'Primary address', labelType: 'Primary address', customLabel: '',
   address: '',
   locality: '',
   state: 'NSW' as AustralianState,
@@ -62,7 +64,7 @@ export default function ClientList() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [search, setSearch] = useState('');
   const [form, setForm] = useState({ name: '', phone: '', email: '', notes: '' });
-  const [formAddresses, setFormAddresses] = useState<ClientAddress[]>([emptyAddress()]);
+  const [formAddresses, setFormAddresses] = useState<ClientAddressDraft[]>([emptyAddress()]);
   const [codeCopied, setCodeCopied] = useState(false);
   const [moreActionsOpen, setMoreActionsOpen] = useState(false);
   const [snackbar, setSnackbar] = useState<{ open: boolean; message: string; severity: 'success' | 'error' }>({ open: false, message: '', severity: 'success' });
@@ -78,11 +80,18 @@ export default function ClientList() {
 
   const handleSave = async () => {
     if (!form.name.trim()) return;
-    const addresses = formAddresses.filter((a) => a.address.trim() || a.locality.trim());
-    if (operational.mode === 'remote' && (addresses.length > 0 || form.notes.trim())) {
-      setSnackbar({ open: true, message: 'Production Beta does not yet support client addresses or notes. Remove them before saving.', severity: 'error' });
+    const locations = formAddresses.filter((a) => a.address.trim() || a.locality.trim());
+    if (!locations.length || locations.some((a) => !Number.isFinite(a.lat) || !Number.isFinite(a.lng) || !a.locationConfirmedAt)) {
+      setSnackbar({ open: true, message: 'Search for and confirm at least one client location before saving.', severity: 'error' });
       return;
     }
+    if (locations.some((a) => a.labelType === 'Custom' && (a.customLabel.trim().length < 2 || /^custom$/i.test(a.customLabel.trim())))) {
+      setSnackbar({ open: true, message: 'Enter a meaningful custom location label.', severity: 'error' });
+      return;
+    }
+    const addresses: ClientAddress[] = locations.map(({ labelType, customLabel, ...address }) => ({
+      ...address, label: labelType === 'Custom' ? customLabel.trim() : labelType,
+    }));
     try {
       const client = await operational.createClient({
         ...form,
@@ -99,7 +108,7 @@ export default function ClientList() {
     }
   };
 
-  const updateAddress = (index: number, updates: Partial<ClientAddress>) => {
+  const updateAddress = (index: number, updates: Partial<ClientAddressDraft>) => {
     setFormAddresses((prev) => prev.map((a, i) => i === index ? { ...a, ...updates } : a));
   };
 
@@ -538,14 +547,14 @@ export default function ClientList() {
               }}>
                 <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1.5 }}>
                   <TextField
-                    label="Label"
-                    value={addr.label}
-                    onChange={(e) => updateAddress(idx, { label: e.target.value })}
+                    label="Location label"
+                    value={addr.labelType}
+                    onChange={(e) => updateAddress(idx, { labelType: e.target.value })}
                     size="small"
                     sx={{ width: 140 }}
                     select
                   >
-                    {['Home', 'Office', 'Farm', 'Postal', 'Other'].map((l) => (
+                    {LOCATION_LABELS.map((l) => (
                       <MenuItem key={l} value={l}>{l}</MenuItem>
                     ))}
                   </TextField>
@@ -556,6 +565,7 @@ export default function ClientList() {
                   )}
                 </Box>
                 <Stack spacing={1.5}>
+                  {addr.labelType === 'Custom' && <TextField label="Custom location label" required value={addr.customLabel} onChange={(e) => updateAddress(idx, { customLabel: e.target.value })} size="small" fullWidth />}
                   <AddressAutocomplete
                     label="Search Address"
                     initialValue={addr.address}
@@ -569,9 +579,11 @@ export default function ClientList() {
                         postcode: result.postcode,
                         lat: result.lat,
                         lng: result.lng,
+                        coordinateSource: result.coordinateSource,
+                        locationConfirmedAt: result.locationConfirmedAt,
                       });
                     }}
-                    mapHeight={180}
+                    mapHeight={220}
                   />
                   <Stack direction="row" spacing={1.5}>
                     <TextField

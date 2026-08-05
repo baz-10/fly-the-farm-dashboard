@@ -15,7 +15,7 @@ const AUSTRALIAN_STATES = new Set(['NSW', 'VIC', 'QLD', 'SA', 'WA', 'TAS', 'NT',
 
 const SCHEMAS = {
   operating_locations: { required: ['name'], fields: { name: 'name', address: 'address', timezone: 'timezone' } },
-  clients: { required: ['name'], fields: { name: 'name', contactName: 'contact_name', contactEmail: 'contact_email', contactPhone: 'contact_phone', notes: 'notes' } },
+  clients: { required: ['name'], fields: { name: 'name', contactName: 'contact_name', contactEmail: 'contact_email', contactPhone: 'contact_phone', notes: 'notes', addresses: 'addresses' } },
   properties: { required: ['clientId', 'name', 'state'], fields: { clientId: 'client_id', name: 'name', address: 'address', state: 'state', locality: 'locality', primaryContactName: 'primary_contact_name', accessNotes: 'access_notes', notes: 'notes', latitude: 'latitude', longitude: 'longitude', addressSource: 'address_source' } },
   fields: { required: ['propertyId', 'name'], readOnly: ['fieldBoundaryVersionId'], fields: { propertyId: 'property_id', fieldBoundaryVersionId: 'field_boundary_version_id', name: 'name', areaHectares: 'area_hectares' } },
   jobs: { required: ['clientId', 'propertyId', 'reference'], fields: { clientId: 'client_id', propertyId: 'property_id', fieldIds: 'field_ids', reference: 'reference', scope: 'scope', status: 'status', notes: 'notes', requestedDate: 'requested_date', scheduledDate: 'scheduled_date' } },
@@ -159,6 +159,24 @@ function mapInput(resource, body, existing) {
   });
   const baseline = existing ? mapDatabaseRecord(resource, existing) : {};
   const merged = { ...baseline, ...body };
+  if (resource === 'clients' && body.addresses !== undefined) {
+    if (!Array.isArray(merged.addresses) || merged.addresses.length < 1 || merged.addresses.length > 20) {
+      throw apiError(400, 'VALIDATION_ERROR', 'addresses must contain between 1 and 20 confirmed locations.');
+    }
+    merged.addresses = merged.addresses.map((location) => {
+      if (!location || typeof location !== 'object' || Array.isArray(location)) throw apiError(400, 'VALIDATION_ERROR', 'Each client location must be an object.');
+      const allowedLocation = new Set(['label','address','locality','state','postcode','lat','lng','coordinateSource','locationConfirmedAt']);
+      Object.keys(location).forEach((key) => { if (!allowedLocation.has(key)) throw apiError(400, 'VALIDATION_ERROR', `Unexpected client location field: ${key}.`); });
+      const label = String(location.label || '').trim();
+      if (label.length < 2 || label.length > 80 || /^(other|custom)$/i.test(label)) throw apiError(400, 'VALIDATION_ERROR', 'Each client location requires a meaningful label.');
+      const lat = Number(location.lat); const lng = Number(location.lng);
+      if (!Number.isFinite(lat) || lat < -90 || lat > 90 || !Number.isFinite(lng) || lng < -180 || lng > 180) throw apiError(400, 'VALIDATION_ERROR', 'Each client location requires valid coordinates.');
+      if (!['GEOCODED','MANUALLY_ADJUSTED'].includes(location.coordinateSource)) throw apiError(400, 'VALIDATION_ERROR', 'Each client location requires valid coordinate provenance.');
+      if (!location.locationConfirmedAt || Number.isNaN(Date.parse(location.locationConfirmedAt))) throw apiError(400, 'VALIDATION_ERROR', 'Each client location must be explicitly confirmed.');
+      if (location.state && !AUSTRALIAN_STATES.has(location.state)) throw apiError(400, 'VALIDATION_ERROR', 'Client location state must be an Australian state or territory code.');
+      return { label, address: String(location.address || ''), locality: String(location.locality || ''), state: String(location.state || ''), postcode: String(location.postcode || ''), lat, lng, coordinateSource: location.coordinateSource, locationConfirmedAt: location.locationConfirmedAt };
+    });
+  }
   const automaticReference = !existing && body.autoGenerateReference === true;
   schema.required.forEach((field) => {
     if (automaticReference && ((resource === 'jobs' && field === 'reference') || (resource === 'missions' && field === 'missionNumber'))) return;

@@ -19,6 +19,15 @@ const jsonResponse = (status: number, body: unknown) => Promise.resolve({
 describe('operational API adapter', () => {
   afterEach(() => jest.restoreAllMocks());
 
+  test('maps authoritative Client locations and provenance', () => {
+    const record = mapApiClient({
+      id: 'client-1', name: 'North Farm', row_version: 1,
+      addresses: [{ label: 'Northern gate', address: '1 Farm Rd', locality: 'Roma', state: 'QLD', postcode: '4455', lat: -26.57, lng: 148.79, coordinateSource: 'MANUALLY_ADJUSTED', locationConfirmedAt: '2026-08-06T00:00:00Z' }],
+      created_at: '2026-08-06T00:00:00Z', updated_at: '2026-08-06T00:00:00Z',
+    });
+    expect(record.addresses?.[0]).toEqual(expect.objectContaining({ label: 'Northern gate', coordinateSource: 'MANUALLY_ADJUSTED', lat: -26.57, lng: 148.79 }));
+  });
+
   test('maps relational API records explicitly into the existing workflow types', () => {
     expect(mapApiClient({
       id: 'client-1', name: 'North Farm', contact_email: 'ops@example.com',
