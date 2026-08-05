@@ -65,3 +65,14 @@ test('reverse geocodes coordinates without exposing an internal operating-locati
     state: 'QLD',
   }));
 });
+
+test('uses rural hamlet names when a reverse-geocoded address has no suburb or town', async () => {
+  const fetchImpl = jest.fn().mockResolvedValue({
+    ok: true,
+    json: async () => ({ address: { hamlet: 'Lilyvale', state: 'Queensland', postcode: '4723', country_code: 'au' } }),
+  });
+
+  await expect(reverseGeocodeAustralianLocation({ latitude: -23.1, longitude: 148.4 }, fetchImpl)).resolves.toEqual(expect.objectContaining({
+    label: 'Lilyvale, QLD 4723', locality: 'Lilyvale', state: 'QLD', postcode: '4723',
+  }));
+});

@@ -15,7 +15,7 @@ const AU_STATE_ABBREVIATIONS={
   Queensland:'QLD','South Australia':'SA',Tasmania:'TAS',Victoria:'VIC','Western Australia':'WA',
 };
 function normaliseAustralianPlace(address={}){
-  const locality=address.suburb||address.town||address.city||address.village||address.municipality||address.county||'';
+  const locality=address.suburb||address.town||address.city||address.village||address.hamlet||address.locality||address.municipality||address.region||address.state_district||address.county||address.isolated_dwelling||address.farm||address.road||'';
   const state=AU_STATE_ABBREVIATIONS[address.state]||address['ISO3166-2-lvl4']?.replace('AU-','')||address.state||'';
   const postcode=address.postcode||'';
   const label=[locality,state].filter(Boolean).join(', ')+(postcode?` ${postcode}`:'');
