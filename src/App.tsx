@@ -56,6 +56,7 @@ import CustomerAcceptancePublic from './pages/CustomerAcceptancePublic';
 import PlatformProtectedRoute from './components/PlatformProtectedRoute';
 import PlatformShell from './components/PlatformShell';
 import PlatformAdmin from './pages/PlatformAdmin';
+import CasaComplianceOverview from './pages/CasaComplianceOverview';
 
 function WorkflowProviders({ children }: { children: React.ReactNode }) {
   const { user } = useAuth();
@@ -136,7 +137,8 @@ function App() {
           <Route path="/missions/new" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><MissionPlanning /></ProtectedRoute>} />
           <Route path="/missions/:missionId" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><MissionPlanning /></ProtectedRoute>} />
           <Route path="/mission-planning" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><MissionRouteRedirect /></ProtectedRoute>} />
-          <Route path="/compliance" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><ComplianceMenu /></ProtectedRoute>} />
+          <Route path="/compliance" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><CasaComplianceOverview /></ProtectedRoute>} />
+          <Route path="/compliance/library" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><ComplianceMenu /></ProtectedRoute>} />
           <Route path="/compliance/flight" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><ComplianceFlight /></ProtectedRoute>} />
           <Route path="/compliance/chemical" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><ComplianceChemical /></ProtectedRoute>} />
           <Route path="/compliance/transport" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><ComplianceTransport /></ProtectedRoute>} />
