@@ -203,7 +203,7 @@ function boundaryCoordinates(record: ApiRecord): LatLng[] | undefined {
 
 export function mapApiClient(record: ApiRecord): Client {
   const contactName = optionalText(record, 'contactName', 'contact_name');
-  const rawAddresses = value(record, 'addresses');
+  const rawAddresses = value(record, 'addresses', 'addresses');
   const addresses = Array.isArray(rawAddresses) ? rawAddresses.filter((entry): entry is ApiRecord => Boolean(entry && typeof entry === 'object' && !Array.isArray(entry))).map((entry) => ({
     label: optionalText(entry, 'label'), address: optionalText(entry, 'address'), locality: optionalText(entry, 'locality'),
     state: optionalText(entry, 'state') as any, postcode: optionalText(entry, 'postcode'),
