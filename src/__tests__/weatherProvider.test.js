@@ -3,6 +3,7 @@ const {
   reverseGeocodeAustralianLocation,
   searchAustralianWeatherLocations,
   deriveAustralianPlaceFromAddress,
+  geocodeOpenMeteoLocation,
 } = require('../../server/weather-provider');
 
 test('requests a padded provider date range so Australian local Mission hours are retained', async () => {
@@ -31,6 +32,13 @@ test('requests a padded provider date range so Australian local Mission hours ar
   expect(result.validFrom).toBe('2026-08-09T22:00:00.000Z');
   expect(result.validTo).toBe('2026-08-10T02:00:00.000Z');
   expect(result.snapshot.hourly.time).toEqual(['2026-08-10T08:00']);
+});
+
+test('retains the provider place name when geocoding an authorised operating-location address', async () => {
+  const fetchImpl=jest.fn().mockResolvedValue({ok:true,json:async()=>({results:[{name:'Mackenzie River',admin1:'Queensland',postcodes:['4705'],latitude:-23.1,longitude:148.4}]})});
+  await expect(geocodeOpenMeteoLocation('Mackenzie River QLD 4705',fetchImpl)).resolves.toEqual(expect.objectContaining({
+    latitude:-23.1,longitude:148.4,resolvedLocation:{label:'Mackenzie River, QLD 4705',locality:'Mackenzie River',state:'QLD',postcode:'4705'},
+  }));
 });
 
 test('derives a locality label from the organisation address when rural reverse geocoding has no place name', () => {
