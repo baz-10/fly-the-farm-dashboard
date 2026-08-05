@@ -29,6 +29,7 @@ test('shows five action-oriented categories and a concise next-events section',a
  render(<CasaComplianceOverview/>);
  await screen.findByText('92%');
  for(const label of['ReOC and Organisation','Operations Manual','Personnel and Licences','Aircraft and Technical','Checklists and Actions'])expect(screen.getByText(label)).toBeInTheDocument();
+ expect(screen.getByText('No checklist or corrective-action evidence is available yet.')).toBeInTheDocument();
  expect(screen.queryByText('Personnel Credentials')).not.toBeInTheDocument();
  expect(screen.getByText('Next 90 days')).toBeInTheDocument();
  expect(screen.getByText('ReOC renewal due')).toBeInTheDocument();
