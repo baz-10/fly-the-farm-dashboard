@@ -48,7 +48,7 @@ jest.mock('../components/AddressAutocomplete', () => (props: any) => <div>
 </div>);
 jest.mock('../components/FieldBoundaryEditor', () => (props: any) => <div>
   Boundary editor
-  <button onClick={() => props.onCoordsChange?.([[-27, 153], [-27, 154], [-28, 154]])}>Draw test boundary</button>
+  <button onClick={() => { props.onCoordsChange?.([[-27, 153], [-27, 154], [-28, 154]]); props.onAreaChange?.(20); }}>Draw test boundary</button>
 </div>);
 jest.mock('../services/fieldManagementStore', () => ({
   getClients: () => [], getClientById: () => undefined, getPropertiesByClient: () => [], getPropertyById: () => undefined,
@@ -163,6 +163,62 @@ describe('authoritative client/property/field workflow screens', () => {
     route('/jobs?view=properties', <ClientList />);
     fireEvent.click(screen.getByRole('button', { name: 'Open Home Block' }));
     expect(mockNavigate).toHaveBeenCalledWith('/jobs/client/client-1/property/property-1');
+  });
+
+  test('presents a dedicated Fields workspace with dominant search, open and add actions', () => {
+    mockSearchParams = new URLSearchParams('view=fields');
+    route('/jobs?view=fields', <ClientList />);
+    expect(screen.getByRole('heading', { name: 'Fields' })).toBeInTheDocument();
+    expect(screen.getByText('Find a Field, see its Property and Client, then open its operational history.')).toBeInTheDocument();
+    expect(screen.getByRole('searchbox', { name: 'Search fields' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Add Field' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Open North Paddock' })).toBeVisible();
+    expect(screen.getByText('Home Block')).toBeVisible();
+    expect(screen.getByText('North Farm')).toBeVisible();
+    expect(screen.getByText('12.5 ha')).toBeVisible();
+    expect(screen.getByText('Boundary not recorded')).toBeVisible();
+    expect(screen.getByRole('button', { name: 'More field actions' })).toBeVisible();
+  });
+
+  test.each(['north paddock', 'home block', 'north farm', '45 farm track', 'roma', 'qld', 'lot-7'])(
+    'searches Fields using %s',
+    (query) => {
+      mockSearchParams = new URLSearchParams('view=fields');
+      route('/jobs?view=fields', <ClientList />);
+      fireEvent.change(screen.getByRole('searchbox', { name: 'Search fields' }), { target: { value: query } });
+      expect(screen.getByRole('button', { name: 'Open North Paddock' })).toBeVisible();
+    },
+  );
+
+  test('opens a Field directly from the workspace', () => {
+    mockSearchParams = new URLSearchParams('view=fields');
+    route('/jobs?view=fields', <ClientList />);
+    fireEvent.click(screen.getByRole('button', { name: 'Open North Paddock' }));
+    expect(mockNavigate).toHaveBeenCalledWith('/jobs/client/client-1/property/property-1/field/field-1');
+  });
+
+  test('creates a Field from Client and Property context with optional authoritative boundary', async () => {
+    const created = { ...field, id: 'field-new', name: 'South Paddock', sizeHa: 20 };
+    mockOperational.createField.mockResolvedValue(created);
+    mockSearchParams = new URLSearchParams('view=fields');
+    route('/jobs?view=fields', <ClientList />);
+    fireEvent.click(screen.getByRole('button', { name: 'Add Field' }));
+    fireEvent.mouseDown(screen.getByRole('combobox', { name: 'Select Client' }));
+    fireEvent.click(await screen.findByRole('option', { name: 'North Farm' }));
+    fireEvent.mouseDown(screen.getByRole('combobox', { name: 'Select Property' }));
+    fireEvent.click(await screen.findByRole('option', { name: 'Home Block' }));
+    expect(screen.getAllByText('45 Farm Track, Roma, QLD').some((element) => element.closest('[role="dialog"]'))).toBe(true);
+    expect(screen.getByText('Boundary editor')).toBeVisible();
+    fireEvent.change(screen.getByRole('textbox', { name: 'Field name' }), { target: { value: 'South Paddock' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Draw test boundary' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save Field' }));
+    await waitFor(() => expect(mockOperational.createField).toHaveBeenCalledWith(expect.objectContaining({
+      propertyId: 'property-1', name: 'South Paddock', sizeHa: 20,
+    })));
+    expect(mockOperational.createFieldBoundaryVersion).toHaveBeenCalledWith('field-new', [[-27, 153], [-27, 154], [-28, 154]]);
+    expect(mockOperational.updateClient).not.toHaveBeenCalled();
+    expect(mockOperational.updateProperty).not.toHaveBeenCalled();
+    expect(mockNavigate).toHaveBeenCalledWith('/jobs/client/client-1/property/property-1/field/field-new');
   });
 
   test('inherits a confirmed Client location without mutating the Client and saves authoritative Property context', async () => {

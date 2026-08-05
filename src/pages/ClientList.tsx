@@ -44,6 +44,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { useOperationalData } from '../contexts/OperationalDataContext';
 import { describeOperationalError } from '../services/operationalDataStore';
 import PropertyWorkspace from './PropertyWorkspace';
+import FieldWorkspace from './FieldWorkspace';
 
 type ClientAddressDraft = ClientAddress & { labelType: string; customLabel: string };
 const LOCATION_LABELS = ['Primary address', 'Billing address', 'Site entrance', 'Loading area', 'Office', 'Workshop', 'Custom'];
@@ -76,6 +77,7 @@ export default function ClientList() {
   const isContractor = user?.role === 'contractor';
   const isClient = user?.role === 'client';
   const isPropertiesView = searchParams.get('view') === 'properties';
+  const isFieldsView = searchParams.get('view') === 'fields';
 
   const filtered = clients.filter((c) =>
     c.name.toLowerCase().includes(search.toLowerCase())
@@ -293,6 +295,7 @@ export default function ClientList() {
   };
 
   if (isPropertiesView) return <PropertyWorkspace />;
+  if (isFieldsView) return <FieldWorkspace />;
 
   // Client users go straight to their own area
   if (isClient && user?.clientRecordId && clients.length === 1) {
