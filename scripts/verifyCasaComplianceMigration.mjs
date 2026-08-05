@@ -8,7 +8,7 @@ const id={org:'51000000-0000-4000-8000-000000000001',otherOrg:'52000000-0000-400
 const db=new PGlite();
 try{
  await db.exec(`create schema auth;create table auth.users(id uuid primary key);create function auth.uid()returns uuid language sql stable as $$select null::uuid$$;create role anon;create role authenticated;create role service_role;`);
- for(const name of(await readdir(directory)).filter(name=>name.endsWith('.sql')&&!['20260804162000_production_beta_platform_identity_reconciliation.sql','20260805131000_personnel_compliance_evidence_storage.sql'].includes(name)).sort())await db.exec(await readFile(resolve(directory,name),'utf8'));
+ for(const name of(await readdir(directory)).filter(name=>name.endsWith('.sql')&&!['20260804162000_production_beta_platform_identity_reconciliation.sql','20260805131000_personnel_compliance_evidence_storage.sql','20260805144000_checklist_evidence_storage.sql'].includes(name)).sort())await db.exec(await readFile(resolve(directory,name),'utf8'));
  await db.exec(`insert into auth.users(id)values('51000000-0000-4000-8000-000000000011'),('52000000-0000-4000-8000-000000000011');
  insert into public.organisations(id,organisation_id,name)values('${id.org}','${id.org}','Fly The Farm'),('${id.otherOrg}','${id.otherOrg}','Other');
  insert into public.internal_users(id,organisation_id,auth_user_id,display_name)values('${id.actor}','${id.org}','51000000-0000-4000-8000-000000000011','Admin'),('${id.otherActor}','${id.otherOrg}','52000000-0000-4000-8000-000000000011','Other');
