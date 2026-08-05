@@ -28,6 +28,7 @@ const selectedResult = {
   address: apiResult.address, locality: apiResult.locality, state: apiResult.state,
   postcode: apiResult.postcode, lat: apiResult.lat, lng: apiResult.lng,
   displayName: apiResult.label, type: apiResult.type,
+  coordinateSource: 'GEOCODED', locationConfirmedAt: undefined,
 };
 
 describe('AddressAutocomplete', () => {
