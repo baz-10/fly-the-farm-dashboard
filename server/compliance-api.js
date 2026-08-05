@@ -28,10 +28,13 @@ function assertSameOrigin(req) {
 }
 
 function privateSafe(value, permitted) {
-  if (permitted || !value || typeof value !== 'object') return value;
-  if (Array.isArray(value)) return value.map((item) => privateSafe(item, false));
-  return Object.fromEntries(Object.entries(value).filter(([key]) => !['evidence','internal_file_id','internalFileId','checksum_sha256','checksumSha256','provenance'].includes(key)).map(([key,item]) => [key, privateSafe(item, false)]));
+  if (!value || typeof value !== 'object') return value;
+  if (Array.isArray(value)) return value.map((item) => privateSafe(item, permitted));
+  const providerKeys=new Set(['providerKey','provider_key','storageBucket','storage_bucket','storageProvider','storage_provider']);
+  const privateKeys=new Set(['evidence','internal_file_id','internalFileId','checksum_sha256','checksumSha256','provenance']);
+  return Object.fromEntries(Object.entries(value).filter(([key])=>!providerKeys.has(key)&&(permitted||!privateKeys.has(key))).map(([key,item])=>[key,privateSafe(item,permitted)]));
 }
+function publicFileEvidence(e){return{internalFileId:e.internalFileId,fileVersion:e.fileVersion,originalFilename:e.originalFilename,contentType:e.contentType,sizeBytes:e.sizeBytes,checksumSha256:e.checksumSha256,provenance:{source:e.provenance?.source,uploadedAt:e.provenance?.uploadedAt,uploadedByInternalUserId:e.provenance?.uploadedByInternalUserId}};}
 
 function validateCredential(body) {
   const credentialType = String(body.credentialType || '').toUpperCase();
@@ -55,11 +58,12 @@ function createComplianceHandler(dependencies = {}) {
     res.setHeader('Content-Type', 'application/json; charset=utf-8');
     try {
       const context = await getContext(req, res);
-      if (!hasPermission(context, 'compliance.read')) throw apiError(403, 'FORBIDDEN', 'You do not have permission for this operation.');
-      if (req.method !== 'GET') throw apiError(405, 'METHOD_NOT_ALLOWED', 'Method not allowed.');
       const action = req.query?.action || 'overview';
-      if (action !== 'overview') throw apiError(400, 'UNSUPPORTED_ACTION', 'Unsupported Compliance action.');
-      return res.status(200).json({ data: await repository.readOverview(context) });
+      if(req.method==='GET'){if (!hasPermission(context, 'compliance.read')) throw apiError(403,'FORBIDDEN','You do not have permission for this operation.');if(action!=='overview')throw apiError(400,'UNSUPPORTED_ACTION','Unsupported Compliance action.');return res.status(200).json({data:await repository.readOverview(context)});}
+      if(req.method!=='POST')throw apiError(405,'METHOD_NOT_ALLOWED','Method not allowed.');assertSameOrigin(req);const body=req.body||{};
+      if(action==='instrument'){if(!hasPermission(context,'compliance.manage'))throw apiError(403,'FORBIDDEN','You do not have permission for this operation.');let staged=null;try{staged=body.file?await repository.stageComplianceFile(context,body.instrumentId||'new-instrument',body.file):null;const result=await repository.writeInstrument(context,body),record=result.record||result;if(result?.conflict)throw apiError(409,'VERSION_CONFLICT','Compliance certificate changed before save.');if(staged&&record?.id)await repository.recordInstrumentEvidence(context,record.id,publicFileEvidence(staged));return res.status(201).json({data:{record,evidence:staged?publicFileEvidence(staged):null}});}catch(error){if(staged)await repository.removeStagedComplianceFile(staged);throw error;}}
+      if(action==='manual'){if(!hasPermission(context,'compliance.publish'))throw apiError(403,'FORBIDDEN','You do not have permission for this operation.');let staged=null;try{staged=await repository.stageComplianceFile(context,body.documentId||'operations-manual',body.file);let documentId=body.documentId,expectedVersion=Number(body.expectedVersion||1);if(!documentId){const created=await repository.createControlledDocument(context,{documentType:'OPERATIONS_MANUAL',title:body.title||'RPAS Operations Manual'}),record=created.record||created;documentId=record.id;expectedVersion=record.row_version||1;}const published=await repository.publishControlledDocument(context,documentId,expectedVersion,{effectiveDate:body.effectiveDate,reviewDueDate:body.reviewDueDate||null,internalFileId:staged.internalFileId,fileVersion:staged.fileVersion,originalFilename:staged.originalFilename,checksum:staged.checksumSha256,provenance:staged.provenance,approvedByPersonnelId:body.approvedByPersonnelId||null,approverSnapshot:body.approverSnapshot||null});if(published?.conflict)throw apiError(409,'VERSION_CONFLICT','Operations Manual changed before publication.');return res.status(201).json({data:{record:published.record||published,evidence:publicFileEvidence(staged)}});}catch(error){if(staged)await repository.removeStagedComplianceFile(staged);throw error;}}
+      throw apiError(400,'UNSUPPORTED_ACTION','Unsupported Compliance action.');
     } catch (error) {
       const { status, response } = errorEnvelope(error);
       return res.status(status).json(response);

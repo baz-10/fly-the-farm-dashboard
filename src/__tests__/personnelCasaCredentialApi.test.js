@@ -39,6 +39,8 @@ test('returns precise mission eligibility blockers and never exposes evidence wi
  expect(res.statusCode).toBe(200);expect(res.body.data.blockers[0].code).toBe('AROC_REQUIRED');expect(res.body.data.evidence).toBeUndefined();
 });
 
+test('never exposes provider-specific storage keys even to authorised evidence readers',async()=>{const repository={evaluatePersonnelMissionEligibility:jest.fn().mockResolvedValue({eligible:true,evidence:{internalFileId:'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',provenance:{source:'OPERATOR_UPLOAD',providerKey:'private/key',storageBucket:'private-bucket',storageProvider:'supabase'}}})},res=response();await createPersonnelCasaCredentialsHandler({repository,resolveContext:jest.fn().mockResolvedValue(context)})(req('GET',{action:'eligibility',personnelId:personnel,requirements:'{}'},{}),res);expect(res.statusCode).toBe(200);expect(JSON.stringify(res.body)).not.toMatch(/providerKey|storageBucket|storageProvider|private\/key/);expect(res.body.data.evidence.internalFileId).toBe('eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee');});
+
 test('rejects invalid evidence metadata and cross-site mutations',async()=>{
  const handler=createPersonnelCasaCredentialsHandler({repository:{},resolveContext:jest.fn().mockResolvedValue(context)}),badOrigin=response();
  await handler(req('POST',{action:'create'},{},{origin:'https://evil.test',host:'spray-command.test'}),badOrigin);
