@@ -20,7 +20,7 @@ const {
   createSessionHandler,
 } = require('./operational-api');
 const { createSupportHandler } = require('./support-api');
-const { createComplianceHandler } = require('./compliance-api');
+const { createComplianceHandler, createPersonnelCasaCredentialsHandler } = require('./compliance-api');
 
 function createDefaultHandlers() {
   return Object.freeze({
@@ -52,6 +52,7 @@ function createDefaultHandlers() {
     session: createSessionHandler(),
     'assisted-support': createSupportHandler(),
     compliance: createComplianceHandler(),
+    'personnel-casa-credentials': createPersonnelCasaCredentialsHandler(),
   });
 }
 
