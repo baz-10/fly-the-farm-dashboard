@@ -62,6 +62,7 @@ import MissionOutcomes from '../components/mission/MissionOutcomes';
 import CustomerAcceptance from '../components/mission/CustomerAcceptance';
 import MissionDeploymentWorkPack from '../components/mission/MissionDeploymentWorkPack';
 import GuidedMissionCreation from '../components/mission/GuidedMissionCreation';
+import MissionChecklists from '../components/mission/MissionChecklists';
 import { useAircraft } from '../contexts/AircraftContext';
 import { useAuth } from '../contexts/AuthContext';
 import { useMission } from '../contexts/MissionContext';
@@ -706,6 +707,9 @@ function AuthoritativeMissionPlanning() {
             {selectedMission && <Panel title="JSA & Risk Controls" icon={<SecurityIcon />}>
               <Alert severity="info" sx={{ mb: 1.5 }}>Mission Checks, triggered hazards, controls and PIC approval are retained as authoritative versioned evidence.</Alert>
               <Button fullWidth variant="contained" startIcon={<SecurityIcon />} onClick={() => setAuthoritativeJsaOpen(true)}>Complete Mission JSA</Button>
+            </Panel>}
+            {selectedMission && <Panel title="Controlled Checklists" icon={<CheckCircleIcon />}>
+              <MissionChecklists missionId={selectedMission.id} operatingLocationId={selectedMission.operatingLocationId} onChanged={()=>setAuthorisationRefreshToken((current)=>current+1)} />
             </Panel>}
             {selectedMission && <Panel title="Mission Readiness & Authorisation" icon={<GavelIcon />}>
               <MissionAuthorisation missionId={selectedMission.id} refreshToken={authorisationRefreshToken} />
