@@ -39,6 +39,15 @@ function assignedLocationFilter(resource, context) {
 }
 
 class OperationalRepository {
+  async readOperationsPreference(context) {
+    const rows=await supabaseRequest(`rest/v1/internal_user_operations_preferences?${tenantFilter(context)}&internal_user_id=eq.${encodeURIComponent(context.internalUser.id)}&select=selected_operating_location_id&limit=1`,{publicMessage:'Operations preference could not be loaded.'});
+    return rows?.[0]||null;
+  }
+
+  async saveOperationsPreference(context,operatingLocationId) {
+    const rows=await supabaseRequest('rest/v1/internal_user_operations_preferences?on_conflict=organisation_id,internal_user_id',{method:'POST',headers:{Prefer:'resolution=merge-duplicates,return=representation'},body:JSON.stringify({organisation_id:context.organisation.id,internal_user_id:context.internalUser.id,selected_operating_location_id:operatingLocationId,updated_at:new Date().toISOString()}),publicMessage:'Operations preference could not be saved.'});
+    return rows?.[0]||null;
+  }
   async attachMissionAssignments(context, records) {
     if (!Array.isArray(records) || records.length === 0) return records;
     const missionIds = records.map((record) => record.id).filter(Boolean).map(encodeURIComponent).join(',');

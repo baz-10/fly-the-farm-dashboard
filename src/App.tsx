@@ -58,6 +58,7 @@ import PlatformShell from './components/PlatformShell';
 import PlatformAdmin from './pages/PlatformAdmin';
 import CasaComplianceOverview from './pages/CasaComplianceOverview';
 import ControlledChecklists from './pages/ControlledChecklists';
+import WeatherCentre from './pages/WeatherCentre';
 
 function WorkflowProviders({ children }: { children: React.ReactNode }) {
   const { user } = useAuth();
@@ -137,6 +138,7 @@ function App() {
           <Route path="/missions" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><MissionRegister /></ProtectedRoute>} />
           <Route path="/missions/new" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><MissionPlanning /></ProtectedRoute>} />
           <Route path="/missions/:missionId" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><MissionPlanning /></ProtectedRoute>} />
+          <Route path="/weather" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><WeatherCentre /></ProtectedRoute>} />
           <Route path="/mission-planning" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><MissionRouteRedirect /></ProtectedRoute>} />
           <Route path="/compliance" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><CasaComplianceOverview /></ProtectedRoute>} />
           <Route path="/compliance/library" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><ComplianceMenu /></ProtectedRoute>} />

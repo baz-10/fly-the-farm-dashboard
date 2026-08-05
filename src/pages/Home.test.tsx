@@ -1,67 +1,9 @@
-import React from 'react';
-import { render, screen } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
-import Home from './Home';
-
-const mockNavigate = jest.fn();
-
-jest.mock('react-router-dom', () => ({
-  useNavigate: () => mockNavigate,
-}), { virtual: true });
-
-jest.mock('../contexts/AuthContext', () => ({
-  useAuth: () => ({ user: { id: 'test-user' } }),
-}));
-
-jest.mock('../contexts/MissionContext', () => ({
-  useMission: () => ({
-    missions: [],
-    isLoading: false,
-    error: null,
-    loadData: jest.fn(),
-  }),
-}));
-
-jest.mock('../contexts/AircraftContext', () => ({
-  useAircraft: () => ({
-    aircraft: [],
-    isLoading: false,
-    error: null,
-    loadData: jest.fn(),
-  }),
-}));
-
-jest.mock('../services/fieldManagementStore', () => ({ getClients: () => [] }));
-jest.mock('../services/quoteStore', () => ({ getQuotes: () => [] }));
-jest.mock('../services/financialsStore', () => ({
-  getFinancialsSummary: () => ({ revenue: 0, costs: 0, profit: 0, hasActuals: false }),
-}));
-
-function renderHome() {
-  return render(<Home />);
-}
-
-describe('Operations schedule navigation', () => {
-  beforeEach(() => {
-    mockNavigate.mockReset();
-  });
-
-  test('View Schedule opens the mission register instead of job history', async () => {
-    const user = userEvent.setup();
-    renderHome();
-
-    await user.click(screen.getByRole('button', { name: 'View Schedule' }));
-
-    expect(mockNavigate).toHaveBeenCalledWith('/missions');
-    expect(mockNavigate).not.toHaveBeenCalledWith('/jobs/history');
-  });
-
-  test("Today's Spray Schedule View all opens the mission register", async () => {
-    const user = userEvent.setup();
-    renderHome();
-
-    await user.click(screen.getByRole('button', { name: 'View all' }));
-
-    expect(mockNavigate).toHaveBeenCalledWith('/missions');
-  });
-});
+import React from'react';import{render,screen}from'@testing-library/react';import userEvent from'@testing-library/user-event';import Home from'./Home';
+var mockNavigate=jest.fn(),mockRead=jest.fn();
+jest.mock('react-router-dom',()=>({useNavigate:()=>mockNavigate}),{virtual:true});
+jest.mock('../services/operationsBriefApi',()=>({createOperationsBriefApi:()=>({read:(...args:any[])=>mockRead(...args)})}));
+const brief={location:{id:'loc-1',name:'Fly The Farm Base'},locations:[{id:'loc-1',name:'Fly The Farm Base'}],weather:{state:'READY',current:{temperatureC:24,minTemperatureC:12,maxTemperatureC:27,windSpeedKmh:11,windGustKmh:18,windDirection:'NW',humidityPercent:44,rainProbability:10,rainAmountMm:0,deltaTC:5.2,condition:'Clear',sprayCondition:{status:'GO',label:'Good'}},retrievedAt:'2026-08-05T00:00:00Z'},schedule:[],quickActions:[{label:'New Mission',route:'/missions/new',primary:true},{label:'New Client',route:'/jobs'}],nextActions:[{title:'Upload ReOC',reason:'Required operating authority evidence is missing.',urgency:'Critical',route:'/compliance',source:'CASA Compliance'}],alerts:[{title:'ReOC certificate missing',reason:'Required ReOC record is missing.',route:'/compliance',blocking:false}]};
+beforeEach(()=>{mockNavigate.mockReset();mockRead.mockResolvedValue(brief)});
+test('presents the four independent Operations Brief areas',async()=>{render(<Home/>);expect(await screen.findByText('Operations Brief')).toBeInTheDocument();for(const text of['Weather now','Today’s Schedule','Quick Actions','Needs attention'])expect(screen.getByText(text)).toBeInTheDocument();expect(screen.getByText('24°C')).toBeInTheDocument();expect(screen.getByText('12° / 27°')).toBeInTheDocument();expect(screen.getByText('Delta T 5.2°C')).toBeInTheDocument();});
+test('keeps New Mission usable during a critical warning',async()=>{const user=userEvent.setup();render(<Home/>);await screen.findByText(/ReOC certificate missing/);await user.click(screen.getAllByRole('button',{name:'New Mission'})[0]);expect(mockNavigate).toHaveBeenCalledWith('/missions/new');});
+test('opens Weather Centre from the weather snapshot',async()=>{const user=userEvent.setup();render(<Home/>);await screen.findByText('24°C');await user.click(screen.getByRole('button',{name:'Open Weather Centre'}));expect(mockNavigate).toHaveBeenCalledWith('/weather');});
