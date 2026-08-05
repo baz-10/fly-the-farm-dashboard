@@ -4,6 +4,7 @@ const {
   searchAustralianWeatherLocations,
   deriveAustralianPlaceFromAddress,
   geocodeOpenMeteoLocation,
+  mergeAustralianPlace,
 } = require('../../server/weather-provider');
 
 test('requests a padded provider date range so Australian local Mission hours are retained', async () => {
@@ -32,6 +33,13 @@ test('requests a padded provider date range so Australian local Mission hours ar
   expect(result.validFrom).toBe('2026-08-09T22:00:00.000Z');
   expect(result.validTo).toBe('2026-08-10T02:00:00.000Z');
   expect(result.snapshot.hourly.time).toEqual(['2026-08-10T08:00']);
+});
+
+test('combines a provider locality with reverse-geocoded state and postcode', () => {
+  expect(mergeAustralianPlace(
+    {locality:'Queensland Islands',state:'',postcode:''},
+    {locality:'',state:'QLD',postcode:'4707',latitude:-22.8,longitude:149.2},
+  )).toEqual(expect.objectContaining({label:'Queensland Islands, QLD 4707',locality:'Queensland Islands',state:'QLD',postcode:'4707'}));
 });
 
 test('retains the provider place name when geocoding an authorised operating-location address', async () => {
