@@ -2,6 +2,7 @@ const {
   fetchOpenMeteoPlanningForecast,
   reverseGeocodeAustralianLocation,
   searchAustralianWeatherLocations,
+  deriveAustralianPlaceFromAddress,
 } = require('../../server/weather-provider');
 
 test('requests a padded provider date range so Australian local Mission hours are retained', async () => {
@@ -30,6 +31,12 @@ test('requests a padded provider date range so Australian local Mission hours ar
   expect(result.validFrom).toBe('2026-08-09T22:00:00.000Z');
   expect(result.validTo).toBe('2026-08-10T02:00:00.000Z');
   expect(result.snapshot.hourly.time).toEqual(['2026-08-10T08:00']);
+});
+
+test('derives a locality label from the organisation address when rural reverse geocoding has no place name', () => {
+  expect(deriveAustralianPlaceFromAddress('17 Example Road, Bluff QLD 4702')).toEqual(expect.objectContaining({
+    label: 'Bluff, QLD 4702', locality: 'Bluff', state: 'QLD', postcode: '4702',
+  }));
 });
 
 test('searches Australian places and returns an operator-readable locality label', async () => {
