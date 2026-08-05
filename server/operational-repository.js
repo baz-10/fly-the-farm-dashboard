@@ -40,13 +40,19 @@ function assignedLocationFilter(resource, context) {
 
 class OperationalRepository {
   async readOperationsPreference(context) {
-    const rows=await supabaseRequest(`rest/v1/internal_user_operations_preferences?${tenantFilter(context)}&internal_user_id=eq.${encodeURIComponent(context.internalUser.id)}&select=selected_operating_location_id&limit=1`,{publicMessage:'Operations preference could not be loaded.'});
+    const rows=await supabaseRequest(`rest/v1/internal_user_operations_preferences?${tenantFilter(context)}&internal_user_id=eq.${encodeURIComponent(context.internalUser.id)}&select=selected_operating_location_id,recent_weather_searches&limit=1`,{publicMessage:'Operations preference could not be loaded.'});
     return rows?.[0]||null;
   }
 
   async saveOperationsPreference(context,operatingLocationId) {
     const rows=await supabaseRequest('rest/v1/internal_user_operations_preferences?on_conflict=organisation_id,internal_user_id',{method:'POST',headers:{Prefer:'resolution=merge-duplicates,return=representation'},body:JSON.stringify({organisation_id:context.organisation.id,internal_user_id:context.internalUser.id,selected_operating_location_id:operatingLocationId,updated_at:new Date().toISOString()}),publicMessage:'Operations preference could not be saved.'});
     return rows?.[0]||null;
+  }
+  async saveRecentWeatherSearch(context,location) {
+    const current=await this.readOperationsPreference(context),key=`${Number(location.latitude).toFixed(5)},${Number(location.longitude).toFixed(5)}`;
+    const recent=[location,...(current?.recent_weather_searches||[]).filter(item=>`${Number(item.latitude).toFixed(5)},${Number(item.longitude).toFixed(5)}`!==key)].slice(0,5);
+    const rows=await supabaseRequest('rest/v1/internal_user_operations_preferences?on_conflict=organisation_id,internal_user_id',{method:'POST',headers:{Prefer:'resolution=merge-duplicates,return=representation'},body:JSON.stringify({organisation_id:context.organisation.id,internal_user_id:context.internalUser.id,selected_operating_location_id:current?.selected_operating_location_id||null,recent_weather_searches:recent,updated_at:new Date().toISOString()}),publicMessage:'Recent weather location could not be saved.'});
+    return rows?.[0]?.recent_weather_searches||recent;
   }
   async attachMissionAssignments(context, records) {
     if (!Array.isArray(records) || records.length === 0) return records;
