@@ -1,6 +1,6 @@
 # Mission Workspace Refinement Design
 
-**Status:** Product Owner approved direction; written specification pending final review  
+**Status:** Product Owner approved
 **Priority:** P1  
 **Requirements:** `SC-011`, `SC-012`, `SC-013`, `IMP-MIS-002`
 
@@ -15,6 +15,22 @@ This is a Mission Workspace, not a wizard. The work has a natural sequence, but 
 The workspace displays one active stage at a time while keeping the complete Mission lifecycle visible. The operator may open any available stage, revisit completed stages, and review stages marked Needs Review. `Save & Next` saves through the existing authoritative command and advances sequentially only after the save succeeds.
 
 The implementation reuses the existing Mission components, routes, APIs, permissions, evidence models, audit behaviour, tenant boundaries, operating-location scope, optimistic concurrency, and downstream invalidation rules. It does not introduce a new Mission architecture or duplicate lifecycle logic.
+
+## One Question Per Stage
+
+Each stage answers one operational question. Content that does not help answer that question is moved behind progressive disclosure or kept in its more appropriate lifecycle stage:
+
+- **Mission:** What am I doing?
+- **Map:** Where am I working?
+- **Resources:** What am I taking?
+- **Weather & Chemicals:** What conditions am I expecting and what am I applying?
+- **JSA:** Is it safe?
+- **Review:** Am I ready to fly?
+- **Operational Closeout:** What actually happened?
+- **Mission Outcomes:** How effective was the work?
+- **Customer Outcome:** What did the customer think?
+
+The Mission Workspace must feel like a sequence of operational decisions, never a long form. If a stage begins answering unrelated questions, it is simplified rather than expanded.
 
 ## Workspace Structure
 
