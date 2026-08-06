@@ -45,4 +45,17 @@ describe('Mission stepper state derivation', () => {
     expect(states[7]).toEqual(expect.objectContaining({ state: 'NEEDS_REVIEW' }));
     expect(states[8]).toEqual(expect.objectContaining({ state: 'NEEDS_REVIEW' }));
   });
+
+  test('an Aircraft change targets JSA review without invalidating unrelated evidence', () => {
+    const states = deriveMissionPlannerStepStates({
+      hasClient: true, hasProperty: true, hasField: true, hasJob: true, hasMission: true,
+      hasMap: true, hasResources: true,
+      readinessCategories: { weather: 'COMPLETE', chemicals: 'COMPLETE', jsa: 'COMPLETE' },
+      missionReady: true, invalidatedBy: 'AIRCRAFT',
+    });
+    expect(states[5].state).toBe('COMPLETE');
+    expect(states[6].state).toBe('COMPLETE');
+    expect(states[7].state).toBe('COMPLETE');
+    expect(states[8]).toEqual(expect.objectContaining({ state: 'CURRENT', reason: 'JSA requires review after Aircraft change.' }));
+  });
 });

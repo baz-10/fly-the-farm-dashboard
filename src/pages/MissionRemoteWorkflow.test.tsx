@@ -27,6 +27,8 @@ let mockOperational: any;
 let mockParams: Record<string, string> = {};
 let mockSearch = '';
 const mockNavigate = jest.fn();
+const mockSetSearchParams = jest.fn();
+const mockLifecycleRefresh = jest.fn();
 const mockMissionMapGet = jest.fn();
 const mockMissionMapSave = jest.fn();
 const mockMissionMapUploadSourceFile = jest.fn();
@@ -44,8 +46,13 @@ const missionKit = {
 jest.mock('react-router-dom', () => ({
   useNavigate: () => mockNavigate,
   useParams: () => mockParams,
-  useSearchParams: () => [new URLSearchParams(mockSearch), jest.fn()],
+  useSearchParams: () => [new URLSearchParams(mockSearch), mockSetSearchParams],
 }), { virtual: true });
+jest.mock('../hooks/useMissionWorkspaceLifecycle', () => ({
+  useMissionWorkspaceLifecycle: () => ({
+    authorised: false, completed: false, loading: false, error: null, refresh: mockLifecycleRefresh,
+  }),
+}));
 jest.mock('../contexts/OperationalDataContext', () => ({ useOperationalData: () => mockOperational }));
 jest.mock('../contexts/AircraftContext', () => ({
   useAircraft: () => ({
@@ -105,6 +112,8 @@ describe('remote authoritative mission workflow', () => {
     mockParams = {};
     mockSearch = '';
     mockNavigate.mockReset();
+    mockSetSearchParams.mockReset();
+    mockLifecycleRefresh.mockReset();
     mockMissionMapGet.mockReset().mockResolvedValue(null);
     mockMissionMapSave.mockReset();
     mockMissionMapUploadSourceFile.mockReset().mockResolvedValue({
@@ -158,42 +167,42 @@ describe('remote authoritative mission workflow', () => {
     expect(screen.getByText('Missions for JOB-42')).toBeVisible();
   });
 
-  test('restores the approved Mission Planner while accurately gating incomplete downstream capabilities', () => {
+  test('renders one active workspace while keeping the complete Mission lifecycle visible', () => {
     mockParams = { missionId: 'mission-1' };
+    mockSearch = 'stage=mission';
     render(<MissionPlanning />);
     expect(screen.getByRole('heading', { name: 'Mission Planner' })).toBeInTheDocument();
-    expect(screen.getByText('1 Customer')).toBeInTheDocument();
-    expect(screen.getByText('10 Review')).toBeInTheDocument();
-    expect(screen.getByText(/Draft · Planning incomplete/i)).toBeInTheDocument();
-    expect(screen.getByText('Mission Boundary')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Mission — Current/i })).toBeEnabled();
+    expect(screen.getByRole('button', { name: /Map — Current/i })).toBeEnabled();
+    expect(screen.getByRole('button', { name: /Operational Closeout — Available after Mission Authorisation/i })).toBeEnabled();
+    expect(screen.getByRole('button', { name: /Mission Outcomes — Available after Completion/i })).toBeEnabled();
+    expect(screen.getByRole('button', { name: /Customer Outcome — Available after Completion/i })).toBeEnabled();
+    expect(screen.getAllByText(/Planning incomplete/i).length).toBeGreaterThan(0);
     expect(screen.getByText('Mission Details')).toBeInTheDocument();
-    expect(screen.getByText('Aircraft & Equipment')).toBeInTheDocument();
-    expect(screen.getByText(/Mission maps, Personnel assignments, Weather evidence, Chemical planning, JSA and triggered risk controls are authoritative/i)).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Complete Mission JSA' })).toBeInTheDocument();
-    expect(screen.queryByText(/JSA — unavailable/i)).not.toBeInTheDocument();
-    expect(screen.getByRole('combobox', { name: 'Aircraft' })).toBeInTheDocument();
-    expect(screen.getByRole('combobox', { name: 'Equipment Kit' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Authorise|Authorize/i })).toBeDisabled();
-    expect(screen.queryByText(/APVMA Compliant/i)).not.toBeInTheDocument();
-    expect(screen.queryByText(/Aircraft — unavailable/i)).not.toBeInTheDocument();
-    expect(screen.queryByText(/Equipment — unavailable/i)).not.toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'What am I doing?' })).toBeInTheDocument();
+    expect(screen.getAllByText('Mission Status').length).toBeGreaterThan(0);
+    expect(screen.queryByText('Mission Boundary')).not.toBeInTheDocument();
+    expect(screen.getAllByText('North Farm').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Home Block').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('North Paddock').length).toBeGreaterThan(0);
   });
 
-  test('labels authoritative Mission steps truthfully and makes every step an explicit action', async () => {
+  test('labels authoritative Mission stages truthfully and keeps available stages non-linear', () => {
     mockParams = { missionId: 'mission-1' };
+    mockSearch = 'stage=map';
     render(<MissionPlanning />);
-    expect(screen.getByRole('button', { name: /1 Customer — COMPLETE/i })).toBeEnabled();
-    expect(screen.getByRole('button', { name: /5 Mission — COMPLETE/i })).toBeEnabled();
-    expect(screen.getByRole('button', { name: /6 Map — CURRENT/i })).toBeEnabled();
-    expect(screen.getByRole('button', { name: /8 Weather & Chemicals — BLOCKED/i })).toBeEnabled();
-    fireEvent.click(screen.getByRole('button', { name: /8 Weather & Chemicals — BLOCKED/i }));
-    expect(screen.getByText(/Save the Mission map and resources before reviewing Weather and Chemicals/i)).toBeVisible();
-    fireEvent.click(screen.getByRole('button', { name: /1 Customer — COMPLETE/i }));
-    expect(mockNavigate).toHaveBeenCalledWith('/jobs/client/client-1');
+    expect(screen.getByRole('button', { name: /Mission — Complete/i })).toBeEnabled();
+    expect(screen.getByRole('button', { name: /Map — Current/i })).toBeEnabled();
+    expect(screen.getByRole('button', { name: /Weather & Chemicals — Blocked/i })).toBeEnabled();
+    fireEvent.click(screen.getByRole('button', { name: /Weather & Chemicals — Blocked/i }));
+    expect(mockSetSearchParams).toHaveBeenCalledWith(expect.objectContaining({ get: expect.any(Function) }), { replace: true });
+    const selected = mockSetSearchParams.mock.calls[0][0] as URLSearchParams;
+    expect(selected.get('stage')).toBe('weather-chemicals');
   });
 
   test('resolves authoritative parent records instead of asking for duplicate entry', () => {
     mockParams = { missionId: 'mission-1' };
+    mockSearch = 'stage=mission';
     render(<MissionPlanning />);
     expect(screen.getByText('North Farm')).toBeInTheDocument();
     expect(screen.getByText('Home Block')).toBeInTheDocument();
@@ -203,15 +212,17 @@ describe('remote authoritative mission workflow', () => {
 
   test('opens the preserved map editor only after authoritative map load succeeds', async () => {
     mockParams = { missionId: 'mission-1' };
+    mockSearch = 'stage=map';
     render(<MissionPlanning />);
     expect(await screen.findByText('Boundary editor')).toBeInTheDocument();
     expect(mockMissionMapGet).toHaveBeenCalledWith('mission-1');
-    expect(screen.getByRole('button', { name: 'Save Mission Map' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Save & Next' })).toBeInTheDocument();
     expect(screen.queryByText(/Maps — unavailable/i)).not.toBeInTheDocument();
   });
 
   test('preserves KML import provenance when saving authoritative Mission geometry', async () => {
     mockParams = { missionId: 'mission-1' };
+    mockSearch = 'stage=map';
     mockMissionMapGet.mockResolvedValue({
       version: 1, notes: '', geometries: [{
         id: 'geometry-1', role: 'operational_boundary', geometryType: 'Polygon',
@@ -225,7 +236,7 @@ describe('remote authoritative mission workflow', () => {
     expect(await screen.findByText('Boundary editor')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Simulate KML import' }));
     expect(await screen.findByText('Boundary points 4')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Save Mission Map' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save & Next' }));
     await waitFor(() => expect(mockMissionMapUploadSourceFile).toHaveBeenCalledWith('mission-1', expect.objectContaining({
       fileName: 'mission-boundary.kml', fileType: 'kml', sourceCrs: 'EPSG:4326',
       validationResult: expect.objectContaining({ state: 'valid' }),
@@ -242,6 +253,7 @@ describe('remote authoritative mission workflow', () => {
   test('does not disguise a failed authoritative geometry load as an empty valid map', async () => {
     mockMissionMapGet.mockRejectedValue(new Error('Database unavailable'));
     mockParams = { missionId: 'mission-1' };
+    mockSearch = 'stage=map';
     render(<MissionPlanning />);
     expect(await screen.findByText(/No empty or browser-stored map has been substituted/i)).toBeInTheDocument();
     expect(screen.queryByText('Boundary editor')).not.toBeInTheDocument();
@@ -249,6 +261,7 @@ describe('remote authoritative mission workflow', () => {
 
   test('shows immutable Mission-map revision and imported-source evidence', async () => {
     mockParams = { missionId: 'mission-1' };
+    mockSearch = 'stage=map';
     mockMissionMapHistory.mockResolvedValue([{ version: 2, createdAt: '2026-08-02T01:00:00Z', createdBy: 'user-1', notes: 'Imported west block', geometries: [{
       role: 'operational_boundary', sourceFileId: '44444444-4444-4444-8444-444444444444',
       sourceFile: { id: '44444444-4444-4444-8444-444444444444', originalFilename: 'west-block.kml', sourceFormat: 'kml', checksum: 'a'.repeat(64), originalCrs: 'EPSG:4326' },
@@ -272,14 +285,14 @@ describe('remote authoritative mission workflow', () => {
     fireEvent.change(screen.getByRole('textbox', { name: 'Mission number' }), { target: { value: 'MSN-099' } });
     fireEvent.change(screen.getByRole('textbox', { name: 'Mission title' }), { target: { value: 'Creek run' } });
     fireEvent.change(screen.getByRole('textbox', { name: 'Description' }), { target: { value: 'Treat creek edge' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Save Mission' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save & Next' }));
     expect(createMission).toHaveBeenCalledWith(expect.objectContaining({
       jobId: 'job-1', operatingLocationId: 'location-1', missionNumber: 'MSN-099', title: 'Creek run',
       description: 'Treat creek edge', status: 'Planning', scheduledStartAt: expect.any(String),
     }));
     expect(mockNavigate).not.toHaveBeenCalled();
     save.resolve({ ...mission, id: 'mission-99', title: 'Creek run' });
-    await waitFor(() => expect(mockNavigate).toHaveBeenCalledWith('/missions/mission-99'));
+    await waitFor(() => expect(mockNavigate).toHaveBeenCalledWith('/missions/mission-99?stage=map'));
   });
 
   test('does not let disconnected downstream capabilities block a valid Draft save', async () => {
@@ -288,30 +301,35 @@ describe('remote authoritative mission workflow', () => {
     render(<MissionPlanning />);
     fireEvent.change(screen.getByRole('textbox', { name: 'Mission number' }), { target: { value: 'MSN-099' } });
     fireEvent.change(screen.getByRole('textbox', { name: 'Mission title' }), { target: { value: 'Creek run' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Save Mission' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save & Next' }));
     expect(mockOperational.createMission).toHaveBeenCalledWith(expect.objectContaining({ status: 'Planning' }));
-    expect(screen.getByText(/Draft is unauthorised and not ready to fly/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/Planning incomplete/i).length).toBeGreaterThan(0);
+    await waitFor(() => expect(mockNavigate).toHaveBeenCalledWith('/missions/mission-1?stage=map'));
   });
 
   test('keeps conflict detail visible and does not replace the confirmed mission', async () => {
     const conflict = Object.assign(new Error('Changed'), { code: 'VERSION_CONFLICT', currentVersion: 4, status: 409 });
     mockOperational = operational({ updateMission: jest.fn().mockRejectedValue(conflict) });
     mockParams = { missionId: 'mission-1' };
+    mockSearch = 'stage=mission';
     render(<MissionPlanning />);
     fireEvent.change(screen.getByRole('textbox', { name: 'Mission title' }), { target: { value: 'Lost edit' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Update Mission' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save & Next' }));
     expect(await screen.findByText(/record changed on the server/i)).toBeInTheDocument();
     expect(mockOperational.updateMission).toHaveBeenCalledWith('mission-1', expect.objectContaining({ title: 'Lost edit', status: 'Planning' }));
+    expect(screen.getByRole('textbox', { name: 'Mission title' })).toHaveValue('Lost edit');
+    expect(mockSetSearchParams).not.toHaveBeenCalled();
   });
 
   test('persists authoritative Aircraft and Equipment assignments with the Draft Mission version', async () => {
     const updateMission = jest.fn().mockResolvedValue({ ...mission, rowVersion: 4 });
     mockOperational = operational({ updateMission });
     mockParams = { missionId: 'mission-1' };
+    mockSearch = 'stage=resources';
     render(<MissionPlanning />);
     expect(screen.getByRole('combobox', { name: 'Aircraft' })).toHaveTextContent('VH-FTF1');
     expect(screen.getByRole('combobox', { name: 'Equipment Kit' })).toHaveTextContent('T50 Spray Kit');
-    fireEvent.click(screen.getByRole('button', { name: 'Update Mission' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save & Next' }));
     await waitFor(() => expect(updateMission).toHaveBeenCalledWith('mission-1', expect.objectContaining({
       aircraftIds: ['aircraft-1'], equipmentKitIds: ['kit-1'],
     })));
@@ -323,9 +341,10 @@ describe('remote authoritative mission workflow', () => {
       updateMission: jest.fn().mockResolvedValue({ ...mission, scheduledStartAt: null, rowVersion: 4 }),
     });
     mockParams = { missionId: 'mission-1' };
+    mockSearch = 'stage=mission';
     render(<MissionPlanning />);
     expect(screen.getByLabelText('Scheduled start')).toHaveValue('');
-    fireEvent.click(screen.getByRole('button', { name: 'Update Mission' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save & Next' }));
     await waitFor(() => expect(mockOperational.updateMission).toHaveBeenCalledWith(
       'mission-1', expect.objectContaining({ scheduledStartAt: null }),
     ));
@@ -367,6 +386,6 @@ describe('remote authoritative mission workflow', () => {
     mockSearch = 'jobId=job-1';
     render(<MissionPlanning />);
     expect(screen.getByText(/no active authorised operating location is available/i)).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Save Mission' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Save & Next' })).toBeDisabled();
   });
 });
