@@ -16,7 +16,9 @@ test('keeps the full lifecycle clickable and identifies the active stage without
   expect(screen.getByRole('button', { name: 'Map — Current' })).toHaveAttribute('aria-current', 'step');
   expect(screen.getByRole('button', { name: 'Mission — Complete' })).toBeEnabled();
   expect(screen.getByRole('button', { name: 'Operational Closeout — Available after Mission Authorisation' })).toBeEnabled();
-  await user.click(screen.getByRole('button', { name: 'Mission — Complete' }));
+  await user.tab();
+  expect(screen.getByRole('button', { name: 'Mission — Complete' })).toHaveFocus();
+  await user.keyboard('{Enter}');
   expect(select).toHaveBeenCalledWith('mission');
 });
 
