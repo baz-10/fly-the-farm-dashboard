@@ -86,7 +86,13 @@ export function MissionWorkspaceStepper({ stages, activeStage, onStageSelect }: 
     <Stack direction="row" spacing={1} sx={{ minWidth: 'max-content' }}>
       {stages.map((stage) => {
         const active = stage.id === activeStage;
-        const stateLabel = active ? 'Current' : stage.state === 'NEEDS_REVIEW' ? 'Needs Review' : stage.state.charAt(0) + stage.state.slice(1).toLowerCase();
+        const stateLabel = active
+          ? 'Current'
+          : stage.state === 'CURRENT'
+            ? 'Needs Attention'
+            : stage.state === 'NEEDS_REVIEW'
+              ? 'Needs Review'
+              : stage.state.charAt(0) + stage.state.slice(1).toLowerCase();
         const accessibleState = stage.available ? stateLabel : stage.reason;
         return <Button
           key={stage.id}

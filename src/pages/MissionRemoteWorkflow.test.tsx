@@ -173,7 +173,7 @@ describe('remote authoritative mission workflow', () => {
     render(<MissionPlanning />);
     expect(screen.getByRole('heading', { name: 'Mission Planner' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Mission — Current/i })).toBeEnabled();
-    expect(screen.getByRole('button', { name: /Map — Current/i })).toBeEnabled();
+    expect(screen.getByRole('button', { name: /Map — Needs Attention/i })).toBeEnabled();
     expect(screen.getByRole('button', { name: /Operational Closeout — Available after Mission Authorisation/i })).toBeEnabled();
     expect(screen.getByRole('button', { name: /Mission Outcomes — Available after Completion/i })).toBeEnabled();
     expect(screen.getByRole('button', { name: /Customer Outcome — Available after Completion/i })).toBeEnabled();

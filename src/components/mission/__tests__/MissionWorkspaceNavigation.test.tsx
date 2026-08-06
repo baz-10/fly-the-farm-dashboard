@@ -20,6 +20,16 @@ test('keeps the full lifecycle clickable and identifies the active stage without
   expect(select).toHaveBeenCalledWith('mission');
 });
 
+test('uses Current only for the active workspace and labels another actionable stage as Needs Attention', () => {
+  const planning = [...complete];
+  planning[7] = { state: 'CURRENT', reason: 'Review Weather and Chemical evidence.' };
+  const stages = deriveMissionWorkspaceStages({ planningSteps: planning, authorised: false, completed: false });
+  render(<MissionWorkspaceStepper stages={stages} activeStage="mission" onStageSelect={jest.fn()} />);
+  expect(screen.getByRole('button', { name: 'Mission — Current' })).toHaveAttribute('aria-current', 'step');
+  expect(screen.getByRole('button', { name: 'Weather & Chemicals — Needs Attention' })).not.toHaveAttribute('aria-current');
+  expect(screen.queryAllByText('Current')).toHaveLength(1);
+});
+
 test('shows Client, Property, Field and Mission breadcrumb context', async () => {
   const user = userEvent.setup();
   const navigate = jest.fn();
