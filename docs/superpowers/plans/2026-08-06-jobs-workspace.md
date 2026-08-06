@@ -32,3 +32,22 @@
 - [ ] Run focused tests and production build until green.
 - [ ] Run the full regression suite and review the diff for scope and secrets.
 - [ ] Commit as `IMP-JOB-001`, push `codex/production-beta`, deploy Production Beta and verify the live route.
+
+### Task 2: Mission next-action refinement
+
+**Files:**
+- Create: `src/utils/jobMissionAction.ts`
+- Create: `src/utils/__tests__/jobMissionAction.test.ts`
+- Modify: `src/pages/JobWorkspace.tsx`
+- Test: `src/pages/OperationalWorkflow.test.tsx`
+
+**Interfaces:**
+- Consumes: existing Job and Mission IDs, Mission status, and existing Mission routes.
+- Produces: `deriveJobMissionAction(jobId, missions)` returning a plain-language summary, action label, and existing route.
+
+- [ ] Write failing table-driven tests for zero Missions, one Draft, one active, multiple, and completed-only Missions.
+- [ ] Run the focused tests and verify they fail because the decision helper and card actions do not exist.
+- [ ] Implement the minimal pure decision helper and use it in each Job card.
+- [ ] Keep **Open Job** as a secondary action and make the Mission action primary.
+- [ ] Run focused tests, the complete regression suite, production build, and diff/secret checks.
+- [ ] Commit as `IMP-JOB-002`, push `codex/production-beta`, deploy Production Beta, and open the live Jobs page for review.

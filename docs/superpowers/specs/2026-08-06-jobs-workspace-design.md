@@ -12,6 +12,18 @@ Primary actions are Search Jobs, Open Job and Add Job. Historical browsing and i
 
 Each result shows the Job reference, plain-language scope, status, Client → Property → Field hierarchy, requested or scheduled date, and linked Mission count. Technical identifiers remain hidden.
 
+## Mission continuation
+
+Each Job card exposes the next authoritative Mission action without duplicating Mission logic:
+
+- No Missions: **Create Mission**, using the existing Job-bound Mission creation route.
+- One Draft Mission: **Continue Mission**, opening that Mission.
+- One non-completed Mission: **Open Mission**, opening that Mission.
+- Multiple Missions: **Open Missions**, opening the existing Mission register filtered by Job.
+- Completed Missions only: **Mission History**, opening the existing Mission register filtered by Job.
+
+The card describes the state in plain operational language. **Open Job** remains available as a secondary action. Mission creation continues to inherit the authoritative Client, Property, Field and Job chain through existing routes and data resolution.
+
 ## Create flow
 
 Add Job applies SC-011 through the authoritative hierarchy:
