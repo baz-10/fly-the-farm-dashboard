@@ -58,6 +58,9 @@ jobs:
       - name: Prove Organisation authentication
         run: npx playwright test --project=auth
 
+      - name: Prove deterministic acceptance cleanup
+        run: npx playwright test --project=cleanup --no-deps
+
       - name: Run Production Beta operational acceptance
         run: npx playwright test --project=chromium --no-deps
 

@@ -28,10 +28,16 @@ export default defineConfig({
       use: { trace: 'off', screenshot: 'off', video: 'off' },
     },
     {
+      name: 'cleanup',
+      testMatch: /cleanup\.setup\.ts/,
+      use: { ...devices['Desktop Chrome'], storageState: 'test-results/.auth/organisation.json' },
+      dependencies: ['auth'],
+    },
+    {
       name: 'chromium',
       use: { ...devices['Desktop Chrome'], storageState: 'test-results/.auth/organisation.json' },
       dependencies: ['auth'],
-      testIgnore: [/environment\.spec\.ts/, /auth\.setup\.ts/],
+      testIgnore: [/environment\.spec\.ts/, /auth\.setup\.ts/, /cleanup\.setup\.ts/],
     },
   ],
 });

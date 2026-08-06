@@ -49,9 +49,9 @@ export async function findAcceptanceRecord(request: APIRequestContext, resource:
   return record!;
 }
 
-export async function archiveAcceptanceRecord(request: APIRequestContext, resource: Resource, record?: ApiRecord): Promise<void> {
+export async function archiveAcceptanceRecord(request: APIRequestContext, resource: Resource, record?: ApiRecord, options: CleanupOptions = {}): Promise<void> {
   if (!record) return;
-  await archiveAcceptanceChain(request, { [recordKey[resource]]: record });
+  await archiveAcceptanceChain(request, { [recordKey[resource]]: record }, options);
 }
 
 export async function archiveAcceptanceChain(
@@ -95,6 +95,19 @@ export async function archiveAcceptanceChain(
     log(`phase=verify resource=${resource} id=${id} status=${verificationStatus} correlation=${correlationId(verification)}`);
     if (verificationStatus !== 404) {
       throw new Error(`CLEANUP_ACTIVE_RECORD_REMAINS resource=${resource} status=${verificationStatus}`);
+    }
+  }
+}
+
+export async function cleanupAcceptanceRecordsByPrefix(
+  request: APIRequestContext,
+  options: CleanupOptions = {},
+): Promise<void> {
+  for (const resource of cleanupOrder) {
+    const records = (await allRecords(request, resource)).filter((record) =>
+      [record.name, record.title, record.scope].some((value) => value?.startsWith(ACCEPTANCE_PREFIX)));
+    for (const record of records) {
+      await archiveAcceptanceRecord(request, resource, record, options);
     }
   }
 }

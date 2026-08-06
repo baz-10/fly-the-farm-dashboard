@@ -19,6 +19,7 @@ describe('Production Beta operational acceptance execution profile', () => {
     expect(workflow).toContain('::add-mask::$E2E_ORGANISATION_PASSWORD');
     expect(workflow).toContain('npx playwright test --project=environment');
     expect(workflow).toContain('npx playwright test --project=auth');
+    expect(workflow).toContain('npx playwright test --project=cleanup --no-deps');
     expect(workflow).toContain('npx playwright test --project=chromium --no-deps');
     expect(workflow).toContain('if-no-files-found: ignore');
     expect(workflow).toContain('cancel-in-progress: false');
@@ -41,10 +42,12 @@ describe('Production Beta operational acceptance execution profile', () => {
     const workflow = fs.readFileSync(workflowPath, 'utf8');
     const environmentIndex = workflow.indexOf('npx playwright test --project=environment');
     const authenticationIndex = workflow.indexOf('npx playwright test --project=auth');
+    const cleanupIndex = workflow.indexOf('npx playwright test --project=cleanup --no-deps');
     const operationalIndex = workflow.indexOf('npx playwright test --project=chromium --no-deps');
 
     expect(environmentIndex).toBeGreaterThan(-1);
     expect(authenticationIndex).toBeGreaterThan(environmentIndex);
-    expect(operationalIndex).toBeGreaterThan(authenticationIndex);
+    expect(cleanupIndex).toBeGreaterThan(authenticationIndex);
+    expect(operationalIndex).toBeGreaterThan(cleanupIndex);
   });
 });

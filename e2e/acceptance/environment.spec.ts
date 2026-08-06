@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test';
-import { acceptanceEnvironment } from './environment';
+import { ACCEPTANCE_PREFIX, acceptanceEnvironment } from './environment';
 import { diagnoseOrganisationLogin, formatOrganisationLoginFailure } from './authDiagnostics';
-import { archiveAcceptanceChain, cleanupOrder } from './fixtures/acceptanceRecords';
+import { archiveAcceptanceChain, cleanupAcceptanceRecordsByPrefix, cleanupOrder } from './fixtures/acceptanceRecords';
 
 test('uses an explicit HTTPS target and the controlled acceptance prefix', () => {
   const environment = acceptanceEnvironment({
@@ -162,4 +162,27 @@ test('distinguishes a bounded cleanup timeout from an API rejection', async () =
   await expect(archiveAcceptanceChain(request, {
     client: { id: '00000000-0000-0000-0000-000000000099', rowVersion: 1 },
   }, { log: () => undefined })).rejects.toThrow('CLEANUP_TIMEOUT resource=clients');
+});
+
+test('discovers only controlled acceptance records and archives them dependency-first', async () => {
+  const archived: string[] = [];
+  const records: Record<string, any[]> = {
+    missions: [{ id: 'mission-a', rowVersion: 1, title: `${ACCEPTANCE_PREFIX} old` }, { id: 'mission-real', rowVersion: 1, title: 'Real Mission' }],
+    jobs: [{ id: 'job-a', rowVersion: 1, scope: `${ACCEPTANCE_PREFIX} old` }], fields: [], properties: [],
+    clients: [{ id: 'client-a', rowVersion: 1, name: `${ACCEPTANCE_PREFIX} old` }, { id: 'client-real', rowVersion: 1, name: 'Genuine Client' }],
+  };
+  const request = {
+    get: async (url: string) => {
+      const resource = url.match(/\/api\/v1\/([^?]+)/)?.[1] || '';
+      if (url.includes('?id=')) return response(404);
+      return { ...response(200), json: async () => ({ data: records[resource] || [] }) };
+    },
+    delete: async (url: string) => { archived.push(url); return response(200); },
+  } as any;
+
+  await cleanupAcceptanceRecordsByPrefix(request, { log: () => undefined });
+
+  expect(archived.map((url) => url.match(/\/api\/v1\/([^?]+)/)?.[1])).toEqual(['missions', 'jobs', 'clients']);
+  expect(archived.join('\n')).not.toContain('mission-real');
+  expect(archived.join('\n')).not.toContain('client-real');
 });
