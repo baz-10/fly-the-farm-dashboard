@@ -11,7 +11,7 @@ const recordKey: Record<Resource, keyof AcceptanceRecords> = {
 };
 const CLEANUP_REQUEST_TIMEOUT_MS = 15_000;
 
-type CleanupOptions = { log?: (event: string) => void };
+type CleanupOptions = { origin: string; log?: (event: string) => void };
 
 function safeId(id: string): string {
   return id.length > 12 ? `${id.slice(0, 8)}…${id.slice(-4)}` : 'redacted';
@@ -49,7 +49,7 @@ export async function findAcceptanceRecord(request: APIRequestContext, resource:
   return record!;
 }
 
-export async function archiveAcceptanceRecord(request: APIRequestContext, resource: Resource, record?: ApiRecord, options: CleanupOptions = {}): Promise<void> {
+export async function archiveAcceptanceRecord(request: APIRequestContext, resource: Resource, record: ApiRecord | undefined, options: CleanupOptions): Promise<void> {
   if (!record) return;
   await archiveAcceptanceChain(request, { [recordKey[resource]]: record }, options);
 }
@@ -57,7 +57,7 @@ export async function archiveAcceptanceRecord(request: APIRequestContext, resour
 export async function archiveAcceptanceChain(
   request: APIRequestContext,
   records: AcceptanceRecords,
-  options: CleanupOptions = {},
+  options: CleanupOptions,
 ): Promise<void> {
   const log = options.log || ((event: string) => console.log(`[acceptance-cleanup] ${event}`));
   for (const resource of cleanupOrder) {
@@ -71,6 +71,7 @@ export async function archiveAcceptanceChain(
     try {
       response = await request.delete(`/api/v1/${resource}?id=${encodeURIComponent(record.id)}`, {
         data: { expectedVersion: record.rowVersion },
+        headers: { Origin: options.origin },
         timeout: CLEANUP_REQUEST_TIMEOUT_MS,
       });
     } catch (error) {
@@ -101,7 +102,7 @@ export async function archiveAcceptanceChain(
 
 export async function cleanupAcceptanceRecordsByPrefix(
   request: APIRequestContext,
-  options: CleanupOptions = {},
+  options: CleanupOptions,
 ): Promise<void> {
   for (const resource of cleanupOrder) {
     const records = (await allRecords(request, resource)).filter((record) =>

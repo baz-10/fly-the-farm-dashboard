@@ -6,6 +6,7 @@ import {
   assertNoLegacyEntityPersistence,
   findAcceptanceRecord,
 } from './fixtures/acceptanceRecords';
+import { acceptanceEnvironment } from './environment';
 
 test('creates, persists, reopens, and archives the authoritative Client to Draft Mission chain', async ({ browser, page }, testInfo) => {
   testInfo.setTimeout(180_000);
@@ -74,7 +75,7 @@ test('creates, persists, reopens, and archives the authoritative Client to Draft
     // a primary workflow failure from cancelling or being masked by cleanup.
     testInfo.setTimeout(testInfo.timeout + 90_000);
     try {
-      await archiveAcceptanceChain(page.request, records);
+      await archiveAcceptanceChain(page.request, records, { origin: new URL(acceptanceEnvironment().baseUrl).origin });
     } catch (error) {
       if (!workflowError) throw error;
       console.error(`[acceptance-cleanup] secondary_failure=${error instanceof Error ? error.message : 'UNKNOWN'}`);

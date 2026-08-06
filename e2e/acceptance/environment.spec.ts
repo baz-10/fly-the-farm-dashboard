@@ -135,8 +135,13 @@ function response(status: number, correlationId = 'cleanup-correlation') {
 
 test('archives acceptance records in dependency-safe order and verifies active-register removal', async () => {
   const calls: string[] = [];
+  const deleteHeaders: Array<Record<string, string> | undefined> = [];
   const request = {
-    delete: async (url: string) => { calls.push(`DELETE ${url.split('?')[0]}`); return response(200); },
+    delete: async (url: string, options: any) => {
+      calls.push(`DELETE ${url.split('?')[0]}`);
+      deleteHeaders.push(options.headers);
+      return response(200);
+    },
     get: async (url: string) => { calls.push(`GET ${url.split('?')[0]}`); return response(404); },
   } as any;
   const recordKey = { missions: 'mission', jobs: 'job', fields: 'field', properties: 'property', clients: 'client' } as const;
@@ -145,13 +150,17 @@ test('archives acceptance records in dependency-safe order and verifies active-r
     rowVersion: 1,
   }]));
 
-  await archiveAcceptanceChain(request, records as any, { log: () => undefined });
+  await archiveAcceptanceChain(request, records as any, {
+    log: () => undefined,
+    origin: 'https://spray-command-production-beta.vercel.app',
+  });
 
   expect(calls.filter((entry) => entry.startsWith('DELETE'))).toEqual([
     'DELETE /api/v1/missions', 'DELETE /api/v1/jobs', 'DELETE /api/v1/fields',
     'DELETE /api/v1/properties', 'DELETE /api/v1/clients',
   ]);
   expect(calls.filter((entry) => entry.startsWith('GET'))).toHaveLength(5);
+  expect(deleteHeaders).toEqual(Array(5).fill({ Origin: 'https://spray-command-production-beta.vercel.app' }));
 });
 
 test('treats already archived records as idempotent and reports safe cleanup diagnostics', async () => {
@@ -163,7 +172,7 @@ test('treats already archived records as idempotent and reports safe cleanup dia
 
   await archiveAcceptanceChain(request, {
     client: { id: '00000000-0000-0000-0000-000000000099', rowVersion: 1 },
-  }, { log: (event) => events.push(event) });
+  }, { origin: 'https://spray-command-production-beta.vercel.app', log: (event) => events.push(event) });
 
   expect(events.join('\n')).toContain('resource=clients');
   expect(events.join('\n')).toContain('status=404');
@@ -178,7 +187,7 @@ test('distinguishes a bounded cleanup timeout from an API rejection', async () =
 
   await expect(archiveAcceptanceChain(request, {
     client: { id: '00000000-0000-0000-0000-000000000099', rowVersion: 1 },
-  }, { log: () => undefined })).rejects.toThrow('CLEANUP_TIMEOUT resource=clients');
+  }, { origin: 'https://spray-command-production-beta.vercel.app', log: () => undefined })).rejects.toThrow('CLEANUP_TIMEOUT resource=clients');
 });
 
 test('discovers only controlled acceptance records and archives them dependency-first', async () => {
@@ -197,7 +206,10 @@ test('discovers only controlled acceptance records and archives them dependency-
     delete: async (url: string) => { archived.push(url); return response(200); },
   } as any;
 
-  await cleanupAcceptanceRecordsByPrefix(request, { log: () => undefined });
+  await cleanupAcceptanceRecordsByPrefix(request, {
+    origin: 'https://spray-command-production-beta.vercel.app',
+    log: () => undefined,
+  });
 
   expect(archived.map((url) => url.match(/\/api\/v1\/([^?]+)/)?.[1])).toEqual(['missions', 'jobs', 'clients']);
   expect(archived.join('\n')).not.toContain('mission-real');
