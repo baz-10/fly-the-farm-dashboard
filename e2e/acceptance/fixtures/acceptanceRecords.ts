@@ -81,7 +81,16 @@ export async function archiveAcceptanceChain(
     const correlation = correlationId(response);
     log(`phase=response resource=${resource} id=${id} status=${status} correlation=${correlation} durationMs=${Date.now() - startedMs}`);
     if (!response.ok() && status !== 404) {
-      throw new Error(`CLEANUP_API_REJECTED resource=${resource} status=${status} correlation=${correlation}`);
+      let responseCode = 'UNKNOWN';
+      try {
+        const responseBody = await response.json();
+        responseCode = String(responseBody?.error?.code || 'UNKNOWN');
+      } catch {
+        // Keep diagnostics non-secret and fail closed when the response is not JSON.
+      }
+      const error = new Error(`CLEANUP_API_REJECTED resource=${resource} status=${status} correlation=${correlation}`);
+      (error as Error & { code?: string }).code = responseCode;
+      throw error;
     }
 
     let verification: any;
@@ -108,7 +117,13 @@ export async function cleanupAcceptanceRecordsByPrefix(
     const records = (await allRecords(request, resource)).filter((record) =>
       [record.name, record.title, record.scope].some((value) => value?.startsWith(ACCEPTANCE_PREFIX)));
     for (const record of records) {
-      await archiveAcceptanceRecord(request, resource, record, options);
+      try {
+        await archiveAcceptanceRecord(request, resource, record, options);
+      } catch (error) {
+        if ((error as Error & { code?: string }).code !== 'ACCEPTANCE_ARCHIVE_SCOPE_FORBIDDEN') throw error;
+        const log = options.log || ((event: string) => console.log(`[acceptance-cleanup] ${event}`));
+        log(`phase=skip resource=${resource} id=${safeId(record.id)} reason=not-owned-by-acceptance-actor`);
+      }
     }
   }
 }

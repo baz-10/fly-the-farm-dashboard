@@ -141,12 +141,12 @@ test('acceptance authority gate rejects administrator, Platform and unexpected p
   expect(validateAcceptanceAuthority({ roles: ['production_beta_acceptance'], permissions: required }).code).toBe('ACCEPTANCE_AUTHORITY_VALID');
 });
 
-function response(status: number, correlationId = 'cleanup-correlation') {
+function response(status: number, correlationId = 'cleanup-correlation', body: any = {}) {
   return {
     ok: () => status >= 200 && status < 300,
     status: () => status,
     headers: () => ({ 'x-correlation-id': correlationId }),
-    json: async () => ({}),
+    json: async () => body,
   };
 }
 
@@ -231,4 +231,44 @@ test('discovers only controlled acceptance records and archives them dependency-
   expect(archived.map((url) => url.match(/\/api\/v1\/([^?]+)/)?.[1])).toEqual(['missions', 'jobs', 'clients']);
   expect(archived.join('\n')).not.toContain('mission-real');
   expect(archived.join('\n')).not.toContain('client-real');
+});
+
+test('prefix cleanup skips controlled records owned by a different acceptance actor', async () => {
+  const archived: string[] = [];
+  const events: string[] = [];
+  const records: Record<string, any[]> = {
+    missions: [], jobs: [], fields: [], properties: [],
+    clients: [
+      { id: 'client-prior-actor', rowVersion: 1, name: `${ACCEPTANCE_PREFIX} prior actor` },
+      { id: 'client-current-actor', rowVersion: 1, name: `${ACCEPTANCE_PREFIX} current actor` },
+      { id: 'client-genuine', rowVersion: 1, name: 'Genuine Client' },
+    ],
+  };
+  const request = {
+    get: async (url: string) => {
+      const resource = url.match(/\/api\/v1\/([^?]+)/)?.[1] || '';
+      if (url.includes('?id=')) return response(404);
+      return { ...response(200), json: async () => ({ data: records[resource] || [] }) };
+    },
+    delete: async (url: string) => {
+      if (url.includes('client-prior-actor')) {
+        return response(403, 'prior-actor-correlation', {
+          error: { code: 'ACCEPTANCE_ARCHIVE_SCOPE_FORBIDDEN' },
+        });
+      }
+      archived.push(url);
+      return response(200);
+    },
+  } as any;
+
+  await cleanupAcceptanceRecordsByPrefix(request, {
+    origin: 'https://spray-command-production-beta.vercel.app',
+    log: (event) => events.push(event),
+  });
+
+  expect(archived).toHaveLength(1);
+  expect(archived[0]).toContain('client-current-actor');
+  expect(archived.join('\n')).not.toContain('client-genuine');
+  expect(events.join('\n')).toContain('phase=skip resource=clients');
+  expect(events.join('\n')).toContain('reason=not-owned-by-acceptance-actor');
 });
