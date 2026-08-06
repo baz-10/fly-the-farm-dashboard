@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useState, useCallback, useEffect } from 'react';
 import { getPersistenceMode } from '../services/persistence';
 
-export type UserRole = 'admin' | 'contractor' | 'client' | 'platform';
+export type UserRole = 'admin' | 'contractor' | 'client' | 'platform' | 'production_beta_acceptance';
 
 export interface User {
   id: string;

@@ -1,4 +1,5 @@
 import React from 'react';
+import { missionOperatorRoles } from './security/operationalRouteRoles';
 import { BrowserRouter, Navigate, Routes, Route } from 'react-router-dom';
 import Layout from './components/Layout';
 import ProtectedRoute from './components/ProtectedRoute';
@@ -122,7 +123,7 @@ function App() {
           <Route path="/jobs/client/:clientId/property/:propertyId/field/:fieldId" element={<FieldDetail />} />
           <Route path="/jobs/client/:clientId/property/:propertyId/field/:fieldId/new-job" element={<JobCreate />} />
           <Route path="/jobs/client/:clientId/property/:propertyId/field/:fieldId/job/:jobId" element={<JobDetail />} />
-          <Route path="/jobs/client/:clientId/property/:propertyId/field/:fieldId/job/:jobId/new-mission" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><MissionPlanning /></ProtectedRoute>} />
+          <Route path="/jobs/client/:clientId/property/:propertyId/field/:fieldId/job/:jobId/new-mission" element={<ProtectedRoute allowedRoles={missionOperatorRoles}><MissionPlanning /></ProtectedRoute>} />
           <Route path="/quotes" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><QuoteList /></ProtectedRoute>} />
           <Route path="/quotes/new" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><QuoteCreate /></ProtectedRoute>} />
           <Route path="/quotes/settings" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><QuoteSettings /></ProtectedRoute>} />
@@ -135,11 +136,11 @@ function App() {
           <Route path="/personnel" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><Personnel /></ProtectedRoute>} />
           <Route path="/fleet-work-packs" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><FleetWorkPacks /></ProtectedRoute>} />
           <Route path="/jsa" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><JSAManagement /></ProtectedRoute>} />
-          <Route path="/missions" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><MissionRegister /></ProtectedRoute>} />
-          <Route path="/missions/new" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><MissionPlanning /></ProtectedRoute>} />
-          <Route path="/missions/:missionId" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><MissionPlanning /></ProtectedRoute>} />
+          <Route path="/missions" element={<ProtectedRoute allowedRoles={missionOperatorRoles}><MissionRegister /></ProtectedRoute>} />
+          <Route path="/missions/new" element={<ProtectedRoute allowedRoles={missionOperatorRoles}><MissionPlanning /></ProtectedRoute>} />
+          <Route path="/missions/:missionId" element={<ProtectedRoute allowedRoles={missionOperatorRoles}><MissionPlanning /></ProtectedRoute>} />
           <Route path="/weather" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><WeatherCentre /></ProtectedRoute>} />
-          <Route path="/mission-planning" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><MissionRouteRedirect /></ProtectedRoute>} />
+          <Route path="/mission-planning" element={<ProtectedRoute allowedRoles={missionOperatorRoles}><MissionRouteRedirect /></ProtectedRoute>} />
           <Route path="/compliance" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><CasaComplianceOverview /></ProtectedRoute>} />
           <Route path="/compliance/library" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><ComplianceMenu /></ProtectedRoute>} />
           <Route path="/compliance/checklists" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><ControlledChecklists /></ProtectedRoute>} />
