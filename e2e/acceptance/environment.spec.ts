@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { ACCEPTANCE_PREFIX, acceptanceEnvironment } from './environment';
-import { diagnoseOrganisationLogin, formatOrganisationLoginFailure } from './authDiagnostics';
+import { diagnoseOrganisationLogin, formatOrganisationLoginFailure, summariseOrganisationAuthority } from './authDiagnostics';
 import { archiveAcceptanceChain, cleanupAcceptanceRecordsByPrefix, cleanupOrder } from './fixtures/acceptanceRecords';
 
 test('uses an explicit HTTPS target and the controlled acceptance prefix', () => {
@@ -105,6 +105,23 @@ test('diagnoses a route defect after the trusted organisation session exists', (
   });
 
   expect(diagnosis.code).toBe('LOGIN_REDIRECT_NOT_COMPLETED');
+});
+
+test('reports acceptance role and only approved archive permission booleans without identity data', () => {
+  expect(summariseOrganisationAuthority({
+    roles: ['operator', 'production_beta_acceptance'],
+    permissions: ['clients.read', 'clients.archive', 'missions.archive', 'platform.super_admin'],
+    user: { id: 'secret-user-id', email: 'secret@example.invalid' },
+  })).toEqual({
+    roles: ['operator', 'production_beta_acceptance'],
+    archivePermissions: {
+      clients: true,
+      properties: false,
+      fields: false,
+      jobs: false,
+      missions: true,
+    },
+  });
 });
 
 function response(status: number, correlationId = 'cleanup-correlation') {

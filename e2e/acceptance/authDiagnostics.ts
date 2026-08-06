@@ -24,6 +24,25 @@ export interface OrganisationLoginDiagnosis {
   correlationId?: string;
 }
 
+const archiveResources = ['clients', 'properties', 'fields', 'jobs', 'missions'] as const;
+
+export function summariseOrganisationAuthority(session: {
+  roles?: unknown;
+  permissions?: unknown;
+}): {
+  roles: string[];
+  archivePermissions: Record<(typeof archiveResources)[number], boolean>;
+} {
+  const roles = Array.isArray(session.roles) ? session.roles.filter((role): role is string => typeof role === 'string').sort() : [];
+  const permissions = new Set(Array.isArray(session.permissions)
+    ? session.permissions.filter((permission): permission is string => typeof permission === 'string')
+    : []);
+  return {
+    roles,
+    archivePermissions: Object.fromEntries(archiveResources.map((resource) => [resource, permissions.has(`${resource}.archive`)])) as Record<(typeof archiveResources)[number], boolean>,
+  };
+}
+
 export function diagnoseOrganisationLogin(signals: OrganisationLoginSignals): OrganisationLoginDiagnosis {
   const correlationId = signals.correlationId || undefined;
   const normalisedError = signals.loginError.trim().toLowerCase();
