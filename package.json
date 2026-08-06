@@ -42,6 +42,7 @@
     "test": "react-scripts test",
     "verify:organisation-branding-reports": "node scripts/verifyOrganisationBrandingReportsPostgres.mjs",
     "verify:platform-support": "node scripts/verifyPlatformIdentitySupportPostgres.mjs",
+    "test:e2e": "playwright test",
     "eject": "react-scripts eject"
   },
   "eslintConfig": {
@@ -64,6 +65,7 @@
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.5.4",
+    "@playwright/test": "^1.62.1",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.1"
