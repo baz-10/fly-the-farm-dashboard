@@ -51,7 +51,50 @@ async function loadProfile(userId) {
     `rest/v1/ftf_profiles?user_id=eq.${encodeURIComponent(userId)}&select=user_id,tenant_id,role,name,invite_code,contractor_id,client_record_id,tier&limit=1`,
     { publicMessage: 'User profile could not be loaded.' }
   );
-  return Array.isArray(rows) && rows[0] ? rows[0] : null;
+  if (Array.isArray(rows) && rows[0]) return rows[0];
+
+  const internalUsers = await supabaseRequest(
+    `rest/v1/internal_users?auth_user_id=eq.${encodeURIComponent(userId)}&is_active=is.true&archived_at=is.null&select=id,organisation_id,display_name`,
+    { publicMessage: 'Organisation identity could not be loaded.' },
+  );
+  const resolvedProfiles = [];
+  for (const internalUser of Array.isArray(internalUsers) ? internalUsers : []) {
+    const memberships = await supabaseRequest(
+      `rest/v1/memberships?organisation_id=eq.${encodeURIComponent(internalUser.organisation_id)}&internal_user_id=eq.${encodeURIComponent(internalUser.id)}&is_active=is.true&archived_at=is.null&select=id,role_id`,
+      { publicMessage: 'Organisation identity could not be loaded.' },
+    );
+    const roleIds = (Array.isArray(memberships) ? memberships : [])
+      .map((membership) => membership.role_id)
+      .filter(Boolean);
+    if (!roleIds.length) continue;
+
+    const roles = await supabaseRequest(
+      `rest/v1/roles?organisation_id=eq.${encodeURIComponent(internalUser.organisation_id)}&id=in.(${roleIds.map(encodeURIComponent).join(',')})&archived_at=is.null&select=id,code`,
+      { publicMessage: 'Organisation identity could not be loaded.' },
+    );
+    const role = Array.isArray(roles) ? roles.find((candidate) => candidate.code) : null;
+    if (!role) continue;
+
+    const organisations = await supabaseRequest(
+      `rest/v1/organisations?id=eq.${encodeURIComponent(internalUser.organisation_id)}&archived_at=is.null&select=id,name&limit=1`,
+      { publicMessage: 'Organisation identity could not be loaded.' },
+    );
+    if (!Array.isArray(organisations) || !organisations[0]) continue;
+
+    resolvedProfiles.push({
+      user_id: userId,
+      tenant_id: internalUser.organisation_id,
+      role: role.code,
+      name: internalUser.display_name,
+      tier: 'free',
+      identity_source: 'authoritative_organisation',
+    });
+  }
+
+  if (resolvedProfiles.length > 1) {
+    throw createHttpError(403, 'Multiple active organisation identities require administrator resolution.');
+  }
+  return resolvedProfiles[0] || null;
 }
 
 async function loadPlatformProfile(userId) {
@@ -158,7 +201,8 @@ async function authenticateRequest(req, res) {
   const authUser = await authenticateAuthUser(req, res);
 
   const profile = await loadProfile(authUser.id);
-  if (profile?.tenant_id && ['admin', 'contractor', 'client'].includes(profile.role)) {
+  const legacyOrganisationRole = ['admin', 'contractor', 'client'].includes(profile?.role);
+  if (profile?.tenant_id && (legacyOrganisationRole || profile.identity_source === 'authoritative_organisation')) {
     return toPublicUser(authUser, profile);
   }
   const platformProfile = await loadPlatformProfile(authUser.id);

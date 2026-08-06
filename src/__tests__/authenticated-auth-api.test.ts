@@ -149,6 +149,57 @@ describe('Supabase authentication API', () => {
     expect(res.headers['set-cookie'].every((cookie: string) => cookie.includes('HttpOnly'))).toBe(true);
   });
 
+  test('signs an authoritative organisation identity in without a legacy profile', async () => {
+    global.fetch = jest.fn(async (url: string) => {
+      if (url.includes('/auth/v1/token?grant_type=password')) {
+        return response(200, {
+          access_token: 'acceptance-access-token',
+          refresh_token: 'acceptance-refresh-token',
+          expires_in: 3600,
+          user: { id: 'acceptance-auth-id', email: 'acceptance@example.com', user_metadata: {} },
+        });
+      }
+      if (url.includes('/rest/v1/ftf_profiles')) return response(200, []);
+      if (url.includes('/rest/v1/internal_users')) {
+        return response(200, [{
+          id: 'acceptance-internal-id',
+          organisation_id: 'organisation-a',
+          display_name: 'Production Beta Acceptance',
+        }]);
+      }
+      if (url.includes('/rest/v1/memberships')) {
+        return response(200, [{ id: 'acceptance-membership-id', role_id: 'acceptance-role-id' }]);
+      }
+      if (url.includes('/rest/v1/roles')) {
+        return response(200, [{ id: 'acceptance-role-id', code: 'production_beta_acceptance' }]);
+      }
+      if (url.includes('/rest/v1/organisations')) {
+        return response(200, [{ id: 'organisation-a', name: 'Fly The Farm' }]);
+      }
+      if (url.includes('/rest/v1/platform_users')) return response(200, []);
+      return response(500, { message: `unexpected request: ${url}` });
+    }) as any;
+    const res = createResponse();
+
+    await authHandler({
+      method: 'POST', headers: { host: 'localhost:3001' },
+      body: { action: 'login', email: 'acceptance@example.com', password: 'password' },
+    }, res);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body.user).toMatchObject({
+      id: 'acceptance-auth-id',
+      tenantId: 'organisation-a',
+      role: 'production_beta_acceptance',
+      name: 'Production Beta Acceptance',
+    });
+    expect(res.body.user.identityPlane).toBeUndefined();
+    expect(res.headers['set-cookie']).toEqual(expect.arrayContaining([
+      expect.stringContaining('ftf_access_token=acceptance-access-token'),
+      expect.stringContaining('ftf_refresh_token=acceptance-refresh-token'),
+    ]));
+  });
+
   test('signs a platform identity into the platform plane without tenant context', async () => {
     let platformIdentityRequest = '';
     global.fetch = jest.fn(async (url: string) => {
@@ -159,6 +210,7 @@ describe('Supabase authentication API', () => {
         });
       }
       if (url.includes('/rest/v1/ftf_profiles')) return response(200, []);
+      if (url.includes('/rest/v1/internal_users')) return response(200, []);
       if (url.includes('/rest/v1/platform_users')) {
         platformIdentityRequest = url;
         return response(200, [{
@@ -201,6 +253,7 @@ describe('Supabase authentication API', () => {
         });
       }
       if (url.includes('/rest/v1/ftf_profiles')) return response(200, []);
+      if (url.includes('/rest/v1/internal_users')) return response(200, []);
       if (url.includes('/rest/v1/platform_users')) return response(200, []);
       return response(500, { message: 'unexpected request' });
     }) as any;
