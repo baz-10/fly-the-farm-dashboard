@@ -53,6 +53,8 @@ describe('AddressAutocomplete', () => {
     await act(async () => { jest.advanceTimersByTime(350); });
 
     await screen.findByText('1 Queen Street');
+    expect(screen.getByRole('listbox', { name: 'Address search results' })).toBeVisible();
+    expect(screen.getByRole('option', { name: /1 Queen Street/ })).toBeVisible();
     const url = String((global.fetch as jest.Mock).mock.calls[0][0]);
     expect(url).toBe('/api/geocode?q=1+Queen+Street');
     expect(url).not.toMatch(/photon|nominatim/i);

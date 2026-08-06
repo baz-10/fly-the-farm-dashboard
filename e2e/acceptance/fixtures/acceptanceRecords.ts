@@ -2,7 +2,31 @@ import { APIRequestContext, expect, Page } from '@playwright/test';
 import { ACCEPTANCE_PREFIX } from '../environment';
 
 type Resource = 'clients' | 'properties' | 'fields' | 'jobs' | 'missions';
-type ApiRecord = { id: string; rowVersion: number; name?: string; title?: string; scope?: string };
+export type ApiRecord = { id: string; rowVersion: number; name?: string; title?: string; scope?: string };
+export type AcceptanceRecords = Partial<Record<'client' | 'property' | 'field' | 'job' | 'mission', ApiRecord>>;
+
+export const cleanupOrder = ['missions', 'jobs', 'fields', 'properties', 'clients'] as const;
+const recordKey: Record<Resource, keyof AcceptanceRecords> = {
+  missions: 'mission', jobs: 'job', fields: 'field', properties: 'property', clients: 'client',
+};
+const CLEANUP_REQUEST_TIMEOUT_MS = 15_000;
+
+type CleanupOptions = { log?: (event: string) => void };
+
+function safeId(id: string): string {
+  return id.length > 12 ? `${id.slice(0, 8)}…${id.slice(-4)}` : 'redacted';
+}
+
+function correlationId(response: any): string {
+  const value = String(response.headers()?.['x-correlation-id'] || 'unavailable');
+  return /^[A-Za-z0-9-]{1,80}$/.test(value) ? value : 'unavailable';
+}
+
+function cleanupError(error: unknown, resource: Resource): Error {
+  const message = error instanceof Error ? error.message : String(error);
+  if (/timeout|timed out/i.test(message)) return new Error(`CLEANUP_TIMEOUT resource=${resource}`);
+  return error instanceof Error ? error : new Error(`CLEANUP_REQUEST_FAILED resource=${resource}`);
+}
 
 export const acceptanceRunLabel = () => `${ACCEPTANCE_PREFIX} ${new Date().toISOString().replace(/[:.]/g, '-')}`;
 
@@ -27,10 +51,52 @@ export async function findAcceptanceRecord(request: APIRequestContext, resource:
 
 export async function archiveAcceptanceRecord(request: APIRequestContext, resource: Resource, record?: ApiRecord): Promise<void> {
   if (!record) return;
-  const response = await request.delete(`/api/v1/${resource}?id=${encodeURIComponent(record.id)}`, {
-    data: { expectedVersion: record.rowVersion },
-  });
-  expect(response.ok(), `${resource} acceptance record should archive`).toBeTruthy();
+  await archiveAcceptanceChain(request, { [recordKey[resource]]: record });
+}
+
+export async function archiveAcceptanceChain(
+  request: APIRequestContext,
+  records: AcceptanceRecords,
+  options: CleanupOptions = {},
+): Promise<void> {
+  const log = options.log || ((event: string) => console.log(`[acceptance-cleanup] ${event}`));
+  for (const resource of cleanupOrder) {
+    const record = records[recordKey[resource]];
+    if (!record) continue;
+    const id = safeId(record.id);
+    const startedAt = new Date();
+    const startedMs = Date.now();
+    log(`phase=request resource=${resource} id=${id} started=${startedAt.toISOString()}`);
+    let response: any;
+    try {
+      response = await request.delete(`/api/v1/${resource}?id=${encodeURIComponent(record.id)}`, {
+        data: { expectedVersion: record.rowVersion },
+        timeout: CLEANUP_REQUEST_TIMEOUT_MS,
+      });
+    } catch (error) {
+      throw cleanupError(error, resource);
+    }
+    const status = response.status();
+    const correlation = correlationId(response);
+    log(`phase=response resource=${resource} id=${id} status=${status} correlation=${correlation} durationMs=${Date.now() - startedMs}`);
+    if (!response.ok() && status !== 404) {
+      throw new Error(`CLEANUP_API_REJECTED resource=${resource} status=${status} correlation=${correlation}`);
+    }
+
+    let verification: any;
+    try {
+      verification = await request.get(`/api/v1/${resource}?id=${encodeURIComponent(record.id)}`, {
+        timeout: CLEANUP_REQUEST_TIMEOUT_MS,
+      });
+    } catch (error) {
+      throw cleanupError(error, resource);
+    }
+    const verificationStatus = verification.status();
+    log(`phase=verify resource=${resource} id=${id} status=${verificationStatus} correlation=${correlationId(verification)}`);
+    if (verificationStatus !== 404) {
+      throw new Error(`CLEANUP_ACTIVE_RECORD_REMAINS resource=${resource} status=${verificationStatus}`);
+    }
+  }
 }
 
 export async function assertNoLegacyEntityPersistence(page: Page): Promise<void> {

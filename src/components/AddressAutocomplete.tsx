@@ -217,10 +217,12 @@ export default function AddressAutocomplete({
               overflow: 'auto',
             }}
           >
-            <List dense disablePadding>
+            <List dense disablePadding role="listbox" aria-label="Address search results">
               {results.map((r, idx) => (
                 <ListItemButton
                   key={idx}
+                  role="option"
+                  aria-selected="false"
                   onClick={() => handleSelect(r)}
                   sx={{
                     py: 1.5,

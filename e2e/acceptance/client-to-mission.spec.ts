@@ -2,14 +2,16 @@ import { expect, test } from '@playwright/test';
 import path from 'node:path';
 import {
   acceptanceRunLabel,
-  archiveAcceptanceRecord,
+  archiveAcceptanceChain,
   assertNoLegacyEntityPersistence,
   findAcceptanceRecord,
 } from './fixtures/acceptanceRecords';
 
-test('creates, persists, reopens, and archives the authoritative Client to Draft Mission chain', async ({ browser, page }) => {
+test('creates, persists, reopens, and archives the authoritative Client to Draft Mission chain', async ({ browser, page }, testInfo) => {
+  testInfo.setTimeout(180_000);
   const label = acceptanceRunLabel();
   const records: Record<string, any> = {};
+  let workflowError: unknown;
 
   try {
     await page.goto('/missions/new');
@@ -24,7 +26,7 @@ test('creates, persists, reopens, and archives the authoritative Client to Draft
     await page.getByRole('button', { name: 'Add new Property' }).click();
     await page.getByRole('textbox', { name: 'Property name' }).fill(label);
     await page.getByRole('textbox', { name: 'Property location' }).fill('1 Queen Street, Brisbane QLD 4000');
-    const addressChoices = page.locator('.MuiListItemButton-root');
+    const addressChoices = page.getByRole('option');
     await expect(addressChoices).not.toHaveCount(0);
     await addressChoices.first().click();
     await page.getByRole('button', { name: 'Confirm location' }).click();
@@ -64,11 +66,18 @@ test('creates, persists, reopens, and archives the authoritative Client to Draft
     await secondPage.goto(`/missions/${records.mission.id}`);
     await expect(secondPage.getByText(label, { exact: true })).toBeVisible();
     await secondContext.close();
+  } catch (error) {
+    workflowError = error;
+    throw error;
   } finally {
-    await archiveAcceptanceRecord(page.request, 'missions', records.mission);
-    await archiveAcceptanceRecord(page.request, 'jobs', records.job);
-    await archiveAcceptanceRecord(page.request, 'fields', records.field);
-    await archiveAcceptanceRecord(page.request, 'properties', records.property);
-    await archiveAcceptanceRecord(page.request, 'clients', records.client);
+    // The remote workflow and cleanup have separate bounded budgets. This keeps
+    // a primary workflow failure from cancelling or being masked by cleanup.
+    testInfo.setTimeout(testInfo.timeout + 90_000);
+    try {
+      await archiveAcceptanceChain(page.request, records);
+    } catch (error) {
+      if (!workflowError) throw error;
+      console.error(`[acceptance-cleanup] secondary_failure=${error instanceof Error ? error.message : 'UNKNOWN'}`);
+    }
   }
 });

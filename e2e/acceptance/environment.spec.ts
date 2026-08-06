@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test';
 import { acceptanceEnvironment } from './environment';
 import { diagnoseOrganisationLogin, formatOrganisationLoginFailure } from './authDiagnostics';
+import { archiveAcceptanceChain, cleanupOrder } from './fixtures/acceptanceRecords';
 
 test('uses an explicit HTTPS target and the controlled acceptance prefix', () => {
   const environment = acceptanceEnvironment({
@@ -104,4 +105,61 @@ test('diagnoses a route defect after the trusted organisation session exists', (
   });
 
   expect(diagnosis.code).toBe('LOGIN_REDIRECT_NOT_COMPLETED');
+});
+
+function response(status: number, correlationId = 'cleanup-correlation') {
+  return {
+    ok: () => status >= 200 && status < 300,
+    status: () => status,
+    headers: () => ({ 'x-correlation-id': correlationId }),
+    json: async () => ({}),
+  };
+}
+
+test('archives acceptance records in dependency-safe order and verifies active-register removal', async () => {
+  const calls: string[] = [];
+  const request = {
+    delete: async (url: string) => { calls.push(`DELETE ${url.split('?')[0]}`); return response(200); },
+    get: async (url: string) => { calls.push(`GET ${url.split('?')[0]}`); return response(404); },
+  } as any;
+  const recordKey = { missions: 'mission', jobs: 'job', fields: 'field', properties: 'property', clients: 'client' } as const;
+  const records = Object.fromEntries(cleanupOrder.map((resource, index) => [recordKey[resource], {
+    id: `00000000-0000-0000-0000-00000000000${index + 1}`,
+    rowVersion: 1,
+  }]));
+
+  await archiveAcceptanceChain(request, records as any, { log: () => undefined });
+
+  expect(calls.filter((entry) => entry.startsWith('DELETE'))).toEqual([
+    'DELETE /api/v1/missions', 'DELETE /api/v1/jobs', 'DELETE /api/v1/fields',
+    'DELETE /api/v1/properties', 'DELETE /api/v1/clients',
+  ]);
+  expect(calls.filter((entry) => entry.startsWith('GET'))).toHaveLength(5);
+});
+
+test('treats already archived records as idempotent and reports safe cleanup diagnostics', async () => {
+  const events: string[] = [];
+  const request = {
+    delete: async () => response(404, 'already-archived-correlation'),
+    get: async () => response(404),
+  } as any;
+
+  await archiveAcceptanceChain(request, {
+    client: { id: '00000000-0000-0000-0000-000000000099', rowVersion: 1 },
+  }, { log: (event) => events.push(event) });
+
+  expect(events.join('\n')).toContain('resource=clients');
+  expect(events.join('\n')).toContain('status=404');
+  expect(events.join('\n')).toContain('correlation=already-archived-correlation');
+  expect(events.join('\n')).not.toContain('00000000-0000-0000-0000-000000000099');
+});
+
+test('distinguishes a bounded cleanup timeout from an API rejection', async () => {
+  const request = {
+    delete: async () => { throw new Error('apiRequestContext.delete: Timeout 15000ms exceeded.'); },
+  } as any;
+
+  await expect(archiveAcceptanceChain(request, {
+    client: { id: '00000000-0000-0000-0000-000000000099', rowVersion: 1 },
+  }, { log: () => undefined })).rejects.toThrow('CLEANUP_TIMEOUT resource=clients');
 });
