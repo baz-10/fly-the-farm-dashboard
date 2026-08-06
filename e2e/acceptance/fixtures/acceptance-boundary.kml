@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+  <Document>
+    <name>SC ACCEPTANCE — browser boundary</name>
+    <Placemark>
+      <name>SC ACCEPTANCE — test field</name>
+      <Polygon>
+        <outerBoundaryIs>
+          <LinearRing>
+            <coordinates>
+              153.0200,-27.4700,0 153.0220,-27.4700,0 153.0220,-27.4720,0 153.0200,-27.4720,0 153.0200,-27.4700,0
+            </coordinates>
+          </LinearRing>
+        </outerBoundaryIs>
+      </Polygon>
+    </Placemark>
+  </Document>
+</kml>
