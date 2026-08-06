@@ -20,7 +20,11 @@ export default defineConfig({
   },
   projects: [
     { name: 'environment', testMatch: /environment\.spec\.ts/ },
-    { name: 'auth', testMatch: /auth\.setup\.ts/ },
+    {
+      name: 'auth',
+      testMatch: /auth\.setup\.ts/,
+      use: { trace: 'off', screenshot: 'off', video: 'off' },
+    },
     {
       name: 'chromium',
       use: { ...devices['Desktop Chrome'], storageState: 'test-results/.auth/organisation.json' },

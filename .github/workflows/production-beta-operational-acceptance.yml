@@ -1,0 +1,64 @@
+name: Production Beta Operational Acceptance
+
+on:
+  workflow_dispatch:
+  repository_dispatch:
+    types: [production-beta-deployed]
+  schedule:
+    - cron: '17 17 * * *'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-beta-operational-acceptance
+  cancel-in-progress: false
+
+jobs:
+  operational-acceptance:
+    name: Client to Mission operational acceptance
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: production-beta-acceptance
+    env:
+      CI: 'true'
+      E2E_BASE_URL: https://spray-command-production-beta.vercel.app
+      E2E_ORGANISATION_EMAIL: ${{ secrets.E2E_ORGANISATION_EMAIL }}
+      E2E_ORGANISATION_PASSWORD: ${{ secrets.E2E_ORGANISATION_PASSWORD }}
+
+    steps:
+      - name: Check out accepted source
+        uses: actions/checkout@v4
+
+      - name: Use Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Install isolated Chromium runtime
+        run: npx playwright install --with-deps chromium
+
+      - name: Protect acceptance credentials in runner output
+        shell: bash
+        run: |
+          set +x
+          echo "::add-mask::$E2E_ORGANISATION_EMAIL"
+          echo "::add-mask::$E2E_ORGANISATION_PASSWORD"
+
+      - name: Run Production Beta operational acceptance
+        run: npm run test:e2e
+
+      - name: Retain non-secret failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-beta-operational-acceptance-failure
+          path: |
+            test-results/playwright-report
+            test-results/playwright-artifacts
+          if-no-files-found: ignore
+          retention-days: 7
