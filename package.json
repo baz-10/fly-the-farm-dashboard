@@ -42,6 +42,7 @@
     "test": "react-scripts test",
     "verify:organisation-branding-reports": "node scripts/verifyOrganisationBrandingReportsPostgres.mjs",
     "verify:platform-support": "node scripts/verifyPlatformIdentitySupportPostgres.mjs",
+    "verify:production-beta-acceptance-identity": "node scripts/verifyProductionBetaAcceptanceIdentity.mjs",
     "test:e2e": "playwright test",
     "eject": "react-scripts eject"
   },
