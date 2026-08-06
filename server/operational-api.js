@@ -12,6 +12,7 @@ const MAX_IMPORT_SOURCE_BYTES = 3 * 1024 * 1024;
 const MAX_IMPORT_BODY_BYTES = Math.ceil(MAX_IMPORT_SOURCE_BYTES * 1.4);
 const MAX_PAGE_SIZE = 100;
 const AUSTRALIAN_STATES = new Set(['NSW', 'VIC', 'QLD', 'SA', 'WA', 'TAS', 'NT', 'ACT']);
+const ACCEPTANCE_PREFIX = 'SC ACCEPTANCE —';
 
 const SCHEMAS = {
   operating_locations: { required: ['name'], fields: { name: 'name', address: 'address', timezone: 'timezone' } },
@@ -72,6 +73,18 @@ function hasPermission(context, resource, action) {
 
 function assertPermission(context, resource, action) {
   if (!hasPermission(context, resource, action)) throw apiError(403, 'FORBIDDEN', 'You do not have permission for this operation.');
+}
+
+function isAcceptanceActor(context) {
+  return Array.isArray(context.roles) && context.roles.includes('production_beta_acceptance');
+}
+
+function assertAcceptanceCreateScope(context, resource, input) {
+  if (!isAcceptanceActor(context)) return;
+  const label = resource === 'jobs' ? input.scope : resource === 'missions' ? input.title : input.name;
+  if (typeof label !== 'string' || !label.startsWith(ACCEPTANCE_PREFIX)) {
+    throw apiError(403, 'ACCEPTANCE_RECORD_SCOPE_REQUIRED', 'The acceptance role may create only controlled acceptance records.');
+  }
 }
 
 function assertDelegatedSupportWrite(context) {
@@ -683,6 +696,7 @@ function createOperationalHandler(resource, dependencies = {}) {
       if (req.method === 'POST') {
         assertPermission(context, resource, 'create');
         const { data, merged } = mapInput(resource, body);
+        assertAcceptanceCreateScope(context, resource, merged);
         if (['missions', 'aircraft', 'equipment-kits'].includes(resource)) assertLocationAccess(context, merged.operatingLocationId, resource === 'missions' ? 'mission' : resource === 'aircraft' ? 'aircraft' : 'equipment kit');
         await assertRelationships(repository, resource, context, merged);
         const result = context.actorType === 'PLATFORM_SUPPORT' ? await repository.createDelegated(resource, context, data) : await repository.create(resource, context, data);
@@ -713,6 +727,9 @@ function createOperationalHandler(resource, dependencies = {}) {
         return res.status(200).json({ data: mapDatabaseRecord(resource, result.record) });
       }
       assertPermission(context, resource, 'archive');
+      if (isAcceptanceActor(context) && !await repository.isAcceptanceRecordOwnedByActor(resource, context, id)) {
+        throw apiError(403, 'ACCEPTANCE_ARCHIVE_SCOPE_FORBIDDEN', 'The acceptance role may archive only records it created.');
+      }
       if (['missions', 'aircraft', 'equipment-kits'].includes(resource)) {
         const existing = await repository.get(resource, context, id);
         if (!existing || existing.archived_at || !hasAssignedLocationReadAccess(resource, context, existing)) {

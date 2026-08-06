@@ -255,6 +255,13 @@ class OperationalRepository {
     return Array.isArray(rows) && Boolean(rows[0]);
   }
 
+  async isAcceptanceRecordOwnedByActor(resource, context, id) {
+    const rows = await supabaseRequest(`rest/v1/audit_events?${tenantFilter(context)}&actor_internal_user_id=eq.${encodeURIComponent(context.internalUser.id)}&event_type=eq.${encodeURIComponent(`${resource}.create`)}&entity_type=eq.${encodeURIComponent(resource)}&entity_id=eq.${encodeURIComponent(id)}&select=id&limit=1`, {
+      publicMessage: 'Acceptance record ownership could not be verified.',
+    });
+    return Array.isArray(rows) && Boolean(rows[0]);
+  }
+
   async create(resource, context, data) {
     return this.write('create', resource, context, null, null, data);
   }

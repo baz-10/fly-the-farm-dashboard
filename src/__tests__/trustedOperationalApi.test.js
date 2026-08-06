@@ -369,6 +369,49 @@ describe('trusted organisation operational API', () => {
     expect(repository.archive).not.toHaveBeenCalled();
   });
 
+  test('acceptance role may create only controlled acceptance records', async () => {
+    const repository = { create: jest.fn() };
+    const res = createResponse();
+    await handlerFor('clients', repository, context({
+      roles: ['production_beta_acceptance'], permissions: ['clients.create'],
+    }))(request('POST', { name: 'Genuine Fly The Farm Client' }), res);
+
+    expect(res.statusCode).toBe(403);
+    expect(res.body.error.code).toBe('ACCEPTANCE_RECORD_SCOPE_REQUIRED');
+    expect(repository.create).not.toHaveBeenCalled();
+  });
+
+  test('acceptance role cannot archive a record created by another actor', async () => {
+    const repository = {
+      isAcceptanceRecordOwnedByActor: jest.fn().mockResolvedValue(false),
+      hasActiveDependencies: jest.fn(), archive: jest.fn(),
+    };
+    const res = createResponse();
+    await handlerFor('clients', repository, context({
+      roles: ['production_beta_acceptance'], permissions: ['clients.archive'],
+    }))(request('DELETE', { expectedVersion: 1 }, { id: '33333333-3333-4333-8333-333333333333' }), res);
+
+    expect(res.statusCode).toBe(403);
+    expect(res.body.error.code).toBe('ACCEPTANCE_ARCHIVE_SCOPE_FORBIDDEN');
+    expect(repository.hasActiveDependencies).not.toHaveBeenCalled();
+    expect(repository.archive).not.toHaveBeenCalled();
+  });
+
+  test('acceptance role archives its own controlled record through normal guards', async () => {
+    const repository = {
+      isAcceptanceRecordOwnedByActor: jest.fn().mockResolvedValue(true),
+      hasActiveDependencies: jest.fn().mockResolvedValue(false),
+      archive: jest.fn().mockResolvedValue({ record: { id: '33333333-3333-4333-8333-333333333333', name: 'SC ACCEPTANCE — old', row_version: 2 } }),
+    };
+    const res = createResponse();
+    const acceptanceContext = context({ roles: ['production_beta_acceptance'], permissions: ['clients.archive'] });
+    await handlerFor('clients', repository, acceptanceContext)(request('DELETE', { expectedVersion: 1 }, { id: '33333333-3333-4333-8333-333333333333' }), res);
+
+    expect(res.statusCode).toBe(200);
+    expect(repository.isAcceptanceRecordOwnedByActor).toHaveBeenCalledWith('clients', acceptanceContext, '33333333-3333-4333-8333-333333333333');
+    expect(repository.archive).toHaveBeenCalled();
+  });
+
   test('rejects authorised mission lifecycle states during planning writes', async () => {
     const repository = { create: jest.fn() };
     const res = createResponse();
