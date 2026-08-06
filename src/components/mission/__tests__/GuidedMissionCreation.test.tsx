@@ -5,6 +5,7 @@ import GuidedMissionCreation from '../GuidedMissionCreation';
 
 const mockCreateClient = jest.fn();
 const mockCreateProperty = jest.fn();
+const mockUpdateProperty = jest.fn();
 const mockCreateField = jest.fn();
 const mockCreateFieldBoundaryVersion = jest.fn();
 const mockCreateJob = jest.fn();
@@ -12,9 +13,9 @@ const mockCreateMission = jest.fn();
 const mockNavigate = jest.fn();
 
 jest.mock('../../../contexts/OperationalDataContext', () => ({ useOperationalData: () => ({
-  clients: [], properties: [], fields: [], jobs: [], missions: [],
+  clients: [], properties: [{ id: 'property-1', clientId: 'client-1', name: 'New Property', address: '1 Queen Street', lat: -27.4698, lng: 153.0251 }], fields: [], jobs: [], missions: [],
   operatingLocations: [{ id: 'loc-1', name: 'Fly The Farm Base' }],
-  saving: false, createClient: mockCreateClient, createProperty: mockCreateProperty, createField: mockCreateField, createFieldBoundaryVersion: mockCreateFieldBoundaryVersion, createJob: mockCreateJob, createMission: mockCreateMission,
+  saving: false, createClient: mockCreateClient, createProperty: mockCreateProperty, updateProperty: mockUpdateProperty, createField: mockCreateField, createFieldBoundaryVersion: mockCreateFieldBoundaryVersion, createJob: mockCreateJob, createMission: mockCreateMission,
 }) }));
 jest.mock('../../../contexts/AuthContext', () => ({ useAuth: () => ({ user: { id: 'user-1' } }) }));
 jest.mock('react-router-dom', () => ({ useNavigate: () => mockNavigate, useSearchParams: () => [new URLSearchParams()] }), { virtual: true });
@@ -164,6 +165,7 @@ test('creates the authoritative parent chain and Draft without leaving the workf
 
   expect(mockCreateClient).toHaveBeenCalledWith(expect.objectContaining({ name: 'New Client' }));
   expect(mockCreateProperty).toHaveBeenCalledWith(expect.objectContaining({ clientId: 'client-1', address: '1 Queen Street', locationConfirmedAt: expect.any(String) }));
+  expect(mockUpdateProperty).not.toHaveBeenCalled();
   expect(mockCreateFieldBoundaryVersion).toHaveBeenCalledWith('field-1', expect.arrayContaining([[-27, 151]]));
   expect(mockCreateJob).toHaveBeenCalledWith(expect.objectContaining({ clientId: 'client-1', propertyId: 'property-1', fieldIds: ['field-1'] }));
   expect(mockCreateMission).toHaveBeenCalledWith(expect.objectContaining({ jobId: 'job-1', status: 'Planning' }));
