@@ -17,7 +17,9 @@ describe('Production Beta operational acceptance execution profile', () => {
     expect(workflow).toContain('E2E_ORGANISATION_PASSWORD: ${{ secrets.E2E_ORGANISATION_PASSWORD }}');
     expect(workflow).toContain('::add-mask::$E2E_ORGANISATION_EMAIL');
     expect(workflow).toContain('::add-mask::$E2E_ORGANISATION_PASSWORD');
-    expect(workflow).toContain('npm run test:e2e');
+    expect(workflow).toContain('npx playwright test --project=environment');
+    expect(workflow).toContain('npx playwright test --project=auth');
+    expect(workflow).toContain('npx playwright test --project=chromium --no-deps');
     expect(workflow).toContain('if-no-files-found: ignore');
     expect(workflow).toContain('cancel-in-progress: false');
 
@@ -33,5 +35,16 @@ describe('Production Beta operational acceptance execution profile', () => {
     expect(config).toMatch(/name: 'auth'[\s\S]*trace: 'off'/);
     expect(config).toMatch(/name: 'auth'[\s\S]*screenshot: 'off'/);
     expect(config).toMatch(/name: 'auth'[\s\S]*video: 'off'/);
+  });
+
+  test('proves authentication before starting the operational workflow', () => {
+    const workflow = fs.readFileSync(workflowPath, 'utf8');
+    const environmentIndex = workflow.indexOf('npx playwright test --project=environment');
+    const authenticationIndex = workflow.indexOf('npx playwright test --project=auth');
+    const operationalIndex = workflow.indexOf('npx playwright test --project=chromium --no-deps');
+
+    expect(environmentIndex).toBeGreaterThan(-1);
+    expect(authenticationIndex).toBeGreaterThan(environmentIndex);
+    expect(operationalIndex).toBeGreaterThan(authenticationIndex);
   });
 });

@@ -46,11 +46,20 @@ jobs:
         shell: bash
         run: |
           set +x
-          echo "::add-mask::$E2E_ORGANISATION_EMAIL"
-          echo "::add-mask::$E2E_ORGANISATION_PASSWORD"
+          if [[ -n "$E2E_ORGANISATION_EMAIL" ]]; then echo "::add-mask::$E2E_ORGANISATION_EMAIL"; fi
+          if [[ -n "$E2E_ORGANISATION_PASSWORD" ]]; then echo "::add-mask::$E2E_ORGANISATION_PASSWORD"; fi
+          printf 'Acceptance secrets present: email=%s password=%s\n' \
+            "$([[ -n "$E2E_ORGANISATION_EMAIL" ]] && echo true || echo false)" \
+            "$([[ -n "$E2E_ORGANISATION_PASSWORD" ]] && echo true || echo false)"
+
+      - name: Validate acceptance environment
+        run: npx playwright test --project=environment
+
+      - name: Prove Organisation authentication
+        run: npx playwright test --project=auth
 
       - name: Run Production Beta operational acceptance
-        run: npm run test:e2e
+        run: npx playwright test --project=chromium --no-deps
 
       - name: Retain non-secret failure diagnostics
         if: failure()
