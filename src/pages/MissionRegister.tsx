@@ -6,7 +6,7 @@ import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import FlightTakeoffIcon from '@mui/icons-material/FlightTakeoff';
 import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 import SearchIcon from '@mui/icons-material/Search';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useMission } from '../contexts/MissionContext';
 import { useOperationalData } from '../contexts/OperationalDataContext';
 import { MissionRecord } from '../types/mission';
@@ -82,13 +82,16 @@ export default function MissionRegister() {
 
 function AuthoritativeMissionRegister() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const operational = useOperationalData();
   const [search, setSearch] = React.useState('');
   const [setupDrafts,setSetupDrafts]=React.useState<MissionSetupDraft[]>([]);
   const draftsApi=React.useMemo(()=>createMissionSetupDraftsApi(),[]);
   React.useEffect(()=>{void draftsApi.list().then(setSetupDrafts).catch(()=>setSetupDrafts([]));},[draftsApi]);
   const normalizedSearch = search.trim().toLowerCase();
-  const missions = operational.missions.filter((mission) => !normalizedSearch || [
+  const selectedJobId = searchParams.get('jobId');
+  const selectedJob = selectedJobId ? operational.jobs.find((job) => job.id === selectedJobId) : undefined;
+  const missions = operational.missions.filter((mission) => !selectedJobId || mission.jobId === selectedJobId).filter((mission) => !normalizedSearch || [
     mission.title, mission.missionNumber, mission.description,
     operational.jobs.find((job) => job.id === mission.jobId)?.reference || '',
     operational.operatingLocations.find((location) => location.id === mission.operatingLocationId)?.name || '',
@@ -142,6 +145,7 @@ function AuthoritativeMissionRegister() {
       <Stack direction={{ xs: 'column', sm: 'row' }} justifyContent="space-between" gap={2} sx={{ mb: 3 }}>
         <Box>
           <Stack direction="row" spacing={1.25} alignItems="center"><FlightTakeoffIcon color="primary" /><Typography variant="h4" sx={{ fontWeight: 900, letterSpacing: '-0.035em' }}>Missions</Typography></Stack>
+          {selectedJob && <Typography fontWeight={800} color="primary.dark" sx={{ mt: 0.5 }}>Missions for {selectedJob.reference}</Typography>}
           <Typography color="text.secondary" sx={{ mt: 0.5 }}>Authoritative Planning missions. Operational readiness and authorisation are not connected.</Typography>
         </Box>
         <Button variant="contained" startIcon={<AddIcon />} onClick={() => navigate('/missions/new')} sx={{ alignSelf: { xs: 'stretch', sm: 'center' } }}>New Mission</Button>

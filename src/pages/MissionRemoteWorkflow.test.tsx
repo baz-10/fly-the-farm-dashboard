@@ -146,6 +146,18 @@ describe('remote authoritative mission workflow', () => {
     expect(screen.queryByText(/No Planning missions/i)).not.toBeInTheDocument();
   });
 
+  test('filters the authoritative Mission register to the Job selected from Jobs', () => {
+    mockSearch = 'jobId=job-1';
+    mockOperational = operational({
+      jobs: [job, { ...job, id: 'job-2', reference: 'JOB-99' }],
+      missions: [mission, { ...mission, id: 'mission-2', jobId: 'job-2', missionNumber: 'MSN-099', title: 'Other Job Mission' }],
+    });
+    render(<MissionRegister />);
+    expect(screen.getByText('North block spray')).toBeVisible();
+    expect(screen.queryByText('Other Job Mission')).not.toBeInTheDocument();
+    expect(screen.getByText('Missions for JOB-42')).toBeVisible();
+  });
+
   test('restores the approved Mission Planner while accurately gating incomplete downstream capabilities', () => {
     mockParams = { missionId: 'mission-1' };
     render(<MissionPlanning />);

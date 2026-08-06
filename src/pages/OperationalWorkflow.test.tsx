@@ -26,6 +26,12 @@ const job = {
   scope: 'Spray lantana', status: 'scheduled', notes: 'Morning access', requestedDate: '2026-08-08', scheduledDate: '2026-08-10',
   rowVersion: 3, createdAt: '2026-08-01T00:00:00Z', updatedAt: '2026-08-02T00:00:00Z',
 };
+const mission = (overrides: Record<string, unknown> = {}) => ({
+  id: 'mission-1', jobId: 'job-1', operatingLocationId: 'location-1', missionNumber: 'FTF-M-001',
+  title: 'North Paddock Mission', description: '', status: 'Planning', scheduledStartAt: '2026-08-10T09:00:00Z',
+  aircraftIds: [], equipmentKitIds: [], rowVersion: 1, createdAt: '2026-08-01T00:00:00Z', updatedAt: '2026-08-02T00:00:00Z',
+  ...overrides,
+});
 
 let mockOperational: any;
 let mockParams: Record<string, string> = {};
@@ -251,6 +257,30 @@ describe('authoritative client/property/field workflow screens', () => {
     route('/jobs?view=jobs', <ClientList />);
     fireEvent.click(screen.getByRole('button', { name: 'Open JOB-42' }));
     expect(mockNavigate).toHaveBeenCalledWith('/jobs/client/client-1/property/property-1/field/field-1/job/job-1');
+  });
+
+  test('creates a Mission directly from a Job with no Missions using inherited context', () => {
+    mockSearchParams = new URLSearchParams('view=jobs');
+    route('/jobs?view=jobs', <ClientList />);
+    fireEvent.click(screen.getByRole('button', { name: 'Create Mission for JOB-42' }));
+    expect(mockNavigate).toHaveBeenCalledWith('/jobs/client/client-1/property/property-1/field/field-1/job/job-1/new-mission');
+  });
+
+  test('continues the single authoritative Draft Mission directly', () => {
+    mockOperational = baseOperational({ missions: [mission()] });
+    mockSearchParams = new URLSearchParams('view=jobs');
+    route('/jobs?view=jobs', <ClientList />);
+    expect(screen.getByText('1 Draft Mission')).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Continue Mission for JOB-42' }));
+    expect(mockNavigate).toHaveBeenCalledWith('/missions/mission-1');
+  });
+
+  test('opens the Mission register filtered to a Job when multiple Missions exist', () => {
+    mockOperational = baseOperational({ missions: [mission(), mission({ id: 'mission-2', status: 'Completed' })] });
+    mockSearchParams = new URLSearchParams('view=jobs');
+    route('/jobs?view=jobs', <ClientList />);
+    fireEvent.click(screen.getByRole('button', { name: 'Open Missions for JOB-42' }));
+    expect(mockNavigate).toHaveBeenCalledWith('/missions?jobId=job-1');
   });
 
   test('starts Job creation from inherited Client, Property and Field context', async () => {

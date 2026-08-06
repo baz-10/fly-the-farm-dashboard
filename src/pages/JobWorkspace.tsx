@@ -11,7 +11,9 @@ import CalendarTodayIcon from '@mui/icons-material/CalendarToday';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import HistoryIcon from '@mui/icons-material/History';
 import UploadFileIcon from '@mui/icons-material/UploadFile';
+import FlightTakeoffIcon from '@mui/icons-material/FlightTakeoff';
 import { useOperationalData } from '../contexts/OperationalDataContext';
+import { deriveJobMissionAction } from '../utils/jobMissionAction';
 
 type JobStart = { clientId: string; propertyId: string; fieldId: string };
 const emptyStart = (): JobStart => ({ clientId: '', propertyId: '', fieldId: '' });
@@ -45,9 +47,10 @@ export default function JobWorkspace() {
       const property = propertyById.get(job.propertyId);
       const fields = job.fieldIds.map((id) => fieldById.get(id)).filter(Boolean);
       const missionCount = operational.missions.filter((mission) => mission.jobId === job.id).length;
+      const missionAction = deriveJobMissionAction(job.id, operational.missions);
       const searchable = [job.reference, job.scope, job.status, job.notes, client?.name, property?.name,
         ...fields.map((field) => field?.name)].filter(Boolean).join(' ').toLowerCase();
-      return { job, client, property, fields, missionCount, searchable };
+      return { job, client, property, fields, missionCount, missionAction, searchable };
     }), [clientById, fieldById, operational.jobs, operational.missions, propertyById]);
   const query = search.trim().toLowerCase();
   const filtered = query ? rows.filter((row) => row.searchable.includes(query)) : rows;
@@ -96,9 +99,19 @@ export default function JobWorkspace() {
     </Box>}
 
     <Grid container spacing={2} className="ftf-animate-in-delay-1">
-      {filtered.map(({ job, client, property, fields, missionCount }) => {
+      {filtered.map(({ job, client, property, fields, missionCount, missionAction }) => {
         const firstField = fields[0];
         const routeReady = Boolean(client && property && firstField);
+        const openMissionAction = () => {
+          if (!routeReady) return;
+          if (missionAction.destination === 'create') {
+            navigate(`/jobs/client/${job.clientId}/property/${job.propertyId}/field/${firstField?.id}/job/${job.id}/new-mission`);
+          } else if (missionAction.destination === 'mission' && missionAction.missionId) {
+            navigate(`/missions/${missionAction.missionId}`);
+          } else {
+            navigate(`/missions?jobId=${job.id}`);
+          }
+        };
         return <Grid size={{ xs: 12, md: 6 }} key={job.id}>
           <Card elevation={0} sx={{ height: '100%', border: `1.5px solid ${alpha(theme.palette.primary.main, 0.1)}`, borderRadius: '14px' }}>
             <CardContent sx={{ p: { xs: 2.25, sm: 2.75 }, pb: 1.25 }}>
@@ -116,10 +129,12 @@ export default function JobWorkspace() {
               </Stack>
               <Stack direction="row" spacing={0.75} alignItems="center" sx={{ mt: 1.75 }}><CalendarTodayIcon sx={{ fontSize: 17, color: 'text.disabled' }} /><Typography variant="body2" color="text.secondary">{job.scheduledDate ? `Scheduled ${formatDate(job.scheduledDate)}` : job.requestedDate ? `Requested ${formatDate(job.requestedDate)}` : formatDate(job.createdAt)}</Typography></Stack>
               <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap sx={{ mt: 2 }}><Chip size="small" label={`${fields.length} ${fields.length === 1 ? 'Field' : 'Fields'}`} /><Chip size="small" label={`${missionCount} ${missionCount === 1 ? 'Mission' : 'Missions'}`} variant="outlined" /></Stack>
+              <Typography variant="body2" fontWeight={800} color="primary.dark" sx={{ mt: 1.5 }}>{missionAction.summary}</Typography>
               {!routeReady && <Alert severity="warning" sx={{ mt: 2 }}>This Job's parent records are incomplete. Open it from its authoritative Field after the relationship is restored.</Alert>}
             </CardContent>
-            <CardActions sx={{ px: { xs: 2.25, sm: 2.75 }, pb: 2.25, justifyContent: 'flex-end' }}>
+            <CardActions sx={{ px: { xs: 2.25, sm: 2.75 }, pb: 2.25, justifyContent: 'flex-end', flexWrap: 'wrap', gap: 0.5 }}>
               <Button endIcon={<ArrowForwardIcon />} aria-label={`Open ${job.reference}`} disabled={!routeReady} onClick={() => navigate(`/jobs/client/${job.clientId}/property/${job.propertyId}/field/${firstField?.id}/job/${job.id}`)} sx={{ fontWeight: 800 }}>Open Job</Button>
+              <Button variant="contained" startIcon={<FlightTakeoffIcon />} aria-label={`${missionAction.label} for ${job.reference}`} disabled={!routeReady} onClick={openMissionAction} sx={{ fontWeight: 800 }}>{missionAction.label}</Button>
             </CardActions>
           </Card>
         </Grid>;
