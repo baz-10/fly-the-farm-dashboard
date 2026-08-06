@@ -1,5 +1,5 @@
 import { expect, test as setup } from '@playwright/test';
-import { diagnoseOrganisationLogin, formatOrganisationLoginFailure, summariseOrganisationAuthority } from './authDiagnostics';
+import { diagnoseOrganisationLogin, formatOrganisationLoginFailure, summariseOrganisationAuthority, validateAcceptanceAuthority } from './authDiagnostics';
 import { acceptanceEnvironment } from './environment';
 
 const authFile = 'test-results/.auth/organisation.json';
@@ -57,7 +57,9 @@ setup('authenticate organisation operator', async ({ page }) => {
     throw new Error(formatOrganisationLoginFailure(diagnosis));
   }
 
-  console.log(JSON.stringify({ acceptanceAuthority: summariseOrganisationAuthority(session.data || {}) }));
+  const authority = validateAcceptanceAuthority(session.data || {});
+  console.log(JSON.stringify({ acceptanceAuthority: summariseOrganisationAuthority(session.data || {}), authorityGate: authority.code }));
+  if (authority.code !== 'ACCEPTANCE_AUTHORITY_VALID') throw new Error(`Organisation acceptance authority failed: ${authority.code}`);
   expect(session.data?.operatingLocationIds?.length).toBeGreaterThan(0);
   await page.context().storageState({ path: authFile });
 });

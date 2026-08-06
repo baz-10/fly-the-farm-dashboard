@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { ACCEPTANCE_PREFIX, acceptanceEnvironment } from './environment';
-import { diagnoseOrganisationLogin, formatOrganisationLoginFailure, summariseOrganisationAuthority } from './authDiagnostics';
+import { diagnoseOrganisationLogin, formatOrganisationLoginFailure, summariseOrganisationAuthority, validateAcceptanceAuthority } from './authDiagnostics';
 import { archiveAcceptanceChain, cleanupAcceptanceRecordsByPrefix, cleanupOrder } from './fixtures/acceptanceRecords';
 
 test('uses an explicit HTTPS target and the controlled acceptance prefix', () => {
@@ -122,6 +122,23 @@ test('reports acceptance role and only approved archive permission booleans with
       missions: true,
     },
   });
+});
+
+test('acceptance authority gate rejects administrator, Platform and unexpected permissions', () => {
+  const required = [
+    'operating_locations.read',
+    'clients.read', 'clients.create', 'clients.archive',
+    'properties.read', 'properties.create', 'properties.archive',
+    'fields.read', 'fields.create', 'fields.archive',
+    'field_boundary_versions.read', 'field_boundary_versions.create',
+    'jobs.read', 'jobs.create', 'jobs.archive',
+    'missions.read', 'missions.create', 'missions.archive',
+  ];
+  expect(validateAcceptanceAuthority({ roles: ['admin'], permissions: required }).code).toBe('ACCEPTANCE_ROLE_MISMATCH');
+  expect(validateAcceptanceAuthority({ roles: ['production_beta_acceptance'], permissions: required.filter((code) => code !== 'clients.archive') }).code).toBe('ACCEPTANCE_PERMISSION_MISSING');
+  expect(validateAcceptanceAuthority({ roles: ['production_beta_acceptance'], permissions: [...required, 'platform.super_admin'] }).code).toBe('ACCEPTANCE_PLATFORM_PERMISSION_PRESENT');
+  expect(validateAcceptanceAuthority({ roles: ['production_beta_acceptance'], permissions: [...required, 'organisation.branding.manage'] }).code).toBe('ACCEPTANCE_PERMISSION_UNEXPECTED');
+  expect(validateAcceptanceAuthority({ roles: ['production_beta_acceptance'], permissions: required }).code).toBe('ACCEPTANCE_AUTHORITY_VALID');
 });
 
 function response(status: number, correlationId = 'cleanup-correlation') {

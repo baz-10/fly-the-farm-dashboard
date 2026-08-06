@@ -25,6 +25,34 @@ export interface OrganisationLoginDiagnosis {
 }
 
 const archiveResources = ['clients', 'properties', 'fields', 'jobs', 'missions'] as const;
+const requiredAcceptancePermissions = [
+  'operating_locations.read',
+  'clients.read', 'clients.create', 'clients.archive',
+  'properties.read', 'properties.create', 'properties.archive',
+  'fields.read', 'fields.create', 'fields.archive',
+  'field_boundary_versions.read', 'field_boundary_versions.create',
+  'jobs.read', 'jobs.create', 'jobs.archive',
+  'missions.read', 'missions.create', 'missions.archive',
+] as const;
+
+export type AcceptanceAuthorityCode =
+  | 'ACCEPTANCE_AUTHORITY_VALID'
+  | 'ACCEPTANCE_ROLE_MISMATCH'
+  | 'ACCEPTANCE_PERMISSION_MISSING'
+  | 'ACCEPTANCE_PERMISSION_UNEXPECTED'
+  | 'ACCEPTANCE_PLATFORM_PERMISSION_PRESENT';
+
+export function validateAcceptanceAuthority(session: { roles?: unknown; permissions?: unknown }): { code: AcceptanceAuthorityCode } {
+  const roles = Array.isArray(session.roles) ? session.roles.filter((role): role is string => typeof role === 'string') : [];
+  if (roles.length !== 1 || roles[0] !== 'production_beta_acceptance') return { code: 'ACCEPTANCE_ROLE_MISMATCH' };
+  const permissions = new Set(Array.isArray(session.permissions)
+    ? session.permissions.filter((permission): permission is string => typeof permission === 'string')
+    : []);
+  if ([...permissions].some((permission) => permission.startsWith('platform.'))) return { code: 'ACCEPTANCE_PLATFORM_PERMISSION_PRESENT' };
+  if (requiredAcceptancePermissions.some((permission) => !permissions.has(permission))) return { code: 'ACCEPTANCE_PERMISSION_MISSING' };
+  if ([...permissions].some((permission) => !(requiredAcceptancePermissions as readonly string[]).includes(permission))) return { code: 'ACCEPTANCE_PERMISSION_UNEXPECTED' };
+  return { code: 'ACCEPTANCE_AUTHORITY_VALID' };
+}
 
 export function summariseOrganisationAuthority(session: {
   roles?: unknown;
