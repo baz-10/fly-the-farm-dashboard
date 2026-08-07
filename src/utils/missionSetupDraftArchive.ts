@@ -8,11 +8,14 @@ export async function archiveSetupDraftAfterMissionCreation(
   api: DraftArchiveApi,
   draft: DraftReference,
 ): Promise<void> {
-  try {
-    await api.archive(draft.id, draft.rowVersion);
-  } catch (error) {
-    if ((error as { code?: string })?.code !== 'VERSION_CONFLICT') throw error;
-    const current = await api.get(draft.id);
-    await api.archive(current.id, current.rowVersion);
+  let current = draft;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      await api.archive(current.id, current.rowVersion);
+      return;
+    } catch (error) {
+      if ((error as { code?: string })?.code !== 'VERSION_CONFLICT' || attempt === 2) throw error;
+      current = await api.get(draft.id);
+    }
   }
 }
