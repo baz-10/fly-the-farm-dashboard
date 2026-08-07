@@ -4,6 +4,10 @@ type DraftArchiveApi = {
   get: (id: string) => Promise<DraftReference>;
 };
 
+export function shouldPersistMissionSetupDraft(loading: boolean, finalizing: boolean): boolean {
+  return !loading && !finalizing;
+}
+
 export async function archiveSetupDraftAfterMissionCreation(
   api: DraftArchiveApi,
   draft: DraftReference,
