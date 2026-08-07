@@ -55,7 +55,10 @@ test('creates, persists, reopens, and archives the authoritative Client to Draft
 
     await page.getByRole('textbox', { name: 'Mission title' }).fill(label);
     await page.getByRole('button', { name: 'Create Draft Mission' }).click();
-    await expect(page).toHaveURL(/\/missions\/[0-9a-f-]+\?guided=1$/);
+    // Mission creation also retires the persisted setup Draft. Production cold
+    // starts and optimistic-concurrency reconciliation can legitimately span
+    // more than Playwright's default assertion timeout.
+    await expect(page).toHaveURL(/\/missions\/[0-9a-f-]+\?guided=1$/, { timeout: 45_000 });
     records.mission = await findAcceptanceRecord(page.request, 'missions', label);
 
     await page.reload();
