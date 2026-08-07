@@ -427,6 +427,30 @@ describe('authoritative client/property/field workflow screens', () => {
     expect(screen.getByText('Home Block')).toBeInTheDocument();
   });
 
+  test('creates a Property under its Client with confirmed location and operational details', async () => {
+    mockOperational.createProperty.mockResolvedValue({ ...property, id: 'property-new', name: 'The Gums - Tara' });
+    route('/jobs/client/client-1', <ClientDetail />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add Property' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Property Name' }), { target: { value: 'The Gums - Tara' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm adjusted location' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Lot / Plan Reference' }), { target: { value: 'Gums - Tara Branch Line' } });
+    fireEvent.change(screen.getByRole('textbox', { name: 'Notes' }), { target: { value: 'Access from the branch line.' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Add Property' }));
+
+    await waitFor(() => expect(mockOperational.createProperty).toHaveBeenCalledWith(expect.objectContaining({
+      clientId: 'client-1',
+      name: 'The Gums - Tara',
+      address: '1 Farm Road',
+      locality: 'Roma',
+      state: 'QLD',
+      lotPlan: 'Gums - Tara Branch Line',
+      notes: 'Access from the branch line.',
+      lat: -26.5701,
+      lng: 148.7901,
+    })));
+  });
+
   test('preserves the property to field detail path using authoritative records', () => {
     route('/jobs/client/client-1/property/property-1', <PropertyDetail />);
     expect(screen.getByRole('heading', { name: 'Home Block' })).toBeInTheDocument();

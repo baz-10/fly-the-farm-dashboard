@@ -129,10 +129,6 @@ export default function ClientDetail() {
 
   const handleSaveProperty = async () => {
     if (!propForm.name.trim()) return;
-    if (operational.mode === 'remote' && (propForm.locality.trim() || propForm.lotPlan.trim() || propForm.notes.trim() || propForm.lat !== undefined || propForm.lng !== undefined)) {
-      setActionError('Production Beta currently saves the property name, address, and state only. Remove town, lot/plan, notes, and map-pin details before saving.');
-      return;
-    }
     try {
       const property = await operational.createProperty({ ...propForm, clientId: client.id });
       setPropDialogOpen(false);
