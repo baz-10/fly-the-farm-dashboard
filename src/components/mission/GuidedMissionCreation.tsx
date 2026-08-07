@@ -48,7 +48,7 @@ export default function GuidedMissionCreation() {
   const choose=(id:string,next:number,setter:(id:string)=>void)=>{setter(id);setStep(next);setMode('select');setError('');};
   const selectPropertyAddress=(result:AddressResult)=>setProperty(value=>({...value,address:result.address,locality:result.locality,postcode:result.postcode,state:result.state,lat:result.lat,lng:result.lng,addressSource:result.coordinateSource==='MANUALLY_ADJUSTED'?'MANUAL':'GEOCODED',locationConfirmedAt:result.locationConfirmedAt}));
   const changePropertyAddress=(address:string)=>setProperty(value=>({...value,address,lat:undefined,lng:undefined,addressSource:'MANUAL',locationConfirmedAt:undefined}));
-  return <Box sx={{maxWidth:1200,mx:'auto'}}>
+  return <Box component="section" aria-label="Mission creation workspace" sx={{maxWidth:1200,mx:'auto'}}>
     <Stack spacing={1} sx={{mb:3}}><Typography component="h1" variant="h3" fontWeight={800} color="primary.dark">Create a Mission</Typography><Typography color="text.secondary">Follow each step. Spray Command will create and connect the authoritative records as you go.</Typography></Stack>
     {progress}<Stack direction="row" justifyContent="flex-end" alignItems="center" spacing={1}><Typography variant="body2" color="text.secondary">{draftStatus==='saving'?'Saving draft…':draftStatus==='saved'?'Draft saved':draftStatus==='error'?'Draft not saved':''}</Typography><Button variant="outlined" disabled={draftStatus==='saving'} onClick={()=>void saveDraft().then(()=>navigate('/missions'))}>Save and exit</Button></Stack>{error&&<Alert severity="error" sx={{my:2}}>{error}</Alert>}
     <Card variant="outlined" sx={{mt:2,borderRadius:3}}><CardContent sx={{p:{xs:2,md:4}}}>

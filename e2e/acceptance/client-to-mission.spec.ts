@@ -7,6 +7,7 @@ import {
   findAcceptanceRecord,
 } from './fixtures/acceptanceRecords';
 import { acceptanceEnvironment } from './environment';
+import { openMissionCreationWorkspace } from './fixtures/missionCreationWorkspace';
 
 test('creates, persists, reopens, and archives the authoritative Client to Draft Mission chain', async ({ browser, page }, testInfo) => {
   testInfo.setTimeout(180_000);
@@ -15,8 +16,7 @@ test('creates, persists, reopens, and archives the authoritative Client to Draft
   let workflowError: unknown;
 
   try {
-    await page.goto('/missions/new');
-    await expect(page.getByRole('heading', { name: 'Create a Mission' })).toBeVisible();
+    await openMissionCreationWorkspace(page);
 
     await page.getByRole('button', { name: 'Add new Client' }).click();
     await page.getByRole('textbox', { name: 'Client or business name' }).fill(label);

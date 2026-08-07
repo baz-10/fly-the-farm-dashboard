@@ -42,6 +42,7 @@ beforeEach(() => {
 
 test('shows the complete follow-the-bouncing-ball Mission journey', () => {
   render(<GuidedMissionCreation />);
+  expect(screen.getByRole('region', { name: 'Mission creation workspace' })).toBeInTheDocument();
   for (const label of ['1 Customer','2 Property','3 Field','4 Job','5 Mission','6 Map','7 Resources','8 Weather & Chemicals','9 JSA','10 Review']) {
     expect(screen.getByText(label)).toBeInTheDocument();
   }
