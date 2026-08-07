@@ -62,13 +62,13 @@ test('creates, persists, reopens, and archives the authoritative Client to Draft
     records.mission = await findAcceptanceRecord(page.request, 'missions', label);
 
     await page.reload();
-    await expect(page.getByText(label, { exact: true })).toBeVisible();
+    await expect(page.getByRole('heading', { name: label, exact: true })).toBeVisible({ timeout: 45_000 });
     await assertNoLegacyEntityPersistence(page);
 
     const secondContext = await browser.newContext({ storageState: 'test-results/.auth/organisation.json' });
     const secondPage = await secondContext.newPage();
     await secondPage.goto(`/missions/${records.mission.id}`);
-    await expect(secondPage.getByText(label, { exact: true })).toBeVisible();
+    await expect(secondPage.getByRole('heading', { name: label, exact: true })).toBeVisible({ timeout: 45_000 });
     await secondContext.close();
   } catch (error) {
     workflowError = error;
