@@ -90,6 +90,8 @@ jest.mock('./contexts/MissionContext', () => ({ MissionProvider: ({ children }: 
 jest.mock('./contexts/WorkPackContext', () => ({ WorkPackProvider: ({ children }: { children: React.ReactNode }) => <>{children}</> }));
 jest.mock('./pages/JobHistory', () => () => <div>Legacy browser job history</div>);
 jest.mock('./pages/SprayRecImport', () => () => <div>Legacy browser spray recommendation importer</div>);
+jest.mock('./pages/ReocComplianceWorkspace', () => () => <div>Dedicated ReOC workspace</div>);
+jest.mock('./pages/OperationsManualWorkspace', () => () => <div>Dedicated Operations Manual workspace</div>);
 
 describe('App', () => {
   afterEach(cleanup);
@@ -122,5 +124,15 @@ describe('App', () => {
     window.history.pushState({}, '', '/jobs/history');
     render(<App />);
     expect(screen.getByText('Legacy browser job history')).toBeInTheDocument();
+  });
+
+  test.each([
+    ['/compliance/reoc', 'Dedicated ReOC workspace'],
+    ['/compliance/operations-manual', 'Dedicated Operations Manual workspace'],
+  ])('connects the protected compliance evidence route %s', (path, expected) => {
+    mockOperationalMode = 'remote';
+    window.history.pushState({}, '', path);
+    render(<App />);
+    expect(screen.getByText(expected)).toBeInTheDocument();
   });
 });

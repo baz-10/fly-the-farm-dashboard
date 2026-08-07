@@ -29,7 +29,7 @@ const categoryReason=(key:string,status:string)=>{
 
 export default function CasaComplianceOverview(){
  const navigate=useNavigate();
- const api=React.useMemo(()=>createComplianceApi(),[]),[data,setData]=React.useState<any>(null),[error,setError]=React.useState(''),[message,setMessage]=React.useState('');
+ const api=React.useMemo(()=>createComplianceApi(),[]),[data,setData]=React.useState<any>(null),[error,setError]=React.useState('');
  const[calendarOpen,setCalendarOpen]=React.useState(false),[calendarView,setCalendarView]=React.useState('Next 90 days'),[recordType,setRecordType]=React.useState('ALL'),[issueDetails,setIssueDetails]=React.useState(false),[categoryDetails,setCategoryDetails]=React.useState<string|null>(null);
  const load=React.useCallback(()=>api.overview().then(setData).catch(e=>setError(e.message)),[api]);React.useEffect(()=>{void load()},[load]);
  if(error)return<Alert severity="error">{error}</Alert>;if(!data)return<Stack spacing={2}><Typography variant="h3">CASA Compliance</Typography><Skeleton height={220}/><Skeleton height={160}/></Stack>;
@@ -50,7 +50,6 @@ export default function CasaComplianceOverview(){
 
  return <Box sx={{maxWidth:1320,mx:'auto',pb:6}}>
   <Stack spacing={.75} sx={{mb:{xs:2.5,md:4}}}><Typography variant="overline" color="text.secondary" sx={{letterSpacing:1.6}}>CASA COMPLIANCE</Typography><Typography variant="h3" fontWeight={850} sx={{fontSize:{xs:'2rem',md:'2.75rem'}}}>Know what is current. Fix what is not.</Typography><Typography color="text.secondary" sx={{maxWidth:720}}>A clear view of the evidence Spray Command currently holds for your organisation.</Typography></Stack>
-  {message&&<Alert severity="success" sx={{mb:2}}>{message}</Alert>}
 
   <Card sx={{mb:3,border:'1px solid',borderColor:primaryBlocker?'error.light':'success.light',boxShadow:'0 14px 42px rgba(16,48,29,.08)',overflow:'hidden'}}><CardContent sx={{p:{xs:2.25,md:4},'&:last-child':{pb:{xs:2.25,md:4}}}}><Grid container spacing={{xs:3,md:5}} alignItems="stretch">
    <Grid size={{xs:12,md:4}}><Stack spacing={1.5}><Typography variant="overline" color="text.secondary">Compliance health</Typography><Stack direction="row" alignItems="baseline" spacing={1}><Typography variant="h2" fontWeight={900} sx={{fontSize:{xs:'4rem',md:'5.25rem'},lineHeight:.9}}>{health.percentage}%</Typography></Stack><Chip label={health.status==='CRITICAL'?'Critical attention required':health.status==='STRONG'?'Current':'Attention required'} color={health.status==='CRITICAL'?'error':health.status==='STRONG'?'success':'warning'} sx={{alignSelf:'flex-start',fontWeight:800}}/><LinearProgress variant="determinate" value={Math.max(0,Math.min(100,health.percentage||0))} sx={{height:8,borderRadius:8}}/><Typography variant="body2" color="text.secondary">Last updated {evaluatedLabel(health.evaluationTimestamp)}</Typography></Stack></Grid>

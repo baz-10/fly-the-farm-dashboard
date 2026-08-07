@@ -58,6 +58,8 @@ import PlatformProtectedRoute from './components/PlatformProtectedRoute';
 import PlatformShell from './components/PlatformShell';
 import PlatformAdmin from './pages/PlatformAdmin';
 import CasaComplianceOverview from './pages/CasaComplianceOverview';
+import ReocComplianceWorkspace from './pages/ReocComplianceWorkspace';
+import OperationsManualWorkspace from './pages/OperationsManualWorkspace';
 import ControlledChecklists from './pages/ControlledChecklists';
 import WeatherCentre from './pages/WeatherCentre';
 
@@ -142,6 +144,8 @@ function App() {
           <Route path="/weather" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><WeatherCentre /></ProtectedRoute>} />
           <Route path="/mission-planning" element={<ProtectedRoute allowedRoles={missionOperatorRoles}><MissionRouteRedirect /></ProtectedRoute>} />
           <Route path="/compliance" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><CasaComplianceOverview /></ProtectedRoute>} />
+          <Route path="/compliance/reoc" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><ReocComplianceWorkspace /></ProtectedRoute>} />
+          <Route path="/compliance/operations-manual" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><OperationsManualWorkspace /></ProtectedRoute>} />
           <Route path="/compliance/library" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><ComplianceMenu /></ProtectedRoute>} />
           <Route path="/compliance/checklists" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><ControlledChecklists /></ProtectedRoute>} />
           <Route path="/compliance/flight" element={<ProtectedRoute allowedRoles={['admin', 'contractor']}><ComplianceFlight /></ProtectedRoute>} />
