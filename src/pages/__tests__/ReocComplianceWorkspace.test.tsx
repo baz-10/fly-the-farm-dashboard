@@ -1,61 +1,10 @@
-import React from 'react';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
-import ReocComplianceWorkspace from '../ReocComplianceWorkspace';
-
-const mockNavigate = jest.fn();
-const mockOverview = jest.fn();
-const mockSaveInstrument = jest.fn();
-
-jest.mock('react-router-dom', () => ({ useNavigate: () => mockNavigate }), { virtual: true });
-jest.mock('../../services/complianceApi', () => ({
-  createComplianceApi: () => ({ overview: mockOverview, saveInstrument: mockSaveInstrument }),
-}));
-
-const missingOverview = { reoc: null };
-
-describe('ReocComplianceWorkspace', () => {
-  beforeEach(() => {
-    mockNavigate.mockReset();
-    mockOverview.mockReset().mockResolvedValue(missingOverview);
-    mockSaveInstrument.mockReset().mockResolvedValue({});
-  });
-
-  test('shows current ReOC status and returns to CASA Compliance', async () => {
-    render(<ReocComplianceWorkspace />);
-    expect(await screen.findByRole('heading', { name: 'ReOC certificate' })).toBeVisible();
-    expect(await screen.findByText('Evidence missing')).toBeVisible();
-    await userEvent.click(screen.getByRole('button', { name: 'Back to CASA Compliance' }));
-    expect(mockNavigate).toHaveBeenCalledWith('/compliance');
-  });
-
-  test('saves ReOC evidence and reloads the authoritative record', async () => {
-    render(<ReocComplianceWorkspace />);
-    await userEvent.type(await screen.findByRole('textbox', { name: /ReOC number/ }), 'CASA.REOC.123');
-    fireEvent.change(screen.getByLabelText(/Expiry date/), { target: { value: '2027-08-08' } });
-    const file = new File(['certificate'], 'reoc.pdf', { type: 'application/pdf' });
-    await userEvent.upload(screen.getByLabelText('Choose ReOC certificate'), file);
-    await userEvent.click(screen.getByRole('button', { name: 'Save ReOC certificate' }));
-
-    await waitFor(() => expect(mockSaveInstrument).toHaveBeenCalledWith(
-      expect.objectContaining({ instrumentType: 'REOC', instrumentNumber: 'CASA.REOC.123', expiryDate: '2027-08-08' }),
-      file,
-    ));
-    await waitFor(() => expect(mockOverview).toHaveBeenCalledTimes(2));
-    expect(screen.getByText('ReOC certificate saved.')).toBeVisible();
-  });
-
-  test('keeps entered evidence available when the authoritative save is rejected', async () => {
-    mockSaveInstrument.mockRejectedValue(new Error('ReOC evidence could not be stored.'));
-    render(<ReocComplianceWorkspace />);
-    await userEvent.type(await screen.findByRole('textbox', { name: /ReOC number/ }), 'CASA.REOC.999');
-    fireEvent.change(screen.getByLabelText(/Expiry date/), { target: { value: '2027-12-01' } });
-    const file = new File(['certificate'], 'current-reoc.pdf', { type: 'application/pdf' });
-    await userEvent.upload(screen.getByLabelText('Choose ReOC certificate'), file);
-    await userEvent.click(screen.getByRole('button', { name: 'Save ReOC certificate' }));
-
-    expect(await screen.findByText('ReOC evidence could not be stored.')).toBeVisible();
-    expect(screen.getByRole('textbox', { name: /ReOC number/ })).toHaveValue('CASA.REOC.999');
-    expect(screen.getByText('current-reoc.pdf')).toBeVisible();
-  });
+import React from'react';import{fireEvent,render,screen,waitFor}from'@testing-library/react';import userEvent from'@testing-library/user-event';import ReocComplianceWorkspace from'../ReocComplianceWorkspace';
+const mockNavigate=jest.fn(),mockRead=jest.fn(),mockUpload=jest.fn(),mockCreate=jest.fn();
+jest.mock('react-router-dom',()=>({useNavigate:()=>mockNavigate}),{virtual:true});
+jest.mock('../../services/complianceApi',()=>({createComplianceApi:()=>({readAuthorityRegister:mockRead,uploadAuthorityFiles:mockUpload,createAuthority:mockCreate})}));
+const register={authorityTypes:[{code:'REOC_CERTIFICATE',label:'ReOC certificate'},{code:'REOC_VARIATION',label:'ReOC variation'},{code:'INSTRUMENT',label:'Instrument'},{code:'SPECIAL_APPROVAL',label:'Special approval'},{code:'EXEMPTION',label:'Exemption'},{code:'OTHER_CASA_AUTHORITY',label:'Other CASA authority'}],authorities:[{id:'reoc-1',authority_type_code:'REOC_CERTIFICATE',instrument_number:'CASA.REOC.8867',expiry_date:'2028-11-30',status:'CURRENT',row_version:1,evidence:[{id:'e1',original_filename:'certificate.pdf'}]},{id:'approval-1',authority_type_code:'SPECIAL_APPROVAL',instrument_number:'CASA.APP.1',status:'CURRENT',row_version:1,evidence:[{id:'e2',original_filename:'approval.pdf'},{id:'e3',original_filename:'schedule.pdf'}]}]};
+describe('ReocComplianceWorkspace',()=>{beforeEach(()=>{mockNavigate.mockReset();mockRead.mockReset().mockResolvedValue(register);mockUpload.mockReset().mockResolvedValue([{uploadId:'u1'},{uploadId:'u2'}]);mockCreate.mockReset().mockResolvedValue({});});
+ test('shows the operating authority register and returns to compliance',async()=>{render(<ReocComplianceWorkspace/>);expect(await screen.findByRole('heading',{name:'ReOC and Operating Authority'})).toBeVisible();expect(await screen.findByText('CASA.REOC.8867')).toBeVisible();expect(screen.getByText('CASA.APP.1')).toBeVisible();expect(screen.getByText('2 files')).toBeVisible();await userEvent.click(screen.getByRole('button',{name:'Back to CASA Compliance'}));expect(mockNavigate).toHaveBeenCalledWith('/compliance');});
+ test('creates a special approval with multiple evidence files',async()=>{render(<ReocComplianceWorkspace/>);await userEvent.click(await screen.findByRole('button',{name:'Add instrument or special approval'}));fireEvent.mouseDown(screen.getByLabelText('Authority type'));await userEvent.click(screen.getByRole('option',{name:'Special approval'}));await userEvent.type(screen.getByRole('textbox',{name:'Approval number'}),'CASA.APP.9');const files=[new File(['one'],'approval.pdf',{type:'application/pdf'}),new File(['two'],'schedule.pdf',{type:'application/pdf'})];await userEvent.upload(screen.getByLabelText('Choose authority files'),files);expect(screen.getByText('approval.pdf')).toBeVisible();expect(screen.getByText('schedule.pdf')).toBeVisible();await userEvent.click(screen.getByRole('button',{name:'Save authority'}));await waitFor(()=>expect(mockUpload).toHaveBeenCalledWith(expect.arrayContaining([expect.objectContaining({file:files[0]}),expect.objectContaining({file:files[1]})]),expect.any(Function)));expect(mockCreate).toHaveBeenCalledWith(expect.objectContaining({authorityTypeCode:'SPECIAL_APPROVAL',authorityNumber:'CASA.APP.9'}),[{uploadId:'u1'},{uploadId:'u2'}]);expect(mockRead).toHaveBeenCalledTimes(2);});
+ test('preserves authority details and files after an upload failure',async()=>{mockUpload.mockRejectedValue(new Error('Upload verification failed.'));render(<ReocComplianceWorkspace/>);await userEvent.click(await screen.findByRole('button',{name:'Add ReOC certificate'}));await userEvent.type(screen.getByRole('textbox',{name:'ReOC number'}),'CASA.REOC.999');const file=new File(['certificate'],'current.pdf',{type:'application/pdf'});await userEvent.upload(screen.getByLabelText('Choose authority files'),file);await userEvent.click(screen.getByRole('button',{name:'Save authority'}));expect(await screen.findByText('Upload verification failed.')).toBeVisible();expect(screen.getByRole('textbox',{name:'ReOC number'})).toHaveValue('CASA.REOC.999');expect(screen.getByText('current.pdf')).toBeVisible();});
 });
