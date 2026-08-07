@@ -444,10 +444,13 @@ describe('authoritative client/property/field workflow screens', () => {
       address: '1 Farm Road',
       locality: 'Roma',
       state: 'QLD',
+      postcode: '4455',
       lotPlan: 'Gums - Tara Branch Line',
       notes: 'Access from the branch line.',
       lat: -26.5701,
       lng: 148.7901,
+      addressSource: 'MANUAL',
+      locationConfirmedAt: '2026-08-06T01:00:00.000Z',
     })));
   });
 

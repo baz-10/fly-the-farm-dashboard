@@ -63,6 +63,25 @@ describe('AddressAutocomplete', () => {
     expect(onInputChange).toHaveBeenCalledWith('1 Queen Street');
   });
 
+  test('uses the geocoded display label as the authoritative address for a town-level result', async () => {
+    const townResult = { ...apiResult, label: 'Tara, Queensland, 4421, Australia', address: '', locality: 'Tara', postcode: '4421', lat: -27.27693, lng: 150.456956 };
+    global.fetch = jest.fn(async () => ({ ok: true, json: async () => ({ results: [townResult] }) })) as any;
+    const onSelect = jest.fn();
+    render(<AddressAutocomplete onSelect={onSelect} showMap={false} />);
+
+    fireEvent.change(screen.getByRole('textbox', { name: 'Search Address' }), { target: { value: 'Tara, Queensland' } });
+    await act(async () => { jest.advanceTimersByTime(350); });
+    await userEvent.setup({ advanceTimers: jest.advanceTimersByTime }).click(await screen.findByRole('option', { name: /Tara/ }));
+
+    expect(onSelect).toHaveBeenCalledWith(expect.objectContaining({
+      address: 'Tara, Queensland, 4421, Australia',
+      locality: 'Tara',
+      postcode: '4421',
+      lat: -27.27693,
+      lng: 150.456956,
+    }));
+  });
+
   test('does not search until at least three characters are entered', async () => {
     global.fetch = jest.fn() as any;
     render(<AddressAutocomplete onSelect={jest.fn()} showMap={false} />);

@@ -41,7 +41,12 @@ import { ClientAddress } from '../types/fieldManagement';
 import { useOperationalData } from '../contexts/OperationalDataContext';
 import { describeOperationalError } from '../services/operationalDataStore';
 
-const defaultPropertyForm = { name: '', address: '', state: 'NSW' as AustralianState, locality: '', lotPlan: '', notes: '', lat: undefined as number | undefined, lng: undefined as number | undefined };
+const defaultPropertyForm = {
+  name: '', address: '', state: 'NSW' as AustralianState, locality: '', postcode: '', lotPlan: '', notes: '',
+  lat: undefined as number | undefined, lng: undefined as number | undefined,
+  addressSource: undefined as 'GEOCODED' | 'MANUAL' | undefined,
+  locationConfirmedAt: undefined as string | undefined,
+};
 type ClientAddressDraft = ClientAddress & { labelType: string; customLabel: string };
 const LOCATION_LABELS = ['Primary address', 'Billing address', 'Site entrance', 'Loading area', 'Office', 'Workshop', 'Custom'];
 const addressDraft = (address?: ClientAddress): ClientAddressDraft => {
@@ -327,9 +332,12 @@ export default function ClientDetail() {
                   ...prev,
                   address: result.address,
                   locality: result.locality,
+                  postcode: result.postcode,
                   state: result.state,
                   lat: result.lat,
                   lng: result.lng,
+                  addressSource: result.coordinateSource === 'MANUALLY_ADJUSTED' ? 'MANUAL' : 'GEOCODED',
+                  locationConfirmedAt: result.locationConfirmedAt,
                 }));
               }}
               lat={propForm.lat}

@@ -107,7 +107,7 @@ export default function AddressAutocomplete({
       if (requestNumber !== requestRef.current) return;
       const limited: AddressResult[] = Array.isArray(data.results)
         ? data.results.slice(0, 5).map((item: any) => ({
-            address: String(item.address || ''), locality: String(item.locality || ''),
+            address: String(item.address || item.label || ''), locality: String(item.locality || ''),
             state: item.state as AustralianState, postcode: String(item.postcode || ''),
             lat: Number(item.lat), lng: Number(item.lng), displayName: String(item.label || ''),
             type: item.type ? String(item.type) : undefined,
