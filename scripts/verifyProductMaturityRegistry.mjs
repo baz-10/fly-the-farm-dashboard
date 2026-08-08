@@ -1,16 +1,9 @@
-import { readFile } from 'node:fs/promises';
-import { dirname, resolve } from 'node:path';
+import { readFile, readdir, stat } from 'node:fs/promises';
+import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const defaultRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const customerFacingSourcePaths = [
-  'src/navigation/organisationNavigation.tsx',
-  'src/components/Layout.tsx',
-  'src/components/productMaturity/ComingSoonWorkspace.tsx',
-  'src/components/productMaturity/MaturityBadge.tsx',
-  'src/components/productMaturity/ProductMaturitySurface.tsx',
-  'src/components/productMaturity/WorkflowMaturityBoundary.tsx',
-];
+const customerUiSourceRoots = ['src/pages', 'src/components', 'src/navigation'];
 
 const validMaturities = new Set([
   'COMMERCIALLY_READY',
@@ -104,7 +97,7 @@ function validateRegistry(registry) {
       throw new Error(`${label} is missing changelogReference.`);
     }
     if (entry.maturity === 'COMMERCIALLY_READY'
-      && !entry.evidence.some((evidence) => /founder approval/i.test(evidence))) {
+      && !entry.evidence.some((evidence) => /founder[ -]approval/i.test(evidence))) {
       throw new Error(`${label} needs explicit Founder approval evidence.`);
     }
   });
@@ -143,19 +136,71 @@ function assertExactRegistryEntries(entries, registry, sourceName) {
   });
 }
 
+async function listCustomerUiSourcePaths(root) {
+  const sourcePaths = [];
+
+  async function visit(relativeDirectory) {
+    const entries = await readdir(resolve(root, relativeDirectory), { withFileTypes: true });
+    await Promise.all(entries.map(async (entry) => {
+      const relativePath = `${relativeDirectory}/${entry.name}`;
+      if (entry.isDirectory()) {
+        if (entry.name !== '__tests__') await visit(relativePath);
+        return;
+      }
+      if (entry.isFile() && entry.name.endsWith('.tsx') && !entry.name.endsWith('.test.tsx')) {
+        sourcePaths.push(relativePath);
+      }
+    }));
+  }
+
+  await Promise.all(customerUiSourceRoots.map(visit));
+  return sourcePaths.sort();
+}
+
+async function validateEvidenceReferences(root, registry) {
+  let evidenceReferenceCount = 0;
+
+  for (const [entryIndex, entry] of registry.entries()) {
+    for (const evidenceReference of entry.evidence) {
+      const resolvedReference = resolve(root, evidenceReference);
+      const repositoryRelativeReference = relative(root, resolvedReference);
+      const leavesRepository = repositoryRelativeReference === '..'
+        || repositoryRelativeReference.startsWith(`..${sep}`)
+        || isAbsolute(repositoryRelativeReference);
+
+      if (isAbsolute(evidenceReference) || repositoryRelativeReference.length === 0 || leavesRepository) {
+        throw new Error(`entry ${entryIndex + 1} evidence reference must be a repository-relative path.`);
+      }
+
+      try {
+        await stat(resolvedReference);
+      } catch (error) {
+        if (error?.code === 'ENOENT') {
+          throw new Error(`entry ${entryIndex + 1} evidence reference does not exist: ${evidenceReference}.`);
+        }
+        throw error;
+      }
+      evidenceReferenceCount += 1;
+    }
+  }
+
+  return evidenceReferenceCount;
+}
+
 async function verifyProductMaturityRegistry(root) {
   const registryPath = resolve(root, 'src/productMaturity/product-maturity-registry.json');
   const routeManifestPath = resolve(root, 'src/productMaturity/surfaces.ts');
   const appPath = resolve(root, 'src/App.tsx');
-  const [registrySource, routeManifestSource, appSource, ...customerFacingSources] = await Promise.all([
+  const [registrySource, routeManifestSource, appSource, customerUiSourcePaths] = await Promise.all([
     readFile(registryPath, 'utf8'),
     readFile(routeManifestPath, 'utf8'),
     readFile(appPath, 'utf8'),
-    ...customerFacingSourcePaths.map((sourcePath) => readFile(resolve(root, sourcePath), 'utf8')),
+    listCustomerUiSourcePaths(root),
   ]);
   const registry = JSON.parse(registrySource);
 
   validateRegistry(registry);
+  const evidenceReferenceCount = await validateEvidenceReferences(root, registry);
 
   const manifestBlock = routeManifestSource.match(
     /export const REACHABLE_PRODUCT_ROUTES\s*=\s*\[([\s\S]*?)\]\s*as const/,
@@ -184,8 +229,11 @@ async function verifyProductMaturityRegistry(root) {
     throw new Error(`Reachable route manifest is missing ${missingManifestRoutes.length} App route literal(s).`);
   }
 
-  const legacyViolations = customerFacingSources.flatMap((source, index) =>
-    /\bLegacy\b/i.test(source) ? [customerFacingSourcePaths[index]] : [],
+  const customerUiSources = await Promise.all(
+    customerUiSourcePaths.map((sourcePath) => readFile(resolve(root, sourcePath), 'utf8')),
+  );
+  const legacyViolations = customerUiSources.flatMap((source, index) =>
+    /\bLegacy\b/i.test(source) ? [customerUiSourcePaths[index]] : [],
   );
   if (legacyViolations.length > 0) {
     throw new Error(`Customer-facing Legacy violation(s): ${legacyViolations.join(', ')}.`);
@@ -194,14 +242,26 @@ async function verifyProductMaturityRegistry(root) {
   const moduleCount = registry.filter((entry) => entry.workflowCode === null).length;
   const workflowCount = registry.length - moduleCount;
 
-  return { moduleCount, workflowCount, routeCount: appRoutePaths.length };
+  return {
+    moduleCount,
+    workflowCount,
+    routeCount: appRoutePaths.length,
+    customerUiSourceCount: customerUiSourcePaths.length,
+    evidenceReferenceCount,
+  };
 }
 
 try {
   const root = resolveVerifierRoot(process.argv.slice(2));
-  const { moduleCount, workflowCount, routeCount } = await verifyProductMaturityRegistry(root);
+  const {
+    moduleCount,
+    workflowCount,
+    routeCount,
+    customerUiSourceCount,
+    evidenceReferenceCount,
+  } = await verifyProductMaturityRegistry(root);
   console.log(
-    `Product maturity registry verified: ${moduleCount} modules and ${workflowCount} workflows classified; ${routeCount} App routes checked; 0 customer-facing Legacy violations.`,
+    `Product maturity registry verified: ${moduleCount} modules and ${workflowCount} workflows classified; ${routeCount} App routes checked; ${customerUiSourceCount} customer UI source files checked; ${evidenceReferenceCount} evidence references checked; 0 customer-facing Legacy violations.`,
   );
 } catch (error) {
   console.error(`Product maturity registry verification failed: ${error.message}`);

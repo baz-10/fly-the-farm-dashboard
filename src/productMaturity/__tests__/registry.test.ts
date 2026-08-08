@@ -108,6 +108,18 @@ describe('product maturity registry', () => {
     expect(() => assertValidRegistry(commerciallyReadyWithoutFounderApproval)).toThrow(ProductMaturityConfigurationError);
   });
 
+  test('allows Commercially Ready with no blockers only when Founder approval evidence is explicit', () => {
+    const commerciallyReady = cloneRegistry();
+    commerciallyReady[0].maturity = 'COMMERCIALLY_READY';
+    commerciallyReady[0].promotionBlockers = [];
+    commerciallyReady[0].evidence = [...commerciallyReady[0].evidence, 'docs/founder-approval.md'];
+
+    expect(() => assertValidRegistry(commerciallyReady)).not.toThrow();
+
+    commerciallyReady[0].evidence = commerciallyReady[0].evidence.filter(item => !item.includes('founder-approval'));
+    expect(() => assertValidRegistry(commerciallyReady)).toThrow(ProductMaturityConfigurationError);
+  });
+
   test('selects a workflow override before falling back to module metadata', () => {
     expect(getMaturityEntry('quotes', 'pdf-export').maturity).toBe('COMING_SOON');
     expect(getMaturityEntry('quotes', 'unlisted-workflow')).toMatchObject({

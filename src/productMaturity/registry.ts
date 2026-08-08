@@ -74,7 +74,9 @@ export function assertValidRegistry(registry: readonly ProductMaturityEntry[]): 
     if (!Array.isArray(entry.promotionBlockers) || !entry.promotionBlockers.every(blocker => typeof blocker === 'string' && blocker.trim().length > 0)) {
       throw configurationError(entry, 'promotionBlockers must be an array of non-empty strings.');
     }
-    if (entry.maturity !== 'OPERATIONALLY_READY' && entry.promotionBlockers.length === 0) {
+    if (entry.maturity !== 'OPERATIONALLY_READY'
+      && entry.maturity !== 'COMMERCIALLY_READY'
+      && entry.promotionBlockers.length === 0) {
       throw configurationError(entry, 'non-operational entries require promotion blockers.');
     }
     REQUIRED_ARRAY_FIELDS.forEach(field => {
@@ -87,7 +89,7 @@ export function assertValidRegistry(registry: readonly ProductMaturityEntry[]): 
     if (typeof entry.changelogReference !== 'string' || entry.changelogReference.trim().length === 0) {
       throw configurationError(entry, 'changelogReference is required.');
     }
-    if (entry.maturity === 'COMMERCIALLY_READY' && !entry.evidence.some(item => /founder approval/i.test(item))) {
+    if (entry.maturity === 'COMMERCIALLY_READY' && !entry.evidence.some(item => /founder[ -]approval/i.test(item))) {
       throw configurationError(entry, 'Commercially Ready entries require explicit Founder approval evidence.');
     }
   });

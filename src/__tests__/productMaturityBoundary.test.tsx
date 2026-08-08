@@ -1,4 +1,4 @@
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { spawnSync, SpawnSyncReturns } from 'child_process';
 import { tmpdir } from 'os';
 import path from 'path';
@@ -8,10 +8,17 @@ const fixturePaths = [
   'src/productMaturity/product-maturity-registry.json',
   'src/productMaturity/surfaces.ts',
   'src/App.tsx',
-  'src/navigation/organisationNavigation.tsx',
-  'src/components/Layout.tsx',
-  'src/components/productMaturity',
+  'src/pages',
+  'src/components',
+  'src/navigation',
 ];
+const registryFixture = JSON.parse(readFileSync(
+  path.join(root, 'src/productMaturity/product-maturity-registry.json'),
+  'utf8',
+));
+const evidenceFixturePaths = Array.from(new Set<string>(
+  registryFixture.flatMap((entry: { evidence: string[] }) => entry.evidence),
+));
 
 const runVerifier = (fixtureRoot?: string): SpawnSyncReturns<string> => spawnSync(process.execPath, [
   'scripts/verifyProductMaturityRegistry.mjs',
@@ -27,10 +34,12 @@ const fixturePath = (fixtureRoot: string, relativePath: string): string => path.
 const withTemporaryFixture = (mutate: (fixtureRoot: string) => void, assertion: (fixtureRoot: string) => void): void => {
   const fixtureRoot = mkdtempSync(path.join(tmpdir(), 'product-maturity-registry-'));
 
-  fixturePaths.forEach((relativePath) => {
+  [...fixturePaths, ...evidenceFixturePaths].forEach((relativePath) => {
+    const source = path.join(root, relativePath);
+    if (!existsSync(source)) return;
     const destination = fixturePath(fixtureRoot, relativePath);
     mkdirSync(path.dirname(destination), { recursive: true });
-    cpSync(path.join(root, relativePath), destination, { recursive: true });
+    if (!existsSync(destination)) cpSync(source, destination, { recursive: true });
   });
 
   try {
@@ -72,6 +81,8 @@ describe('product maturity CI boundary', () => {
     expect(result.status).toBe(0);
     expect(result.stderr).toBe('');
     expect(result.stdout).toContain('46 modules and 12 workflows classified');
+    expect(result.stdout).toContain('116 customer UI source files checked');
+    expect(result.stdout).toContain('61 evidence references checked');
     expect(result.stdout).toContain('0 customer-facing Legacy violations');
   });
 
@@ -95,11 +106,14 @@ describe('product maturity CI boundary', () => {
 
   test('allows a Commercially Ready entry with no promotion blockers when Founder approval is present', () => {
     withTemporaryFixture((fixtureRoot) => updateFixtureRegistry(fixtureRoot, (registry) => {
+      const approvalPath = fixturePath(fixtureRoot, 'docs/founder-approval.md');
+      mkdirSync(path.dirname(approvalPath), { recursive: true });
+      writeFileSync(approvalPath, '# Founder approval\n', 'utf8');
       registry[0] = {
         ...registry[0],
         maturity: 'COMMERCIALLY_READY',
         promotionBlockers: [],
-        evidence: [...registry[0].evidence, 'Founder approval recorded in release decision.'],
+        evidence: [...registry[0].evidence, 'docs/founder-approval.md'],
       };
     }), (fixtureRoot) => {
       const result = runVerifier(fixtureRoot);
@@ -128,5 +142,26 @@ describe('product maturity CI boundary', () => {
       "{ label: 'Clients'",
       "{ label: 'legacy Clients'",
     ), (fixtureRoot) => expectVerifierFailure('Customer-facing Legacy violation', fixtureRoot));
+  });
+
+  test('rejects customer-facing legacy language in any production UI source', () => {
+    withTemporaryFixture((fixtureRoot) => replaceFixtureSource(
+      fixtureRoot,
+      'src/pages/ClientDetail.tsx',
+      'All Clients',
+      'legacy Clients',
+    ), (fixtureRoot) => expectVerifierFailure('Customer-facing Legacy violation', fixtureRoot));
+  });
+
+  test('fails closed when an evidence reference does not exist', () => {
+    withTemporaryFixture((fixtureRoot) => updateFixtureRegistry(fixtureRoot, (registry) => {
+      registry[0] = { ...registry[0], evidence: ['src/pages/NotARealEvidence.tsx'] };
+    }), (fixtureRoot) => expectVerifierFailure('evidence reference does not exist', fixtureRoot));
+  });
+
+  test('fails closed when an evidence reference leaves the repository root', () => {
+    withTemporaryFixture((fixtureRoot) => updateFixtureRegistry(fixtureRoot, (registry) => {
+      registry[0] = { ...registry[0], evidence: ['../outside-evidence.md'] };
+    }), (fixtureRoot) => expectVerifierFailure('evidence reference must be a repository-relative path', fixtureRoot));
   });
 });

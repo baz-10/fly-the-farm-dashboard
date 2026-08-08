@@ -28,14 +28,14 @@ Before changing maturity, attach the required evidence to the entry and link the
 - operational evidence appropriate to the maturity, such as a support, training, or controlled beta review record; and
 - unresolved promotion blockers, or a clear explanation of why each blocker has been removed.
 
-`COMMERCIALLY_READY` additionally requires explicit Founder approval in the entry's evidence. This gate records the accountable commercial decision: automated checks and operational evidence can show readiness, but they do not replace the Founder’s approval to make a customer-facing commercial commitment.
+`COMMERCIALLY_READY` may have an empty `promotionBlockers` array, but it additionally requires an existing repository evidence path whose name explicitly identifies Founder approval. This gate records the accountable commercial decision: automated checks and operational evidence can show readiness, but they do not replace the Founder’s approval to make a customer-facing commercial commitment.
 
 ## Safe operational records
 
-Record only non-secret, reviewable evidence references in the registry: ticket IDs, dated review summaries, test names, release notes, and approved document paths. Do not put customer names, tenant identifiers, access tokens, passwords, production URLs containing credentials, raw support transcripts, or customer records in the registry, verifier output, or changelog reference.
+Every `evidence` item must be an existing repository-relative file or directory path. Record ticket IDs, dated review summaries, test results, release notes, and approval decisions in an approved repository document, then reference that path from the registry. Absolute paths, paths outside the repository, and missing paths fail CI. Do not put customer names, tenant identifiers, access tokens, passwords, production URLs containing credentials, raw support transcripts, or customer records in the registry, verifier output, or changelog reference.
 
 At each review, confirm that `reviewDate` is a valid ISO date and still reflects the next decision point. Confirm that `changelogReference` identifies the decision, release note, or approved governance document that explains the current classification. Update both when a promotion, rollback, or material scope change occurs.
 
 ## Release gate behaviour
 
-The CI verifier validates registry completeness and unique module/workflow keys, checks the reachable App routes against the route manifest, and rejects `Legacy` language in customer-facing navigation and maturity components. A verification failure blocks the release workflow until the governance issue is corrected. It does not change application runtime permissions, workflow triggers, environments, secrets, or operational acceptance credentials.
+The CI verifier validates registry completeness, reviewable evidence paths and unique module/workflow keys; checks reachable App routes against the route manifest; and rejects `Legacy` language across production TSX sources in `src/pages`, `src/components`, and `src/navigation`. Server, persistence, migration, and internal engineering sources are outside that customer-UI scan. A verification failure blocks the release workflow until the governance issue is corrected. It does not change application runtime permissions, workflow triggers, environments, secrets, or operational acceptance credentials.
