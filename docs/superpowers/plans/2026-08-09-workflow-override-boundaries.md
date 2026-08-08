@@ -73,3 +73,25 @@
 - [ ] Run the full Jest suite and confirm zero failures.
 - [ ] Record RED/GREEN and verification evidence in the repair report.
 - [ ] Commit the focused implementation and report without pushing or deploying.
+
+### Task 6: Review corrections for duplicate presentation and report composition
+
+**Files:**
+- Modify: `src/components/productMaturity/WorkflowMaturityBoundary.tsx`
+- Modify: `src/components/mission/MissionOperationalCloseout.tsx`
+- Modify: `src/components/mission/MissionSummary.tsx`
+- Modify: `src/components/mission/MissionRecord.tsx`
+- Modify: `src/pages/ControlledChecklists.tsx`
+- Test: `src/components/productMaturity/__tests__/ProductMaturitySurface.test.tsx`
+- Test: `src/components/mission/__tests__/MissionOperationalCloseout.test.tsx`
+- Test: `src/pages/__tests__/ReocComplianceWorkspace.test.tsx`
+- Test: `src/pages/__tests__/ControlledChecklists.test.tsx`
+
+- [ ] Add integration tests proving equal parent/workflow Beta states produce exactly one indicator on ReOC and Controlled Checklists.
+- [ ] Add completed-closeout coverage proving a Coming Soon reports override renders one workspace with one valid heading ID and neither report-status child mounts.
+- [ ] Add checklist layout coverage for the original responsive title row while retaining constrained API isolation.
+- [ ] Run the focused tests and confirm duplicate indicators/workspaces and changed layout fail before production edits.
+- [ ] Resolve the parent module entry in `WorkflowMaturityBoundary` and render children directly when module/workflow maturities match.
+- [ ] Move the completed reports boundary to `MissionOperationalCloseout`, remove leaf report boundaries, and retain the distinct MissionAuthorisation boundary.
+- [ ] Restore the Controlled Checklists responsive title row without moving administration hooks outside the constrained child.
+- [ ] Re-run focused tests, verifier, build, and full relevant tests; update the package-H report and commit without push or deployment.

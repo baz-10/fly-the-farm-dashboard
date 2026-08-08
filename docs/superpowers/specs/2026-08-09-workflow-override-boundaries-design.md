@@ -17,6 +17,14 @@ Every production file imports `WorkflowMaturityBoundary` directly from its canon
 
 Extracted child components own workflow hooks and API creation. When an override is `COMING_SOON`, the boundary renders the safe maturity surface without mounting the constrained child or starting its API reads. MissionAuthorisation keeps its broader authorisation hooks active because that parent workflow remains available; its report child UI and report-status component do not mount.
 
+## Presentation deduplication
+
+`WorkflowMaturityBoundary` always resolves and validates the exact workflow override and its parent module entry. When both entries have the same maturity, the parent surface already communicates that state, so the workflow boundary renders children directly without a second badge or workspace. When the states differ, the workflow boundary presents the override normally.
+
+The completed-Mission report boundary belongs at the `MissionOperationalCloseout` composition point around the combined Mission Summary and Mission Record subtree. This produces one Coming Soon workspace with one valid heading ID and prevents both report-status children from mounting. `MissionAuthorisation` retains its separate single report boundary because Mission Pack generation is a distinct stage. Mission Summary and Mission Record do not own boundaries individually.
+
+The Controlled Checklists page keeps its original responsive title row, including the Create action at the opposite edge. Only the extracted administration body remains inside the workflow boundary, preserving API isolation when constrained.
+
 ## Tests
 
 Each relevant component test temporarily changes the exact registry entry to `COMING_SOON`, restores it after the test, and asserts:
@@ -27,3 +35,5 @@ Each relevant component test temporarily changes the exact registry entry to `CO
 - extracted workflow APIs do not start where the gated child owns them.
 
 Normal tests continue proving the current maturity states leave all workflows usable.
+
+Integration coverage renders ReOC and Controlled Checklists inside their real `ProductMaturitySurface` parent and asserts exactly one Beta indicator. Completed closeout coverage asserts one Coming Soon workspace, a unique `aria-labelledby` target, and non-mounting of both report-status children.
