@@ -13,6 +13,7 @@ const fixturePaths = [
   'src/pages',
   'src/components',
   'src/navigation',
+  'src/security',
 ];
 const registryFixture = JSON.parse(readFileSync(
   path.join(root, 'src/productMaturity/product-maturity-registry.json'),
@@ -417,10 +418,130 @@ describe('product maturity CI boundary', () => {
       if (modified === source) throw new Error('Fixture mutation did not replace ProductMaturitySurface.');
       writeFileSync(filePath, modified, 'utf8');
     }],
+    ['missionOperatorRoles dependency', (fixtureRoot: string) => {
+      writeFileSync(
+        fixturePath(fixtureRoot, 'src/security/operationalRouteRolesFixtureNoop.ts'),
+        "export const missionOperatorRoles = ['admin', 'contractor', 'production_beta_acceptance'];\n",
+        'utf8',
+      );
+      replaceFixtureSource(
+        fixtureRoot,
+        'src/App.tsx',
+        "from './security/operationalRouteRoles';",
+        "from './security/operationalRouteRolesFixtureNoop';",
+      );
+    }],
   ])('rejects a non-canonical %s route symbol', (_label, mutateFixture) => {
     withTemporaryFixture(
       mutateFixture,
       (fixtureRoot) => expectVerifierFailure('canonical route import/symbol convention', fixtureRoot),
+    );
+  });
+
+  test.each([
+    ['removed /quotes roles', (fixtureRoot: string) => replaceFixtureSource(
+      fixtureRoot,
+      'src/App.tsx',
+      "productRoute(<QuoteList />, { allowedRoles: ['admin', 'contractor'] })",
+      'productRoute(<QuoteList />)',
+    )],
+    ['removed /ask-ftf entitlement', (fixtureRoot: string) => replaceFixtureSource(
+      fixtureRoot,
+      'src/App.tsx',
+      "productRoute(<AskFTF />, { allowedRoles: ['admin', 'contractor'], requiredEntitlement: 'legacyAskFtf' })",
+      "productRoute(<AskFTF />, { allowedRoles: ['admin', 'contractor'] })",
+    )],
+    ['changed /quotes role', (fixtureRoot: string) => replaceFixtureSource(
+      fixtureRoot,
+      'src/App.tsx',
+      "productRoute(<QuoteList />, { allowedRoles: ['admin', 'contractor'] })",
+      "productRoute(<QuoteList />, { allowedRoles: ['admin', 'client'] })",
+    )],
+    ['reordered /quotes roles', (fixtureRoot: string) => replaceFixtureSource(
+      fixtureRoot,
+      'src/App.tsx',
+      "productRoute(<QuoteList />, { allowedRoles: ['admin', 'contractor'] })",
+      "productRoute(<QuoteList />, { allowedRoles: ['contractor', 'admin'] })",
+    )],
+    ['dynamic /quotes options', (fixtureRoot: string) => {
+      replaceFixtureSource(
+        fixtureRoot,
+        'src/App.tsx',
+        'function App() {',
+        "const quoteRouteOptions = { allowedRoles: ['admin', 'contractor'] as UserRole[] };\n\nfunction App() {",
+      );
+      replaceFixtureSource(
+        fixtureRoot,
+        'src/App.tsx',
+        "productRoute(<QuoteList />, { allowedRoles: ['admin', 'contractor'] })",
+        'productRoute(<QuoteList />, quoteRouteOptions)',
+      );
+    }],
+    ['spread /quotes options', (fixtureRoot: string) => {
+      replaceFixtureSource(
+        fixtureRoot,
+        'src/App.tsx',
+        'function App() {',
+        "const quoteRouteOptions = { allowedRoles: ['admin', 'contractor'] as UserRole[] };\n\nfunction App() {",
+      );
+      replaceFixtureSource(
+        fixtureRoot,
+        'src/App.tsx',
+        "productRoute(<QuoteList />, { allowedRoles: ['admin', 'contractor'] })",
+        'productRoute(<QuoteList />, { ...quoteRouteOptions })',
+      );
+    }],
+    ['extra /quotes option', (fixtureRoot: string) => replaceFixtureSource(
+      fixtureRoot,
+      'src/App.tsx',
+      "productRoute(<QuoteList />, { allowedRoles: ['admin', 'contractor'] })",
+      "productRoute(<QuoteList />, { allowedRoles: ['admin', 'contractor'], unexpected: true })",
+    )],
+    ['explicit options on a default-auth route', (fixtureRoot: string) => replaceFixtureSource(
+      fixtureRoot,
+      'src/App.tsx',
+      'productRoute(<HomeRoute />)',
+      'productRoute(<HomeRoute />, {})',
+    )],
+    ['changed productRoute default options', (fixtureRoot: string) => replaceFixtureSource(
+      fixtureRoot,
+      'src/App.tsx',
+      'options: { allowedRoles?: UserRole[]; requiredEntitlement?: string } = {}',
+      "options: { allowedRoles?: UserRole[]; requiredEntitlement?: string } = { allowedRoles: ['admin'] }",
+    )],
+    ['dynamic /quotes roles', (fixtureRoot: string) => {
+      replaceFixtureSource(
+        fixtureRoot,
+        'src/App.tsx',
+        'function App() {',
+        "const quoteRoles: UserRole[] = ['admin', 'contractor'];\n\nfunction App() {",
+      );
+      replaceFixtureSource(
+        fixtureRoot,
+        'src/App.tsx',
+        "productRoute(<QuoteList />, { allowedRoles: ['admin', 'contractor'] })",
+        'productRoute(<QuoteList />, { allowedRoles: quoteRoles })',
+      );
+    }],
+    ['changed mission role metadata', (fixtureRoot: string) => replaceFixtureSource(
+      fixtureRoot,
+      'src/security/operationalRouteRoles.ts',
+      "  'production_beta_acceptance',",
+      "  'client',",
+    )],
+    ['a classified route missing validation metadata', (fixtureRoot: string) => {
+      replaceFixtureSource(fixtureRoot, 'src/App.tsx', 'path="/quotes"', 'path="/quotations"');
+      replaceFixtureSource(
+        fixtureRoot,
+        'src/productMaturity/surfaces.ts',
+        "{ path: '/quotes', moduleCode: 'quotes', workflowCode: null },",
+        "{ path: '/quotations', moduleCode: 'quotes', workflowCode: null },",
+      );
+    }],
+  ])('rejects a route access contract with %s', (_label, mutateFixture) => {
+    withTemporaryFixture(
+      mutateFixture,
+      (fixtureRoot) => expectVerifierFailure('exact route access contract', fixtureRoot),
     );
   });
 

@@ -190,6 +190,21 @@ function requiredClassSymbol(sourceFile, checker, name) {
   return { declaration: declarations[0], symbol };
 }
 
+function requiredVariableSymbol(sourceFile, checker, name) {
+  const declarations = sourceFile.statements.flatMap((statement) => (
+    ts.isVariableStatement(statement)
+      ? statement.declarationList.declarations.filter((declaration) => (
+        ts.isIdentifier(declaration.name) && declaration.name.text === name
+      ))
+      : []
+  ));
+  const symbol = declarations.length === 1 && ts.isIdentifier(declarations[0].name)
+    ? checker.getSymbolAtLocation(declarations[0].name)
+    : undefined;
+  if (!symbol || !declarations[0].initializer) throw new Error(canonicalRouteConventionError);
+  return { declaration: declarations[0], symbol };
+}
+
 function resolveAliasedSymbol(checker, symbol) {
   return symbol && (symbol.flags & ts.SymbolFlags.Alias)
     ? checker.getAliasedSymbol(symbol)
@@ -267,6 +282,10 @@ function assertCanonicalRouteSymbolConventions(program, appSourceFile) {
     program,
     '/components/productMaturity/MaturityBadge.tsx',
   );
+  const operationalRouteRolesSource = requiredSourceFile(
+    program,
+    '/security/operationalRouteRoles.ts',
+  );
   const protectedRoute = requiredFunctionSymbol(protectedSource, checker, 'ProtectedRoute');
   const platformProtectedRoute = requiredFunctionSymbol(
     platformProtectedSource,
@@ -308,6 +327,11 @@ function assertCanonicalRouteSymbolConventions(program, appSourceFile) {
     maturityBadgeSource,
     checker,
     'MaturityBadge',
+  );
+  const missionOperatorRoles = requiredVariableSymbol(
+    operationalRouteRolesSource,
+    checker,
+    'missionOperatorRoles',
   );
 
   const authorisedModuleSymbol = checker.getSymbolAtLocation(authorisedSource);
@@ -364,6 +388,13 @@ function assertCanonicalRouteSymbolConventions(program, appSourceFile) {
     ['MaturityBadge'],
     new Map([['MaturityBadge', maturityBadge.symbol]]),
   );
+  const appOperationalRoleImports = exactNamedImportSymbols(
+    appSourceFile,
+    checker,
+    './security/operationalRouteRoles',
+    ['missionOperatorRoles'],
+    new Map([['missionOperatorRoles', missionOperatorRoles.symbol]]),
+  );
 
   return {
     checker,
@@ -397,6 +428,7 @@ function assertCanonicalRouteSymbolConventions(program, appSourceFile) {
       ),
       AuthorisedProductRoute: appAuthorisedImports.get('AuthorisedProductRoute'),
       ProductRouteSurface: appAuthorisedImports.get('ProductRouteSurface'),
+      missionOperatorRoles: appOperationalRoleImports.get('missionOperatorRoles'),
     },
     authorised: {
       ProtectedRoute: exactDefaultImportSymbol(
@@ -416,6 +448,9 @@ function assertCanonicalRouteSymbolConventions(program, appSourceFile) {
       ComingSoonWorkspace: productMaturityComingSoonImport.get('ComingSoonWorkspace'),
       MaturityBadge: productMaturityBadgeImport.get('MaturityBadge'),
     },
+    access: {
+      missionOperatorRolesDeclaration: missionOperatorRoles.declaration,
+    },
   };
 }
 
@@ -428,6 +463,96 @@ const authLifecycleRouteComponents = new Map([
 const publicProductSurfaceRouteComponents = new Map([
   ['/register', 'Register'],
   ['/customer-acceptance/:token', 'CustomerAcceptancePublic'],
+]);
+
+// Validation metadata only. Runtime permission, entitlement, and maturity
+// authority remains in the application components and product registry.
+const publicAccessRoutePaths = [
+  '/login',
+  '/register',
+  '/auth/callback',
+  '/forgot-password',
+  '/reset-password',
+  '/customer-acceptance/:token',
+];
+const defaultOrganisationAccessRoutePaths = [
+  '/',
+  '/database',
+  '/search',
+  '/treatment/:id',
+  '/jobs',
+  '/jobs/import',
+  '/jobs/history',
+  '/jobs/client/:clientId',
+  '/jobs/client/:clientId/property/:propertyId',
+  '/jobs/client/:clientId/property/:propertyId/field/:fieldId',
+  '/jobs/client/:clientId/property/:propertyId/field/:fieldId/new-job',
+  '/jobs/client/:clientId/property/:propertyId/field/:fieldId/job/:jobId',
+];
+const adminContractorAccessRoutePaths = [
+  '/calculator',
+  '/quotes',
+  '/quotes/new',
+  '/quotes/settings',
+  '/quotes/:quoteId',
+  '/financials',
+  '/financials/new',
+  '/financials/:actualId',
+  '/aircraft',
+  '/personnel',
+  '/fleet-work-packs',
+  '/jsa',
+  '/weather',
+  '/compliance',
+  '/compliance/reoc',
+  '/compliance/operations-manual',
+  '/compliance/library',
+  '/compliance/checklists',
+  '/compliance/flight',
+  '/compliance/chemical',
+  '/compliance/transport',
+  '/compliance/licensing',
+  '/compliance/environmental',
+  '/compliance/vegetation',
+  '/compliance/safety',
+  '/compliance/documentation',
+  '/license-settings',
+];
+const missionOperatorAccessRoutePaths = [
+  '/jobs/client/:clientId/property/:propertyId/field/:fieldId/job/:jobId/new-mission',
+  '/missions',
+  '/missions/new',
+  '/missions/:missionId',
+  '/mission-planning',
+];
+const routeAccessContracts = new Map([
+  ...publicAccessRoutePaths.map((path) => [path, { kind: 'public' }]),
+  ['/platform', { kind: 'platform' }],
+  ...defaultOrganisationAccessRoutePaths.map((path) => [path, {
+    kind: 'organisation',
+    allowedRoles: null,
+    requiredEntitlement: null,
+  }]),
+  ...adminContractorAccessRoutePaths.map((path) => [path, {
+    kind: 'organisation',
+    allowedRoles: ['admin', 'contractor'],
+    requiredEntitlement: null,
+  }]),
+  ...missionOperatorAccessRoutePaths.map((path) => [path, {
+    kind: 'organisation',
+    allowedRoles: ['admin', 'contractor', 'production_beta_acceptance'],
+    requiredEntitlement: null,
+  }]),
+  ['/ask-ftf', {
+    kind: 'organisation',
+    allowedRoles: ['admin', 'contractor'],
+    requiredEntitlement: 'legacyAskFtf',
+  }],
+  ['/admin', {
+    kind: 'organisation',
+    allowedRoles: ['admin'],
+    requiredEntitlement: null,
+  }],
 ]);
 
 function unwrapTransparentExpression(expression) {
@@ -502,6 +627,71 @@ function hasExactExpressionAttribute(element, sourceFile, name, expressionText) 
   ));
 }
 
+function staticAllowedRoles(expression, checker, routeSymbols) {
+  if (!expression) return null;
+  let candidate = unwrapTransparentExpression(expression);
+  if (ts.isIdentifier(candidate)) {
+    if (checker.getSymbolAtLocation(candidate) !== routeSymbols.app.missionOperatorRoles) return null;
+    candidate = unwrapTransparentExpression(
+      routeSymbols.access.missionOperatorRolesDeclaration.initializer,
+    );
+  }
+  if (!ts.isArrayLiteralExpression(candidate) || candidate.elements.some(ts.isSpreadElement)) return null;
+  const roles = [];
+  for (const element of candidate.elements) {
+    const role = unwrapTransparentExpression(element);
+    if (!ts.isStringLiteralLike(role)) return null;
+    roles.push(role.text);
+  }
+  return roles;
+}
+
+function sameOrderedStrings(actual, expected) {
+  return actual?.length === expected.length
+    && actual.every((value, index) => value === expected[index]);
+}
+
+function hasExactProductRouteAccessContract(callExpression, contract, checker, routeSymbols) {
+  if (!contract || contract.kind !== 'organisation') return false;
+  if (contract.allowedRoles === null) return callExpression.arguments.length === 1;
+  if (callExpression.arguments.length !== 2) return false;
+
+  const options = unwrapTransparentExpression(callExpression.arguments[1]);
+  if (!ts.isObjectLiteralExpression(options)) return false;
+  const expectedPropertyNames = contract.requiredEntitlement === null
+    ? ['allowedRoles']
+    : ['allowedRoles', 'requiredEntitlement'];
+  if (options.properties.length !== expectedPropertyNames.length) return false;
+
+  const properties = new Map();
+  for (const [index, property] of options.properties.entries()) {
+    const expectedName = expectedPropertyNames[index];
+    if (!ts.isPropertyAssignment(property)
+      || !ts.isIdentifier(property.name)
+      || property.name.text !== expectedName) return false;
+    properties.set(expectedName, property.initializer);
+  }
+
+  if (!sameOrderedStrings(
+    staticAllowedRoles(properties.get('allowedRoles'), checker, routeSymbols),
+    contract.allowedRoles,
+  )) return false;
+  if (contract.requiredEntitlement !== null) {
+    const entitlement = unwrapTransparentExpression(properties.get('requiredEntitlement'));
+    if (!ts.isStringLiteralLike(entitlement)
+      || entitlement.text !== contract.requiredEntitlement) return false;
+  }
+  return true;
+}
+
+function assertExactRouteAccessContractKeys(reachableRoutes) {
+  const manifestPaths = new Set(reachableRoutes.map(({ path: routePath }) => routePath));
+  if (routeAccessContracts.size !== manifestPaths.size
+    || [...routeAccessContracts.keys()].some((routePath) => !manifestPaths.has(routePath))) {
+    throw new Error('Verifier-only exact route access contract metadata does not match reachable routes.');
+  }
+}
+
 function assertProductRouteHelperComposition(sourceFile, routeSymbols) {
   const { checker } = routeSymbols;
   const declarations = [];
@@ -518,6 +708,29 @@ function assertProductRouteHelperComposition(sourceFile, routeSymbols) {
   const body = initializer && ts.isArrowFunction(initializer)
     ? unwrapTransparentExpression(initializer.body)
     : null;
+  const childrenParameter = initializer && ts.isArrowFunction(initializer)
+    ? initializer.parameters[0]
+    : null;
+  const optionsParameter = initializer && ts.isArrowFunction(initializer)
+    ? initializer.parameters[1]
+    : null;
+  if (!initializer
+    || !ts.isArrowFunction(initializer)
+    || initializer.parameters.length !== 2
+    || !childrenParameter
+    || !ts.isIdentifier(childrenParameter.name)
+    || childrenParameter.name.text !== 'children'
+    || childrenParameter.initializer
+    || childrenParameter.dotDotDotToken
+    || !optionsParameter
+    || !ts.isIdentifier(optionsParameter.name)
+    || optionsParameter.name.text !== 'options'
+    || optionsParameter.dotDotDotToken
+    || !optionsParameter.initializer
+    || !ts.isObjectLiteralExpression(unwrapTransparentExpression(optionsParameter.initializer))
+    || unwrapTransparentExpression(optionsParameter.initializer).properties.length !== 0) {
+    throw new Error('App productRoute helper does not match its exact route access contract.');
+  }
   if (!body
     || !ts.isJsxElement(body)
     || !jsxTagIdentifier(
@@ -859,6 +1072,7 @@ function discoverReactRouterPaths(sourceFile, checker, approvedRoutePaths, route
   const productRouteSymbol = assertProductRouteHelperComposition(sourceFile, routeSymbols);
   routeRecords.forEach(({ path: routePath, opening }) => {
     if (!approvedRoutePaths.has(routePath)) return;
+    const accessContract = routeAccessContracts.get(routePath);
     const expression = routeElementExpression(
       opening,
       `App route ${routePath} requires an approved route composition.`,
@@ -867,7 +1081,9 @@ function discoverReactRouterPaths(sourceFile, checker, approvedRoutePaths, route
     const kind = layout ? layoutKind.get(layout) : null;
     const authComponent = authLifecycleRouteComponents.get(routePath);
     if (authComponent) {
-      if (kind !== null || !isExactJsxComponent(expression, authComponent)) {
+      if (accessContract?.kind !== 'public'
+        || kind !== null
+        || !isExactJsxComponent(expression, authComponent)) {
         throw new Error(`App route ${routePath} requires its approved auth lifecycle composition.`);
       }
       return;
@@ -875,7 +1091,8 @@ function discoverReactRouterPaths(sourceFile, checker, approvedRoutePaths, route
 
     const publicComponent = publicProductSurfaceRouteComponents.get(routePath);
     if (publicComponent) {
-      const validPublicSurface = kind === null && isExactJsxWrapper(
+      const validPublicSurface = accessContract?.kind === 'public'
+        && kind === null && isExactJsxWrapper(
         expression,
         'ProductRouteSurface',
         (child) => isExactJsxComponent(child, publicComponent),
@@ -889,7 +1106,9 @@ function discoverReactRouterPaths(sourceFile, checker, approvedRoutePaths, route
     }
 
     if (routePath === '/platform') {
-      if (kind !== 'platform' || !isExactJsxComponent(expression, 'PlatformAdmin')) {
+      if (accessContract?.kind !== 'platform'
+        || kind !== 'platform'
+        || !isExactJsxComponent(expression, 'PlatformAdmin')) {
         throw new Error('App route /platform requires its approved platform guard-before-maturity composition.');
       }
       return;
@@ -911,6 +1130,14 @@ function discoverReactRouterPaths(sourceFile, checker, approvedRoutePaths, route
       && (ts.isJsxElement(unwrapped.arguments[0]) || ts.isJsxSelfClosingElement(unwrapped.arguments[0]));
     if (!validProductRoute) {
       throw new Error(`App route ${routePath} requires the approved productRoute composition.`);
+    }
+    if (!hasExactProductRouteAccessContract(
+      unwrapped,
+      accessContract,
+      checker,
+      routeSymbols,
+    )) {
+      throw new Error(`App route ${routePath} does not match its exact route access contract.`);
     }
   });
 
@@ -1928,6 +2155,7 @@ async function verifyProductMaturityRegistry(root) {
     routeSymbols,
   );
   assertExactRoutePathMultiset(appRoutePaths, reachableRoutes);
+  assertExactRouteAccessContractKeys(reachableRoutes);
 
   const legacyViolations = findCustomerVisibleLegacyViolations(root, customerUiSourcePaths, productionProgram);
   if (legacyViolations.length > 0) {
