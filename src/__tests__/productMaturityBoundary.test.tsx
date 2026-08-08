@@ -639,6 +639,56 @@ describe('product maturity CI boundary', () => {
     }, expectVerifierSuccess);
   });
 
+  test('fails closed when a visible local helper/composition chain exceeds the depth budget', () => {
+    withTemporaryFixture((fixtureRoot) => {
+      const filePath = fixturePath(fixtureRoot, 'src/pages/ClientDetail.tsx');
+      const source = readFileSync(filePath, 'utf8');
+      const helpers = Array.from({ length: 36 }, (_, index) => (
+        index === 0
+          ? "const repairDepth0 = () => 'Leg' + 'acy Records';"
+          : `const repairDepth${index} = () => repairDepth${index - 1}();`
+      )).join('\n');
+      writeFileSync(filePath, `${source}\n${helpers}\nexport const repairDepthFixture = <span>{repairDepth35()}</span>;\n`, 'utf8');
+    }, (fixtureRoot) => expectVerifierFailure('visible-string resolution depth exceeded (32)', fixtureRoot));
+  });
+
+  test('fails closed when a visible imported helper/composition chain exceeds the depth budget', () => {
+    withTemporaryFixture((fixtureRoot) => {
+      const helperPath = fixturePath(fixtureRoot, 'src/customerCopy.ts');
+      const helpers = Array.from({ length: 36 }, (_, index) => (
+        index === 0
+          ? "const importedDepth0 = () => 'Leg' + 'acy Imported Records';"
+          : `${index === 35 ? 'export ' : ''}const importedDepth${index} = () => importedDepth${index - 1}();`
+      )).join('\n');
+      writeFileSync(helperPath, `${helpers}\n`, 'utf8');
+      replaceFixtureSource(
+        fixtureRoot,
+        'src/pages/ClientDetail.tsx',
+        "import React, { useState } from 'react';",
+        "import React, { useState } from 'react';\nimport { importedDepth35 } from '../customerCopy';",
+      );
+      replaceFixtureSource(
+        fixtureRoot,
+        'src/pages/ClientDetail.tsx',
+        'All Clients',
+        '{importedDepth35()}',
+      );
+    }, (fixtureRoot) => expectVerifierFailure('visible-string resolution depth exceeded (32)', fixtureRoot));
+  });
+
+  test('allows a near-limit clean helper chain', () => {
+    withTemporaryFixture((fixtureRoot) => {
+      const filePath = fixturePath(fixtureRoot, 'src/pages/ClientDetail.tsx');
+      const source = readFileSync(filePath, 'utf8');
+      const helpers = Array.from({ length: 28 }, (_, index) => (
+        index === 0
+          ? "const repairSafeDepth0 = () => 'Current Records';"
+          : `const repairSafeDepth${index} = () => repairSafeDepth${index - 1}();`
+      )).join('\n');
+      writeFileSync(filePath, `${source}\n${helpers}\nexport const repairSafeDepthFixture = <span>{repairSafeDepth27()}</span>;\n`, 'utf8');
+    }, expectVerifierSuccess);
+  });
+
   test('fails closed when an evidence reference does not exist', () => {
     withTemporaryFixture((fixtureRoot) => updateFixtureRegistry(fixtureRoot, (registry) => {
       registry[0] = { ...registry[0], evidence: ['src/pages/NotARealEvidence.tsx'] };

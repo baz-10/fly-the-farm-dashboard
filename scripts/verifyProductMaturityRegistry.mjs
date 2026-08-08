@@ -18,6 +18,9 @@ const validMaturities = new Set([
 const validPriorities = new Set(['P0', 'P1', 'P2', 'P3']);
 const codePattern = /^[a-z][a-z0-9-]*(?:\.[a-z0-9-]+)*$/;
 const visibleStringCandidateBudget = 256;
+const visibleStringDepthBudget = 32;
+const visibleStringNodeBudget = 4096;
+const visibleStringSymbolBudget = 1024;
 const requiredArrayFields = [
   'evidence',
   'requiredAutomatedTests',
@@ -421,10 +424,26 @@ function boundedVisibleStringCandidates(values) {
   return candidates;
 }
 
-function resolveVisibleStrings(expression, checker, seen = new Set(), depth = 0, bindings = new Map()) {
-  if (!expression || depth > 32 || seen.has(expression)) return [];
+function resolveVisibleStrings(
+  expression,
+  checker,
+  seen = new Set(),
+  depth = 0,
+  bindings = new Map(),
+  symbolPath = new Set(),
+) {
+  if (!expression) return [];
+  if (depth > visibleStringDepthBudget) {
+    throw new Error(`visible-string resolution depth exceeded (${visibleStringDepthBudget}).`);
+  }
+  if (seen.size >= visibleStringNodeBudget) {
+    throw new Error(`visible-string node budget exceeded (${visibleStringNodeBudget}).`);
+  }
+  if (seen.has(expression)) return [];
   seen.add(expression);
-  const resolveNested = (nested) => resolveVisibleStrings(nested, checker, seen, depth + 1, bindings);
+  const resolveNested = (nested) => resolveVisibleStrings(
+    nested, checker, seen, depth + 1, bindings, new Set(symbolPath),
+  );
 
   if (ts.isStringLiteralLike(expression)) return [expression.text];
   if (ts.isParenthesizedExpression(expression)) return resolveNested(expression.expression);
@@ -490,6 +509,12 @@ function resolveVisibleStrings(expression, checker, seen = new Set(), depth = 0,
       : expression.expression;
     let symbol = checker.getSymbolAtLocation(symbolLocation);
     if (symbol && (symbol.flags & ts.SymbolFlags.Alias)) symbol = checker.getAliasedSymbol(symbol);
+    if (symbolPath.size >= visibleStringSymbolBudget) {
+      throw new Error(`visible-string symbol budget exceeded (${visibleStringSymbolBudget}).`);
+    }
+    if (symbol && symbolPath.has(symbol)) return argumentStrings;
+    const functionSymbolPath = new Set(symbolPath);
+    if (symbol) functionSymbolPath.add(symbol);
     let resolvedFunction = false;
     const returnStrings = (symbol?.declarations ?? []).flatMap((declaration) => {
       let functionDeclaration = declaration;
@@ -508,7 +533,7 @@ function resolveVisibleStrings(expression, checker, seen = new Set(), depth = 0,
       }
       resolvedFunction = true;
       return functionReturnExpressions(functionDeclaration).flatMap((returnExpression) => resolveVisibleStrings(
-        returnExpression, checker, new Set(seen), depth + 1, callBindings,
+        returnExpression, checker, new Set(seen), depth + 1, callBindings, functionSymbolPath,
       ));
     });
     return boundedVisibleStringCandidates(resolvedFunction ? returnStrings : argumentStrings);
@@ -517,12 +542,22 @@ function resolveVisibleStrings(expression, checker, seen = new Set(), depth = 0,
     let symbol = checker.getSymbolAtLocation(ts.isPropertyAccessExpression(expression) ? expression.name : expression);
     if (symbol && bindings.has(symbol)) return bindings.get(symbol);
     if (symbol && (symbol.flags & ts.SymbolFlags.Alias)) symbol = checker.getAliasedSymbol(symbol);
+    if (symbolPath.size >= visibleStringSymbolBudget) {
+      throw new Error(`visible-string symbol budget exceeded (${visibleStringSymbolBudget}).`);
+    }
+    if (symbol && symbolPath.has(symbol)) return [];
+    const declarationSymbolPath = new Set(symbolPath);
+    if (symbol) declarationSymbolPath.add(symbol);
     return boundedVisibleStringCandidates((symbol?.declarations ?? []).flatMap((declaration) => {
       if (ts.isVariableDeclaration(declaration) && declaration.initializer) {
-        return resolveNested(declaration.initializer);
+        return resolveVisibleStrings(
+          declaration.initializer, checker, seen, depth + 1, bindings, declarationSymbolPath,
+        );
       }
       if (ts.isPropertyAssignment(declaration)) {
-        return resolveNested(declaration.initializer);
+        return resolveVisibleStrings(
+          declaration.initializer, checker, seen, depth + 1, bindings, declarationSymbolPath,
+        );
       }
       return [];
     }));
