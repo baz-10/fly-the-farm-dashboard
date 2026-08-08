@@ -178,86 +178,64 @@ function assertWorkflowBoundaryReferences(root, customerUiSourcePaths, registry)
     : undefined;
   if (!canonicalSymbol) throw new Error('Canonical WorkflowMaturityBoundary declaration is missing.');
 
-  function traceBoundaryExpression(expression, state, depth = 0) {
-    if (!expression || depth > 32) return 'unrelated';
-    if (state.nodes.size >= 256) return 'unrelated';
-    if (state.nodes.has(expression)) return 'unrelated';
-    state.nodes.add(expression);
-
-    if (ts.isParenthesizedExpression(expression)
-      || ts.isAsExpression(expression)
-      || ts.isTypeAssertionExpression(expression)
-      || ts.isNonNullExpression(expression)
-      || ts.isSatisfiesExpression(expression)) {
-      return traceBoundaryExpression(expression.expression, state, depth + 1);
-    }
-    if (ts.isCallExpression(expression)) {
-      const argumentResults = expression.arguments.map((argument) => (
-        traceBoundaryExpression(argument, state, depth + 1)
-      ));
-      const containsBoundary = argumentResults.includes('matched');
-      const containsUnsupported = argumentResults.includes('unsupported');
-      const calleeName = ts.isIdentifier(expression.expression)
-        ? expression.expression.text
-        : ts.isPropertyAccessExpression(expression.expression)
-          ? expression.expression.name.text
-          : '';
-      if (containsBoundary && /^(?:memo|forwardRef)$/.test(calleeName)) return 'matched';
-      if (containsBoundary || containsUnsupported) return 'unsupported';
-      return 'unrelated';
-    }
-    if (!ts.isIdentifier(expression) && !ts.isPropertyAccessExpression(expression)) return 'unrelated';
-
-    const symbolLocation = ts.isPropertyAccessExpression(expression) ? expression.name : expression;
-    return traceBoundarySymbol(checker.getSymbolAtLocation(symbolLocation), state, depth + 1);
-  }
-
-  function traceBoundarySymbol(symbol, state, depth = 0) {
-    if (!symbol || depth > 32) return 'unrelated';
-    if (symbol === canonicalSymbol) return 'matched';
-    if (state.symbols.size >= 256) return 'unrelated';
-    if (state.symbols.has(symbol)) return 'unrelated';
-    state.symbols.add(symbol);
-
-    if (symbol.flags & ts.SymbolFlags.Alias) {
-      const aliased = checker.getAliasedSymbol(symbol);
-      const aliasResult = traceBoundarySymbol(aliased, state, depth + 1);
-      if (aliasResult === 'matched' && (symbol.declarations ?? []).some((declaration) => (
-        !ts.isImportSpecifier(declaration)
-        && !ts.isExportSpecifier(declaration)
-        && !ts.isNamespaceImport(declaration)
-      ))) return 'unsupported';
-      if (aliasResult !== 'unrelated') return aliasResult;
-    }
-
-    const declarationResults = (symbol.declarations ?? []).map((declaration) => {
-      if (ts.isVariableDeclaration(declaration) && declaration.initializer) {
-        return traceBoundaryExpression(declaration.initializer, state, depth + 1);
-      }
-      if (ts.isPropertyAssignment(declaration)) {
-        return traceBoundaryExpression(declaration.initializer, state, depth + 1);
-      }
-      if (ts.isShorthandPropertyAssignment(declaration)) {
-        return traceBoundaryExpression(declaration.name, state, depth + 1);
-      }
-      return 'unrelated';
-    });
-    if (declarationResults.includes('unsupported')) return 'unsupported';
-    if (declarationResults.includes('matched')) return 'matched';
-    return 'unrelated';
-  }
-
   customerUiSourcePaths.forEach((sourcePath, index) => {
     const sourceFile = program.getSourceFile(rootNames[index]);
     if (!sourceFile) return;
+    let directImportSymbol;
+    const canonicalModuleSuffix = 'components/productMaturity/WorkflowMaturityBoundary';
+    const resolvesToCanonical = (symbol) => {
+      if (!symbol) return false;
+      if (symbol === canonicalSymbol) return true;
+      return Boolean(symbol.flags & ts.SymbolFlags.Alias)
+        && checker.getAliasedSymbol(symbol) === canonicalSymbol;
+    };
+
+    sourceFile.statements.forEach((statement) => {
+      if (ts.isImportDeclaration(statement) && ts.isStringLiteral(statement.moduleSpecifier)) {
+        const modulePath = statement.moduleSpecifier.text;
+        const bindings = statement.importClause?.namedBindings;
+        if (modulePath.endsWith(canonicalModuleSuffix)
+          && (!bindings || ts.isNamespaceImport(bindings) || statement.importClause?.name)) {
+          throw new Error(`WorkflowMaturityBoundary in ${sourcePath} requires its exact direct named import.`);
+        }
+        if (bindings && ts.isNamedImports(bindings)) {
+          bindings.elements.forEach((element) => {
+            const importSymbol = checker.getSymbolAtLocation(element.name);
+            if (!resolvesToCanonical(importSymbol)) return;
+            if (!modulePath.endsWith(canonicalModuleSuffix)
+              || (element.propertyName ?? element.name).text !== 'WorkflowMaturityBoundary'
+              || element.name.text !== 'WorkflowMaturityBoundary') {
+              throw new Error(`WorkflowMaturityBoundary in ${sourcePath} requires its exact direct named import without aliases or barrels.`);
+            }
+            directImportSymbol = importSymbol;
+          });
+        }
+      }
+      if (ts.isExportDeclaration(statement) && statement.exportClause && ts.isNamedExports(statement.exportClause)) {
+        statement.exportClause.elements.forEach((element) => {
+          if (resolvesToCanonical(checker.getSymbolAtLocation(element.name))) {
+            throw new Error(`WorkflowMaturityBoundary in ${sourcePath} must not be re-exported.`);
+          }
+        });
+      }
+    });
+
+    let visitedNodeCount = 0;
 
     function visit(node) {
+      visitedNodeCount += 1;
+      if (visitedNodeCount > 250000) {
+        throw new Error(`WorkflowMaturityBoundary traversal budget exceeded in ${sourcePath}.`);
+      }
       if (ts.isJsxOpeningElement(node) || ts.isJsxSelfClosingElement(node)) {
-        const boundaryTrace = traceBoundaryExpression(node.tagName, { nodes: new Set(), symbols: new Set() });
-        const isBoundaryReference = boundaryTrace === 'matched';
-        if (boundaryTrace === 'unsupported') {
-          throw new Error(`WorkflowMaturityBoundary reference in ${sourcePath} uses an unsupported alias or wrapper.`);
+        const tagText = node.tagName.getText(sourceFile);
+        const tagSymbol = ts.isIdentifier(node.tagName)
+          ? checker.getSymbolAtLocation(node.tagName)
+          : undefined;
+        if (tagText === 'WorkflowMaturityBoundary' && tagSymbol !== directImportSymbol) {
+          throw new Error(`WorkflowMaturityBoundary JSX tag in ${sourcePath} is shadowed or unrelated.`);
         }
+        const isBoundaryReference = tagText === 'WorkflowMaturityBoundary' && tagSymbol === directImportSymbol;
 
         if (isBoundaryReference) {
           if (node.attributes.properties.some(ts.isJsxSpreadAttribute)) {
@@ -282,6 +260,16 @@ function assertWorkflowBoundaryReferences(root, customerUiSourcePaths, registry)
           if (!registryKeys.has(`${moduleCode}::${workflowCode}`)) {
             throw new Error(`WorkflowMaturityBoundary reference in ${sourcePath} does not have an exact registry override: ${moduleCode}/${workflowCode}.`);
           }
+        }
+      }
+      if (ts.isIdentifier(node) && directImportSymbol
+        && checker.getSymbolAtLocation(node) === directImportSymbol) {
+        const isImportName = ts.isImportSpecifier(node.parent);
+        const isJsxTag = (ts.isJsxOpeningElement(node.parent)
+          || ts.isJsxSelfClosingElement(node.parent)
+          || ts.isJsxClosingElement(node.parent)) && node.parent.tagName === node;
+        if (!isImportName && !isJsxTag) {
+          throw new Error(`WorkflowMaturityBoundary in ${sourcePath} must only be referenced as its direct JSX tag.`);
         }
       }
       ts.forEachChild(node, visit);

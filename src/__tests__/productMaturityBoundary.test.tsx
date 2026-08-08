@@ -200,10 +200,10 @@ describe('product maturity CI boundary', () => {
         )
         .replace('workflowCode="network-source-manager"', 'workflowCode={dynamicWorkflow}');
       writeFileSync(filePath, source, 'utf8');
-    }, (fixtureRoot) => expectVerifierFailure('static string literal', fixtureRoot));
+    }, (fixtureRoot) => expectVerifierFailure('exact direct named import', fixtureRoot));
   });
 
-  test('accepts an aliased WorkflowMaturityBoundary import with exact static codes', () => {
+  test('rejects an aliased WorkflowMaturityBoundary import with exact static codes', () => {
     withTemporaryFixture((fixtureRoot) => {
       const filePath = fixturePath(fixtureRoot, 'src/pages/Admin.tsx');
       const source = readFileSync(filePath, 'utf8')
@@ -214,7 +214,7 @@ describe('product maturity CI boundary', () => {
           'import { WorkflowMaturityBoundary as Boundary }',
         );
       writeFileSync(filePath, source, 'utf8');
-    }, expectVerifierSuccess);
+    }, (fixtureRoot) => expectVerifierFailure('exact direct named import', fixtureRoot));
   });
 
   test('fails closed when an aliased WorkflowMaturityBoundary tag is rebound', () => {
@@ -228,7 +228,7 @@ describe('product maturity CI boundary', () => {
           'import { WorkflowMaturityBoundary as Boundary }',
         );
       writeFileSync(filePath, `${source}\nconst Boundary = () => null;\n`, 'utf8');
-    }, (fixtureRoot) => expectVerifierFailure('unsupported alias or wrapper', fixtureRoot));
+    }, (fixtureRoot) => expectVerifierFailure('exact direct named import', fixtureRoot));
   });
 
   test.each([
@@ -252,16 +252,18 @@ describe('product maturity CI boundary', () => {
       "import * as Maturity from '../components/productMaturity/WorkflowMaturityBoundary';",
       'const Boundary = Maturity.WorkflowMaturityBoundary;',
     ],
-  ])('resolves a %s to the canonical boundary and validates its props', (_label, replacementImport, declaration) => {
+    [
+      'conditional alias',
+      "import { WorkflowMaturityBoundary } from '../components/productMaturity/WorkflowMaturityBoundary';",
+      'const Boundary = true ? WorkflowMaturityBoundary : WorkflowMaturityBoundary;',
+    ],
+  ])('rejects a %s instead of inferring a boundary alias', (_label, replacementImport, declaration) => {
     withTemporaryFixture((fixtureRoot) => rewriteAdminBoundaryAlias(
       fixtureRoot, replacementImport, declaration,
-    ), expectVerifierSuccess);
-    withTemporaryFixture((fixtureRoot) => rewriteAdminBoundaryAlias(
-      fixtureRoot, replacementImport, declaration, true,
-    ), (fixtureRoot) => expectVerifierFailure('static string literal', fixtureRoot));
+    ), (fixtureRoot) => expectVerifierFailure('WorkflowMaturityBoundary', fixtureRoot));
   });
 
-  test('resolves a barrel re-export to the canonical boundary', () => {
+  test('rejects a barrel re-export of the canonical boundary', () => {
     withTemporaryFixture((fixtureRoot) => {
       writeFileSync(
         fixturePath(fixtureRoot, 'src/components/productMaturity/index.ts'),
@@ -273,20 +275,28 @@ describe('product maturity CI boundary', () => {
         "import { WorkflowMaturityBoundary as Boundary } from '../components/productMaturity';",
         '',
       );
-    }, expectVerifierSuccess);
+    }, (fixtureRoot) => expectVerifierFailure('must not be re-exported', fixtureRoot));
+  });
+
+  test('rejects a boundary hidden behind more than 32 alias hops', () => {
     withTemporaryFixture((fixtureRoot) => {
-      writeFileSync(
-        fixturePath(fixtureRoot, 'src/components/productMaturity/index.ts'),
-        "export { WorkflowMaturityBoundary } from './WorkflowMaturityBoundary';\n",
-        'utf8',
-      );
+      const declarations = Array.from({ length: 40 }, (_, index) => (
+        `const Boundary${index + 1} = ${index === 0 ? 'WorkflowMaturityBoundary' : `Boundary${index}`};`
+      )).join('\n');
       rewriteAdminBoundaryAlias(
         fixtureRoot,
-        "import { WorkflowMaturityBoundary as Boundary } from '../components/productMaturity';",
-        '',
-        true,
+        "import { WorkflowMaturityBoundary } from '../components/productMaturity/WorkflowMaturityBoundary';",
+        `${declarations}\nconst Boundary = Boundary40;`,
       );
-    }, (fixtureRoot) => expectVerifierFailure('static string literal', fixtureRoot));
+    }, (fixtureRoot) => expectVerifierFailure('direct JSX tag', fixtureRoot));
+  });
+
+  test('rejects a legally nested shadow with the canonical JSX tag text', () => {
+    withTemporaryFixture((fixtureRoot) => {
+      const filePath = fixturePath(fixtureRoot, 'src/pages/Admin.tsx');
+      const source = readFileSync(filePath, 'utf8');
+      writeFileSync(filePath, `${source}\nfunction ShadowFixture() { const WorkflowMaturityBoundary = ({ children }: any) => children; return <WorkflowMaturityBoundary moduleCode="organisation-administration" workflowCode="network-source-manager">shadow</WorkflowMaturityBoundary>; }\n`, 'utf8');
+    }, (fixtureRoot) => expectVerifierFailure('shadowed or unrelated', fixtureRoot));
   });
 
   test('allows a Commercially Ready entry with no promotion blockers when Founder approval is present', () => {
