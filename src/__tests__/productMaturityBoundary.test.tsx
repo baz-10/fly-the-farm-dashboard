@@ -614,6 +614,30 @@ describe('product maturity CI boundary', () => {
     }, (fixtureRoot) => expectVerifierFailure('Customer-facing Legacy violation', fixtureRoot));
   });
 
+  test('rejects visible Legacy composed across typed cyclic variables', () => {
+    withTemporaryFixture((fixtureRoot) => {
+      const filePath = fixturePath(fixtureRoot, 'src/pages/ClientDetail.tsx');
+      const source = readFileSync(filePath, 'utf8');
+      writeFileSync(
+        filePath,
+        `${source}\nconst left: string = right || 'Leg';\nconst right: string = left || 'acy';\nexport const repairCyclicCopyFixture = <span>{left + right}</span>;\n`,
+        'utf8',
+      );
+    }, (fixtureRoot) => expectVerifierFailure('Customer-facing Legacy violation', fixtureRoot));
+  });
+
+  test('terminates a genuine typed variable cycle with no visible strings', () => {
+    withTemporaryFixture((fixtureRoot) => {
+      const filePath = fixturePath(fixtureRoot, 'src/pages/ClientDetail.tsx');
+      const source = readFileSync(filePath, 'utf8');
+      writeFileSync(
+        filePath,
+        `${source}\nconst left: string = right;\nconst right: string = left;\nexport const repairNonvisibleCycleFixture = <span>{left}</span>;\n`,
+        'utf8',
+      );
+    }, expectVerifierSuccess);
+  });
+
   test('rejects a visible string returned by a statically resolvable imported helper', () => {
     withTemporaryFixture((fixtureRoot) => {
       writeFileSync(
@@ -687,6 +711,49 @@ describe('product maturity CI boundary', () => {
       )).join('\n');
       writeFileSync(filePath, `${source}\n${helpers}\nexport const repairSafeDepthFixture = <span>{repairSafeDepth27()}</span>;\n`, 'utf8');
     }, expectVerifierSuccess);
+  });
+
+  test('fails closed when two helper return branches aggregate beyond the node budget', () => {
+    withTemporaryFixture((fixtureRoot) => {
+      const filePath = fixturePath(fixtureRoot, 'src/pages/ClientDetail.tsx');
+      const source = readFileSync(filePath, 'utf8');
+      const branchValues = Array.from({ length: 2048 }, () => "'Current'").join(', ');
+      writeFileSync(
+        filePath,
+        `${source}\nfunction repairNodeBudget() {\n  if (true) return [${branchValues}];\n  return [${branchValues}];\n}\nexport const repairNodeBudgetFixture = <span>{repairNodeBudget()}</span>;\n`,
+        'utf8',
+      );
+    }, (fixtureRoot) => expectVerifierFailure('visible-string node budget exceeded (4096)', fixtureRoot));
+  });
+
+  test('allows two helper return branches whose aggregate stays at the node budget', () => {
+    withTemporaryFixture((fixtureRoot) => {
+      const filePath = fixturePath(fixtureRoot, 'src/pages/ClientDetail.tsx');
+      const source = readFileSync(filePath, 'utf8');
+      const branchValues = Array.from({ length: 2044 }, () => "'Current'").join(', ');
+      writeFileSync(
+        filePath,
+        `${source}\nfunction repairNearNodeBudget() {\n  if (true) return [${branchValues}];\n  return [${branchValues}];\n}\nexport const repairNearNodeBudgetFixture = <span>{repairNearNodeBudget()}</span>;\n`,
+        'utf8',
+      );
+    }, expectVerifierSuccess);
+  });
+
+  test('fails closed when shallow visible-string breadth exceeds the symbol budget', () => {
+    withTemporaryFixture((fixtureRoot) => {
+      const filePath = fixturePath(fixtureRoot, 'src/pages/ClientDetail.tsx');
+      const source = readFileSync(filePath, 'utf8');
+      const declarations = Array.from(
+        { length: 1025 },
+        (_, index) => `const repairSymbol${index}: string = 'Current';`,
+      ).join('\n');
+      const references = Array.from({ length: 1025 }, (_, index) => `repairSymbol${index}`).join(', ');
+      writeFileSync(
+        filePath,
+        `${source}\n${declarations}\nexport const repairSymbolBudgetFixture = <span>{[${references}]}</span>;\n`,
+        'utf8',
+      );
+    }, (fixtureRoot) => expectVerifierFailure('visible-string symbol budget exceeded (1024)', fixtureRoot));
   });
 
   test('fails closed when an evidence reference does not exist', () => {

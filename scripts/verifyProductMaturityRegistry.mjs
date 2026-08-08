@@ -398,13 +398,28 @@ async function validateRegistryReferences(root, registry) {
   return evidenceReferenceCount;
 }
 
-function functionReturnExpressions(declaration) {
+function recordVisibleStringNodeVisit(state) {
+  state.nodeVisitCount += 1;
+  if (state.nodeVisitCount > visibleStringNodeBudget) {
+    throw new Error(`visible-string node budget exceeded (${visibleStringNodeBudget}).`);
+  }
+}
+
+function recordVisibleStringSymbolVisit(state) {
+  state.symbolVisitCount += 1;
+  if (state.symbolVisitCount > visibleStringSymbolBudget) {
+    throw new Error(`visible-string symbol budget exceeded (${visibleStringSymbolBudget}).`);
+  }
+}
+
+function functionReturnExpressions(declaration, state) {
   const body = declaration.body;
   if (!body) return [];
   if (!ts.isBlock(body)) return [body];
 
   const returns = [];
   function visit(node) {
+    recordVisibleStringNodeVisit(state);
     if (node !== body && ts.isFunctionLike(node)) return;
     if (ts.isReturnStatement(node) && node.expression) {
       returns.push(node.expression);
@@ -427,22 +442,22 @@ function boundedVisibleStringCandidates(values) {
 function resolveVisibleStrings(
   expression,
   checker,
-  seen = new Set(),
+  nodePath = new Set(),
   depth = 0,
   bindings = new Map(),
   symbolPath = new Set(),
+  state = { nodeVisitCount: 0, symbolVisitCount: 0 },
 ) {
   if (!expression) return [];
   if (depth > visibleStringDepthBudget) {
     throw new Error(`visible-string resolution depth exceeded (${visibleStringDepthBudget}).`);
   }
-  if (seen.size >= visibleStringNodeBudget) {
-    throw new Error(`visible-string node budget exceeded (${visibleStringNodeBudget}).`);
-  }
-  if (seen.has(expression)) return [];
-  seen.add(expression);
+  recordVisibleStringNodeVisit(state);
+  if (nodePath.has(expression)) return [];
+  const nestedNodePath = new Set(nodePath);
+  nestedNodePath.add(expression);
   const resolveNested = (nested) => resolveVisibleStrings(
-    nested, checker, seen, depth + 1, bindings, new Set(symbolPath),
+    nested, checker, nestedNodePath, depth + 1, bindings, new Set(symbolPath), state,
   );
 
   if (ts.isStringLiteralLike(expression)) return [expression.text];
@@ -508,10 +523,8 @@ function resolveVisibleStrings(
       ? expression.expression.name
       : expression.expression;
     let symbol = checker.getSymbolAtLocation(symbolLocation);
+    if (symbol) recordVisibleStringSymbolVisit(state);
     if (symbol && (symbol.flags & ts.SymbolFlags.Alias)) symbol = checker.getAliasedSymbol(symbol);
-    if (symbolPath.size >= visibleStringSymbolBudget) {
-      throw new Error(`visible-string symbol budget exceeded (${visibleStringSymbolBudget}).`);
-    }
     if (symbol && symbolPath.has(symbol)) return argumentStrings;
     const functionSymbolPath = new Set(symbolPath);
     if (symbol) functionSymbolPath.add(symbol);
@@ -528,35 +541,34 @@ function resolveVisibleStrings(
         if (!ts.isIdentifier(parameter.name)) return [];
         const parameterSymbol = checker.getSymbolAtLocation(parameter.name);
         const argumentValues = argumentValueSets[index];
+        if (parameterSymbol) recordVisibleStringSymbolVisit(state);
         if (!parameterSymbol || argumentValues.length === 0) return [];
         callBindings.set(parameterSymbol, argumentValues);
       }
       resolvedFunction = true;
-      return functionReturnExpressions(functionDeclaration).flatMap((returnExpression) => resolveVisibleStrings(
-        returnExpression, checker, new Set(seen), depth + 1, callBindings, functionSymbolPath,
+      return functionReturnExpressions(functionDeclaration, state).flatMap((returnExpression) => resolveVisibleStrings(
+        returnExpression, checker, nestedNodePath, depth + 1, callBindings, functionSymbolPath, state,
       ));
     });
     return boundedVisibleStringCandidates(resolvedFunction ? returnStrings : argumentStrings);
   }
   if (ts.isIdentifier(expression) || ts.isPropertyAccessExpression(expression)) {
     let symbol = checker.getSymbolAtLocation(ts.isPropertyAccessExpression(expression) ? expression.name : expression);
+    if (symbol) recordVisibleStringSymbolVisit(state);
     if (symbol && bindings.has(symbol)) return bindings.get(symbol);
     if (symbol && (symbol.flags & ts.SymbolFlags.Alias)) symbol = checker.getAliasedSymbol(symbol);
-    if (symbolPath.size >= visibleStringSymbolBudget) {
-      throw new Error(`visible-string symbol budget exceeded (${visibleStringSymbolBudget}).`);
-    }
     if (symbol && symbolPath.has(symbol)) return [];
     const declarationSymbolPath = new Set(symbolPath);
     if (symbol) declarationSymbolPath.add(symbol);
     return boundedVisibleStringCandidates((symbol?.declarations ?? []).flatMap((declaration) => {
       if (ts.isVariableDeclaration(declaration) && declaration.initializer) {
         return resolveVisibleStrings(
-          declaration.initializer, checker, seen, depth + 1, bindings, declarationSymbolPath,
+          declaration.initializer, checker, nestedNodePath, depth + 1, bindings, declarationSymbolPath, state,
         );
       }
       if (ts.isPropertyAssignment(declaration)) {
         return resolveVisibleStrings(
-          declaration.initializer, checker, seen, depth + 1, bindings, declarationSymbolPath,
+          declaration.initializer, checker, nestedNodePath, depth + 1, bindings, declarationSymbolPath, state,
         );
       }
       return [];
