@@ -213,6 +213,33 @@ describe('product maturity CI boundary', () => {
     ), (fixtureRoot) => expectVerifierFailure('App route manifest mismatch', fixtureRoot));
   });
 
+  test('accepts a pathless layout route whose Route child is inside nested JSX fragments', () => {
+    withTemporaryFixture((fixtureRoot) => replaceFixtureSource(
+      fixtureRoot,
+      'src/App.tsx',
+      '          <Route path="/platform" element={<PlatformAdmin />} />',
+      '          <>\n            <>\n              <Route path="/platform" element={<PlatformAdmin />} />\n            </>\n          </>',
+    ), expectVerifierSuccess);
+  });
+
+  test('rejects a pathless layout route whose nested JSX fragments contain no Route', () => {
+    withTemporaryFixture((fixtureRoot) => replaceFixtureSource(
+      fixtureRoot,
+      'src/App.tsx',
+      '          <Route path="/platform" element={<PlatformAdmin />} />',
+      '          <>\n            <>\n              <PlatformAdmin />\n            </>\n          </>',
+    ), (fixtureRoot) => expectVerifierFailure('requires a path', fixtureRoot));
+  });
+
+  test('rejects a missing leaf path inside nested JSX fragments', () => {
+    withTemporaryFixture((fixtureRoot) => replaceFixtureSource(
+      fixtureRoot,
+      'src/App.tsx',
+      '          <Route path="/platform" element={<PlatformAdmin />} />',
+      '          <>\n            <>\n              <Route element={<PlatformAdmin />} />\n            </>\n          </>',
+    ), (fixtureRoot) => expectVerifierFailure('requires a path', fixtureRoot));
+  });
+
   test.each([
     ['moduleCode="organisation-administration"', 'moduleCode="missing-administration"'],
     ['workflowCode="network-source-manager"', 'workflowCode="missing-source-manager"'],
@@ -610,6 +637,58 @@ describe('product maturity CI boundary', () => {
       const source = readFileSync(filePath, 'utf8');
       writeFileSync(filePath, `${source}\n${fixtureSource}\n`, 'utf8');
     }, (fixtureRoot) => expectVerifierFailure('Customer-facing Legacy violation', fixtureRoot));
+  });
+
+  test.each([
+    ['element-access join', "{['Leg', 'acy']['join']('')}"],
+    ['element-access string concat', "{'Leg'['concat']('acy')}"],
+    ['template-named element-access array concat', "{['Leg'][`concat`]('acy')}"],
+  ])('rejects Legacy assembled through %s', (_label, replacement) => {
+    withTemporaryFixture((fixtureRoot) => replaceFixtureSource(
+      fixtureRoot,
+      'src/pages/ClientDetail.tsx',
+      'All Clients',
+      replacement,
+    ), (fixtureRoot) => expectVerifierFailure('Customer-facing Legacy violation', fixtureRoot));
+  });
+
+  test('fails closed on a rendered dynamic element-access method name', () => {
+    withTemporaryFixture((fixtureRoot) => replaceFixtureSource(
+      fixtureRoot,
+      'src/pages/ClientDetail.tsx',
+      'All Clients',
+      "{['Current Records'][dynamicMethodName]('')}",
+    ), (fixtureRoot) => expectVerifierFailure('dynamic rendered method name', fixtureRoot));
+  });
+
+  test.each([
+    ['property string concat array coercion', "{'Le'.concat(['g', 'acy'])}"],
+    ['element string concat array coercion', "{'Le'['concat'](['g', 'acy'])}"],
+    ['property join separator', "{['Leg', 'acy'].join(',')}"],
+    ['element join separator', "{['Leg', 'acy']['join'](',')}"],
+    ['property join array-to-string separator coercion', "{['Leg', 'acy'].join([','])}"],
+  ])('allows non-Legacy visible copy with real %s semantics', (_label, replacement) => {
+    withTemporaryFixture((fixtureRoot) => replaceFixtureSource(
+      fixtureRoot,
+      'src/pages/ClientDetail.tsx',
+      'All Clients',
+      replacement,
+    ), expectVerifierSuccess);
+  });
+
+  test.each([
+    ['property array concat flattening', "{['Le'].concat(['g', 'acy'])}"],
+    ['element array concat flattening', "{['Le']['concat'](['g', 'acy'])}"],
+    ['property string concat single-array coercion', "{'Leg'.concat(['acy'])}"],
+    ['element string concat single-array coercion', "{'Leg'['concat'](['acy'])}"],
+    ['element join empty-array separator coercion', "{['Leg', 'acy']['join']([])}"],
+  ])('rejects Legacy visible copy with real %s semantics', (_label, replacement) => {
+    withTemporaryFixture((fixtureRoot) => replaceFixtureSource(
+      fixtureRoot,
+      'src/pages/ClientDetail.tsx',
+      'All Clients',
+      replacement,
+    ), (fixtureRoot) => expectVerifierFailure('Customer-facing Legacy violation', fixtureRoot));
   });
 
   test('fails closed when a rendered join receiver has static copy but a dynamic separator', () => {

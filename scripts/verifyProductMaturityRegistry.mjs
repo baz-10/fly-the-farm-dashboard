@@ -201,6 +201,7 @@ function discoverReactRouterPaths(sourceFile, checker) {
     if (ts.isJsxElement(child)) {
       return isReactRouterRouteTag(child.openingElement.tagName) || containsRouteChild(child);
     }
+    if (ts.isJsxFragment(child)) return containsRouteChild(child);
     if (ts.isJsxSelfClosingElement(child)) return isReactRouterRouteTag(child.tagName);
     if (ts.isJsxExpression(child) && child.expression) {
       let found = false;
@@ -566,13 +567,58 @@ function boundedVisibleStringCandidates(values) {
   return candidates;
 }
 
-function composeVisibleStringCandidateSets(valueSets, separator = '') {
-  if (valueSets.some((values) => values.length === 0)) return null;
-  return valueSets.reduce((compositions, values, index) => boundedVisibleStringCandidates(
-    compositions.flatMap((composition) => values.map((value) => (
-      `${composition}${index === 0 ? '' : separator}${value}`
-    ))),
-  ), ['']);
+function boundedStaticValues(values) {
+  const candidates = [...new Map(values.map((value) => [
+    `${value.kind}:${JSON.stringify(value.value)}`,
+    value,
+  ])).values()];
+  if (candidates.length > visibleStringCandidateBudget) {
+    throw new Error(`visible-string candidate budget exceeded (${visibleStringCandidateBudget}).`);
+  }
+  return candidates;
+}
+
+function composeStaticArrayValues(elementValueSets) {
+  if (elementValueSets.some((values) => (
+    values.length === 0 || values.some((value) => value.kind !== 'string')
+  ))) return null;
+
+  return elementValueSets.reduce((arrays, values) => boundedStaticValues(
+    arrays.flatMap((arrayValue) => values.map((value) => ({
+      kind: 'string-array',
+      value: [...arrayValue.value, value.value],
+    }))),
+  ), [{ kind: 'string-array', value: [] }]);
+}
+
+function staticValuesToVisibleStrings(values) {
+  return boundedVisibleStringCandidates(values.map((value) => (
+    value.kind === 'string' ? value.value : value.value.join('')
+  )));
+}
+
+function coerceStaticValueToString(value) {
+  return value.kind === 'string' ? value.value : value.value.join(',');
+}
+
+function evaluateStaticConcat(receiverValues, argumentValueSets) {
+  if (!receiverValues || argumentValueSets.some((values) => !values)) return null;
+
+  return argumentValueSets.reduce((currentValues, argumentValues) => boundedStaticValues(
+    currentValues.flatMap((receiverValue) => argumentValues.map((argumentValue) => {
+      if (receiverValue.kind === 'string') {
+        const coercedArgument = coerceStaticValueToString(argumentValue);
+        return { kind: 'string', value: `${receiverValue.value}${coercedArgument}` };
+      }
+      return {
+        kind: 'string-array',
+        value: [
+          ...receiverValue.value,
+          ...(argumentValue.kind === 'string' ? [argumentValue.value] : argumentValue.value),
+        ],
+      };
+    })),
+  ), receiverValues);
 }
 
 function resolveVisibleStrings(
@@ -653,10 +699,13 @@ function resolveVisibleStrings(
     }));
   }
   if (ts.isCallExpression(expression)) {
-    const methodAccess = ts.isPropertyAccessExpression(expression.expression)
+    const propertyMethodAccess = ts.isPropertyAccessExpression(expression.expression)
       ? expression.expression
       : null;
-    const methodName = methodAccess?.name.text;
+    const elementMethodAccess = ts.isElementAccessExpression(expression.expression)
+      ? expression.expression
+      : null;
+    const methodAccess = propertyMethodAccess ?? elementMethodAccess;
     const unwrapStaticExpression = (candidate) => {
       let unwrapped = candidate;
       while (ts.isParenthesizedExpression(unwrapped)
@@ -669,10 +718,19 @@ function resolveVisibleStrings(
       }
       return unwrapped;
     };
-    const resolveStaticSequence = (
+    const elementMethodNameExpression = elementMethodAccess?.argumentExpression
+      ? unwrapStaticExpression(elementMethodAccess.argumentExpression)
+      : null;
+    const methodName = propertyMethodAccess?.name.text
+      ?? (elementMethodNameExpression && ts.isStringLiteralLike(elementMethodNameExpression)
+        ? elementMethodNameExpression.text
+        : null);
+    if (elementMethodAccess && methodName === null) {
+      throw new Error('visible-string dynamic rendered method name could not be resolved safely.');
+    }
+
+    const resolveStaticValues = (
       candidate,
-      separator,
-      arrayRequired = false,
       sequenceSymbolPath = new Set(symbolPath),
       sequenceDepth = depth + 1,
     ) => {
@@ -683,10 +741,23 @@ function resolveVisibleStrings(
       if (ts.isArrayLiteralExpression(unwrapped)) {
         recordVisibleStringNodeVisit(state);
         if (unwrapped.elements.some(ts.isSpreadElement)) return null;
-        return composeVisibleStringCandidateSets(
-          unwrapped.elements.map((element) => resolveNested(element)),
-          separator,
+        return composeStaticArrayValues(
+          unwrapped.elements.map((element) => resolveStaticValues(
+            element,
+            new Set(sequenceSymbolPath),
+            sequenceDepth + 1,
+          ) ?? []),
         );
+      }
+      if (ts.isConditionalExpression(unwrapped)) {
+        const branchValues = [unwrapped.whenTrue, unwrapped.whenFalse].flatMap((branch) => (
+          resolveStaticValues(
+            branch,
+            new Set(sequenceSymbolPath),
+            sequenceDepth + 1,
+          ) ?? []
+        ));
+        return branchValues.length > 0 ? boundedStaticValues(branchValues) : null;
       }
       if (ts.isIdentifier(unwrapped) || ts.isPropertyAccessExpression(unwrapped)) {
         recordVisibleStringNodeVisit(state);
@@ -694,8 +765,11 @@ function resolveVisibleStrings(
           ts.isPropertyAccessExpression(unwrapped) ? unwrapped.name : unwrapped,
         );
         if (sequenceSymbol) recordVisibleStringSymbolVisit(state);
-        if (sequenceSymbol && bindings.has(sequenceSymbol) && !arrayRequired) {
-          return bindings.get(sequenceSymbol);
+        if (sequenceSymbol && bindings.has(sequenceSymbol)) {
+          return boundedStaticValues(bindings.get(sequenceSymbol).map((value) => ({
+            kind: 'string',
+            value,
+          })));
         }
         if (sequenceSymbol && (sequenceSymbol.flags & ts.SymbolFlags.Alias)) {
           sequenceSymbol = checker.getAliasedSymbol(sequenceSymbol);
@@ -710,49 +784,53 @@ function resolveVisibleStrings(
               ? declaration.initializer
               : null;
           if (!initializer) return [];
-          return resolveStaticSequence(
+          return resolveStaticValues(
             initializer,
-            separator,
-            arrayRequired,
             nestedSequenceSymbolPath,
             sequenceDepth + 1,
           ) ?? [];
         });
         if (declarationValues.length > 0) {
-          return boundedVisibleStringCandidates(declarationValues);
+          return boundedStaticValues(declarationValues);
         }
-        if (arrayRequired) return null;
       }
-      if (arrayRequired) return null;
 
       const type = checker.getTypeAtLocation(unwrapped);
       if ((type.flags & ts.TypeFlags.StringLike) === 0) return null;
       const values = resolveNested(unwrapped);
-      return values.length > 0 ? values : null;
+      return values.length > 0
+        ? boundedStaticValues(values.map((value) => ({ kind: 'string', value })))
+        : null;
     };
 
+    const staticMethodReceiverValues = methodAccess
+      && (methodName === 'join' || methodName === 'concat')
+      ? resolveStaticValues(methodAccess.expression)
+      : null;
+
     if (methodAccess && methodName === 'join') {
-      const separators = expression.arguments.length === 0
-        ? [',']
+      const separatorValues = expression.arguments.length === 0
+        ? [{ kind: 'string', value: ',' }]
         : expression.arguments.length === 1
-          ? resolveNested(expression.arguments[0])
-          : [];
-      if (separators.length > 0) {
-        const joinedValues = boundedVisibleStringCandidates(separators.flatMap((separator) => (
-          resolveStaticSequence(methodAccess.expression, separator, true) ?? []
+          ? resolveStaticValues(expression.arguments[0])
+          : null;
+      if (staticMethodReceiverValues
+        && staticMethodReceiverValues.every((value) => value.kind === 'string-array')
+        && separatorValues) {
+        return boundedVisibleStringCandidates(staticMethodReceiverValues.flatMap((receiverValue) => (
+          separatorValues.map((separatorValue) => receiverValue.value.join(
+            coerceStaticValueToString(separatorValue),
+          ))
         )));
-        if (joinedValues.length > 0) return joinedValues;
       }
     }
 
     if (methodAccess && methodName === 'concat') {
-      const sequenceSets = [methodAccess.expression, ...expression.arguments].map((candidate) => (
-        resolveStaticSequence(candidate, '')
-      ));
-      if (sequenceSets.every((values) => values !== null)) {
-        const concatenatedValues = composeVisibleStringCandidateSets(sequenceSets, '');
-        if (concatenatedValues) return concatenatedValues;
-      }
+      const concatenatedValues = evaluateStaticConcat(
+        staticMethodReceiverValues,
+        expression.arguments.map((argument) => resolveStaticValues(argument)),
+      );
+      if (concatenatedValues) return staticValuesToVisibleStrings(concatenatedValues);
     }
 
     const argumentValueSets = expression.arguments.map(resolveNested);
@@ -765,14 +843,14 @@ function resolveVisibleStrings(
       || ts.isBinaryExpression(receiverExpression)
       || ts.isConditionalExpression(receiverExpression)
     );
-    const receiverStrings = methodAccess && (
-      receiverHasDirectStaticCopy || methodName === 'join' || methodName === 'concat'
-    )
-      ? resolveNested(methodAccess.expression)
-      : [];
-    const symbolLocation = methodAccess
-      ? expression.expression.name
-      : expression.expression;
+    const receiverStrings = staticMethodReceiverValues
+      ? staticValuesToVisibleStrings(staticMethodReceiverValues)
+      : methodAccess && (
+        receiverHasDirectStaticCopy || methodName === 'join' || methodName === 'concat'
+      )
+        ? resolveNested(methodAccess.expression)
+        : [];
+    const symbolLocation = propertyMethodAccess?.name ?? elementMethodAccess ?? expression.expression;
     let symbol = checker.getSymbolAtLocation(symbolLocation);
     if (symbol) recordVisibleStringSymbolVisit(state);
     if (symbol && (symbol.flags & ts.SymbolFlags.Alias)) symbol = checker.getAliasedSymbol(symbol);
