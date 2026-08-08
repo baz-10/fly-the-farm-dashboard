@@ -1769,6 +1769,7 @@ function resolveVisibleStrings(
       candidate,
       transformSymbolPath = new Set(symbolPath),
       transformDepth = depth + 1,
+      transformBindings = new Map(),
     ) => {
       if (transformDepth > visibleStringDepthBudget) {
         throw new Error(`visible-string resolution depth exceeded (${visibleStringDepthBudget}).`);
@@ -1780,11 +1781,13 @@ function resolveVisibleStrings(
           unwrapped.whenTrue,
           new Set(transformSymbolPath),
           transformDepth + 1,
+          transformBindings,
         );
         const whenFalse = resolveStaticTransformValues(
           unwrapped.whenFalse,
           new Set(transformSymbolPath),
           transformDepth + 1,
+          transformBindings,
         );
         return whenTrue && whenFalse
           ? boundedStaticValues([...whenTrue, ...whenFalse])
@@ -1796,6 +1799,9 @@ function resolveVisibleStrings(
           ts.isPropertyAccessExpression(unwrapped) ? unwrapped.name : unwrapped,
         );
         if (transformSymbol) recordVisibleStringSymbolVisit(state);
+        if (transformSymbol && transformBindings.has(transformSymbol)) {
+          return transformBindings.get(transformSymbol);
+        }
         if (transformSymbol && bindings.has(transformSymbol)) {
           return boundedStaticValues(bindings.get(transformSymbol).map((value) => ({
             kind: 'string',
@@ -1819,6 +1825,7 @@ function resolveVisibleStrings(
               initializer,
               nestedTransformSymbolPath,
               transformDepth + 1,
+              transformBindings,
             )
             : null;
         });
@@ -1837,13 +1844,13 @@ function resolveVisibleStrings(
           ?? (nestedElementName && ts.isStringLiteralLike(nestedElementName)
             ? nestedElementName.text
             : null);
-        if (!nestedMethodAccess) return null;
         if (nestedMethodName === 'replace' || nestedMethodName === 'replaceAll') {
           if (unwrapped.arguments.length !== 2) return null;
           const nestedReceiverValues = resolveStaticTransformValues(
             nestedMethodAccess.expression,
             new Set(transformSymbolPath),
             transformDepth + 1,
+            transformBindings,
           );
           const transformedValues = evaluateStaticStringTransform(
             nestedReceiverValues,
@@ -1851,11 +1858,13 @@ function resolveVisibleStrings(
               unwrapped.arguments[0],
               new Set(transformSymbolPath),
               transformDepth + 1,
+              transformBindings,
             ),
             resolveStaticTransformValues(
               unwrapped.arguments[1],
               new Set(transformSymbolPath),
               transformDepth + 1,
+              transformBindings,
             ),
             nestedMethodName === 'replaceAll',
           );
@@ -1869,11 +1878,13 @@ function resolveVisibleStrings(
             nestedMethodAccess.expression,
             new Set(transformSymbolPath),
             transformDepth + 1,
+            transformBindings,
           );
           const argumentValueSets = unwrapped.arguments.map((argument) => resolveStaticTransformValues(
             argument,
             new Set(transformSymbolPath),
             transformDepth + 1,
+            transformBindings,
           ));
           const values = evaluateStaticConcat(receiverValues, argumentValueSets);
           return values?.every((value) => value.kind === 'string') ? values : null;
@@ -1887,6 +1898,7 @@ function resolveVisibleStrings(
                 unwrapped.arguments[0],
                 new Set(transformSymbolPath),
                 transformDepth + 1,
+                transformBindings,
               )
               : null;
           if (!receiverValues
@@ -1899,7 +1911,73 @@ function resolveVisibleStrings(
             }),
           )));
         }
-        return null;
+
+        const helperSymbolLocation = nestedPropertyAccess?.name
+          ?? nestedElementAccess
+          ?? nestedCallee;
+        let helperSymbol = checker.getSymbolAtLocation(helperSymbolLocation);
+        if (helperSymbol) recordVisibleStringSymbolVisit(state);
+        if (helperSymbol && (helperSymbol.flags & ts.SymbolFlags.Alias)) {
+          helperSymbol = checker.getAliasedSymbol(helperSymbol);
+        }
+        const helperFunctions = (helperSymbol?.declarations ?? []).flatMap((declaration) => {
+          const functionDeclaration = ts.isVariableDeclaration(declaration) && declaration.initializer
+            ? declaration.initializer
+            : ts.isPropertyAssignment(declaration)
+              ? declaration.initializer
+              : declaration;
+          return ts.isFunctionLike(functionDeclaration) && functionDeclaration.body
+            ? [functionDeclaration]
+            : [];
+        });
+        if (helperFunctions.length === 0) return null;
+        if (helperSymbol && transformSymbolPath.has(helperSymbol)) return null;
+
+        const argumentValueSets = unwrapped.arguments.map((argument) => resolveStaticTransformValues(
+          argument,
+          new Set(transformSymbolPath),
+          transformDepth + 1,
+          transformBindings,
+        ));
+        if (argumentValueSets.some((values) => !values)) {
+          throw new Error('visible-string rendered string transform could not be resolved safely.');
+        }
+
+        const nestedHelperSymbolPath = new Set(transformSymbolPath);
+        if (helperSymbol) nestedHelperSymbolPath.add(helperSymbol);
+        const helperReturnValueSets = helperFunctions.flatMap((helperFunction) => {
+          if (helperFunction.parameters.length !== unwrapped.arguments.length
+            || helperFunction.parameters.some((parameter) => (
+              !ts.isIdentifier(parameter.name)
+                || parameter.dotDotDotToken
+                || parameter.initializer
+            ))) {
+            throw new Error('visible-string rendered string transform could not be resolved safely.');
+          }
+          const helperBindings = new Map(transformBindings);
+          helperFunction.parameters.forEach((parameter, index) => {
+            const parameterSymbol = checker.getSymbolAtLocation(parameter.name);
+            if (parameterSymbol) recordVisibleStringSymbolVisit(state);
+            if (!parameterSymbol) {
+              throw new Error('visible-string rendered string transform could not be resolved safely.');
+            }
+            helperBindings.set(parameterSymbol, argumentValueSets[index]);
+          });
+          const returnExpressions = functionReturnExpressions(helperFunction, state);
+          if (returnExpressions.length === 0) {
+            throw new Error('visible-string rendered string transform could not be resolved safely.');
+          }
+          return returnExpressions.map((returnExpression) => resolveStaticTransformValues(
+            returnExpression,
+            new Set(nestedHelperSymbolPath),
+            transformDepth + 1,
+            helperBindings,
+          ));
+        });
+        if (helperReturnValueSets.some((values) => !values)) {
+          throw new Error('visible-string rendered string transform could not be resolved safely.');
+        }
+        return boundedStaticValues(helperReturnValueSets.flat());
       }
       return null;
     };

@@ -1081,6 +1081,111 @@ describe('product maturity CI boundary', () => {
   });
 
   test.each([
+    [
+      'local literal',
+      "const repairHiddenCopy = () => 'LeXacy';\nexport const repairHelperReturnFixture = <span>{repairHiddenCopy().replace('X', 'g')}</span>;",
+    ],
+    [
+      'parameterised identity',
+      "const repairHiddenCopy = (value: string) => value;\nexport const repairHelperReturnFixture = <span>{repairHiddenCopy('LeXacy').replace('X', 'g')}</span>;",
+    ],
+    [
+      'function declaration',
+      "function repairHiddenCopy() { return 'LeXacy'; }\nexport const repairHelperReturnFixture = <span>{repairHiddenCopy().replace('X', 'g')}</span>;",
+    ],
+    [
+      'nested static join',
+      "const repairHiddenCopy = () => ['Le', 'Xacy'].join('');\nexport const repairHelperReturnFixture = <span>{repairHiddenCopy().replace('X', 'g')}</span>;",
+    ],
+  ])('rejects Legacy assembled through a %s helper-return transform', (_label, fixtureSource) => {
+    withTemporaryFixture((fixtureRoot) => {
+      const filePath = fixturePath(fixtureRoot, 'src/pages/ClientDetail.tsx');
+      const source = readFileSync(filePath, 'utf8');
+      writeFileSync(filePath, `${source}\n${fixtureSource}\n`, 'utf8');
+    }, (fixtureRoot) => expectVerifierFailure('Customer-facing Legacy violation', fixtureRoot));
+  });
+
+  test('rejects Legacy assembled through an imported helper-return transform', () => {
+    withTemporaryFixture((fixtureRoot) => {
+      writeFileSync(
+        fixturePath(fixtureRoot, 'src/pages/repairStaticCopyHelper.ts'),
+        "export const repairImportedHiddenCopy = () => 'L_e_g_a_c_y';\n",
+        'utf8',
+      );
+      const filePath = fixturePath(fixtureRoot, 'src/pages/ClientDetail.tsx');
+      const source = readFileSync(filePath, 'utf8');
+      writeFileSync(
+        filePath,
+        `import { repairImportedHiddenCopy } from './repairStaticCopyHelper';\n${source}\nexport const repairImportedHelperReturnFixture = <span>{repairImportedHiddenCopy().replaceAll('_', '')}</span>;\n`,
+        'utf8',
+      );
+    }, (fixtureRoot) => expectVerifierFailure('Customer-facing Legacy violation', fixtureRoot));
+  });
+
+  test('fails closed on an imported helper-return transform hiding a dynamic search', () => {
+    withTemporaryFixture((fixtureRoot) => {
+      writeFileSync(
+        fixturePath(fixtureRoot, 'src/pages/repairStaticCopyHelper.ts'),
+        "declare const repairDynamicSearch: string;\nexport const repairImportedHiddenCopy = () => 'LeXacy'.replace(repairDynamicSearch, 'g');\n",
+        'utf8',
+      );
+      const filePath = fixturePath(fixtureRoot, 'src/pages/ClientDetail.tsx');
+      const source = readFileSync(filePath, 'utf8');
+      writeFileSync(
+        filePath,
+        `import { repairImportedHiddenCopy } from './repairStaticCopyHelper';\n${source}\nexport const repairImportedHelperReturnFixture = <span>{repairImportedHiddenCopy().replace('x', 'x')}</span>;\n`,
+        'utf8',
+      );
+    }, (fixtureRoot) => expectVerifierFailure('rendered string transform could not be resolved safely', fixtureRoot));
+  });
+
+  test.each([
+    [
+      'regular expression',
+      "const repairHiddenCopy = () => 'LeXacy'.replace(/X/g, 'g');\nexport const repairHelperReturnFixture = <span>{repairHiddenCopy().replace('x', 'x')}</span>;",
+    ],
+    [
+      'callback',
+      "const repairHiddenCopy = () => 'LeXacy'.replace('X', () => { throw new Error('must not execute'); });\nexport const repairHelperReturnFixture = <span>{repairHiddenCopy().replace('x', 'x')}</span>;",
+    ],
+    [
+      'dynamic search',
+      "declare const repairDynamicSearch: string;\nconst repairHiddenCopy = () => 'LeXacy'.replace(repairDynamicSearch, 'g');\nexport const repairHelperReturnFixture = <span>{repairHiddenCopy().replace('x', 'x')}</span>;",
+    ],
+    [
+      'dynamic return',
+      "declare const repairDynamicCopy: string;\nconst repairHiddenCopy = () => repairDynamicCopy;\nexport const repairHelperReturnFixture = <span>{repairHiddenCopy().replace('X', 'g')}</span>;",
+    ],
+  ])('fails closed on a helper-return transform hiding a %s', (_label, fixtureSource) => {
+    withTemporaryFixture((fixtureRoot) => {
+      const filePath = fixturePath(fixtureRoot, 'src/pages/ClientDetail.tsx');
+      const source = readFileSync(filePath, 'utf8');
+      writeFileSync(filePath, `${source}\n${fixtureSource}\n`, 'utf8');
+    }, (fixtureRoot) => expectVerifierFailure('rendered string transform could not be resolved safely', fixtureRoot));
+  });
+
+  test.each([
+    [
+      'non-Legacy static result',
+      "const repairHiddenCopy = () => 'LeXacy';\nexport const repairHelperReturnControl = <span>{repairHiddenCopy().replace('X', '-')}</span>;",
+    ],
+    [
+      'removed Legacy static result',
+      "const repairHiddenCopy = () => 'Legacy';\nexport const repairHelperReturnControl = <span>{repairHiddenCopy().replace('Legacy', 'Current')}</span>;",
+    ],
+    [
+      'direct dynamic receiver',
+      "declare const repairDynamicCopy: string;\nexport const repairHelperReturnControl = <span>{repairDynamicCopy.replace('X', 'g')}</span>;",
+    ],
+  ])('allows a helper-return transform control with a %s', (_label, fixtureSource) => {
+    withTemporaryFixture((fixtureRoot) => {
+      const filePath = fixturePath(fixtureRoot, 'src/pages/ClientDetail.tsx');
+      const source = readFileSync(filePath, 'utf8');
+      writeFileSync(filePath, `${source}\n${fixtureSource}\n`, 'utf8');
+    }, expectVerifierSuccess);
+  });
+
+  test.each([
     ['a non-Legacy replacement', "{'LeXacy'.replace('X', '-')}"],
     ['replace first-match semantics', "{'LeXXacy'.replace('X', 'g')}"],
     ['replaceAll non-Legacy semantics', "{'L_e_g_a_c_y'.replaceAll('_', '-')}"],
