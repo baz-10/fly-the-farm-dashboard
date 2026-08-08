@@ -17,6 +17,7 @@ const validMaturities = new Set([
 ]);
 const validPriorities = new Set(['P0', 'P1', 'P2', 'P3']);
 const codePattern = /^[a-z][a-z0-9-]*(?:\.[a-z0-9-]+)*$/;
+const visibleStringCandidateBudget = 256;
 const requiredArrayFields = [
   'evidence',
   'requiredAutomatedTests',
@@ -173,16 +174,26 @@ function assertWorkflowBoundaryReferences(root, customerUiSourcePaths, registry)
       if (ts.isJsxOpeningElement(node) || ts.isJsxSelfClosingElement(node)) {
         const tagName = ts.isPropertyAccessExpression(node.tagName) ? node.tagName.name.text : node.tagName.getText(sourceFile);
         if (tagName === 'WorkflowMaturityBoundary') {
+          if (node.attributes.properties.some(ts.isJsxSpreadAttribute)) {
+            throw new Error(`WorkflowMaturityBoundary reference in ${sourcePath} must not use spread code props.`);
+          }
           const attributes = new Map(node.attributes.properties
             .filter(ts.isJsxAttribute)
             .map((attribute) => [attribute.name.text, attribute.initializer]));
           const readLiteral = (name) => {
             const initializer = attributes.get(name);
-            return initializer && ts.isStringLiteral(initializer) ? initializer.text : null;
+            if (initializer && ts.isStringLiteral(initializer)) return initializer.text;
+            if (initializer && ts.isJsxExpression(initializer)
+              && initializer.expression
+              && ts.isStringLiteralLike(initializer.expression)) return initializer.expression.text;
+            return null;
           };
           const moduleCode = readLiteral('moduleCode');
           const workflowCode = readLiteral('workflowCode');
-          if (moduleCode && workflowCode && !registryKeys.has(`${moduleCode}::${workflowCode}`)) {
+          if (!moduleCode || !workflowCode) {
+            throw new Error(`WorkflowMaturityBoundary reference in ${sourcePath} has a missing or nonliteral code prop; moduleCode and workflowCode require a static string literal.`);
+          }
+          if (!registryKeys.has(`${moduleCode}::${workflowCode}`)) {
             throw new Error(`WorkflowMaturityBoundary reference in ${sourcePath} does not have an exact registry override: ${moduleCode}/${workflowCode}.`);
           }
         }
@@ -291,6 +302,14 @@ function functionReturnExpressions(declaration) {
   return returns;
 }
 
+function boundedVisibleStringCandidates(values) {
+  const candidates = [...new Set(values)];
+  if (candidates.length > visibleStringCandidateBudget) {
+    throw new Error(`visible-string candidate budget exceeded (${visibleStringCandidateBudget}).`);
+  }
+  return candidates;
+}
+
 function resolveVisibleStrings(expression, checker, seen = new Set(), depth = 0, bindings = new Map()) {
   if (!expression || depth > 32 || seen.has(expression)) return [];
   seen.add(expression);
@@ -305,46 +324,52 @@ function resolveVisibleStrings(expression, checker, seen = new Set(), depth = 0,
     return resolveNested(expression.expression);
   }
   if (ts.isConditionalExpression(expression)) {
-    return [
+    return boundedVisibleStringCandidates([
       ...resolveNested(expression.whenTrue),
       ...resolveNested(expression.whenFalse),
-    ];
+    ]);
   }
   if (ts.isBinaryExpression(expression) && expression.operatorToken.kind === ts.SyntaxKind.PlusToken) {
     const leftValues = resolveNested(expression.left);
     const rightValues = resolveNested(expression.right);
-    if (leftValues.length === 0 || rightValues.length === 0) return [...leftValues, ...rightValues];
-    return leftValues.flatMap((left) => rightValues.map((right) => `${left}${right}`));
+    if (leftValues.length === 0 || rightValues.length === 0) {
+      return boundedVisibleStringCandidates([...leftValues, ...rightValues]);
+    }
+    return boundedVisibleStringCandidates(
+      leftValues.flatMap((left) => rightValues.map((right) => `${left}${right}`)),
+    );
   }
   if (ts.isBinaryExpression(expression) && [
     ts.SyntaxKind.AmpersandAmpersandToken,
     ts.SyntaxKind.BarBarToken,
     ts.SyntaxKind.QuestionQuestionToken,
   ].includes(expression.operatorToken.kind)) {
-    return [
+    return boundedVisibleStringCandidates([
       ...resolveNested(expression.left),
       ...resolveNested(expression.right),
-    ];
+    ]);
   }
   if (ts.isTemplateExpression(expression)) {
     return expression.templateSpans.reduce((compositions, span) => {
       const values = resolveNested(span.expression);
-      if (values.length === 0) return compositions.map((value) => `${value}${span.literal.text}`);
-      return compositions.flatMap((composition) => values.map(
+      if (values.length === 0) {
+        return boundedVisibleStringCandidates(compositions.map((value) => `${value}${span.literal.text}`));
+      }
+      return boundedVisibleStringCandidates(compositions.flatMap((composition) => values.map(
         (value) => `${composition}${value}${span.literal.text}`,
-      ));
+      )));
     }, [expression.head.text]);
   }
   if (ts.isArrayLiteralExpression(expression)) {
-    return expression.elements.flatMap(resolveNested);
+    return boundedVisibleStringCandidates(expression.elements.flatMap(resolveNested));
   }
   if (ts.isObjectLiteralExpression(expression)) {
-    return expression.properties.flatMap((property) => {
+    return boundedVisibleStringCandidates(expression.properties.flatMap((property) => {
       if (ts.isPropertyAssignment(property)) return resolveNested(property.initializer);
       if (ts.isShorthandPropertyAssignment(property)) return resolveNested(property.name);
       if (ts.isSpreadAssignment(property)) return resolveNested(property.expression);
       return [];
-    });
+    }));
   }
   if (ts.isCallExpression(expression)) {
     const argumentValueSets = expression.arguments.map(resolveNested);
@@ -375,13 +400,13 @@ function resolveVisibleStrings(expression, checker, seen = new Set(), depth = 0,
         returnExpression, checker, new Set(seen), depth + 1, callBindings,
       ));
     });
-    return resolvedFunction ? returnStrings : argumentStrings;
+    return boundedVisibleStringCandidates(resolvedFunction ? returnStrings : argumentStrings);
   }
   if (ts.isIdentifier(expression) || ts.isPropertyAccessExpression(expression)) {
     let symbol = checker.getSymbolAtLocation(ts.isPropertyAccessExpression(expression) ? expression.name : expression);
     if (symbol && bindings.has(symbol)) return bindings.get(symbol);
     if (symbol && (symbol.flags & ts.SymbolFlags.Alias)) symbol = checker.getAliasedSymbol(symbol);
-    return (symbol?.declarations ?? []).flatMap((declaration) => {
+    return boundedVisibleStringCandidates((symbol?.declarations ?? []).flatMap((declaration) => {
       if (ts.isVariableDeclaration(declaration) && declaration.initializer) {
         return resolveNested(declaration.initializer);
       }
@@ -389,7 +414,7 @@ function resolveVisibleStrings(expression, checker, seen = new Set(), depth = 0,
         return resolveNested(declaration.initializer);
       }
       return [];
-    });
+    }));
   }
   return [];
 }

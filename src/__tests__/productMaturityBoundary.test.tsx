@@ -146,6 +146,28 @@ describe('product maturity CI boundary', () => {
     ), (fixtureRoot) => expectVerifierFailure('WorkflowMaturityBoundary reference', fixtureRoot));
   });
 
+  test.each([
+    ['workflowCode="network-source-manager"', '', 'missing'],
+    ['workflowCode="network-source-manager"', 'workflowCode={dynamicWorkflow}', 'static string literal'],
+    ['moduleCode="organisation-administration"', '{...boundaryCodes} moduleCode="organisation-administration"', 'spread'],
+  ])('fails closed on %s WorkflowMaturityBoundary code props', (find, replace, expectedMessage) => {
+    withTemporaryFixture((fixtureRoot) => replaceFixtureSource(
+      fixtureRoot,
+      'src/pages/Admin.tsx',
+      find,
+      replace,
+    ), (fixtureRoot) => expectVerifierFailure(expectedMessage, fixtureRoot));
+  });
+
+  test('accepts a WorkflowMaturityBoundary code expressed as a static JSX string expression', () => {
+    withTemporaryFixture((fixtureRoot) => replaceFixtureSource(
+      fixtureRoot,
+      'src/pages/Admin.tsx',
+      'workflowCode="network-source-manager"',
+      "workflowCode={'network-source-manager'}",
+    ), expectVerifierSuccess);
+  });
+
   test('allows a Commercially Ready entry with no promotion blockers when Founder approval is present', () => {
     withTemporaryFixture((fixtureRoot) => updateFixtureRegistry(fixtureRoot, (registry) => {
       const approvalPath = fixturePath(fixtureRoot, 'docs/commercial-release-decision.md');
@@ -304,6 +326,24 @@ describe('product maturity CI boundary', () => {
       'All Clients',
       replacement,
     ), (fixtureRoot) => expectVerifierFailure('Customer-facing Legacy violation', fixtureRoot));
+  });
+
+  test('fails deterministically when static visible-string composition exceeds the candidate budget', () => {
+    withTemporaryFixture((fixtureRoot) => {
+      const filePath = fixturePath(fixtureRoot, 'src/pages/ClientDetail.tsx');
+      const source = readFileSync(filePath, 'utf8');
+      const substitutions = '${true ? \'a\' : \'b\'}'.repeat(9);
+      writeFileSync(filePath, `${source}\nexport const repairBudgetFixture = <span>{\`${substitutions}\`}</span>;\n`, 'utf8');
+    }, (fixtureRoot) => expectVerifierFailure('visible-string candidate budget exceeded', fixtureRoot));
+  });
+
+  test('deduplicates repeated static candidates before enforcing the budget', () => {
+    withTemporaryFixture((fixtureRoot) => {
+      const filePath = fixturePath(fixtureRoot, 'src/pages/ClientDetail.tsx');
+      const source = readFileSync(filePath, 'utf8');
+      const substitutions = '${true ? \'safe\' : \'safe\'}'.repeat(12);
+      writeFileSync(filePath, `${source}\nexport const repairDedupFixture = <span>{\`${substitutions}\`}</span>;\n`, 'utf8');
+    }, expectVerifierSuccess);
   });
 
   test('rejects nested customer-message values in object, array, and call argument forms', () => {
