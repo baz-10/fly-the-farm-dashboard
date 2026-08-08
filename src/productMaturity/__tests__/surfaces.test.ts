@@ -15,6 +15,15 @@ const concretePath = (routePattern: string): string => routePattern
   .replace(':id', 'record-1');
 
 describe('product maturity route surfaces', () => {
+  test('declares workflowCode explicitly for every reachable route', () => {
+    const { REACHABLE_PRODUCT_ROUTES } = surfaces();
+
+    REACHABLE_PRODUCT_ROUTES.forEach((route: { workflowCode?: unknown }) => {
+      expect(Object.prototype.hasOwnProperty.call(route, 'workflowCode')).toBe(true);
+      expect(route.workflowCode === null || typeof route.workflowCode === 'string').toBe(true);
+    });
+  });
+
   test('resolves every declared reachable route to its registry metadata', () => {
     const { REACHABLE_PRODUCT_ROUTES, resolveProductSurface } = surfaces();
 
