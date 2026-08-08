@@ -168,6 +168,49 @@ describe('product maturity CI boundary', () => {
     ), expectVerifierSuccess);
   });
 
+  test('validates dynamic props on an aliased WorkflowMaturityBoundary import', () => {
+    withTemporaryFixture((fixtureRoot) => {
+      const filePath = fixturePath(fixtureRoot, 'src/pages/Admin.tsx');
+      const source = readFileSync(filePath, 'utf8')
+        .replaceAll('<WorkflowMaturityBoundary', '<Boundary')
+        .replaceAll('</WorkflowMaturityBoundary', '</Boundary')
+        .replace(
+          'import { WorkflowMaturityBoundary }',
+          'import { WorkflowMaturityBoundary as Boundary }',
+        )
+        .replace('workflowCode="network-source-manager"', 'workflowCode={dynamicWorkflow}');
+      writeFileSync(filePath, source, 'utf8');
+    }, (fixtureRoot) => expectVerifierFailure('static string literal', fixtureRoot));
+  });
+
+  test('accepts an aliased WorkflowMaturityBoundary import with exact static codes', () => {
+    withTemporaryFixture((fixtureRoot) => {
+      const filePath = fixturePath(fixtureRoot, 'src/pages/Admin.tsx');
+      const source = readFileSync(filePath, 'utf8')
+        .replaceAll('<WorkflowMaturityBoundary', '<Boundary')
+        .replaceAll('</WorkflowMaturityBoundary', '</Boundary')
+        .replace(
+          'import { WorkflowMaturityBoundary }',
+          'import { WorkflowMaturityBoundary as Boundary }',
+        );
+      writeFileSync(filePath, source, 'utf8');
+    }, expectVerifierSuccess);
+  });
+
+  test('fails closed when an aliased WorkflowMaturityBoundary tag is rebound', () => {
+    withTemporaryFixture((fixtureRoot) => {
+      const filePath = fixturePath(fixtureRoot, 'src/pages/Admin.tsx');
+      const source = readFileSync(filePath, 'utf8')
+        .replaceAll('<WorkflowMaturityBoundary', '<Boundary')
+        .replaceAll('</WorkflowMaturityBoundary', '</Boundary')
+        .replace(
+          'import { WorkflowMaturityBoundary }',
+          'import { WorkflowMaturityBoundary as Boundary }',
+        );
+      writeFileSync(filePath, `${source}\nconst Boundary = () => null;\n`, 'utf8');
+    }, (fixtureRoot) => expectVerifierFailure('rebound or shadowed', fixtureRoot));
+  });
+
   test('allows a Commercially Ready entry with no promotion blockers when Founder approval is present', () => {
     withTemporaryFixture((fixtureRoot) => updateFixtureRegistry(fixtureRoot, (registry) => {
       const approvalPath = fixturePath(fixtureRoot, 'docs/commercial-release-decision.md');

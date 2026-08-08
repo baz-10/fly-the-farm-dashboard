@@ -165,15 +165,64 @@ function assertWorkflowBoundaryReferences(root, customerUiSourcePaths, registry)
     moduleResolution: ts.ModuleResolutionKind.NodeJs,
     target: ts.ScriptTarget.ESNext,
   });
+  const checker = program.getTypeChecker();
   const registryKeys = new Set(registry.map((entry) => `${entry.moduleCode}::${entry.workflowCode ?? ''}`));
 
   customerUiSourcePaths.forEach((sourcePath, index) => {
     const sourceFile = program.getSourceFile(rootNames[index]);
     if (!sourceFile) return;
+    const namedBoundaryImports = new Map();
+    const namespaceBoundaryImports = new Set();
+
+    sourceFile.statements.forEach((statement) => {
+      if (!ts.isImportDeclaration(statement)
+        || !ts.isStringLiteral(statement.moduleSpecifier)
+        || !statement.moduleSpecifier.text.endsWith('components/productMaturity/WorkflowMaturityBoundary')) return;
+      const bindings = statement.importClause?.namedBindings;
+      if (bindings && ts.isNamespaceImport(bindings)) {
+        namespaceBoundaryImports.add(bindings.name.text);
+        return;
+      }
+      if (bindings && ts.isNamedImports(bindings)) {
+        bindings.elements.forEach((element) => {
+          if ((element.propertyName ?? element.name).text === 'WorkflowMaturityBoundary') {
+            namedBoundaryImports.set(element.name.text, element);
+          }
+        });
+      }
+    });
+
     function visit(node) {
       if (ts.isJsxOpeningElement(node) || ts.isJsxSelfClosingElement(node)) {
-        const tagName = ts.isPropertyAccessExpression(node.tagName) ? node.tagName.name.text : node.tagName.getText(sourceFile);
-        if (tagName === 'WorkflowMaturityBoundary') {
+        let isBoundaryReference = false;
+        if (ts.isIdentifier(node.tagName) && namedBoundaryImports.has(node.tagName.text)) {
+          const importSpecifier = namedBoundaryImports.get(node.tagName.text);
+          const tagSymbol = checker.getSymbolAtLocation(node.tagName);
+          const importSymbol = checker.getSymbolAtLocation(importSpecifier.name);
+          if (!tagSymbol || tagSymbol !== importSymbol
+            || (tagSymbol.declarations ?? []).some((declaration) => !ts.isImportSpecifier(declaration))) {
+            throw new Error(`WorkflowMaturityBoundary reference in ${sourcePath} is rebound or shadowed.`);
+          }
+          isBoundaryReference = true;
+        } else if (ts.isPropertyAccessExpression(node.tagName)
+          && ts.isIdentifier(node.tagName.expression)
+          && namespaceBoundaryImports.has(node.tagName.expression.text)
+          && node.tagName.name.text === 'WorkflowMaturityBoundary') {
+          throw new Error(`WorkflowMaturityBoundary reference in ${sourcePath} must use a direct named import, not a namespace alias.`);
+        } else if (ts.isIdentifier(node.tagName)) {
+          const tagSymbol = checker.getSymbolAtLocation(node.tagName);
+          const isIndirectBoundaryAlias = (tagSymbol?.declarations ?? []).some((declaration) => (
+            ts.isVariableDeclaration(declaration)
+            && declaration.initializer
+            && ts.isIdentifier(declaration.initializer)
+            && namedBoundaryImports.has(declaration.initializer.text)
+          ));
+          if (isIndirectBoundaryAlias) {
+            throw new Error(`WorkflowMaturityBoundary reference in ${sourcePath} must not use a dynamic alias.`);
+          }
+        }
+
+        if (isBoundaryReference) {
           if (node.attributes.properties.some(ts.isJsxSpreadAttribute)) {
             throw new Error(`WorkflowMaturityBoundary reference in ${sourcePath} must not use spread code props.`);
           }
