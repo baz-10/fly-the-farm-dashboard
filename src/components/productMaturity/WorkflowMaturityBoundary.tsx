@@ -18,7 +18,7 @@ export function WorkflowMaturityBoundary({ moduleCode, workflowCode, children }:
   }
 
   if (entry.maturity === 'COMING_SOON') {
-    return <ComingSoonWorkspace entry={entry} />;
+    return <ComingSoonWorkspace entry={entry} headingLevel="h2" />;
   }
 
   return (

@@ -50,6 +50,25 @@ describe('product maturity route surfaces', () => {
     expect(resolveProductSurface('/jobs/client/client-1/property/property-1/field/field-1/job/job-1/new-mission', '')).toMatchObject({ moduleCode: 'mission-workspace' });
   });
 
+  test.each([
+    ['/QUOTES', '', 'quotes', null],
+    ['/Quotes', '', 'quotes', null],
+    ['/QUOTES/NEW', '', 'quotes', null],
+    ['/QUOTES/quote-1', '', 'quotes', 'pdf-export'],
+    ['/FINANCIALS', '', 'financials', null],
+    ['/JOBS', '?view=jobs', 'jobs', null],
+  ])('matches static route segments case-insensitively without changing specificity or query semantics', (pathname, search, moduleCode, workflowCode) => {
+    const { resolveProductSurface } = surfaces();
+
+    expect(resolveProductSurface(pathname, search)).toMatchObject({ moduleCode, workflowCode });
+  });
+
+  test('keeps maturity query values case-sensitive', () => {
+    const { resolveProductSurface } = surfaces();
+
+    expect(resolveProductSurface('/JOBS', '?view=JOBS')).toMatchObject({ moduleCode: 'clients' });
+  });
+
   test('keeps Chemical treatment details inside the usable Beta Chemical Database surface', () => {
     const { resolveProductSurface } = surfaces();
 

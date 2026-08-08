@@ -117,7 +117,9 @@ const matchesRoute = (routePattern: string, pathname: string): boolean => {
   const pathnameSegments = pathname.split('/').filter(Boolean);
 
   return routeSegments.length === pathnameSegments.length && routeSegments.every((segment, index) =>
-    segment.startsWith(':') ? pathnameSegments[index].length > 0 : segment === pathnameSegments[index]
+    segment.startsWith(':')
+      ? pathnameSegments[index].length > 0
+      : segment.toLowerCase() === pathnameSegments[index].toLowerCase()
   );
 };
 

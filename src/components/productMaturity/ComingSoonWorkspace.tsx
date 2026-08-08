@@ -6,17 +6,18 @@ import { MaturityBadge } from './MaturityBadge';
 interface ComingSoonWorkspaceProps {
   entry: ProductMaturityEntry;
   alternativeAction?: ReactNode;
+  headingLevel?: 'h1' | 'h2' | 'h3' | 'h4' | 'h5' | 'h6';
 }
 
-export function ComingSoonWorkspace({ entry, alternativeAction }: ComingSoonWorkspaceProps) {
+export function ComingSoonWorkspace({ entry, alternativeAction, headingLevel = 'h1' }: ComingSoonWorkspaceProps) {
   const headingId = `${entry.moduleCode}-${entry.workflowCode ?? 'workspace'}-coming-soon`;
 
   return (
     <Paper component="section" aria-labelledby={headingId} variant="outlined" sx={{ maxWidth: 640, mx: 'auto', mt: 4, p: { xs: 3, sm: 4 } }}>
       <Stack spacing={2} alignItems="flex-start">
-        <MaturityBadge entry={entry} showComingSoon />
+        <MaturityBadge entry={entry} showComingSoon interactive={false} />
         <Box>
-          <Typography id={headingId} component="h1" variant="h5" gutterBottom>
+          <Typography id={headingId} component={headingLevel} variant="h5" gutterBottom>
             {entry.customerName}
           </Typography>
           <Typography color="text.secondary">

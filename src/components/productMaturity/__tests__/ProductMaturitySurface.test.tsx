@@ -29,6 +29,7 @@ describe('ProductMaturitySurface', () => {
     );
 
     expect(screen.getByRole('heading', { name: 'Quotes' })).toBeVisible();
+    expect(screen.getByRole('heading', { name: 'Quotes', level: 1 })).toBeVisible();
     expect(screen.getByText('Coming Soon')).toBeVisible();
     expect(screen.getByText('Quotes will be available in a future release.')).toBeVisible();
     expect(screen.queryByRole('button', { name: 'Create quote' })).not.toBeInTheDocument();
@@ -60,5 +61,17 @@ describe('WorkflowMaturityBoundary', () => {
 
     expect(screen.getByText('Beta')).toBeVisible();
     expect(screen.getByRole('button', { name: 'Manage CASA credentials' })).toBeEnabled();
+  });
+
+  test('uses a nested heading for an unavailable workflow inside an existing page', () => {
+    render(
+      <WorkflowMaturityBoundary moduleCode="organisation-administration" workflowCode="network-source-manager">
+        <button type="button">Manage network sources</button>
+      </WorkflowMaturityBoundary>
+    );
+
+    expect(screen.getByRole('heading', { name: 'Organisation Network and Source Manager', level: 2 })).toBeVisible();
+    expect(screen.queryByRole('heading', { name: 'Organisation Network and Source Manager', level: 1 })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Manage network sources' })).not.toBeInTheDocument();
   });
 });

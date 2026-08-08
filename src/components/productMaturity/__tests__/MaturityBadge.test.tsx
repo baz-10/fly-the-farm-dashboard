@@ -51,6 +51,7 @@ describe('MaturityBadge', () => {
 
     rerender(<MaturityBadge entry={entry('COMING_SOON')} showComingSoon />);
     expect(screen.getByText('Coming Soon')).toBeVisible();
+    expect(screen.getByLabelText('Coming Soon')).not.toHaveAttribute('tabindex', '0');
   });
 
   test('never presents internal maturity language to customers', () => {

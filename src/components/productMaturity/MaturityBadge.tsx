@@ -10,7 +10,7 @@ interface MaturityBadgeProps {
   interactive?: boolean;
 }
 
-export function MaturityBadge({ entry, showComingSoon = false, interactive = true }: MaturityBadgeProps) {
+export function MaturityBadge({ entry, showComingSoon = false, interactive }: MaturityBadgeProps) {
   const label = entry.maturity === 'BETA'
     ? 'Beta'
     : entry.maturity === 'COMING_SOON' && showComingSoon
@@ -18,13 +18,14 @@ export function MaturityBadge({ entry, showComingSoon = false, interactive = tru
       : null;
 
   if (!label) return null;
+  const isInteractive = interactive ?? entry.maturity === 'BETA';
 
   const chip = (
     <Chip
       aria-label={label}
       label={label}
       size="small"
-      tabIndex={interactive ? 0 : undefined}
+      tabIndex={isInteractive ? 0 : undefined}
       variant="outlined"
       sx={{
         fontWeight: 600,
@@ -34,7 +35,7 @@ export function MaturityBadge({ entry, showComingSoon = false, interactive = tru
   );
 
   return entry.maturity === 'BETA' ? (
-    <Tooltip title={BETA_TOOLTIP} enterTouchDelay={0} disableFocusListener={!interactive}>
+    <Tooltip title={BETA_TOOLTIP} enterTouchDelay={0} disableFocusListener={!isInteractive}>
       {chip}
     </Tooltip>
   ) : chip;
