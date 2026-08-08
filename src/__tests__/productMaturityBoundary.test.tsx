@@ -652,12 +652,43 @@ describe('product maturity CI boundary', () => {
     ), (fixtureRoot) => expectVerifierFailure('Customer-facing Legacy violation', fixtureRoot));
   });
 
+  test.each([
+    ['a parenthesized element-access join reference', "{(['Leg', 'acy']['join'])('')}"],
+    ['a parenthesized property concat reference', "{('Leg'.concat)('acy')}"],
+    ['an as-wrapped element-access concat reference', "{('Leg'['concat'] as typeof String.prototype.concat)('acy')}"],
+    ['a non-null property join reference', "{(['Leg', 'acy'].join!)('')}"],
+  ])('rejects Legacy assembled through %s', (_label, replacement) => {
+    withTemporaryFixture((fixtureRoot) => replaceFixtureSource(
+      fixtureRoot,
+      'src/pages/ClientDetail.tsx',
+      'All Clients',
+      replacement,
+    ), (fixtureRoot) => expectVerifierFailure('Customer-facing Legacy violation', fixtureRoot));
+  });
+
+  test('rejects Legacy assembled through a type-assertion-wrapped method reference', () => {
+    withTemporaryFixture((fixtureRoot) => writeFileSync(
+      fixturePath(fixtureRoot, 'src/pages/RepairWrappedCalleeFixture.ts'),
+      "export const repairWrappedCalleeFixture = { label: (<any>['Leg', 'acy']['join'])('') };\n",
+      'utf8',
+    ), (fixtureRoot) => expectVerifierFailure('Customer-facing Legacy violation', fixtureRoot));
+  });
+
   test('fails closed on a rendered dynamic element-access method name', () => {
     withTemporaryFixture((fixtureRoot) => replaceFixtureSource(
       fixtureRoot,
       'src/pages/ClientDetail.tsx',
       'All Clients',
       "{['Current Records'][dynamicMethodName]('')}",
+    ), (fixtureRoot) => expectVerifierFailure('dynamic rendered method name', fixtureRoot));
+  });
+
+  test('fails closed on a parenthesized rendered dynamic element-access method reference', () => {
+    withTemporaryFixture((fixtureRoot) => replaceFixtureSource(
+      fixtureRoot,
+      'src/pages/ClientDetail.tsx',
+      'All Clients',
+      '{(receiver[dynamicMethod])()}',
     ), (fixtureRoot) => expectVerifierFailure('dynamic rendered method name', fixtureRoot));
   });
 

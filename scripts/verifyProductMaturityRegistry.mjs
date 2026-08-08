@@ -699,13 +699,6 @@ function resolveVisibleStrings(
     }));
   }
   if (ts.isCallExpression(expression)) {
-    const propertyMethodAccess = ts.isPropertyAccessExpression(expression.expression)
-      ? expression.expression
-      : null;
-    const elementMethodAccess = ts.isElementAccessExpression(expression.expression)
-      ? expression.expression
-      : null;
-    const methodAccess = propertyMethodAccess ?? elementMethodAccess;
     const unwrapStaticExpression = (candidate) => {
       let unwrapped = candidate;
       while (ts.isParenthesizedExpression(unwrapped)
@@ -718,6 +711,14 @@ function resolveVisibleStrings(
       }
       return unwrapped;
     };
+    const calleeExpression = unwrapStaticExpression(expression.expression);
+    const propertyMethodAccess = ts.isPropertyAccessExpression(calleeExpression)
+      ? calleeExpression
+      : null;
+    const elementMethodAccess = ts.isElementAccessExpression(calleeExpression)
+      ? calleeExpression
+      : null;
+    const methodAccess = propertyMethodAccess ?? elementMethodAccess;
     const elementMethodNameExpression = elementMethodAccess?.argumentExpression
       ? unwrapStaticExpression(elementMethodAccess.argumentExpression)
       : null;
