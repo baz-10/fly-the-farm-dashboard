@@ -118,19 +118,21 @@ test('collapsed desktop keyboard focus provides the full approved Beta explanati
 
   const database = screen.getByRole('button', { name: 'Chemical Database' });
   expect(database).toHaveAccessibleName('Chemical Database');
-  expect(database).toHaveAccessibleDescription(betaExplanation);
+  expect(database).toHaveAccessibleDescription(`Chemical Database — ${betaExplanation}`);
   act(() => database.focus());
 
-  expect(await screen.findByRole('tooltip')).toHaveTextContent(`Chemical Database — ${betaExplanation}`);
+  const tooltip = await screen.findByRole('tooltip');
+  expect(tooltip).toHaveTextContent(`Chemical Database — ${betaExplanation}`);
+  expect(tooltip).toHaveAttribute('id');
+  expect(database).toHaveAttribute('aria-describedby', tooltip.id);
   expect(screen.getAllByRole('tooltip')).toHaveLength(1);
   expect(within(database).queryByLabelText('Beta')).not.toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'Home' })).toBeVisible();
   expect(screen.queryByRole('button', { name: 'HOME navigation group' })).not.toBeInTheDocument();
 });
 
-test('expanded desktop navigation groups expose maturity through the item description without adding a nested tab stop', () => {
-  mockIsDesktop = true;
-  renderLayout('/database');
+test('expanded mobile navigation groups expose maturity through the item description without adding a nested tab stop', () => {
+  openNavigation('/database');
 
   const intelligenceGroup = screen.getByRole('button', { name: 'INTELLIGENCE navigation group' });
   expect(intelligenceGroup).toHaveAttribute('aria-expanded', 'true');
