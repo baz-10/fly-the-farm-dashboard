@@ -25,7 +25,10 @@ test('keeps the authorised navigation shell usable while explaining Beta work', 
 test('keeps the authoritative Client to Mission path available without losing the session', async ({ page }) => {
   await page.goto('/');
   await expect(page.getByRole('heading', { name: 'Operations Brief' })).toBeVisible({ timeout: 45_000 });
-  await openMissionCreationWorkspace(page);
+  await page.getByRole('button', { name: 'New Mission' }).click();
+  await expect(page).toHaveURL(/\/missions\/new$/);
+  await expect(page.getByRole('region', { name: 'Mission creation workspace' })).toBeVisible({ timeout: 45_000 });
+  await expect(page.getByRole('heading', { name: 'Create a Mission' })).toBeVisible();
 
   await expect(page.getByRole('button', { name: /^1 Customer —/ })).toBeVisible();
   await expect(page.getByRole('button', { name: /^2 Property —/ })).toBeVisible();
