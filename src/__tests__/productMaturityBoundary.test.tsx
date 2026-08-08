@@ -418,6 +418,47 @@ describe('product maturity CI boundary', () => {
       if (modified === source) throw new Error('Fixture mutation did not replace ProductMaturitySurface.');
       writeFileSync(filePath, modified, 'utf8');
     }],
+    ['ProductMaturitySurface dead-code implementation', (fixtureRoot: string) => {
+      const filePath = fixturePath(
+        fixtureRoot,
+        'src/components/productMaturity/ProductMaturitySurface.tsx',
+      );
+      const source = readFileSync(filePath, 'utf8');
+      const modified = source.replace(
+        /export function ProductMaturitySurface[\s\S]*\n}\n$/,
+        [
+          'export function ProductMaturitySurface({ pathname, search, children }: ProductMaturitySurfaceProps) {',
+          '  if (false) {',
+          '    let surface;',
+          '    try {',
+          '      surface = resolveProductSurface(pathname, search);',
+          '    } catch (error) {',
+          '      if (!(error instanceof ProductMaturityPathError)) throw error;',
+          '    }',
+          "    if (surface?.entry.maturity === 'COMING_SOON') return <ComingSoonWorkspace entry={surface.entry} />;",
+          '    return <MaturityBadge entry={surface!.entry} />;',
+          '  }',
+          '  return <>{children}</>;',
+          '}',
+          '',
+        ].join('\n'),
+      );
+      if (modified === source) throw new Error('Fixture mutation did not replace ProductMaturitySurface.');
+      writeFileSync(filePath, modified, 'utf8');
+    }],
+    ['ProductMaturitySurface unsafe error fallback', (fixtureRoot: string) => replaceFixtureSource(
+      fixtureRoot,
+      'src/components/productMaturity/ProductMaturitySurface.tsx',
+      [
+        '    return (',
+        '      <Alert severity="warning">',
+        '        <Typography component="h1" variant="h5" gutterBottom>Page unavailable</Typography>',
+        '        This URL could not be opened safely. Use the application navigation to choose a page.',
+        '      </Alert>',
+        '    );',
+      ].join('\n'),
+      '    return <Alert severity="warning">{children}</Alert>;',
+    )],
     ['missionOperatorRoles dependency', (fixtureRoot: string) => {
       writeFileSync(
         fixturePath(fixtureRoot, 'src/security/operationalRouteRolesFixtureNoop.ts'),
@@ -1120,6 +1161,165 @@ describe('product maturity CI boundary', () => {
         'utf8',
       );
     }, (fixtureRoot) => expectVerifierFailure('Customer-facing Legacy violation', fixtureRoot));
+  });
+
+  test('rejects Legacy assembled through a local helper-function alias', () => {
+    withTemporaryFixture((fixtureRoot) => {
+      const filePath = fixturePath(fixtureRoot, 'src/pages/ClientDetail.tsx');
+      const source = readFileSync(filePath, 'utf8');
+      writeFileSync(
+        filePath,
+        `${source}\nconst repairAliasedSource = () => 'LeXacy';\nconst repairAliasedHelper = repairAliasedSource;\nexport const repairAliasedHelperFixture = <span>{repairAliasedHelper().replace('X', 'g')}</span>;\n`,
+        'utf8',
+      );
+    }, (fixtureRoot) => expectVerifierFailure('Customer-facing Legacy violation', fixtureRoot));
+  });
+
+  test('rejects Legacy assembled through an imported helper-function alias', () => {
+    withTemporaryFixture((fixtureRoot) => {
+      writeFileSync(
+        fixturePath(fixtureRoot, 'src/pages/repairStaticCopyHelper.ts'),
+        "const repairAliasedSource = () => 'LeXacy';\nexport const repairAliasedHelper = repairAliasedSource;\n",
+        'utf8',
+      );
+      const filePath = fixturePath(fixtureRoot, 'src/pages/ClientDetail.tsx');
+      const source = readFileSync(filePath, 'utf8');
+      writeFileSync(
+        filePath,
+        `import { repairAliasedHelper } from './repairStaticCopyHelper';\n${source}\nexport const repairImportedAliasFixture = <span>{repairAliasedHelper().replace('X', 'g')}</span>;\n`,
+        'utf8',
+      );
+    }, (fixtureRoot) => expectVerifierFailure('Customer-facing Legacy violation', fixtureRoot));
+  });
+
+  test('rejects Legacy assembled through a helper-function property alias', () => {
+    withTemporaryFixture((fixtureRoot) => {
+      const filePath = fixturePath(fixtureRoot, 'src/pages/ClientDetail.tsx');
+      const source = readFileSync(filePath, 'utf8');
+      writeFileSync(
+        filePath,
+        `${source}\nconst repairPropertySource = () => 'LeXacy';\nconst repairPropertyAliases = { hidden: repairPropertySource };\nexport const repairPropertyAliasFixture = <span>{repairPropertyAliases.hidden().replace('X', 'g')}</span>;\n`,
+        'utf8',
+      );
+    }, (fixtureRoot) => expectVerifierFailure('Customer-facing Legacy violation', fixtureRoot));
+  });
+
+  test('rejects Legacy assembled through a shorthand helper-function property alias', () => {
+    withTemporaryFixture((fixtureRoot) => {
+      const filePath = fixturePath(fixtureRoot, 'src/pages/ClientDetail.tsx');
+      const source = readFileSync(filePath, 'utf8');
+      writeFileSync(
+        filePath,
+        `${source}\nconst repairShorthandSource = () => 'LeXacy';\nconst repairShorthandAliases = { repairShorthandSource };\nexport const repairShorthandAliasFixture = <span>{repairShorthandAliases.repairShorthandSource().replace('X', 'g')}</span>;\n`,
+        'utf8',
+      );
+    }, (fixtureRoot) => expectVerifierFailure('Customer-facing Legacy violation', fixtureRoot));
+  });
+
+  test('allows a non-Legacy shorthand helper-function property alias', () => {
+    withTemporaryFixture((fixtureRoot) => {
+      const filePath = fixturePath(fixtureRoot, 'src/pages/ClientDetail.tsx');
+      const source = readFileSync(filePath, 'utf8');
+      writeFileSync(
+        filePath,
+        `${source}\nconst repairSafeShorthandSource = () => 'Current';\nconst repairSafeShorthandAliases = { repairSafeShorthandSource };\nexport const repairSafeShorthandAliasFixture = <span>{repairSafeShorthandAliases.repairSafeShorthandSource().replace('x', 'x')}</span>;\n`,
+        'utf8',
+      );
+    }, expectVerifierSuccess);
+  });
+
+  test('rejects Legacy assembled through a destructured helper-function property alias', () => {
+    withTemporaryFixture((fixtureRoot) => {
+      const filePath = fixturePath(fixtureRoot, 'src/pages/ClientDetail.tsx');
+      const source = readFileSync(filePath, 'utf8');
+      writeFileSync(
+        filePath,
+        `${source}\nconst repairDestructuredSource = () => 'LeXacy';\nconst repairDestructuredAliases = { hidden: repairDestructuredSource };\nconst { hidden: repairDestructuredHelper } = repairDestructuredAliases;\nexport const repairDestructuredAliasFixture = <span>{repairDestructuredHelper().replace('X', 'g')}</span>;\n`,
+        'utf8',
+      );
+    }, (fixtureRoot) => expectVerifierFailure('Customer-facing Legacy violation', fixtureRoot));
+  });
+
+  test('allows a non-Legacy destructured helper-function property alias', () => {
+    withTemporaryFixture((fixtureRoot) => {
+      const filePath = fixturePath(fixtureRoot, 'src/pages/ClientDetail.tsx');
+      const source = readFileSync(filePath, 'utf8');
+      writeFileSync(
+        filePath,
+        `${source}\nconst repairSafeDestructuredSource = () => 'Current';\nconst repairSafeDestructuredAliases = { hidden: repairSafeDestructuredSource };\nconst { hidden: repairSafeDestructuredHelper } = repairSafeDestructuredAliases;\nexport const repairSafeDestructuredAliasFixture = <span>{repairSafeDestructuredHelper().replace('x', 'x')}</span>;\n`,
+        'utf8',
+      );
+    }, expectVerifierSuccess);
+  });
+
+  test('rejects Legacy assembled through a re-exported helper-function alias', () => {
+    withTemporaryFixture((fixtureRoot) => {
+      writeFileSync(
+        fixturePath(fixtureRoot, 'src/pages/repairStaticCopySource.ts'),
+        "export const repairAliasedSource = () => 'LeXacy';\n",
+        'utf8',
+      );
+      writeFileSync(
+        fixturePath(fixtureRoot, 'src/pages/repairStaticCopyHelper.ts'),
+        "export { repairAliasedSource as repairAliasedHelper } from './repairStaticCopySource';\n",
+        'utf8',
+      );
+      const filePath = fixturePath(fixtureRoot, 'src/pages/ClientDetail.tsx');
+      const source = readFileSync(filePath, 'utf8');
+      writeFileSync(
+        filePath,
+        `import { repairAliasedHelper } from './repairStaticCopyHelper';\n${source}\nexport const repairReexportedAliasFixture = <span>{repairAliasedHelper().replace('X', 'g')}</span>;\n`,
+        'utf8',
+      );
+    }, (fixtureRoot) => expectVerifierFailure('Customer-facing Legacy violation', fixtureRoot));
+  });
+
+  test('fails closed on a cyclic helper-function alias', () => {
+    withTemporaryFixture((fixtureRoot) => {
+      const filePath = fixturePath(fixtureRoot, 'src/pages/ClientDetail.tsx');
+      const source = readFileSync(filePath, 'utf8');
+      writeFileSync(
+        filePath,
+        `${source}\nconst repairAliasA = repairAliasB;\nconst repairAliasB = repairAliasA;\nexport const repairCyclicAliasFixture = <span>{repairAliasA().replace('X', 'g')}</span>;\n`,
+        'utf8',
+      );
+    }, (fixtureRoot) => expectVerifierFailure('rendered string transform could not be resolved safely', fixtureRoot));
+  });
+
+  test('allows a non-Legacy result through a local helper-function alias', () => {
+    withTemporaryFixture((fixtureRoot) => {
+      const filePath = fixturePath(fixtureRoot, 'src/pages/ClientDetail.tsx');
+      const source = readFileSync(filePath, 'utf8');
+      writeFileSync(
+        filePath,
+        `${source}\nconst repairSafeAliasedSource = () => 'Current';\nconst repairSafeAliasedHelper = repairSafeAliasedSource;\nexport const repairSafeAliasFixture = <span>{repairSafeAliasedHelper().replace('x', 'x')}</span>;\n`,
+        'utf8',
+      );
+    }, expectVerifierSuccess);
+  });
+
+  test('rejects Legacy assembled through a typed string-array helper parameter', () => {
+    withTemporaryFixture((fixtureRoot) => {
+      const filePath = fixturePath(fixtureRoot, 'src/pages/ClientDetail.tsx');
+      const source = readFileSync(filePath, 'utf8');
+      writeFileSync(
+        filePath,
+        `${source}\nconst repairArrayHelper = (parts: string[]) => parts.join('');\nexport const repairArrayHelperFixture = <span>{repairArrayHelper(['Le', 'Xacy']).replace('X', 'g')}</span>;\n`,
+        'utf8',
+      );
+    }, (fixtureRoot) => expectVerifierFailure('Customer-facing Legacy violation', fixtureRoot));
+  });
+
+  test('allows a non-Legacy typed string-array helper parameter', () => {
+    withTemporaryFixture((fixtureRoot) => {
+      const filePath = fixturePath(fixtureRoot, 'src/pages/ClientDetail.tsx');
+      const source = readFileSync(filePath, 'utf8');
+      writeFileSync(
+        filePath,
+        `${source}\nconst repairSafeArrayHelper = (parts: string[]) => parts.join('');\nexport const repairSafeArrayHelperFixture = <span>{repairSafeArrayHelper(['Current']).replace('x', 'x')}</span>;\n`,
+        'utf8',
+      );
+    }, expectVerifierSuccess);
   });
 
   test('fails closed on an imported helper-return transform hiding a dynamic search', () => {

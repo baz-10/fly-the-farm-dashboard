@@ -825,56 +825,307 @@ function assertCanonicalAuthorisedProductRouteComposition(routeSymbols) {
 
 function assertCanonicalProductMaturitySurfaceComposition(routeSymbols) {
   const { checker } = routeSymbols;
+  const sourceFile = routeSymbols.sourceFiles.productMaturity;
   const declaration = routeSymbols.productMaturity.declaration;
-  if (!declaration.body) throw new Error(canonicalRouteConventionError);
-  const counts = {
-    resolveProductSurface: 0,
-    ProductMaturityPathError: 0,
-    ComingSoonWorkspace: 0,
-    MaturityBadge: 0,
-  };
+  if (!declaration.body || !sourceFile) throw new Error(canonicalRouteConventionError);
 
-  const visit = (node) => {
-    if (ts.isCallExpression(node)) {
-      const callee = unwrapTransparentExpression(node.expression);
-      if (ts.isIdentifier(callee) && callee.text === 'resolveProductSurface') {
-        if (checker.getSymbolAtLocation(callee) !== routeSymbols.productMaturity.resolveProductSurface
-          || node.arguments.length !== 2
-          || node.arguments[0].getText(routeSymbols.sourceFiles.productMaturity) !== 'pathname'
-          || node.arguments[1].getText(routeSymbols.sourceFiles.productMaturity) !== 'search') {
-          throw new Error(canonicalRouteConventionError);
-        }
-        counts.resolveProductSurface += 1;
-      }
-    }
-    if (ts.isBinaryExpression(node)
-      && node.operatorToken.kind === ts.SyntaxKind.InstanceOfKeyword
-      && ts.isIdentifier(node.right)
-      && node.right.text === 'ProductMaturityPathError') {
-      if (checker.getSymbolAtLocation(node.right) !== routeSymbols.productMaturity.ProductMaturityPathError) {
-        throw new Error(canonicalRouteConventionError);
-      }
-      counts.ProductMaturityPathError += 1;
-    }
-    if (ts.isJsxOpeningElement(node) || ts.isJsxSelfClosingElement(node)) {
-      if (ts.isIdentifier(node.tagName) && node.tagName.text === 'ComingSoonWorkspace') {
-        if (checker.getSymbolAtLocation(node.tagName) !== routeSymbols.productMaturity.ComingSoonWorkspace) {
-          throw new Error(canonicalRouteConventionError);
-        }
-        counts.ComingSoonWorkspace += 1;
-      }
-      if (ts.isIdentifier(node.tagName) && node.tagName.text === 'MaturityBadge') {
-        if (checker.getSymbolAtLocation(node.tagName) !== routeSymbols.productMaturity.MaturityBadge) {
-          throw new Error(canonicalRouteConventionError);
-        }
-        counts.MaturityBadge += 1;
-      }
-    }
-    ts.forEachChild(node, visit);
+  const singleStatement = (statement) => (
+    ts.isBlock(statement) && statement.statements.length === 1
+      ? statement.statements[0]
+      : statement
+  );
+  const returnedExpression = (statement) => {
+    const candidate = singleStatement(statement);
+    return ts.isReturnStatement(candidate) && candidate.expression
+      ? unwrapTransparentExpression(candidate.expression)
+      : null;
   };
-  visit(declaration.body);
+  const significantFragmentChildren = (fragment) => fragment.children.filter((child) => (
+    !(ts.isJsxText(child) && child.text.trim().length === 0)
+      && !(ts.isJsxExpression(child) && !child.expression)
+  ));
+  const isChildrenExpression = (node, childrenSymbol) => ts.isJsxExpression(node)
+    && Boolean(node.expression)
+    && isIdentifierSymbol(node.expression, 'children', childrenSymbol);
+  const isChildrenFragment = (expression, childrenSymbol) => ts.isJsxFragment(expression)
+    && significantFragmentChildren(expression).length === 1
+    && isChildrenExpression(significantFragmentChildren(expression)[0], childrenSymbol);
+  const isIdentifierSymbol = (expression, name, symbol) => {
+    const unwrapped = unwrapTransparentExpression(expression);
+    return ts.isIdentifier(unwrapped)
+      && unwrapped.text === name
+      && checker.getSymbolAtLocation(unwrapped) === symbol;
+  };
+  const isSurfaceEntryExpression = (expression, propertyName, surfaceSymbol) => {
+    const unwrapped = unwrapTransparentExpression(expression);
+    return ts.isPropertyAccessExpression(unwrapped)
+      && unwrapped.name.text === propertyName
+      && ts.isPropertyAccessExpression(unwrapTransparentExpression(unwrapped.expression))
+      && unwrapTransparentExpression(unwrapped.expression).name.text === 'entry'
+      && isIdentifierSymbol(
+        unwrapTransparentExpression(unwrapped.expression).expression,
+        'surface',
+        surfaceSymbol,
+      );
+  };
+  const isMaturityComparison = (expression, maturity, surfaceSymbol) => {
+    const unwrapped = unwrapTransparentExpression(expression);
+    return ts.isBinaryExpression(unwrapped)
+      && unwrapped.operatorToken.kind === ts.SyntaxKind.EqualsEqualsEqualsToken
+      && isSurfaceEntryExpression(unwrapped.left, 'maturity', surfaceSymbol)
+      && ts.isStringLiteralLike(unwrapTransparentExpression(unwrapped.right))
+      && unwrapTransparentExpression(unwrapped.right).text === maturity;
+  };
+  const hasExactOpeningExpressionAttribute = (opening, name, expressionText) => (
+    opening.attributes.properties.some((attribute) => (
+      ts.isJsxAttribute(attribute)
+        && attribute.name.text === name
+        && attribute.initializer
+        && ts.isJsxExpression(attribute.initializer)
+        && attribute.initializer.expression?.getText(sourceFile) === expressionText
+    ))
+  );
+  const isProviderElement = (expression, surfaceSymbol, expectedChildren) => {
+    if (!ts.isJsxElement(expression)
+      || !ts.isPropertyAccessExpression(expression.openingElement.tagName)
+      || expression.openingElement.tagName.getText(sourceFile)
+        !== 'ProductMaturitySurfaceContext.Provider'
+      || expression.openingElement.attributes.properties.length !== 1
+      || !hasExactExpressionAttribute(expression, sourceFile, 'value', 'surface.entry.moduleCode')) {
+      return false;
+    }
+    const valueAttribute = expression.openingElement.attributes.properties[0];
+    const valueExpression = ts.isJsxAttribute(valueAttribute)
+      && valueAttribute.initializer
+      && ts.isJsxExpression(valueAttribute.initializer)
+      ? valueAttribute.initializer.expression
+      : null;
+    return valueExpression
+      && isSurfaceEntryExpression(valueExpression, 'moduleCode', surfaceSymbol)
+      && expectedChildren(significantJsxChildren(expression));
+  };
+  const hasExactStringAttribute = (opening, name, value) => opening.attributes.properties.some(
+    (attribute) => ts.isJsxAttribute(attribute)
+      && attribute.name.text === name
+      && attribute.initializer
+      && ts.isStringLiteral(attribute.initializer)
+      && attribute.initializer.text === value,
+  );
+  const hasExactBooleanAttribute = (opening, name) => opening.attributes.properties.some(
+    (attribute) => ts.isJsxAttribute(attribute)
+      && attribute.name.text === name
+      && !attribute.initializer,
+  );
 
-  if (Object.values(counts).some((count) => count !== 1)) {
+  const statements = declaration.body.statements;
+  const propsParameter = declaration.parameters.length === 1
+    ? declaration.parameters[0]
+    : null;
+  const propsElements = propsParameter && ts.isObjectBindingPattern(propsParameter.name)
+    ? propsParameter.name.elements
+    : [];
+  const exactPropElement = (element, name) => !element.dotDotDotToken
+    && !element.propertyName
+    && !element.initializer
+    && ts.isIdentifier(element.name)
+    && element.name.text === name;
+  if (!propsParameter
+    || propsParameter.dotDotDotToken
+    || propsParameter.initializer
+    || propsElements.length !== 3
+    || !exactPropElement(propsElements[0], 'pathname')
+    || !exactPropElement(propsElements[1], 'search')
+    || !exactPropElement(propsElements[2], 'children')
+    || statements.length !== 6
+    || !ts.isVariableStatement(statements[0])
+    || statements[0].declarationList.declarations.length !== 1) {
+    throw new Error(canonicalRouteConventionError);
+  }
+  const pathnameSymbol = checker.getSymbolAtLocation(propsElements[0].name);
+  const searchSymbol = checker.getSymbolAtLocation(propsElements[1].name);
+  const childrenSymbol = checker.getSymbolAtLocation(propsElements[2].name);
+  if (!pathnameSymbol || !searchSymbol || !childrenSymbol) {
+    throw new Error(canonicalRouteConventionError);
+  }
+  const surfaceDeclaration = statements[0].declarationList.declarations[0];
+  const surfaceSymbol = ts.isIdentifier(surfaceDeclaration.name)
+    ? checker.getSymbolAtLocation(surfaceDeclaration.name)
+    : null;
+  if (!surfaceSymbol
+    || surfaceDeclaration.name.text !== 'surface'
+    || surfaceDeclaration.initializer) {
+    throw new Error(canonicalRouteConventionError);
+  }
+
+  const tryStatement = statements[1];
+  const tryBodyStatement = ts.isTryStatement(tryStatement)
+    && tryStatement.tryBlock.statements.length === 1
+    ? tryStatement.tryBlock.statements[0]
+    : null;
+  const assignment = tryBodyStatement && ts.isExpressionStatement(tryBodyStatement)
+    ? unwrapTransparentExpression(tryBodyStatement.expression)
+    : null;
+  const resolverCall = assignment
+    && ts.isBinaryExpression(assignment)
+    && assignment.operatorToken.kind === ts.SyntaxKind.EqualsToken
+    && isIdentifierSymbol(assignment.left, 'surface', surfaceSymbol)
+    && ts.isCallExpression(unwrapTransparentExpression(assignment.right))
+    ? unwrapTransparentExpression(assignment.right)
+    : null;
+  if (!ts.isTryStatement(tryStatement)
+    || tryStatement.finallyBlock
+    || !resolverCall
+    || !isIdentifierSymbol(
+      resolverCall.expression,
+      'resolveProductSurface',
+      routeSymbols.productMaturity.resolveProductSurface,
+    )
+    || resolverCall.arguments.length !== 2
+    || !isIdentifierSymbol(resolverCall.arguments[0], 'pathname', pathnameSymbol)
+    || !isIdentifierSymbol(resolverCall.arguments[1], 'search', searchSymbol)) {
+    throw new Error(canonicalRouteConventionError);
+  }
+
+  const catchClause = tryStatement.catchClause;
+  const catchStatements = catchClause?.block.statements ?? [];
+  const errorSymbol = catchClause?.variableDeclaration
+    && ts.isIdentifier(catchClause.variableDeclaration.name)
+    ? checker.getSymbolAtLocation(catchClause.variableDeclaration.name)
+    : null;
+  const errorGuard = catchStatements[0];
+  const errorCondition = errorGuard && ts.isIfStatement(errorGuard)
+    ? unwrapTransparentExpression(errorGuard.expression)
+    : null;
+  const instanceOf = errorCondition
+    && ts.isPrefixUnaryExpression(errorCondition)
+    && errorCondition.operator === ts.SyntaxKind.ExclamationToken
+    ? unwrapTransparentExpression(errorCondition.operand)
+    : null;
+  const throwStatement = errorGuard && ts.isIfStatement(errorGuard)
+    ? singleStatement(errorGuard.thenStatement)
+    : null;
+  const catchReturn = catchStatements[1] && ts.isReturnStatement(catchStatements[1])
+    && catchStatements[1].expression
+    ? unwrapTransparentExpression(catchStatements[1].expression)
+    : null;
+  const catchChildren = ts.isJsxElement(catchReturn)
+    ? significantJsxChildren(catchReturn)
+    : [];
+  const catchHeading = catchChildren.length === 2 && ts.isJsxElement(catchChildren[0])
+    ? catchChildren[0]
+    : null;
+  const catchHeadingChildren = catchHeading ? significantJsxChildren(catchHeading) : [];
+  if (!catchClause
+    || !errorSymbol
+    || catchClause.variableDeclaration.name.text !== 'error'
+    || catchStatements.length !== 2
+    || !ts.isBinaryExpression(instanceOf)
+    || instanceOf.operatorToken.kind !== ts.SyntaxKind.InstanceOfKeyword
+    || !isIdentifierSymbol(instanceOf.left, 'error', errorSymbol)
+    || !isIdentifierSymbol(
+      instanceOf.right,
+      'ProductMaturityPathError',
+      routeSymbols.productMaturity.ProductMaturityPathError,
+    )
+    || !ts.isThrowStatement(throwStatement)
+    || !throwStatement.expression
+    || !isIdentifierSymbol(throwStatement.expression, 'error', errorSymbol)
+    || !ts.isJsxElement(catchReturn)
+    || !jsxTagIdentifier(catchReturn, 'Alert', checker)
+    || catchReturn.openingElement.attributes.properties.length !== 1
+    || !hasExactStringAttribute(catchReturn.openingElement, 'severity', 'warning')
+    || !catchHeading
+    || !jsxTagIdentifier(catchHeading, 'Typography', checker)
+    || catchHeading.openingElement.attributes.properties.length !== 3
+    || !hasExactStringAttribute(catchHeading.openingElement, 'component', 'h1')
+    || !hasExactStringAttribute(catchHeading.openingElement, 'variant', 'h5')
+    || !hasExactBooleanAttribute(catchHeading.openingElement, 'gutterBottom')
+    || catchHeadingChildren.length !== 1
+    || !ts.isJsxText(catchHeadingChildren[0])
+    || catchHeadingChildren[0].text.trim() !== 'Page unavailable'
+    || !ts.isJsxText(catchChildren[1])
+    || catchChildren[1].text.trim()
+      !== 'This URL could not be opened safely. Use the application navigation to choose a page.') {
+    throw new Error(canonicalRouteConventionError);
+  }
+
+  const noSurface = statements[2];
+  const noSurfaceCondition = ts.isIfStatement(noSurface)
+    ? unwrapTransparentExpression(noSurface.expression)
+    : null;
+  if (!ts.isIfStatement(noSurface)
+    || noSurface.elseStatement
+    || !ts.isPrefixUnaryExpression(noSurfaceCondition)
+    || noSurfaceCondition.operator !== ts.SyntaxKind.ExclamationToken
+    || !isIdentifierSymbol(noSurfaceCondition.operand, 'surface', surfaceSymbol)
+    || !isChildrenFragment(returnedExpression(noSurface.thenStatement), childrenSymbol)) {
+    throw new Error(canonicalRouteConventionError);
+  }
+
+  const readySurface = statements[3];
+  const readyCondition = ts.isIfStatement(readySurface)
+    ? unwrapTransparentExpression(readySurface.expression)
+    : null;
+  const readyReturn = ts.isIfStatement(readySurface)
+    ? returnedExpression(readySurface.thenStatement)
+    : null;
+  if (!ts.isIfStatement(readySurface)
+    || readySurface.elseStatement
+    || !ts.isBinaryExpression(readyCondition)
+    || readyCondition.operatorToken.kind !== ts.SyntaxKind.BarBarToken
+    || !isMaturityComparison(readyCondition.left, 'COMMERCIALLY_READY', surfaceSymbol)
+    || !isMaturityComparison(readyCondition.right, 'OPERATIONALLY_READY', surfaceSymbol)
+    || !isProviderElement(readyReturn, surfaceSymbol, (children) => (
+      children.length === 1 && isChildrenExpression(children[0], childrenSymbol)
+    ))) {
+    throw new Error(canonicalRouteConventionError);
+  }
+
+  const comingSoon = statements[4];
+  const comingSoonReturn = ts.isIfStatement(comingSoon)
+    ? returnedExpression(comingSoon.thenStatement)
+    : null;
+  const comingSoonOpening = ts.isJsxSelfClosingElement(comingSoonReturn)
+    ? comingSoonReturn
+    : null;
+  if (!ts.isIfStatement(comingSoon)
+    || comingSoon.elseStatement
+    || !isMaturityComparison(comingSoon.expression, 'COMING_SOON', surfaceSymbol)
+    || !comingSoonOpening
+    || !jsxTagIdentifier(
+      comingSoonOpening,
+      'ComingSoonWorkspace',
+      checker,
+      routeSymbols.productMaturity.ComingSoonWorkspace,
+    )
+    || comingSoonOpening.attributes.properties.length !== 1
+    || !hasExactOpeningExpressionAttribute(comingSoonOpening, 'entry', 'surface.entry')) {
+    throw new Error(canonicalRouteConventionError);
+  }
+
+  const betaReturn = statements[5];
+  const betaExpression = ts.isReturnStatement(betaReturn) && betaReturn.expression
+    ? unwrapTransparentExpression(betaReturn.expression)
+    : null;
+  const validBetaSurface = isProviderElement(betaExpression, surfaceSymbol, (children) => {
+    if (children.length !== 2
+      || !ts.isJsxElement(children[0])
+      || !ts.isIdentifier(children[0].openingElement.tagName)
+      || children[0].openingElement.tagName.text !== 'Box'
+      || !isChildrenExpression(children[1], childrenSymbol)) return false;
+    const boxChildren = significantJsxChildren(children[0]);
+    const badge = boxChildren.length === 1 ? boxChildren[0] : null;
+    return ts.isJsxSelfClosingElement(badge)
+      && jsxTagIdentifier(
+        badge,
+        'MaturityBadge',
+        checker,
+        routeSymbols.productMaturity.MaturityBadge,
+      )
+      && badge.attributes.properties.length === 1
+      && hasExactOpeningExpressionAttribute(badge, 'entry', 'surface.entry');
+  });
+  if (!validBetaSurface) {
     throw new Error(canonicalRouteConventionError);
   }
 }
@@ -1765,6 +2016,133 @@ function resolveVisibleStrings(
         : null;
     };
 
+    const helperAliasSymbol = (expression) => {
+      const unwrapped = unwrapStaticExpression(expression);
+      if (ts.isIdentifier(unwrapped)) return checker.getSymbolAtLocation(unwrapped);
+      if (ts.isPropertyAccessExpression(unwrapped)) {
+        return checker.getSymbolAtLocation(unwrapped.name);
+      }
+      if (ts.isElementAccessExpression(unwrapped)) {
+        return checker.getSymbolAtLocation(unwrapped)
+          ?? (unwrapped.argumentExpression
+            ? checker.getSymbolAtLocation(unwrapped.argumentExpression)
+            : undefined);
+      }
+      return undefined;
+    };
+
+    const resolveHelperFunctionDeclarations = (
+      candidateSymbol,
+      helperSymbolPath,
+      helperDepth,
+    ) => {
+      if (helperDepth > visibleStringDepthBudget) {
+        throw new Error(`visible-string resolution depth exceeded (${visibleStringDepthBudget}).`);
+      }
+      if (!candidateSymbol) {
+        return {
+          functions: [], symbols: new Set(), recognizedAlias: false, unresolvedAlias: false,
+        };
+      }
+
+      recordVisibleStringSymbolVisit(state);
+      const helperSymbol = (candidateSymbol.flags & ts.SymbolFlags.Alias)
+        ? checker.getAliasedSymbol(candidateSymbol)
+        : candidateSymbol;
+      if (helperSymbolPath.has(helperSymbol)) {
+        return {
+          functions: [], symbols: new Set([helperSymbol]), recognizedAlias: true, unresolvedAlias: true,
+        };
+      }
+
+      const nestedHelperSymbolPath = new Set(helperSymbolPath);
+      nestedHelperSymbolPath.add(helperSymbol);
+      const result = {
+        functions: [],
+        symbols: new Set([helperSymbol]),
+        recognizedAlias: false,
+        unresolvedAlias: false,
+      };
+
+      (helperSymbol.declarations ?? []).forEach((declaration) => {
+        recordVisibleStringNodeVisit(state);
+        let functionDeclaration = declaration;
+        let initializer = null;
+        let aliasTargetSymbol;
+        if (ts.isVariableDeclaration(declaration) || ts.isPropertyAssignment(declaration)) {
+          initializer = declaration.initializer;
+          functionDeclaration = declaration.initializer;
+        } else if (ts.isShorthandPropertyAssignment(declaration)) {
+          initializer = declaration.name;
+          functionDeclaration = declaration.name;
+          aliasTargetSymbol = checker.getShorthandAssignmentValueSymbol(declaration);
+        } else if (ts.isBindingElement(declaration)) {
+          result.recognizedAlias = true;
+          const bindingPattern = declaration.parent;
+          const variableDeclaration = ts.isObjectBindingPattern(bindingPattern)
+            && ts.isVariableDeclaration(bindingPattern.parent)
+            ? bindingPattern.parent
+            : null;
+          const propertyName = declaration.propertyName ?? declaration.name;
+          const propertyText = ts.isIdentifier(propertyName) || ts.isStringLiteralLike(propertyName)
+            ? propertyName.text
+            : null;
+          if (declaration.dotDotDotToken
+            || declaration.initializer
+            || !variableDeclaration?.initializer
+            || propertyText === null) {
+            result.unresolvedAlias = true;
+            return;
+          }
+          aliasTargetSymbol = checker.getPropertyOfType(
+            checker.getTypeAtLocation(variableDeclaration.initializer),
+            propertyText,
+          );
+          if (!aliasTargetSymbol) {
+            result.unresolvedAlias = true;
+            return;
+          }
+          const nestedResult = resolveHelperFunctionDeclarations(
+            aliasTargetSymbol,
+            nestedHelperSymbolPath,
+            helperDepth + 1,
+          );
+          nestedResult.symbols.forEach((symbol) => result.symbols.add(symbol));
+          result.functions.push(...nestedResult.functions);
+          if (nestedResult.unresolvedAlias || !nestedResult.recognizedAlias) {
+            result.unresolvedAlias = true;
+          }
+          return;
+        }
+
+        if (ts.isFunctionLike(functionDeclaration) && functionDeclaration.body) {
+          result.recognizedAlias = true;
+          result.functions.push(functionDeclaration);
+          return;
+        }
+        if (!initializer) return;
+
+        const aliasTarget = unwrapStaticExpression(initializer);
+        if (!ts.isIdentifier(aliasTarget)
+          && !ts.isPropertyAccessExpression(aliasTarget)
+          && !ts.isElementAccessExpression(aliasTarget)) return;
+
+        result.recognizedAlias = true;
+        const nestedResult = resolveHelperFunctionDeclarations(
+          aliasTargetSymbol ?? helperAliasSymbol(aliasTarget),
+          nestedHelperSymbolPath,
+          helperDepth + 1,
+        );
+        nestedResult.symbols.forEach((symbol) => result.symbols.add(symbol));
+        result.functions.push(...nestedResult.functions);
+        if (nestedResult.unresolvedAlias || !nestedResult.recognizedAlias) {
+          result.unresolvedAlias = true;
+        }
+      });
+
+      return result;
+    };
+
     const resolveStaticTransformValues = (
       candidate,
       transformSymbolPath = new Set(symbolPath),
@@ -1776,6 +2154,18 @@ function resolveVisibleStrings(
       }
       const unwrapped = unwrapStaticExpression(candidate);
       if (ts.isStringLiteralLike(unwrapped)) return resolveStaticValues(unwrapped);
+      if (ts.isArrayLiteralExpression(unwrapped)) {
+        recordVisibleStringNodeVisit(state);
+        if (unwrapped.elements.some(ts.isSpreadElement)) return null;
+        const elementValueSets = unwrapped.elements.map((element) => resolveStaticTransformValues(
+          element,
+          new Set(transformSymbolPath),
+          transformDepth + 1,
+          transformBindings,
+        ));
+        if (elementValueSets.some((values) => !values)) return null;
+        return composeStaticArrayValues(elementValueSets);
+      }
       if (ts.isConditionalExpression(unwrapped)) {
         const whenTrue = resolveStaticTransformValues(
           unwrapped.whenTrue,
@@ -1890,7 +2280,12 @@ function resolveVisibleStrings(
           return values?.every((value) => value.kind === 'string') ? values : null;
         }
         if (nestedMethodName === 'join') {
-          const receiverValues = resolveStaticValues(nestedMethodAccess.expression);
+          const receiverValues = resolveStaticTransformValues(
+            nestedMethodAccess.expression,
+            new Set(transformSymbolPath),
+            transformDepth + 1,
+            transformBindings,
+          );
           const separatorValues = unwrapped.arguments.length === 0
             ? [{ kind: 'string', value: ',' }]
             : unwrapped.arguments.length === 1
@@ -1907,7 +2302,7 @@ function resolveVisibleStrings(
           return boundedStaticValues(receiverValues.flatMap((receiverValue) => separatorValues.map(
             (separatorValue) => ({
               kind: 'string',
-              value: receiverValue.value.join(separatorValue.value),
+              value: receiverValue.value.join(coerceStaticValueToString(separatorValue)),
             }),
           )));
         }
@@ -1916,22 +2311,16 @@ function resolveVisibleStrings(
           ?? nestedElementAccess
           ?? nestedCallee;
         let helperSymbol = checker.getSymbolAtLocation(helperSymbolLocation);
-        if (helperSymbol) recordVisibleStringSymbolVisit(state);
-        if (helperSymbol && (helperSymbol.flags & ts.SymbolFlags.Alias)) {
-          helperSymbol = checker.getAliasedSymbol(helperSymbol);
+        const helperResolution = resolveHelperFunctionDeclarations(
+          helperSymbol,
+          new Set(transformSymbolPath),
+          transformDepth + 1,
+        );
+        if (helperResolution.unresolvedAlias) {
+          throw new Error('visible-string rendered string transform could not be resolved safely.');
         }
-        const helperFunctions = (helperSymbol?.declarations ?? []).flatMap((declaration) => {
-          const functionDeclaration = ts.isVariableDeclaration(declaration) && declaration.initializer
-            ? declaration.initializer
-            : ts.isPropertyAssignment(declaration)
-              ? declaration.initializer
-              : declaration;
-          return ts.isFunctionLike(functionDeclaration) && functionDeclaration.body
-            ? [functionDeclaration]
-            : [];
-        });
+        const helperFunctions = helperResolution.functions;
         if (helperFunctions.length === 0) return null;
-        if (helperSymbol && transformSymbolPath.has(helperSymbol)) return null;
 
         const argumentValueSets = unwrapped.arguments.map((argument) => resolveStaticTransformValues(
           argument,
@@ -1944,7 +2333,7 @@ function resolveVisibleStrings(
         }
 
         const nestedHelperSymbolPath = new Set(transformSymbolPath);
-        if (helperSymbol) nestedHelperSymbolPath.add(helperSymbol);
+        helperResolution.symbols.forEach((symbol) => nestedHelperSymbolPath.add(symbol));
         const helperReturnValueSets = helperFunctions.flatMap((helperFunction) => {
           if (helperFunction.parameters.length !== unwrapped.arguments.length
             || helperFunction.parameters.some((parameter) => (
