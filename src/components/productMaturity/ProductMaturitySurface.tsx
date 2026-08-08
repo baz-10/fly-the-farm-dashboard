@@ -1,8 +1,10 @@
-import React, { ReactNode } from 'react';
+import React, { createContext, ReactNode } from 'react';
 import { Alert, Box, Typography } from '@mui/material';
 import { ProductMaturityPathError, resolveProductSurface } from '../../productMaturity/surfaces';
 import { ComingSoonWorkspace } from './ComingSoonWorkspace';
 import { MaturityBadge } from './MaturityBadge';
+
+export const ProductMaturitySurfaceContext = createContext<string | null>(null);
 
 interface ProductMaturitySurfaceProps {
   pathname: string;
@@ -24,8 +26,16 @@ export function ProductMaturitySurface({ pathname, search, children }: ProductMa
     );
   }
 
-  if (!surface || surface.entry.maturity === 'COMMERCIALLY_READY' || surface.entry.maturity === 'OPERATIONALLY_READY') {
+  if (!surface) {
     return <>{children}</>;
+  }
+
+  if (surface.entry.maturity === 'COMMERCIALLY_READY' || surface.entry.maturity === 'OPERATIONALLY_READY') {
+    return (
+      <ProductMaturitySurfaceContext.Provider value={surface.entry.moduleCode}>
+        {children}
+      </ProductMaturitySurfaceContext.Provider>
+    );
   }
 
   if (surface.entry.maturity === 'COMING_SOON') {
@@ -33,11 +43,11 @@ export function ProductMaturitySurface({ pathname, search, children }: ProductMa
   }
 
   return (
-    <>
+    <ProductMaturitySurfaceContext.Provider value={surface.entry.moduleCode}>
       <Box component="aside" aria-label="Beta availability" sx={{ mb: 2 }}>
         <MaturityBadge entry={surface.entry} />
       </Box>
       {children}
-    </>
+    </ProductMaturitySurfaceContext.Provider>
   );
 }

@@ -65,6 +65,28 @@ describe('WorkflowMaturityBoundary', () => {
     expect(screen.getByRole('button', { name: 'Manage CASA credentials' })).toBeEnabled();
   });
 
+  test('does not repeat presentation when an exact workflow override matches its parent module maturity', () => {
+    const registry = PRODUCT_MATURITY_REGISTRY as ProductMaturityEntry[];
+    const moduleEntry = registry.find(entry => entry.moduleCode === 'personnel' && entry.workflowCode === null)!;
+    const previousMaturity = moduleEntry.maturity;
+    moduleEntry.maturity = 'BETA';
+
+    try {
+      render(
+        <ProductMaturitySurface pathname="/personnel" search="">
+          <WorkflowMaturityBoundary moduleCode="personnel" workflowCode="casa-credentials">
+            <button type="button">Manage CASA credentials</button>
+          </WorkflowMaturityBoundary>
+        </ProductMaturitySurface>
+      );
+
+      expect(screen.getByRole('button', { name: 'Manage CASA credentials' })).toBeEnabled();
+      expect(screen.getAllByText('Beta')).toHaveLength(1);
+    } finally {
+      moduleEntry.maturity = previousMaturity;
+    }
+  });
+
   test('uses a nested heading for an unavailable workflow inside an existing page', () => {
     render(
       <WorkflowMaturityBoundary moduleCode="organisation-administration" workflowCode="network-source-manager">

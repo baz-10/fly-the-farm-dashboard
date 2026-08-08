@@ -27,12 +27,19 @@ Completed locally. No push or deployment was performed.
 - The first strict verifier run rejected component-relative imports that resolved correctly but did not use the repository's literal canonical path suffix.
 - The four mission components now use the exact direct `../../components/productMaturity/WorkflowMaturityBoundary` import convention; pages use the exact direct `../components/productMaturity/WorkflowMaturityBoundary` convention.
 
+## Review corrections
+
+- Workflow maturity presentation is now deduplicated only when the active parent product surface is for the same module and the exact workflow override has the same maturity. This leaves ReOC and Controlled Checklists with one Beta marker while preserving independently constrained workflows embedded in another module's page.
+- The reports boundary now belongs to `MissionOperationalCloseout` and composes Mission Summary and Mission Record as one workflow surface. A constrained completed Mission therefore renders one uniquely labelled Mission Reports workspace and mounts neither report child nor its API status component. The distinct Mission Pack boundary remains in Mission Authorisation.
+- Controlled Checklists restores the Create action to the responsive title row while its administration body still owns the template API and remains unmounted when constrained.
+- Review RED evidence covered duplicate Beta presentation on ReOC and Checklists, duplicate reports workspaces and IDs in completed closeout, and title-row placement. The focused corrective batch subsequently passed 8 suites and 30 tests; after adding active-surface scoping, the directly affected regression batch passed 5 suites and 24 tests.
+
 ## Verification
 
 - Focused workflow tests: 6 suites, 16 tests passed.
 - Product maturity governance and surface batch: 5 suites, 115 tests passed.
 - Product maturity registry verifier passed: 46 modules, 12 workflows, 53 App routes, 148 customer UI source files, 64 evidence references, and zero customer-facing Legacy violations.
-- Full test suite passed: 207 suites, 1007 tests.
+- Full test suite passed: 207 suites, 1009 tests.
 - Optimized production build succeeded with the repository's existing lint and bundle-size warnings.
 - `git diff --check` passed.
 - No push or deployment.
