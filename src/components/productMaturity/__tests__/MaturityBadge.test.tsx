@@ -58,4 +58,10 @@ describe('MaturityBadge', () => {
 
     expect(container.textContent).not.toMatch(/legacy|experimental|unfinished|unsafe/i);
   });
+
+  test('can remain presentational inside an existing navigation control', () => {
+    render(<MaturityBadge entry={entry('BETA')} interactive={false} />);
+
+    expect(screen.getByLabelText('Beta')).not.toHaveAttribute('tabindex', '0');
+  });
 });

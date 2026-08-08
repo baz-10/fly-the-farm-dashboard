@@ -71,7 +71,7 @@ describe('product maturity CI boundary', () => {
     expect(result.error).toBeUndefined();
     expect(result.status).toBe(0);
     expect(result.stderr).toBe('');
-    expect(result.stdout).toContain('46 modules and 9 workflows classified');
+    expect(result.stdout).toContain('46 modules and 12 workflows classified');
     expect(result.stdout).toContain('0 customer-facing Legacy violations');
   });
 

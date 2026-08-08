@@ -83,11 +83,7 @@ test('Home remains visible when every accordion group is collapsed', () => {
   expect(screen.getByRole('button', { name: 'Home' })).toBeVisible();
 });
 
-test('shows Beta beside classified Weather and Chemical surfaces, without cluttering Operationally Ready destinations', () => {
-  const weather = renderLayout('/weather');
-  expect(screen.getByLabelText('Beta')).toBeInTheDocument();
-
-  weather.unmount();
+test('shows navigation maturity beside Chemical without cluttering Operationally Ready destinations', () => {
   const aircraft = renderLayout('/aircraft');
   expect(screen.queryByLabelText('Beta')).not.toBeInTheDocument();
   expect(screen.queryByLabelText('Coming Soon')).not.toBeInTheDocument();

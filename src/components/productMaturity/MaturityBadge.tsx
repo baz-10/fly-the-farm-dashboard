@@ -7,9 +7,10 @@ const BETA_TOOLTIP = 'This feature is available during Private Commercial Beta a
 interface MaturityBadgeProps {
   entry: ProductMaturityEntry;
   showComingSoon?: boolean;
+  interactive?: boolean;
 }
 
-export function MaturityBadge({ entry, showComingSoon = false }: MaturityBadgeProps) {
+export function MaturityBadge({ entry, showComingSoon = false, interactive = true }: MaturityBadgeProps) {
   const label = entry.maturity === 'BETA'
     ? 'Beta'
     : entry.maturity === 'COMING_SOON' && showComingSoon
@@ -23,7 +24,7 @@ export function MaturityBadge({ entry, showComingSoon = false }: MaturityBadgePr
       aria-label={label}
       label={label}
       size="small"
-      tabIndex={0}
+      tabIndex={interactive ? 0 : undefined}
       variant="outlined"
       sx={{
         fontWeight: 600,
@@ -33,7 +34,7 @@ export function MaturityBadge({ entry, showComingSoon = false }: MaturityBadgePr
   );
 
   return entry.maturity === 'BETA' ? (
-    <Tooltip title={BETA_TOOLTIP} enterTouchDelay={0}>
+    <Tooltip title={BETA_TOOLTIP} enterTouchDelay={0} disableFocusListener={!interactive}>
       {chip}
     </Tooltip>
   ) : chip;

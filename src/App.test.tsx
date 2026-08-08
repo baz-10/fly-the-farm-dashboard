@@ -30,7 +30,7 @@ jest.mock('react-router-dom', () => {
     Navigate: () => null,
     useNavigate: () => jest.fn(),
     useParams: () => ({}),
-    useLocation: () => ({ pathname: globalThis.window.location.pathname }),
+    useLocation: () => ({ pathname: globalThis.window.location.pathname, search: globalThis.window.location.search }),
     Outlet: () => null,
   };
 }, { virtual: true });
@@ -48,7 +48,8 @@ jest.mock('react-leaflet', () => ({
 jest.mock('./components/Layout', () => () => null);
 jest.mock('./components/ProtectedRoute', () => ({ children }: { children: React.ReactNode }) => <>{children}</>);
 jest.mock('./pages/Login', () => () => null);
-jest.mock('./pages/Register', () => () => null);
+jest.mock('./pages/Register', () => () => <div>Create account form</div>);
+jest.mock('./pages/CustomerAcceptancePublic', () => () => <div>Customer outcome portal</div>);
 jest.mock('./pages/Home', () => () => null);
 jest.mock('./pages/Dashboard', () => () => null);
 jest.mock('./pages/SearchResults', () => () => null);
@@ -96,15 +97,26 @@ jest.mock('./pages/OperationsManualWorkspace', () => () => <div>Dedicated Operat
 describe('App', () => {
   afterEach(cleanup);
 
-  test('keeps Spray Rec Import gated in remote mode', () => {
+  test('presents Spray Recommendation Import as a usable Beta workflow in remote mode', () => {
     mockOperationalMode = 'remote';
     window.history.pushState({}, '', '/jobs/import');
 
     render(<App />);
 
-    expect(screen.getByRole('heading', { name: 'Import Spray Rec' })).toBeInTheDocument();
-    expect(screen.getByText(/not yet connected to production data/i)).toBeInTheDocument();
-    expect(screen.queryByText(/Legacy browser/i)).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Beta')).toBeVisible();
+    expect(screen.getByText('Legacy browser spray recommendation importer')).toBeInTheDocument();
+    expect(screen.queryByText(/not yet connected to production data/i)).not.toBeInTheDocument();
+  });
+
+  test.each([
+    ['/register', 'Create account form'],
+    ['/customer-acceptance/customer-token', 'Customer outcome portal'],
+  ])('presents the public Beta state on %s without replacing its lifecycle', (path, expected) => {
+    window.history.pushState({}, '', path);
+    render(<App />);
+
+    expect(screen.getByLabelText('Beta')).toBeVisible();
+    expect(screen.getByText(expected)).toBeInTheDocument();
   });
 
   test.each([

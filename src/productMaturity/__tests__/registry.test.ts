@@ -45,8 +45,11 @@ describe('product maturity registry', () => {
       ['documentation-audit', null, 'COMING_SOON'], ['quotes', null, 'COMING_SOON'],
       ['quotes', 'pdf-export', 'COMING_SOON'], ['financials', null, 'COMING_SOON'],
       ['financials', 'margin-analysis', 'COMING_SOON'], ['financials', 'invoice-export', 'COMING_SOON'],
-      ['operational-intelligence', null, 'COMING_SOON'], ['organisation-administration', null, 'COMING_SOON'],
+      ['operational-intelligence', null, 'COMING_SOON'], ['organisation-administration', null, 'OPERATIONALLY_READY'],
+      ['organisation-administration', 'network-source-manager', 'COMING_SOON'],
       ['chemical-intelligence', null, 'COMING_SOON'],
+      ['chemical-intelligence', 'source-extraction', 'COMING_SOON'],
+      ['chemical-intelligence', 'document-sourcing', 'COMING_SOON'],
     ]);
     expect(getMaturityEntry('quotes').promotionBlockers).toEqual(expect.arrayContaining([
       'Quotes, pricing configuration and quote equipment models remain browser-local authoritative records.',
@@ -111,6 +114,19 @@ describe('product maturity registry', () => {
       moduleCode: 'quotes',
       workflowCode: null,
       maturity: 'COMING_SOON',
+    });
+  });
+
+  test('keeps safe Administration available while constraining its exact browser-local workflows', () => {
+    expect(getMaturityEntry('organisation-administration').maturity).toBe('OPERATIONALLY_READY');
+    expect(getMaturityEntry('organisation-administration', 'network-source-manager')).toMatchObject({
+      workflowCode: 'network-source-manager', maturity: 'COMING_SOON',
+    });
+    expect(getMaturityEntry('chemical-intelligence', 'source-extraction')).toMatchObject({
+      workflowCode: 'source-extraction', maturity: 'COMING_SOON',
+    });
+    expect(getMaturityEntry('chemical-intelligence', 'document-sourcing')).toMatchObject({
+      workflowCode: 'document-sourcing', maturity: 'COMING_SOON',
     });
   });
 

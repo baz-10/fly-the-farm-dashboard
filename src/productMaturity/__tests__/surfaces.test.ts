@@ -50,6 +50,15 @@ describe('product maturity route surfaces', () => {
     expect(resolveProductSurface('/jobs/client/client-1/property/property-1/field/field-1/job/job-1/new-mission', '')).toMatchObject({ moduleCode: 'mission-workspace' });
   });
 
+  test('keeps Chemical treatment details inside the usable Beta Chemical Database surface', () => {
+    const { resolveProductSurface } = surfaces();
+
+    expect(resolveProductSurface('/treatment/product-1', '')).toMatchObject({
+      moduleCode: 'chemical-database',
+      entry: { maturity: 'BETA' },
+    });
+  });
+
   test('resolves Jobs workspace query views before the shared Clients fallback', () => {
     const { resolveProductSurface } = surfaces();
 

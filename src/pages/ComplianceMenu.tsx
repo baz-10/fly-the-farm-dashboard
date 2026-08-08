@@ -265,7 +265,7 @@ export default function ComplianceMenu() {
                         alignSelf: 'flex-start',
                       }}
                     >
-                      Development in progress
+                      Available in a future release
                     </Typography>
                   )}
                 </CardContent>

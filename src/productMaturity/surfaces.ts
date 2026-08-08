@@ -32,7 +32,7 @@ export const REACHABLE_PRODUCT_ROUTES = [
   { path: '/', moduleCode: 'home', workflowCode: null },
   { path: '/database', moduleCode: 'chemical-database', workflowCode: null },
   { path: '/search', moduleCode: 'chemical-database', workflowCode: null },
-  { path: '/treatment/:id', moduleCode: 'chemical-intelligence', workflowCode: null },
+  { path: '/treatment/:id', moduleCode: 'chemical-database', workflowCode: null },
   { path: '/calculator', moduleCode: 'spray-calculator', workflowCode: null },
   { path: '/jobs', moduleCode: 'clients', workflowCode: null },
   { path: '/jobs/import', moduleCode: 'spray-recommendation-import', workflowCode: null },
