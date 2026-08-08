@@ -160,6 +160,133 @@ function assertExactRegistryEntries(entries, registry, sourceName) {
   });
 }
 
+function discoverReactRouterPaths(sourceFile, checker) {
+  const directRouteImportSymbols = new Set();
+  const namespaceImportSymbols = new Set();
+
+  sourceFile.statements.forEach((statement) => {
+    if (!ts.isImportDeclaration(statement)
+      || !ts.isStringLiteral(statement.moduleSpecifier)
+      || statement.moduleSpecifier.text !== 'react-router-dom') return;
+
+    const bindings = statement.importClause?.namedBindings;
+    if (bindings && ts.isNamedImports(bindings)) {
+      bindings.elements.forEach((element) => {
+        if ((element.propertyName ?? element.name).text !== 'Route') return;
+        const symbol = checker.getSymbolAtLocation(element.name);
+        if (symbol) directRouteImportSymbols.add(symbol);
+      });
+    }
+    if (bindings && ts.isNamespaceImport(bindings)) {
+      const symbol = checker.getSymbolAtLocation(bindings.name);
+      if (symbol) namespaceImportSymbols.add(symbol);
+    }
+  });
+
+  if (directRouteImportSymbols.size === 0 && namespaceImportSymbols.size === 0) {
+    throw new Error('App route source does not import React Router Route.');
+  }
+
+  const isReactRouterRouteTag = (tagName) => {
+    if (ts.isIdentifier(tagName)) {
+      return directRouteImportSymbols.has(checker.getSymbolAtLocation(tagName));
+    }
+    return ts.isPropertyAccessExpression(tagName)
+      && tagName.name.text === 'Route'
+      && ts.isIdentifier(tagName.expression)
+      && namespaceImportSymbols.has(checker.getSymbolAtLocation(tagName.expression));
+  };
+
+  const containsRouteChild = (element) => element.children.some((child) => {
+    if (ts.isJsxElement(child)) {
+      return isReactRouterRouteTag(child.openingElement.tagName) || containsRouteChild(child);
+    }
+    if (ts.isJsxSelfClosingElement(child)) return isReactRouterRouteTag(child.tagName);
+    if (ts.isJsxExpression(child) && child.expression) {
+      let found = false;
+      const visitExpression = (node) => {
+        if (found) return;
+        if ((ts.isJsxOpeningElement(node) || ts.isJsxSelfClosingElement(node))
+          && isReactRouterRouteTag(node.tagName)) {
+          found = true;
+          return;
+        }
+        ts.forEachChild(node, visitExpression);
+      };
+      visitExpression(child.expression);
+      return found;
+    }
+    return false;
+  });
+
+  const paths = [];
+  function visit(node) {
+    if (ts.isJsxOpeningElement(node) || ts.isJsxSelfClosingElement(node)) {
+      if (isReactRouterRouteTag(node.tagName)) {
+        if (node.attributes.properties.some(ts.isJsxSpreadAttribute)) {
+          throw new Error('React Router Route in App.tsx must not use spread attributes.');
+        }
+
+        const pathAttributes = node.attributes.properties.filter((attribute) => (
+          ts.isJsxAttribute(attribute) && attribute.name.text === 'path'
+        ));
+        if (pathAttributes.length === 0) {
+          const isStructuralLayoutRoute = ts.isJsxOpeningElement(node)
+            && ts.isJsxElement(node.parent)
+            && containsRouteChild(node.parent);
+          if (!isStructuralLayoutRoute) {
+            throw new Error('Every reachable React Router Route in App.tsx requires a path.');
+          }
+        } else {
+          if (pathAttributes.length !== 1) {
+            throw new Error('React Router Route path in App.tsx must be declared exactly once.');
+          }
+          const initializer = pathAttributes[0].initializer;
+          let routePath;
+          if (initializer && ts.isStringLiteral(initializer)) {
+            routePath = initializer.text;
+          } else if (initializer && ts.isJsxExpression(initializer)
+            && initializer.expression
+            && ts.isStringLiteralLike(initializer.expression)) {
+            routePath = initializer.expression.text;
+          } else {
+            throw new Error('React Router Route path in App.tsx requires a static string literal.');
+          }
+          if (routePath.length === 0) {
+            throw new Error('React Router Route path in App.tsx requires a non-empty static string literal.');
+          }
+          paths.push(routePath);
+        }
+      }
+    }
+    ts.forEachChild(node, visit);
+  }
+  visit(sourceFile);
+
+  if (paths.length === 0) throw new Error('App route source contains no route paths.');
+  return paths;
+}
+
+function assertExactRoutePathMultiset(appRoutePaths, reachableRoutes) {
+  const appCounts = new Map();
+  const manifestCounts = new Map();
+  appRoutePaths.forEach((routePath) => appCounts.set(routePath, (appCounts.get(routePath) ?? 0) + 1));
+  reachableRoutes.forEach(({ path: routePath }) => (
+    manifestCounts.set(routePath, (manifestCounts.get(routePath) ?? 0) + 1)
+  ));
+
+  const allPaths = [...new Set([...appCounts.keys(), ...manifestCounts.keys()])].sort();
+  const mismatches = allPaths.filter((routePath) => (
+    appCounts.get(routePath) !== manifestCounts.get(routePath)
+  ));
+  if (mismatches.length === 0) return;
+
+  const details = mismatches.map((routePath) => (
+    `${routePath} (App ${appCounts.get(routePath) ?? 0}, manifest ${manifestCounts.get(routePath) ?? 0})`
+  ));
+  throw new Error(`App route manifest mismatch: ${details.join(', ')}.`);
+}
+
 function assertWorkflowBoundaryReferences(root, productionSourcePaths, registry, program) {
   const checker = program.getTypeChecker();
   const registryKeys = new Set(registry.map((entry) => `${entry.moduleCode}::${entry.workflowCode ?? ''}`));
@@ -439,6 +566,15 @@ function boundedVisibleStringCandidates(values) {
   return candidates;
 }
 
+function composeVisibleStringCandidateSets(valueSets, separator = '') {
+  if (valueSets.some((values) => values.length === 0)) return null;
+  return valueSets.reduce((compositions, values, index) => boundedVisibleStringCandidates(
+    compositions.flatMap((composition) => values.map((value) => (
+      `${composition}${index === 0 ? '' : separator}${value}`
+    ))),
+  ), ['']);
+}
+
 function resolveVisibleStrings(
   expression,
   checker,
@@ -517,9 +653,124 @@ function resolveVisibleStrings(
     }));
   }
   if (ts.isCallExpression(expression)) {
+    const methodAccess = ts.isPropertyAccessExpression(expression.expression)
+      ? expression.expression
+      : null;
+    const methodName = methodAccess?.name.text;
+    const unwrapStaticExpression = (candidate) => {
+      let unwrapped = candidate;
+      while (ts.isParenthesizedExpression(unwrapped)
+        || ts.isAsExpression(unwrapped)
+        || ts.isTypeAssertionExpression(unwrapped)
+        || ts.isNonNullExpression(unwrapped)
+        || ts.isSatisfiesExpression(unwrapped)) {
+        recordVisibleStringNodeVisit(state);
+        unwrapped = unwrapped.expression;
+      }
+      return unwrapped;
+    };
+    const resolveStaticSequence = (
+      candidate,
+      separator,
+      arrayRequired = false,
+      sequenceSymbolPath = new Set(symbolPath),
+      sequenceDepth = depth + 1,
+    ) => {
+      if (sequenceDepth > visibleStringDepthBudget) {
+        throw new Error(`visible-string resolution depth exceeded (${visibleStringDepthBudget}).`);
+      }
+      const unwrapped = unwrapStaticExpression(candidate);
+      if (ts.isArrayLiteralExpression(unwrapped)) {
+        recordVisibleStringNodeVisit(state);
+        if (unwrapped.elements.some(ts.isSpreadElement)) return null;
+        return composeVisibleStringCandidateSets(
+          unwrapped.elements.map((element) => resolveNested(element)),
+          separator,
+        );
+      }
+      if (ts.isIdentifier(unwrapped) || ts.isPropertyAccessExpression(unwrapped)) {
+        recordVisibleStringNodeVisit(state);
+        let sequenceSymbol = checker.getSymbolAtLocation(
+          ts.isPropertyAccessExpression(unwrapped) ? unwrapped.name : unwrapped,
+        );
+        if (sequenceSymbol) recordVisibleStringSymbolVisit(state);
+        if (sequenceSymbol && bindings.has(sequenceSymbol) && !arrayRequired) {
+          return bindings.get(sequenceSymbol);
+        }
+        if (sequenceSymbol && (sequenceSymbol.flags & ts.SymbolFlags.Alias)) {
+          sequenceSymbol = checker.getAliasedSymbol(sequenceSymbol);
+        }
+        if (sequenceSymbol && sequenceSymbolPath.has(sequenceSymbol)) return null;
+        const nestedSequenceSymbolPath = new Set(sequenceSymbolPath);
+        if (sequenceSymbol) nestedSequenceSymbolPath.add(sequenceSymbol);
+        const declarationValues = (sequenceSymbol?.declarations ?? []).flatMap((declaration) => {
+          const initializer = ts.isVariableDeclaration(declaration)
+            ? declaration.initializer
+            : ts.isPropertyAssignment(declaration)
+              ? declaration.initializer
+              : null;
+          if (!initializer) return [];
+          return resolveStaticSequence(
+            initializer,
+            separator,
+            arrayRequired,
+            nestedSequenceSymbolPath,
+            sequenceDepth + 1,
+          ) ?? [];
+        });
+        if (declarationValues.length > 0) {
+          return boundedVisibleStringCandidates(declarationValues);
+        }
+        if (arrayRequired) return null;
+      }
+      if (arrayRequired) return null;
+
+      const type = checker.getTypeAtLocation(unwrapped);
+      if ((type.flags & ts.TypeFlags.StringLike) === 0) return null;
+      const values = resolveNested(unwrapped);
+      return values.length > 0 ? values : null;
+    };
+
+    if (methodAccess && methodName === 'join') {
+      const separators = expression.arguments.length === 0
+        ? [',']
+        : expression.arguments.length === 1
+          ? resolveNested(expression.arguments[0])
+          : [];
+      if (separators.length > 0) {
+        const joinedValues = boundedVisibleStringCandidates(separators.flatMap((separator) => (
+          resolveStaticSequence(methodAccess.expression, separator, true) ?? []
+        )));
+        if (joinedValues.length > 0) return joinedValues;
+      }
+    }
+
+    if (methodAccess && methodName === 'concat') {
+      const sequenceSets = [methodAccess.expression, ...expression.arguments].map((candidate) => (
+        resolveStaticSequence(candidate, '')
+      ));
+      if (sequenceSets.every((values) => values !== null)) {
+        const concatenatedValues = composeVisibleStringCandidateSets(sequenceSets, '');
+        if (concatenatedValues) return concatenatedValues;
+      }
+    }
+
     const argumentValueSets = expression.arguments.map(resolveNested);
     const argumentStrings = argumentValueSets.flat();
-    const symbolLocation = ts.isPropertyAccessExpression(expression.expression)
+    const receiverExpression = methodAccess ? unwrapStaticExpression(methodAccess.expression) : null;
+    const receiverHasDirectStaticCopy = receiverExpression && (
+      ts.isStringLiteralLike(receiverExpression)
+      || ts.isTemplateExpression(receiverExpression)
+      || ts.isArrayLiteralExpression(receiverExpression)
+      || ts.isBinaryExpression(receiverExpression)
+      || ts.isConditionalExpression(receiverExpression)
+    );
+    const receiverStrings = methodAccess && (
+      receiverHasDirectStaticCopy || methodName === 'join' || methodName === 'concat'
+    )
+      ? resolveNested(methodAccess.expression)
+      : [];
+    const symbolLocation = methodAccess
       ? expression.expression.name
       : expression.expression;
     let symbol = checker.getSymbolAtLocation(symbolLocation);
@@ -535,6 +786,7 @@ function resolveVisibleStrings(
         functionDeclaration = declaration.initializer;
       }
       if (!ts.isFunctionLike(functionDeclaration)
+        || !functionDeclaration.body
         || functionDeclaration.parameters.length !== expression.arguments.length) return [];
       const callBindings = new Map(bindings);
       for (const [index, parameter] of functionDeclaration.parameters.entries()) {
@@ -550,7 +802,15 @@ function resolveVisibleStrings(
         returnExpression, checker, nestedNodePath, depth + 1, callBindings, functionSymbolPath, state,
       ));
     });
-    return boundedVisibleStringCandidates(resolvedFunction ? returnStrings : argumentStrings);
+    if (resolvedFunction) return boundedVisibleStringCandidates(returnStrings);
+    if (receiverStrings.length > 0) {
+      const unresolvedVisibleStrings = boundedVisibleStringCandidates([...receiverStrings, ...argumentStrings]);
+      if (methodName === 'join' || methodName === 'concat') {
+        throw new Error('visible-string rendered call receiver could not be resolved safely.');
+      }
+      return unresolvedVisibleStrings;
+    }
+    return boundedVisibleStringCandidates(argumentStrings);
   }
   if (ts.isIdentifier(expression) || ts.isPropertyAccessExpression(expression)) {
     let symbol = checker.getSymbolAtLocation(ts.isPropertyAccessExpression(expression) ? expression.name : expression);
@@ -637,10 +897,9 @@ async function verifyProductMaturityRegistry(root) {
   const registryPath = resolve(root, 'src/productMaturity/product-maturity-registry.json');
   const routeManifestPath = resolve(root, 'src/productMaturity/surfaces.ts');
   const appPath = resolve(root, 'src/App.tsx');
-  const [registrySource, routeManifestSource, appSource, customerUiSourcePaths, productionSourcePaths] = await Promise.all([
+  const [registrySource, routeManifestSource, customerUiSourcePaths, productionSourcePaths] = await Promise.all([
     readFile(registryPath, 'utf8'),
     readFile(routeManifestPath, 'utf8'),
-    readFile(appPath, 'utf8'),
     listCustomerUiSourcePaths(root),
     listProductionTypeScriptSourcePaths(root),
   ]);
@@ -676,16 +935,10 @@ async function verifyProductMaturityRegistry(root) {
   assertExactRegistryEntries(querySurfaces, registry, 'Query-driven product surface manifest');
   assertWorkflowBoundaryReferences(root, productionSourcePaths, registry, productionProgram);
 
-  const manifestPaths = new Set(reachableRoutes.map((route) => route.path));
-  const appRoutePaths = Array.from(
-    appSource.matchAll(/<Route\s+path\s*=\s*['"]([^'"]+)['"]/g),
-    (match) => match[1],
-  );
-  if (appRoutePaths.length === 0) throw new Error('App route source contains no route paths.');
-  const missingManifestRoutes = appRoutePaths.filter((routePath) => !manifestPaths.has(routePath));
-  if (missingManifestRoutes.length > 0) {
-    throw new Error(`Reachable route manifest is missing ${missingManifestRoutes.length} App route literal(s).`);
-  }
+  const appSourceFile = productionProgram.getSourceFile(appPath);
+  if (!appSourceFile) throw new Error('App route source is missing from the TypeScript Program.');
+  const appRoutePaths = discoverReactRouterPaths(appSourceFile, productionProgram.getTypeChecker());
+  assertExactRoutePathMultiset(appRoutePaths, reachableRoutes);
 
   const legacyViolations = findCustomerVisibleLegacyViolations(root, customerUiSourcePaths, productionProgram);
   if (legacyViolations.length > 0) {

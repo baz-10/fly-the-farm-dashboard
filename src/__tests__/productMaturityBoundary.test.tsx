@@ -154,6 +154,65 @@ describe('product maturity CI boundary', () => {
     ), (fixtureRoot) => expectVerifierFailure('does not have an exact registry entry', fixtureRoot));
   });
 
+  test('discovers an unclassified App route written as a static JSX expression', () => {
+    withTemporaryFixture((fixtureRoot) => replaceFixtureSource(
+      fixtureRoot,
+      'src/App.tsx',
+      'path="/login"',
+      "path={'/unclassified-login'}",
+    ), (fixtureRoot) => expectVerifierFailure('App route manifest mismatch', fixtureRoot));
+  });
+
+  test.each([
+    ['dynamic expression', 'path={dynamicRoutePath}', 'static string literal'],
+    ['spread props', '{...dynamicRouteProps} path="/login"', 'spread attributes'],
+    ['missing path', '', 'requires a path'],
+  ])('fails closed on an App leaf Route with a %s', (_label, replacement, expectedMessage) => {
+    withTemporaryFixture((fixtureRoot) => replaceFixtureSource(
+      fixtureRoot,
+      'src/App.tsx',
+      'path="/login"',
+      replacement,
+    ), (fixtureRoot) => expectVerifierFailure(expectedMessage, fixtureRoot));
+  });
+
+  test.each([
+    ['JSX string expression', "path={'/login'}"],
+    ['no-substitution template', 'path={`/login`}'],
+  ])('counts an exact App route written as a %s', (_label, replacement) => {
+    withTemporaryFixture((fixtureRoot) => replaceFixtureSource(
+      fixtureRoot,
+      'src/App.tsx',
+      'path="/login"',
+      replacement,
+    ), (fixtureRoot) => {
+      const result = runVerifier(fixtureRoot);
+
+      expect(result.error).toBeUndefined();
+      expect(result.status).toBe(0);
+      expect(result.stderr).toBe('');
+      expect(result.stdout).toContain('53 App routes checked');
+    });
+  });
+
+  test('fails closed when the reachable manifest contains an extra route', () => {
+    withTemporaryFixture((fixtureRoot) => replaceFixtureSource(
+      fixtureRoot,
+      'src/productMaturity/surfaces.ts',
+      "  { path: '/login', moduleCode: 'authentication', workflowCode: null },",
+      "  { path: '/login', moduleCode: 'authentication', workflowCode: null },\n  { path: '/manifest-only', moduleCode: 'authentication', workflowCode: null },",
+    ), (fixtureRoot) => expectVerifierFailure('App route manifest mismatch', fixtureRoot));
+  });
+
+  test('fails closed when App route multiplicity differs from the reachable manifest', () => {
+    withTemporaryFixture((fixtureRoot) => replaceFixtureSource(
+      fixtureRoot,
+      'src/App.tsx',
+      '        <Route path="/login" element={<Login />} />',
+      '        <Route path="/login" element={<Login />} />\n        <Route path="/login" element={<Login />} />',
+    ), (fixtureRoot) => expectVerifierFailure('App route manifest mismatch', fixtureRoot));
+  });
+
   test.each([
     ['moduleCode="organisation-administration"', 'moduleCode="missing-administration"'],
     ['workflowCode="network-source-manager"', 'workflowCode="missing-source-manager"'],
@@ -526,6 +585,61 @@ describe('product maturity CI boundary', () => {
       'All Clients',
       replacement,
     ), (fixtureRoot) => expectVerifierFailure('Customer-facing Legacy violation', fixtureRoot));
+  });
+
+  test.each([
+    ['a complete array element joined into visible copy', "{['Legacy Records'].join('')}"],
+    ['fragmented array elements joined into visible copy', "{['Leg', 'acy'].join('')}"],
+    ['string concat', "{'Leg'.concat('acy Records')}"],
+    ['array concat rendered as adjacent copy', "{['Leg'].concat('acy Records')}"],
+  ])('rejects Legacy assembled through %s', (_label, replacement) => {
+    withTemporaryFixture((fixtureRoot) => replaceFixtureSource(
+      fixtureRoot,
+      'src/pages/ClientDetail.tsx',
+      'All Clients',
+      replacement,
+    ), (fixtureRoot) => expectVerifierFailure('Customer-facing Legacy violation', fixtureRoot));
+  });
+
+  test.each([
+    ['array identifier join', "const repairParts = ['Leg', 'acy'];\nexport const repairReceiverFixture = <span>{repairParts.join('')}</span>;"],
+    ['array identifier concat', "const repairParts = ['Leg'];\nexport const repairReceiverFixture = <span>{repairParts.concat('acy')}</span>;"],
+  ])('rejects Legacy assembled through an %s', (_label, fixtureSource) => {
+    withTemporaryFixture((fixtureRoot) => {
+      const filePath = fixturePath(fixtureRoot, 'src/pages/ClientDetail.tsx');
+      const source = readFileSync(filePath, 'utf8');
+      writeFileSync(filePath, `${source}\n${fixtureSource}\n`, 'utf8');
+    }, (fixtureRoot) => expectVerifierFailure('Customer-facing Legacy violation', fixtureRoot));
+  });
+
+  test('fails closed when a rendered join receiver has static copy but a dynamic separator', () => {
+    withTemporaryFixture((fixtureRoot) => replaceFixtureSource(
+      fixtureRoot,
+      'src/pages/ClientDetail.tsx',
+      'All Clients',
+      "{['Current', ' Records'].join(dynamicSeparator)}",
+    ), (fixtureRoot) => expectVerifierFailure('rendered call receiver could not be resolved safely', fixtureRoot));
+  });
+
+  test('fails closed without executing an unresolved rendered concat argument', () => {
+    withTemporaryFixture((fixtureRoot) => replaceFixtureSource(
+      fixtureRoot,
+      'src/pages/ClientDetail.tsx',
+      'All Clients',
+      "{['Current Records'].concat(() => { throw new Error('must not execute'); })}",
+    ), (fixtureRoot) => expectVerifierFailure('rendered call receiver could not be resolved safely', fixtureRoot));
+  });
+
+  test('ignores an unsupported receiver call that cannot flow into rendered output', () => {
+    withTemporaryFixture((fixtureRoot) => {
+      const filePath = fixturePath(fixtureRoot, 'src/pages/ClientDetail.tsx');
+      const source = readFileSync(filePath, 'utf8');
+      writeFileSync(
+        filePath,
+        `${source}\nconst repairInternalReceiver = ['Legacy Records'].map(() => { throw new Error('must not execute'); });\n`,
+        'utf8',
+      );
+    }, expectVerifierSuccess);
   });
 
   test('fails deterministically when static visible-string composition exceeds the candidate budget', () => {
