@@ -2,6 +2,8 @@ import React from 'react';
 import { render, screen } from '@testing-library/react';
 import { ProductMaturitySurface } from '../ProductMaturitySurface';
 import { WorkflowMaturityBoundary } from '../WorkflowMaturityBoundary';
+import { PRODUCT_MATURITY_REGISTRY } from '../../../productMaturity/registry';
+import { ProductMaturityEntry } from '../../../productMaturity/types';
 
 describe('ProductMaturitySurface', () => {
   test('resolves a Beta route from its pathname and search props while keeping children usable', () => {
@@ -73,5 +75,50 @@ describe('WorkflowMaturityBoundary', () => {
     expect(screen.getByRole('heading', { name: 'Organisation Network and Source Manager', level: 2 })).toBeVisible();
     expect(screen.queryByRole('heading', { name: 'Organisation Network and Source Manager', level: 1 })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Manage network sources' })).not.toBeInTheDocument();
+  });
+
+  test('fails closed without mounting an unsafe child when an Admin workflow code is mistyped', () => {
+    const unsafeChildMount = jest.fn();
+    const UnsafeChild = () => {
+      unsafeChildMount();
+      return <button type="button">Write browser-local network source</button>;
+    };
+
+    render(
+      <WorkflowMaturityBoundary moduleCode="organisation-administration" workflowCode="network-source-managr">
+        <UnsafeChild />
+      </WorkflowMaturityBoundary>
+    );
+
+    expect(screen.getByRole('alert')).toHaveTextContent('This workflow is unavailable');
+    expect(unsafeChildMount).not.toHaveBeenCalled();
+    expect(screen.queryByRole('button', { name: 'Write browser-local network source' })).not.toBeInTheDocument();
+  });
+
+  test('fails closed without mounting an unsafe child when Admin workflow metadata is deleted', () => {
+    const registry = PRODUCT_MATURITY_REGISTRY as ProductMaturityEntry[];
+    const workflowIndex = registry.findIndex(entry => entry.moduleCode === 'organisation-administration'
+      && entry.workflowCode === 'network-source-manager');
+    expect(workflowIndex).toBeGreaterThanOrEqual(0);
+    const [deletedWorkflow] = registry.splice(workflowIndex, 1);
+    const unsafeChildMount = jest.fn();
+    const UnsafeChild = () => {
+      unsafeChildMount();
+      return <button type="button">Write browser-local network source</button>;
+    };
+
+    try {
+      render(
+        <WorkflowMaturityBoundary moduleCode="organisation-administration" workflowCode="network-source-manager">
+          <UnsafeChild />
+        </WorkflowMaturityBoundary>
+      );
+    } finally {
+      registry.splice(workflowIndex, 0, deletedWorkflow);
+    }
+
+    expect(screen.getByRole('alert')).toHaveTextContent('This workflow is unavailable');
+    expect(unsafeChildMount).not.toHaveBeenCalled();
+    expect(screen.queryByRole('button', { name: 'Write browser-local network source' })).not.toBeInTheDocument();
   });
 });

@@ -79,6 +79,9 @@ export function assertValidRegistry(registry: readonly ProductMaturityEntry[]): 
       && entry.promotionBlockers.length === 0) {
       throw configurationError(entry, 'non-operational entries require promotion blockers.');
     }
+    if (entry.maturity === 'COMMERCIALLY_READY' && entry.promotionBlockers.length !== 0) {
+      throw configurationError(entry, 'Commercially Ready entries must not have promotion blockers.');
+    }
     REQUIRED_ARRAY_FIELDS.forEach(field => {
       if (!hasNonEmptyStrings(entry[field])) throw configurationError(entry, `${field} is required.`);
     });
@@ -111,13 +114,19 @@ export const PRODUCT_MATURITY_REGISTRY: readonly ProductMaturityEntry[] = regist
 
 assertValidRegistry(PRODUCT_MATURITY_REGISTRY);
 
+export function getWorkflowMaturityEntry(moduleCode: string, workflowCode: string): ProductMaturityEntry {
+  const workflowEntry = PRODUCT_MATURITY_REGISTRY.find(entry =>
+    entry.moduleCode === moduleCode && entry.workflowCode === workflowCode
+  );
+  if (workflowEntry) return workflowEntry;
+
+  throw new ProductMaturityConfigurationError(
+    `Missing product maturity registry metadata for workflow ${moduleCode}/${workflowCode}.`
+  );
+}
+
 export function getMaturityEntry(moduleCode: string, workflowCode?: string): ProductMaturityEntry {
-  if (workflowCode) {
-    const workflowEntry = PRODUCT_MATURITY_REGISTRY.find(entry =>
-      entry.moduleCode === moduleCode && entry.workflowCode === workflowCode
-    );
-    if (workflowEntry) return workflowEntry;
-  }
+  if (workflowCode !== undefined) return getWorkflowMaturityEntry(moduleCode, workflowCode);
 
   const moduleEntry = PRODUCT_MATURITY_REGISTRY.find(entry =>
     entry.moduleCode === moduleCode && entry.workflowCode === null

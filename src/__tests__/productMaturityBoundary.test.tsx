@@ -164,6 +164,25 @@ describe('product maturity CI boundary', () => {
     }), (fixtureRoot) => expectVerifierFailure('needs explicit structured Founder approval', fixtureRoot));
   });
 
+  test('rejects Commercially Ready entries while promotion blockers remain', () => {
+    withTemporaryFixture((fixtureRoot) => updateFixtureRegistry(fixtureRoot, (registry) => {
+      const approvalPath = fixturePath(fixtureRoot, 'docs/commercial-release-decision.md');
+      mkdirSync(path.dirname(approvalPath), { recursive: true });
+      writeFileSync(approvalPath, '# Founder approval\n', 'utf8');
+      registry[0] = {
+        ...registry[0],
+        maturity: 'COMMERCIALLY_READY',
+        promotionBlockers: ['Complete the outstanding release recovery exercise.'],
+        founderApproval: {
+          status: 'APPROVED',
+          approverRole: 'Founder',
+          decision: 'Approved for commercial release.',
+          reference: 'docs/commercial-release-decision.md',
+        },
+      };
+    }), (fixtureRoot) => expectVerifierFailure('must not have promotion blockers', fixtureRoot));
+  });
+
   test('rejects lowercase legacy language in registry customer-facing names', () => {
     withTemporaryFixture((fixtureRoot) => updateFixtureRegistry(fixtureRoot, (registry) => {
       registry[0] = { ...registry[0], customerName: 'legacy Authentication' };

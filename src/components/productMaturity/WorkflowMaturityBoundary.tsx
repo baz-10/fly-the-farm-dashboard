@@ -1,6 +1,10 @@
 import React, { ReactNode } from 'react';
-import { Box } from '@mui/material';
-import { getMaturityEntry } from '../../productMaturity/registry';
+import { Alert, Box } from '@mui/material';
+import {
+  getWorkflowMaturityEntry,
+  ProductMaturityConfigurationError,
+} from '../../productMaturity/registry';
+import { ProductMaturityEntry } from '../../productMaturity/types';
 import { ComingSoonWorkspace } from './ComingSoonWorkspace';
 import { MaturityBadge } from './MaturityBadge';
 
@@ -11,7 +15,15 @@ interface WorkflowMaturityBoundaryProps {
 }
 
 export function WorkflowMaturityBoundary({ moduleCode, workflowCode, children }: WorkflowMaturityBoundaryProps) {
-  const entry = getMaturityEntry(moduleCode, workflowCode);
+  let entry: ProductMaturityEntry;
+  try {
+    entry = getWorkflowMaturityEntry(moduleCode, workflowCode);
+  } catch (error) {
+    if (error instanceof ProductMaturityConfigurationError) {
+      return <Alert severity="error">This workflow is unavailable. Please contact support.</Alert>;
+    }
+    throw error;
+  }
 
   if (entry.maturity === 'COMMERCIALLY_READY' || entry.maturity === 'OPERATIONALLY_READY') {
     return <>{children}</>;

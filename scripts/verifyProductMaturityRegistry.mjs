@@ -92,6 +92,9 @@ function validateRegistry(registry) {
       && entry.maturity !== 'COMMERCIALLY_READY') {
       throw new Error(`${label} needs at least one promotion blocker.`);
     }
+    if (entry.maturity === 'COMMERCIALLY_READY' && entry.promotionBlockers.length !== 0) {
+      throw new Error(`${label} must not have promotion blockers when Commercially Ready.`);
+    }
     requiredArrayFields.forEach((field) => {
       if (!hasNonEmptyStrings(entry[field])) throw new Error(`${label} is missing ${field}.`);
     });

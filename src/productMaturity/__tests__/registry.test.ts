@@ -1,6 +1,7 @@
 import {
   assertValidRegistry,
   getMaturityEntry,
+  getWorkflowMaturityEntry,
   ProductMaturityConfigurationError,
   PRODUCT_MATURITY_REGISTRY,
 } from '../registry';
@@ -128,6 +129,23 @@ describe('product maturity registry', () => {
     expect(() => assertValidRegistry(commerciallyReady)).toThrow(ProductMaturityConfigurationError);
   });
 
+  test('rejects Commercially Ready while any promotion blocker remains despite Founder approval', () => {
+    const commerciallyReady = cloneRegistry();
+    commerciallyReady[0] = {
+      ...commerciallyReady[0],
+      maturity: 'COMMERCIALLY_READY',
+      promotionBlockers: ['Complete the outstanding release recovery exercise.'],
+      founderApproval: {
+        status: 'APPROVED',
+        approverRole: 'Founder',
+        decision: 'Approved for commercial release.',
+        reference: 'docs/commercial-release-decision.md',
+      },
+    };
+
+    expect(() => assertValidRegistry(commerciallyReady)).toThrow(ProductMaturityConfigurationError);
+  });
+
   test('rejects incomplete or unapproved structured Founder decisions', () => {
     const commerciallyReady = cloneRegistry();
     commerciallyReady[0] = {
@@ -166,13 +184,16 @@ describe('product maturity registry', () => {
     expect(getMaturityEntry('documentation-audit').evidence).toContain('src/pages/ComplianceDocumentation.tsx');
   });
 
-  test('selects a workflow override before falling back to module metadata', () => {
+  test('selects exact workflow metadata and uses module metadata only when no workflow is requested', () => {
     expect(getMaturityEntry('quotes', 'pdf-export').maturity).toBe('COMING_SOON');
-    expect(getMaturityEntry('quotes', 'unlisted-workflow')).toMatchObject({
+    expect(getWorkflowMaturityEntry('quotes', 'pdf-export').maturity).toBe('COMING_SOON');
+    expect(getMaturityEntry('quotes')).toMatchObject({
       moduleCode: 'quotes',
       workflowCode: null,
       maturity: 'COMING_SOON',
     });
+    expect(() => getMaturityEntry('quotes', 'unlisted-workflow')).toThrow(ProductMaturityConfigurationError);
+    expect(() => getWorkflowMaturityEntry('quotes', 'unlisted-workflow')).toThrow(ProductMaturityConfigurationError);
   });
 
   test('keeps safe Administration available while constraining its exact browser-local workflows', () => {
