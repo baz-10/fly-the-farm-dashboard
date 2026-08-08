@@ -70,7 +70,7 @@ function validateRegistry(registry) {
     if (keys.has(key)) throw new Error(`${label} duplicates a module/workflow key.`);
     keys.add(key);
 
-    if (!isNonEmptyString(entry.customerName) || /Legacy/.test(entry.customerName)) {
+    if (!isNonEmptyString(entry.customerName) || /\bLegacy\b/i.test(entry.customerName)) {
       throw new Error(`${label} has an invalid customer-facing name.`);
     }
     if (!validMaturities.has(entry.maturity)) throw new Error(`${label} has an invalid maturity.`);
@@ -80,7 +80,9 @@ function validateRegistry(registry) {
       || !entry.promotionBlockers.every(isNonEmptyString)) {
       throw new Error(`${label} has invalid promotionBlockers.`);
     }
-    if (entry.promotionBlockers.length === 0 && entry.maturity !== 'OPERATIONALLY_READY') {
+    if (entry.promotionBlockers.length === 0
+      && entry.maturity !== 'OPERATIONALLY_READY'
+      && entry.maturity !== 'COMMERCIALLY_READY') {
       throw new Error(`${label} needs at least one promotion blocker.`);
     }
     requiredArrayFields.forEach((field) => {
@@ -102,10 +104,37 @@ function validateRegistry(registry) {
   });
 }
 
-function extractRoutePaths(source, expression, sourceName) {
-  const paths = Array.from(source.matchAll(expression), (match) => match[1]);
-  if (paths.length === 0) throw new Error(`${sourceName} contains no route paths.`);
-  return paths;
+function readSurfaceProperty(source, property, sourceName) {
+  const match = source.match(new RegExp(`\\b${property}:\\s*(?:'([^']+)'|\"([^\"]+)\"|(null))`));
+  if (!match) throw new Error(`${sourceName} is missing ${property}.`);
+
+  return match[1] ?? match[2] ?? null;
+}
+
+function parseSurfaceEntries(source, sourceName, pathProperty) {
+  const objectSources = Array.from(source.matchAll(/\{([^{}]+)\}/g), (match) => match[1]);
+  if (objectSources.length === 0) throw new Error(`${sourceName} contains no surface entries.`);
+
+  return objectSources.map((objectSource, index) => {
+    const entryName = `${sourceName} entry ${index + 1}`;
+    const path = readSurfaceProperty(objectSource, pathProperty, entryName);
+    const moduleCode = readSurfaceProperty(objectSource, 'moduleCode', entryName);
+    const workflowCode = readSurfaceProperty(objectSource, 'workflowCode', entryName);
+
+    if (path === null || moduleCode === null) throw new Error(`${entryName} has invalid route metadata.`);
+    return { path, moduleCode, workflowCode };
+  });
+}
+
+function assertExactRegistryEntries(entries, registry, sourceName) {
+  const registryKeys = new Set(registry.map((entry) => `${entry.moduleCode}::${entry.workflowCode ?? ''}`));
+
+  entries.forEach(({ path, moduleCode, workflowCode }) => {
+    const registryKey = `${moduleCode}::${workflowCode ?? ''}`;
+    if (!registryKeys.has(registryKey)) {
+      throw new Error(`${sourceName} entry for ${path} does not have an exact registry entry.`);
+    }
+  });
 }
 
 async function verifyProductMaturityRegistry() {
@@ -124,19 +153,30 @@ async function verifyProductMaturityRegistry() {
   )?.[1];
   if (!manifestBlock) throw new Error('Reachable route manifest is missing.');
 
-  const manifestPaths = new Set(extractRoutePaths(
-    manifestBlock,
-    /\bpath:\s*['"]([^'"]+)['"]/g,
-    'Reachable route manifest',
-  ));
-  const appRoutePaths = extractRoutePaths(appSource, /<Route\s+path\s*=\s*['"]([^'"]+)['"]/g, 'App route source');
+  const reachableRoutes = parseSurfaceEntries(manifestBlock, 'Reachable route manifest', 'path');
+  assertExactRegistryEntries(reachableRoutes, registry, 'Reachable route manifest');
+
+  const querySurfaceBlock = routeManifestSource.match(
+    /export const PRODUCT_SURFACES[\s\S]*?=\s*\[([\s\S]*?)\.\.\.routeSurfaces/,
+  )?.[1];
+  if (querySurfaceBlock === undefined) throw new Error('Product surface manifest is missing.');
+
+  const querySurfaces = parseSurfaceEntries(querySurfaceBlock, 'Query-driven product surface manifest', 'routePattern');
+  assertExactRegistryEntries(querySurfaces, registry, 'Query-driven product surface manifest');
+
+  const manifestPaths = new Set(reachableRoutes.map((route) => route.path));
+  const appRoutePaths = Array.from(
+    appSource.matchAll(/<Route\s+path\s*=\s*['"]([^'"]+)['"]/g),
+    (match) => match[1],
+  );
+  if (appRoutePaths.length === 0) throw new Error('App route source contains no route paths.');
   const missingManifestRoutes = appRoutePaths.filter((routePath) => !manifestPaths.has(routePath));
   if (missingManifestRoutes.length > 0) {
     throw new Error(`Reachable route manifest is missing ${missingManifestRoutes.length} App route literal(s).`);
   }
 
   const legacyViolations = customerFacingSources.flatMap((source, index) =>
-    /Legacy/.test(source) ? [customerFacingSourcePaths[index]] : [],
+    /\bLegacy\b/i.test(source) ? [customerFacingSourcePaths[index]] : [],
   );
   if (legacyViolations.length > 0) {
     throw new Error(`Customer-facing Legacy violation(s): ${legacyViolations.join(', ')}.`);
