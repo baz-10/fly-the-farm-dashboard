@@ -187,8 +187,44 @@ describe('product maturity CI boundary', () => {
     withTemporaryFixture((fixtureRoot) => {
       const filePath = fixturePath(fixtureRoot, 'src/pages/ClientDetail.tsx');
       const source = readFileSync(filePath, 'utf8');
-      writeFileSync(filePath, `${source}\n// legacy migration note\nconst internalMigrationKey = 'legacy-record';\n`, 'utf8');
+      writeFileSync(filePath, `${source}\n// legacy migration note\nconst legacyInternalMigrationKey = 'legacy-record';\nconst internalOnly = <div id="legacy-panel" className="legacy-layout" data-testid="legacy-client" />;\n`, 'utf8');
     }, expectVerifierSuccess);
+  });
+
+  test.each([
+    ['showNotice', "showNotice('legacy client record');"],
+    ['setNotice', "setNotice('legacy client record');"],
+  ])('rejects customer-visible copy passed to %s wrappers', (_wrapperName, statement) => {
+    withTemporaryFixture((fixtureRoot) => {
+      const filePath = fixturePath(fixtureRoot, 'src/pages/ClientDetail.tsx');
+      const source = readFileSync(filePath, 'utf8');
+      writeFileSync(filePath, `${source}\n${statement}\n`, 'utf8');
+    }, (fixtureRoot) => expectVerifierFailure('Customer-facing Legacy violation', fixtureRoot));
+  });
+
+  test('rejects customer-visible copy in logical JSX expressions', () => {
+    withTemporaryFixture((fixtureRoot) => replaceFixtureSource(
+      fixtureRoot,
+      'src/pages/ClientDetail.tsx',
+      'All Clients',
+      "{true && 'legacy Client Records'}",
+    ), (fixtureRoot) => expectVerifierFailure('Customer-facing Legacy violation', fixtureRoot));
+  });
+
+  test('rejects nested customer-message values in object, array, and call argument forms', () => {
+    withTemporaryFixture((fixtureRoot) => {
+      const filePath = fixturePath(fixtureRoot, 'src/pages/ClientDetail.tsx');
+      const source = readFileSync(filePath, 'utf8');
+      writeFileSync(filePath, `${source}\nshowNotice({ message: formatNotice([true ? 'legacy client record' : 'client record']) });\n`, 'utf8');
+    }, (fixtureRoot) => expectVerifierFailure('Customer-facing Legacy violation', fixtureRoot));
+  });
+
+  test('rejects customer copy in accessibility attributes', () => {
+    withTemporaryFixture((fixtureRoot) => {
+      const filePath = fixturePath(fixtureRoot, 'src/pages/ClientDetail.tsx');
+      const source = readFileSync(filePath, 'utf8');
+      writeFileSync(filePath, `${source}\nconst accessibleCopy = <img alt="legacy client record" />;\n`, 'utf8');
+    }, (fixtureRoot) => expectVerifierFailure('Customer-facing Legacy violation', fixtureRoot));
   });
 
   test('rejects an imported string when a production UI source renders it', () => {

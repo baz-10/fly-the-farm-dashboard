@@ -221,20 +221,51 @@ function resolveVisibleStrings(expression, checker, seen = new Set()) {
 
   if (ts.isStringLiteralLike(expression)) return [expression.text];
   if (ts.isParenthesizedExpression(expression)) return resolveVisibleStrings(expression.expression, checker, seen);
+  if (ts.isAsExpression(expression)
+    || ts.isTypeAssertionExpression(expression)
+    || ts.isNonNullExpression(expression)
+    || ts.isSatisfiesExpression(expression)) {
+    return resolveVisibleStrings(expression.expression, checker, seen);
+  }
   if (ts.isConditionalExpression(expression)) {
     return [
       ...resolveVisibleStrings(expression.whenTrue, checker, seen),
       ...resolveVisibleStrings(expression.whenFalse, checker, seen),
     ];
   }
-  if (ts.isBinaryExpression(expression) && expression.operatorToken.kind === ts.SyntaxKind.PlusToken) {
+  if (ts.isBinaryExpression(expression) && [
+    ts.SyntaxKind.PlusToken,
+    ts.SyntaxKind.AmpersandAmpersandToken,
+    ts.SyntaxKind.BarBarToken,
+    ts.SyntaxKind.QuestionQuestionToken,
+  ].includes(expression.operatorToken.kind)) {
     return [
       ...resolveVisibleStrings(expression.left, checker, seen),
       ...resolveVisibleStrings(expression.right, checker, seen),
     ];
   }
   if (ts.isTemplateExpression(expression)) {
-    return [expression.head.text, ...expression.templateSpans.map((span) => span.literal.text)];
+    return [
+      expression.head.text,
+      ...expression.templateSpans.flatMap((span) => [
+        ...resolveVisibleStrings(span.expression, checker, seen),
+        span.literal.text,
+      ]),
+    ];
+  }
+  if (ts.isArrayLiteralExpression(expression)) {
+    return expression.elements.flatMap((element) => resolveVisibleStrings(element, checker, seen));
+  }
+  if (ts.isObjectLiteralExpression(expression)) {
+    return expression.properties.flatMap((property) => {
+      if (ts.isPropertyAssignment(property)) return resolveVisibleStrings(property.initializer, checker, seen);
+      if (ts.isShorthandPropertyAssignment(property)) return resolveVisibleStrings(property.name, checker, seen);
+      if (ts.isSpreadAssignment(property)) return resolveVisibleStrings(property.expression, checker, seen);
+      return [];
+    });
+  }
+  if (ts.isCallExpression(expression)) {
+    return expression.arguments.flatMap((argument) => resolveVisibleStrings(argument, checker, seen));
   }
   if (ts.isIdentifier(expression) || ts.isPropertyAccessExpression(expression)) {
     let symbol = checker.getSymbolAtLocation(ts.isPropertyAccessExpression(expression) ? expression.name : expression);
@@ -254,14 +285,19 @@ function resolveVisibleStrings(expression, checker, seen = new Set()) {
 
 function customerVisibleStrings(sourceFile, checker) {
   const visibleStrings = [];
-  const visibleSetterPattern = /^(?:alert|setSnackbar|set.*(?:Error|Message))$/;
+  const visibleMessageCallPattern = /^(?:alert|(?:set|show|open|enqueue)?(?:Snackbar|Toast|Notice)|(?:set|show)(?:.*(?:Error|Message|Notice|Toast)))$/i;
+  const visibleJsxAttributes = new Set([
+    'label', 'title', 'placeholder', 'helpertext', 'aria-label', 'alt', 'tooltip', 'description',
+  ]);
   const customerCopyProperties = new Set([
     'label', 'shortLabel', 'message', 'title', 'placeholder', 'helperText', 'primary', 'secondary',
   ]);
 
   function visit(node) {
     if (ts.isJsxText(node)) visibleStrings.push(node.text);
-    if (ts.isJsxAttribute(node) && node.initializer) {
+    if (ts.isJsxAttribute(node)
+      && node.initializer
+      && visibleJsxAttributes.has(node.name.text.toLowerCase())) {
       const expression = ts.isJsxExpression(node.initializer) ? node.initializer.expression : node.initializer;
       visibleStrings.push(...resolveVisibleStrings(expression, checker));
     }
@@ -272,17 +308,18 @@ function customerVisibleStrings(sourceFile, checker) {
       && customerCopyProperties.has(node.name.getText(sourceFile).replace(/^['"]|['"]$/g, ''))) {
       visibleStrings.push(...resolveVisibleStrings(node.initializer, checker));
     }
-    if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && visibleSetterPattern.test(node.expression.text)) {
+    if (ts.isCallExpression(node)) {
+      const calleeName = ts.isIdentifier(node.expression)
+        ? node.expression.text
+        : ts.isPropertyAccessExpression(node.expression)
+          ? node.expression.name.text
+          : '';
+      if (!visibleMessageCallPattern.test(calleeName)) {
+        ts.forEachChild(node, visit);
+        return;
+      }
       node.arguments.forEach((argument) => {
-        if (ts.isObjectLiteralExpression(argument)) {
-          argument.properties.forEach((property) => {
-            if (ts.isPropertyAssignment(property) && property.name.getText(sourceFile) === 'message') {
-              visibleStrings.push(...resolveVisibleStrings(property.initializer, checker));
-            }
-          });
-        } else {
-          visibleStrings.push(...resolveVisibleStrings(argument, checker));
-        }
+        visibleStrings.push(...resolveVisibleStrings(argument, checker));
       });
     }
     ts.forEachChild(node, visit);
