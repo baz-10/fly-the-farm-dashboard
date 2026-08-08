@@ -89,8 +89,20 @@ export function assertValidRegistry(registry: readonly ProductMaturityEntry[]): 
     if (typeof entry.changelogReference !== 'string' || entry.changelogReference.trim().length === 0) {
       throw configurationError(entry, 'changelogReference is required.');
     }
-    if (entry.maturity === 'COMMERCIALLY_READY' && !entry.evidence.some(item => /founder[ -]approval/i.test(item))) {
-      throw configurationError(entry, 'Commercially Ready entries require explicit Founder approval evidence.');
+    if (entry.founderApproval !== undefined) {
+      const approval = entry.founderApproval;
+      if (!approval || typeof approval !== 'object'
+        || approval.status !== 'APPROVED'
+        || approval.approverRole !== 'Founder'
+        || typeof approval.decision !== 'string'
+        || approval.decision.trim().length === 0
+        || typeof approval.reference !== 'string'
+        || approval.reference.trim().length === 0) {
+        throw configurationError(entry, 'Founder approval must be a complete approved decision.');
+      }
+    }
+    if (entry.maturity === 'COMMERCIALLY_READY' && entry.founderApproval === undefined) {
+      throw configurationError(entry, 'Commercially Ready entries require structured Founder approval.');
     }
   });
 }

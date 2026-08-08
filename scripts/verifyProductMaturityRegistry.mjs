@@ -1,6 +1,7 @@
-import { readFile, readdir, stat } from 'node:fs/promises';
+import { readFile, readdir, realpath } from 'node:fs/promises';
 import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import ts from 'typescript';
 
 const defaultRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const customerUiSourceRoots = ['src/pages', 'src/components', 'src/navigation'];
@@ -96,9 +97,18 @@ function validateRegistry(registry) {
     if (!isNonEmptyString(entry.changelogReference)) {
       throw new Error(`${label} is missing changelogReference.`);
     }
-    if (entry.maturity === 'COMMERCIALLY_READY'
-      && !entry.evidence.some((evidence) => /founder[ -]approval/i.test(evidence))) {
-      throw new Error(`${label} needs explicit Founder approval evidence.`);
+    if (entry.founderApproval !== undefined) {
+      const approval = entry.founderApproval;
+      if (!approval || typeof approval !== 'object'
+        || approval.status !== 'APPROVED'
+        || approval.approverRole !== 'Founder'
+        || !isNonEmptyString(approval.decision)
+        || !isNonEmptyString(approval.reference)) {
+        throw new Error(`${label} has invalid structured Founder approval.`);
+      }
+    }
+    if (entry.maturity === 'COMMERCIALLY_READY' && entry.founderApproval === undefined) {
+      throw new Error(`${label} needs explicit structured Founder approval.`);
     }
   });
 }
@@ -157,34 +167,146 @@ async function listCustomerUiSourcePaths(root) {
   return sourcePaths.sort();
 }
 
+function isOutsideRoot(root, candidate) {
+  const relativeCandidate = relative(root, candidate);
+  return relativeCandidate === '..'
+    || relativeCandidate.startsWith(`..${sep}`)
+    || isAbsolute(relativeCandidate);
+}
+
+async function validateRepositoryReference(root, realRoot, reference, label) {
+  const resolvedReference = resolve(root, reference);
+  if (isAbsolute(reference) || relative(root, resolvedReference).length === 0 || isOutsideRoot(root, resolvedReference)) {
+    throw new Error(`${label} must be a repository-relative path.`);
+  }
+
+  let realReference;
+  try {
+    realReference = await realpath(resolvedReference);
+  } catch (error) {
+    if (error?.code === 'ENOENT') throw new Error(`${label} does not exist: ${reference}.`);
+    throw error;
+  }
+
+  if (isOutsideRoot(realRoot, realReference)) {
+    throw new Error(`${label} resolves outside the repository: ${reference}.`);
+  }
+}
+
 async function validateEvidenceReferences(root, registry) {
+  const realRoot = await realpath(root);
   let evidenceReferenceCount = 0;
 
   for (const [entryIndex, entry] of registry.entries()) {
     for (const evidenceReference of entry.evidence) {
-      const resolvedReference = resolve(root, evidenceReference);
-      const repositoryRelativeReference = relative(root, resolvedReference);
-      const leavesRepository = repositoryRelativeReference === '..'
-        || repositoryRelativeReference.startsWith(`..${sep}`)
-        || isAbsolute(repositoryRelativeReference);
-
-      if (isAbsolute(evidenceReference) || repositoryRelativeReference.length === 0 || leavesRepository) {
-        throw new Error(`entry ${entryIndex + 1} evidence reference must be a repository-relative path.`);
-      }
-
-      try {
-        await stat(resolvedReference);
-      } catch (error) {
-        if (error?.code === 'ENOENT') {
-          throw new Error(`entry ${entryIndex + 1} evidence reference does not exist: ${evidenceReference}.`);
-        }
-        throw error;
-      }
+      await validateRepositoryReference(root, realRoot, evidenceReference, `entry ${entryIndex + 1} evidence reference`);
       evidenceReferenceCount += 1;
+    }
+    if (entry.founderApproval !== undefined) {
+      await validateRepositoryReference(
+        root,
+        realRoot,
+        entry.founderApproval.reference,
+        `entry ${entryIndex + 1} Founder approval reference`,
+      );
     }
   }
 
   return evidenceReferenceCount;
+}
+
+function resolveVisibleStrings(expression, checker, seen = new Set()) {
+  if (!expression || seen.has(expression)) return [];
+  seen.add(expression);
+
+  if (ts.isStringLiteralLike(expression)) return [expression.text];
+  if (ts.isParenthesizedExpression(expression)) return resolveVisibleStrings(expression.expression, checker, seen);
+  if (ts.isConditionalExpression(expression)) {
+    return [
+      ...resolveVisibleStrings(expression.whenTrue, checker, seen),
+      ...resolveVisibleStrings(expression.whenFalse, checker, seen),
+    ];
+  }
+  if (ts.isBinaryExpression(expression) && expression.operatorToken.kind === ts.SyntaxKind.PlusToken) {
+    return [
+      ...resolveVisibleStrings(expression.left, checker, seen),
+      ...resolveVisibleStrings(expression.right, checker, seen),
+    ];
+  }
+  if (ts.isTemplateExpression(expression)) {
+    return [expression.head.text, ...expression.templateSpans.map((span) => span.literal.text)];
+  }
+  if (ts.isIdentifier(expression) || ts.isPropertyAccessExpression(expression)) {
+    let symbol = checker.getSymbolAtLocation(ts.isPropertyAccessExpression(expression) ? expression.name : expression);
+    if (symbol && (symbol.flags & ts.SymbolFlags.Alias)) symbol = checker.getAliasedSymbol(symbol);
+    return (symbol?.declarations ?? []).flatMap((declaration) => {
+      if (ts.isVariableDeclaration(declaration) && declaration.initializer) {
+        return resolveVisibleStrings(declaration.initializer, checker, seen);
+      }
+      if (ts.isPropertyAssignment(declaration)) {
+        return resolveVisibleStrings(declaration.initializer, checker, seen);
+      }
+      return [];
+    });
+  }
+  return [];
+}
+
+function customerVisibleStrings(sourceFile, checker) {
+  const visibleStrings = [];
+  const visibleSetterPattern = /^(?:alert|setSnackbar|set.*(?:Error|Message))$/;
+  const customerCopyProperties = new Set([
+    'label', 'shortLabel', 'message', 'title', 'placeholder', 'helperText', 'primary', 'secondary',
+  ]);
+
+  function visit(node) {
+    if (ts.isJsxText(node)) visibleStrings.push(node.text);
+    if (ts.isJsxAttribute(node) && node.initializer) {
+      const expression = ts.isJsxExpression(node.initializer) ? node.initializer.expression : node.initializer;
+      visibleStrings.push(...resolveVisibleStrings(expression, checker));
+    }
+    if (ts.isJsxExpression(node) && node.expression) {
+      visibleStrings.push(...resolveVisibleStrings(node.expression, checker));
+    }
+    if (ts.isPropertyAssignment(node)
+      && customerCopyProperties.has(node.name.getText(sourceFile).replace(/^['"]|['"]$/g, ''))) {
+      visibleStrings.push(...resolveVisibleStrings(node.initializer, checker));
+    }
+    if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && visibleSetterPattern.test(node.expression.text)) {
+      node.arguments.forEach((argument) => {
+        if (ts.isObjectLiteralExpression(argument)) {
+          argument.properties.forEach((property) => {
+            if (ts.isPropertyAssignment(property) && property.name.getText(sourceFile) === 'message') {
+              visibleStrings.push(...resolveVisibleStrings(property.initializer, checker));
+            }
+          });
+        } else {
+          visibleStrings.push(...resolveVisibleStrings(argument, checker));
+        }
+      });
+    }
+    ts.forEachChild(node, visit);
+  }
+
+  visit(sourceFile);
+  return visibleStrings;
+}
+
+function findCustomerVisibleLegacyViolations(root, customerUiSourcePaths) {
+  const rootNames = customerUiSourcePaths.map((sourcePath) => resolve(root, sourcePath));
+  const program = ts.createProgram(rootNames, {
+    allowJs: false,
+    jsx: ts.JsxEmit.ReactJSX,
+    module: ts.ModuleKind.ESNext,
+    moduleResolution: ts.ModuleResolutionKind.NodeJs,
+    target: ts.ScriptTarget.ESNext,
+  });
+  const checker = program.getTypeChecker();
+
+  return customerUiSourcePaths.filter((sourcePath, index) => {
+    const sourceFile = program.getSourceFile(rootNames[index]);
+    return sourceFile && customerVisibleStrings(sourceFile, checker).some((value) => /\bLegacy\b/i.test(value));
+  });
 }
 
 async function verifyProductMaturityRegistry(root) {
@@ -229,12 +351,7 @@ async function verifyProductMaturityRegistry(root) {
     throw new Error(`Reachable route manifest is missing ${missingManifestRoutes.length} App route literal(s).`);
   }
 
-  const customerUiSources = await Promise.all(
-    customerUiSourcePaths.map((sourcePath) => readFile(resolve(root, sourcePath), 'utf8')),
-  );
-  const legacyViolations = customerUiSources.flatMap((source, index) =>
-    /\bLegacy\b/i.test(source) ? [customerUiSourcePaths[index]] : [],
-  );
+  const legacyViolations = findCustomerVisibleLegacyViolations(root, customerUiSourcePaths);
   if (legacyViolations.length > 0) {
     throw new Error(`Customer-facing Legacy violation(s): ${legacyViolations.join(', ')}.`);
   }

@@ -548,9 +548,9 @@ const AskFTF: React.FC = () => {
 
   return (
     <div style={pageStyle}>
-      <h1 style={h1Style}>Ask Fly The Farm</h1>
+      <h1 style={h1Style}>Operational Intelligence</h1>
       <p style={introStyle}>
-        Spray Command advisory only — not Project KEN or Clare. Ask a spray, compliance, or execution question. You can
+        Ask a spray, compliance, or execution question and review the supporting job details. You can
         type naturally and review the auto-filled job details below.
       </p>
 

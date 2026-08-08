@@ -112,12 +112,49 @@ describe('product maturity registry', () => {
     const commerciallyReady = cloneRegistry();
     commerciallyReady[0].maturity = 'COMMERCIALLY_READY';
     commerciallyReady[0].promotionBlockers = [];
-    commerciallyReady[0].evidence = [...commerciallyReady[0].evidence, 'docs/founder-approval.md'];
+    commerciallyReady[0] = {
+      ...commerciallyReady[0],
+      founderApproval: {
+        status: 'APPROVED',
+        approverRole: 'Founder',
+        decision: 'Approved for commercial release.',
+        reference: 'docs/commercial-release-decision.md',
+      },
+    } as ProductMaturityEntry;
 
     expect(() => assertValidRegistry(commerciallyReady)).not.toThrow();
 
-    commerciallyReady[0].evidence = commerciallyReady[0].evidence.filter(item => !item.includes('founder-approval'));
+    delete (commerciallyReady[0] as ProductMaturityEntry & { founderApproval?: unknown }).founderApproval;
     expect(() => assertValidRegistry(commerciallyReady)).toThrow(ProductMaturityConfigurationError);
+  });
+
+  test('rejects incomplete or unapproved structured Founder decisions', () => {
+    const commerciallyReady = cloneRegistry();
+    commerciallyReady[0] = {
+      ...commerciallyReady[0],
+      maturity: 'COMMERCIALLY_READY',
+      promotionBlockers: [],
+      founderApproval: {
+        status: 'PENDING',
+        approverRole: 'Founder',
+        decision: 'Pending commercial release decision.',
+        reference: 'docs/commercial-release-decision.md',
+      },
+    } as ProductMaturityEntry;
+
+    expect(() => assertValidRegistry(commerciallyReady)).toThrow(ProductMaturityConfigurationError);
+  });
+
+  test('keeps evidence tied to the relevant implementation and acceptance sources', () => {
+    expect(getMaturityEntry('properties').evidence).toEqual(expect.arrayContaining([
+      'src/services/operationalApi.ts', 'src/__tests__/trustedOperationalApi.test.js',
+    ]));
+    expect(getMaturityEntry('jobs').evidence).toContain('src/pages/OperationalWorkflow.test.tsx');
+    expect(getMaturityEntry('mission-records').evidence).toContain('src/__tests__/reportArtefactOperationalApi.test.js');
+    expect(getMaturityEntry('spray-recommendation-import').evidence).toEqual(expect.arrayContaining([
+      'src/pages/SprayRecImport.tsx', 'src/services/sprayRecParser.ts', 'src/App.test.tsx',
+    ]));
+    expect(getMaturityEntry('spray-calculator').evidence).toContain('src/pages/Calculator.tsx');
   });
 
   test('selects a workflow override before falling back to module metadata', () => {

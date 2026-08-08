@@ -6,6 +6,13 @@ export type ProductMaturity =
 
 export type ProductPriority = 'P0' | 'P1' | 'P2' | 'P3';
 
+export interface FounderApproval {
+  status: 'APPROVED';
+  approverRole: 'Founder';
+  decision: string;
+  reference: string;
+}
+
 export interface ProductMaturityEntry {
   moduleCode: string;
   workflowCode: string | null;
@@ -21,4 +28,5 @@ export interface ProductMaturityEntry {
   targetPromotionMilestone: string;
   reviewDate: string;
   changelogReference: string;
+  founderApproval?: FounderApproval;
 }

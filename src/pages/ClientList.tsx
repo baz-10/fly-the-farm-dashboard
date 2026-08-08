@@ -165,7 +165,7 @@ export default function ClientList() {
     const file = e.target.files?.[0];
     if (!file) return;
     if (operational.mode === 'remote') {
-      setSnackbar({ open: true, message: 'CSV client import is unavailable in Production Beta until all existing address and notes fields have authoritative API columns.', severity: 'error' });
+      setSnackbar({ open: true, message: 'CSV client import is not available in Production Beta yet. You can continue to manage clients manually.', severity: 'error' });
       e.target.value = '';
       return;
     }
