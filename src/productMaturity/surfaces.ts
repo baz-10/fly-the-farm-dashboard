@@ -145,7 +145,17 @@ const decodePathname = (pathname: string): string => {
 };
 
 const resolveSurface = (surface: ProductSurface): ResolvedProductSurface => {
-  const entry = getMaturityEntry(surface.moduleCode, surface.workflowCode ?? undefined);
+  let entry: ProductMaturityEntry;
+  try {
+    entry = getMaturityEntry(surface.moduleCode, surface.workflowCode ?? undefined);
+  } catch (error) {
+    if (error instanceof ProductMaturityConfigurationError && surface.workflowCode !== null) {
+      throw new ProductMaturityConfigurationError(
+        `Missing product maturity registry metadata for route ${surface.routePattern}.`
+      );
+    }
+    throw error;
+  }
 
   if (entry.moduleCode !== surface.moduleCode || entry.workflowCode !== surface.workflowCode) {
     throw new ProductMaturityConfigurationError(

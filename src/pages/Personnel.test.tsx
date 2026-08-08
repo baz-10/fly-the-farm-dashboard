@@ -30,6 +30,12 @@ jest.mock('../productMaturity/registry', () => {
         ? { ...entry, maturity: mockCredentialMaturity }
         : entry;
     },
+    getWorkflowMaturityEntry: (moduleCode: string, workflowCode: string) => {
+      const entry = actual.getWorkflowMaturityEntry(moduleCode, workflowCode);
+      return moduleCode === 'personnel' && workflowCode === 'casa-credentials'
+        ? { ...entry, maturity: mockCredentialMaturity }
+        : entry;
+    },
   };
 });
 jest.mock('../components/personnel/PersonnelCredentialEditor', () => () => <button type="button">Add CASA credential</button>);
