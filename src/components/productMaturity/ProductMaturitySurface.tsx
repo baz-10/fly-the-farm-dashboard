@@ -4,18 +4,14 @@ import { resolveProductSurface } from '../../productMaturity/surfaces';
 import { ComingSoonWorkspace } from './ComingSoonWorkspace';
 import { MaturityBadge } from './MaturityBadge';
 
-export interface ProductMaturityLocation {
+interface ProductMaturitySurfaceProps {
   pathname: string;
   search: string;
-}
-
-interface ProductMaturitySurfaceProps {
-  location: ProductMaturityLocation;
   children: ReactNode;
 }
 
-export function ProductMaturitySurface({ location, children }: ProductMaturitySurfaceProps) {
-  const surface = resolveProductSurface(location.pathname, location.search);
+export function ProductMaturitySurface({ pathname, search, children }: ProductMaturitySurfaceProps) {
+  const surface = resolveProductSurface(pathname, search);
 
   if (!surface || surface.entry.maturity === 'COMMERCIALLY_READY' || surface.entry.maturity === 'OPERATIONALLY_READY') {
     return <>{children}</>;

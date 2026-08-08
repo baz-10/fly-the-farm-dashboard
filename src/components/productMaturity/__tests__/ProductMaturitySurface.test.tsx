@@ -3,12 +3,10 @@ import { render, screen } from '@testing-library/react';
 import { ProductMaturitySurface } from '../ProductMaturitySurface';
 import { WorkflowMaturityBoundary } from '../WorkflowMaturityBoundary';
 
-const location = (pathname: string, search = '') => ({ pathname, search });
-
 describe('ProductMaturitySurface', () => {
-  test('keeps a Beta route usable while providing a page-level indicator', () => {
+  test('resolves a Beta route from its pathname and search props while keeping children usable', () => {
     render(
-      <ProductMaturitySurface location={location('/')}>
+      <ProductMaturitySurface pathname="/" search="">
         <button type="button">Create briefing</button>
       </ProductMaturitySurface>
     );
@@ -17,7 +15,7 @@ describe('ProductMaturitySurface', () => {
     expect(screen.getByRole('button', { name: 'Create briefing' })).toBeEnabled();
   });
 
-  test('replaces a Coming Soon route before its child can perform a browser write', () => {
+  test('resolves a Coming Soon route from its pathname and search props before its child can write', () => {
     const write = jest.spyOn(Storage.prototype, 'setItem');
     const BrowserWritingChild = () => {
       window.localStorage.setItem('quote-draft', 'written');
@@ -25,7 +23,7 @@ describe('ProductMaturitySurface', () => {
     };
 
     render(
-      <ProductMaturitySurface location={location('/quotes')}>
+      <ProductMaturitySurface pathname="/quotes" search="">
         <BrowserWritingChild />
       </ProductMaturitySurface>
     );
@@ -41,7 +39,7 @@ describe('ProductMaturitySurface', () => {
 
   test('does not add maturity badge clutter to an Operationally Ready route', () => {
     render(
-      <ProductMaturitySurface location={location('/aircraft')}>
+      <ProductMaturitySurface pathname="/aircraft" search="">
         <button type="button">Add aircraft</button>
       </ProductMaturitySurface>
     );
