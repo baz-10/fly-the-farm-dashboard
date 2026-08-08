@@ -6,6 +6,9 @@ const record = {
   id: 'person-1', rowVersion: 1, fullName: 'Alex Operator', engagementStatus: 'employee', isActive: true,
   operatingLocationIds: ['location-1'], operationalRoles: ['pilot'], internalUserId: null, arn: null, credentials: [],
 };
+const mockSecondRecord = {
+  ...record, id: 'person-2', fullName: 'Sam Loader', internalUserId: 'member-2',
+};
 let mockOperationalMode = 'remote';
 let mockCredentialMaturity = 'BETA';
 
@@ -14,7 +17,7 @@ jest.mock('../contexts/OperationalDataContext', () => ({
 }));
 jest.mock('../services/personnelApi', () => ({
   PersonnelApiError: class PersonnelApiError extends Error {},
-  createPersonnelApi: () => ({ list: jest.fn().mockResolvedValue([record]) }),
+  createPersonnelApi: () => ({ list: jest.fn().mockResolvedValue([record, mockSecondRecord]) }),
 }));
 jest.mock('../services/personnelIdentityApi', () => ({ createPersonnelIdentityApi: () => ({}) }));
 jest.mock('../services/operationalApi', () => ({
@@ -47,9 +50,10 @@ test('marks the CASA credentials workflow Beta without downgrading the Personnel
   render(<Personnel />);
 
   expect(await screen.findByText('Alex Operator')).toBeVisible();
-  expect(screen.getByLabelText('Beta')).toBeVisible();
-  expect(screen.getByRole('button', { name: 'Add CASA credential' })).toBeEnabled();
-  expect(screen.getByRole('button', { name: 'Link identity' })).toBeEnabled();
+  expect(screen.getByText('Sam Loader')).toBeVisible();
+  expect(screen.getAllByLabelText('Beta')).toHaveLength(1);
+  expect(screen.getAllByRole('button', { name: 'Add CASA credential' })).toHaveLength(2);
+  expect(screen.getAllByRole('button', { name: 'Link identity' })).toHaveLength(2);
 });
 
 test('keeps identity linking available when the CASA credentials boundary is unavailable', async () => {
@@ -58,9 +62,12 @@ test('keeps identity linking available when the CASA credentials boundary is una
   render(<Personnel />);
 
   expect(await screen.findByText('Alex Operator')).toBeVisible();
-  expect(screen.getByRole('heading', { name: 'Personnel CASA Credentials' })).toBeVisible();
+  expect(screen.getByText('Sam Loader')).toBeVisible();
+  expect(screen.getAllByRole('region', { name: 'Personnel CASA Credentials' })).toHaveLength(1);
+  expect(screen.getAllByRole('heading', { name: 'Personnel CASA Credentials' })).toHaveLength(1);
+  expect(document.querySelectorAll('#personnel-casa-credentials-coming-soon')).toHaveLength(1);
   expect(screen.queryByRole('button', { name: 'Add CASA credential' })).not.toBeInTheDocument();
-  expect(screen.getByRole('button', { name: 'Link identity' })).toBeEnabled();
+  expect(screen.getAllByRole('button', { name: 'Link identity' })).toHaveLength(2);
 });
 
 test('uses customer-safe availability wording outside the Production Beta backend', () => {

@@ -54,7 +54,7 @@ describe('product maturity route surfaces', () => {
     ['/QUOTES', '', 'quotes', null],
     ['/Quotes', '', 'quotes', null],
     ['/QUOTES/NEW', '', 'quotes', null],
-    ['/QUOTES/quote-1', '', 'quotes', 'pdf-export'],
+    ['/QUOTES/quote-1', '', 'quotes', null],
     ['/FINANCIALS', '', 'financials', null],
     ['/JOBS', '?view=jobs', 'jobs', null],
   ])('matches static route segments case-insensitively without changing specificity or query semantics', (pathname, search, moduleCode, workflowCode) => {
@@ -70,11 +70,21 @@ describe('product maturity route surfaces', () => {
   });
 
   test.each([
+    ['/quotes/quote-1', 'quotes'],
+    ['/financials/new', 'financials'],
+    ['/financials/actual-1', 'financials'],
+  ])('classifies %s by its parent module instead of a narrow workflow', (pathname, moduleCode) => {
+    const { resolveProductSurface } = surfaces();
+
+    expect(resolveProductSurface(pathname, '')).toMatchObject({ moduleCode, workflowCode: null });
+  });
+
+  test.each([
     ['/%71uotes', 'quotes', null],
     ['/%66inancials', 'financials', null],
     ['/%63ompliance/transport', 'transport-storage', null],
     ['/quotes/%6eew', 'quotes', null],
-    ['/quotes/%71uote-1', 'quotes', 'pdf-export'],
+    ['/quotes/%71uote-1', 'quotes', null],
   ])('decodes pathname segments before applying route specificity for %s', (pathname, moduleCode, workflowCode) => {
     const { resolveProductSurface } = surfaces();
 

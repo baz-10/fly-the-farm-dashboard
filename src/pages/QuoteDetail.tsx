@@ -32,6 +32,7 @@ import { getClients, getPropertiesByClient } from '../services/fieldManagementSt
 import { QuoteStatus } from '../types/quote';
 import { formatCurrency } from '../utils/quoteCalculator';
 import { useAuth } from '../contexts/AuthContext';
+import { WorkflowMaturityBoundary } from '../components/productMaturity/WorkflowMaturityBoundary';
 
 const STATUS_COLORS: Record<QuoteStatus, 'default' | 'info' | 'success' | 'warning' | 'error'> = {
   draft: 'default',
@@ -126,6 +127,9 @@ export default function QuoteDetail() {
             <Button variant="outlined" startIcon={<PrintIcon />} onClick={handlePrint}>
               Print
             </Button>
+            <WorkflowMaturityBoundary moduleCode="quotes" workflowCode="pdf-export">
+              <Button variant="outlined" disabled>Export PDF</Button>
+            </WorkflowMaturityBoundary>
             {quote.status === 'accepted' && quote.fieldIds?.[0] && (
               <Button
                 variant="outlined"
