@@ -39,6 +39,9 @@ jobs:
       - name: Install locked dependencies
         run: npm ci
 
+      - name: Verify Product Maturity Registry completeness
+        run: node scripts/verifyProductMaturityRegistry.mjs
+
       - name: Install isolated Chromium runtime
         run: npx playwright install --with-deps chromium
 
