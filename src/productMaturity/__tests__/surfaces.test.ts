@@ -41,13 +41,14 @@ describe('product maturity route surfaces', () => {
     expect(resolveProductSurface('/jobs/client/client-1/property/property-1/field/field-1/job/job-1/new-mission', '')).toMatchObject({ moduleCode: 'mission-workspace' });
   });
 
-  test('resolves Jobs workspace query views before the shared Jobs fallback', () => {
+  test('resolves Jobs workspace query views before the shared Clients fallback', () => {
     const { resolveProductSurface } = surfaces();
 
     expect(resolveProductSurface('/jobs', '?view=properties')).toMatchObject({ moduleCode: 'properties' });
     expect(resolveProductSurface('/jobs', '?view=fields')).toMatchObject({ moduleCode: 'fields' });
     expect(resolveProductSurface('/jobs', '?view=jobs')).toMatchObject({ moduleCode: 'jobs' });
-    expect(resolveProductSurface('/jobs', '?view=unknown')).toMatchObject({ moduleCode: 'jobs' });
+    expect(resolveProductSurface('/jobs', '')).toMatchObject({ moduleCode: 'clients' });
+    expect(resolveProductSurface('/jobs', '?view=unknown')).toMatchObject({ moduleCode: 'clients' });
   });
 
   test('fails closed when a configured route refers to an unknown module', () => {

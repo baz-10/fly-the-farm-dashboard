@@ -34,7 +34,7 @@ export const REACHABLE_PRODUCT_ROUTES = [
   { path: '/search', moduleCode: 'chemical-database' },
   { path: '/treatment/:id', moduleCode: 'chemical-intelligence' },
   { path: '/calculator', moduleCode: 'spray-calculator' },
-  { path: '/jobs', moduleCode: 'jobs' },
+  { path: '/jobs', moduleCode: 'clients' },
   { path: '/jobs/import', moduleCode: 'spray-recommendation-import' },
   { path: '/jobs/history', moduleCode: 'jobs' },
   { path: '/jobs/client/:clientId', moduleCode: 'clients' },
