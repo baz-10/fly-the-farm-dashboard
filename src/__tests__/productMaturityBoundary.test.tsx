@@ -213,6 +213,84 @@ describe('product maturity CI boundary', () => {
     ), (fixtureRoot) => expectVerifierFailure('App route manifest mismatch', fixtureRoot));
   });
 
+  test.each([
+    ['bare destination', '<QuoteList />'],
+    ['guard only', "<ProtectedRoute allowedRoles={['admin', 'contractor']}><QuoteList /></ProtectedRoute>"],
+    ['maturity only', '<ProductRouteSurface><QuoteList /></ProductRouteSurface>'],
+    ['guard nested inside maturity', "<ProductRouteSurface><ProtectedRoute allowedRoles={['admin', 'contractor']}><QuoteList /></ProtectedRoute></ProductRouteSurface>"],
+    ['direct equivalent wrapper', "<AuthorisedProductRoute allowedRoles={['admin', 'contractor']}><QuoteList /></AuthorisedProductRoute>"],
+  ])('rejects an organisation route using %s instead of productRoute', (_label, routeElement) => {
+    withTemporaryFixture((fixtureRoot) => replaceFixtureSource(
+      fixtureRoot,
+      'src/App.tsx',
+      "<Route path=\"/quotes\" element={productRoute(<QuoteList />, { allowedRoles: ['admin', 'contractor'] })} />",
+      `<Route path="/quotes" element={${routeElement}} />`,
+    ), (fixtureRoot) => expectVerifierFailure('approved productRoute composition', fixtureRoot));
+  });
+
+  test.each([
+    [
+      'register maturity surface',
+      '<Route path="/register" element={<ProductRouteSurface><Register /></ProductRouteSurface>} />',
+      '<Route path="/register" element={<Register />} />',
+      'public ProductRouteSurface composition',
+    ],
+    [
+      'login auth lifecycle',
+      '<Route path="/login" element={<Login />} />',
+      '<Route path="/login" element={<ProductRouteSurface><Login /></ProductRouteSurface>} />',
+      'auth lifecycle composition',
+    ],
+    [
+      'platform guard-before-maturity layout',
+      '<Route element={<PlatformProtectedRoute><ProductRouteSurface><PlatformShell /></ProductRouteSurface></PlatformProtectedRoute>}>',
+      '<Route element={<ProductRouteSurface><PlatformProtectedRoute><PlatformShell /></PlatformProtectedRoute></ProductRouteSurface>}>',
+      'platform guard-before-maturity composition',
+    ],
+  ])('rejects a route with an invalid %s', (_label, find, replace, expectedMessage) => {
+    withTemporaryFixture((fixtureRoot) => replaceFixtureSource(
+      fixtureRoot,
+      'src/App.tsx',
+      find,
+      replace,
+    ), (fixtureRoot) => expectVerifierFailure(expectedMessage, fixtureRoot));
+  });
+
+  test('rejects an organisation structural layout without its approved guard/provider composition', () => {
+    withTemporaryFixture((fixtureRoot) => replaceFixtureSource(
+      fixtureRoot,
+      'src/App.tsx',
+      '            <ProtectedRoute>\n              <WorkflowProviders>\n                <Layout />\n              </WorkflowProviders>\n            </ProtectedRoute>',
+      '            <WorkflowProviders>\n              <ProtectedRoute>\n                <Layout />\n              </ProtectedRoute>\n            </WorkflowProviders>',
+    ), (fixtureRoot) => expectVerifierFailure('organisation structural route composition', fixtureRoot));
+  });
+
+  test('rejects a productRoute helper that omits its authorised guard composition', () => {
+    withTemporaryFixture((fixtureRoot) => {
+      replaceFixtureSource(
+        fixtureRoot,
+        'src/App.tsx',
+        '    <AuthorisedProductRoute allowedRoles={options.allowedRoles} requiredEntitlement={options.requiredEntitlement}>',
+        '    <ProductRouteSurface>',
+      );
+      replaceFixtureSource(
+        fixtureRoot,
+        'src/App.tsx',
+        '    </AuthorisedProductRoute>',
+        '    </ProductRouteSurface>',
+      );
+    }, (fixtureRoot) => expectVerifierFailure('productRoute helper', fixtureRoot));
+  });
+
+  test('rejects a canonical route wrapper with maturity outside its guard', () => {
+    withTemporaryFixture((fixtureRoot) => replaceFixtureSource(
+      fixtureRoot,
+      'src/components/productMaturity/AuthorisedProductRoute.tsx',
+      '    <ProtectedRoute allowedRoles={allowedRoles} requiredEntitlement={requiredEntitlement}>\n      <ProductRouteSurface>{children}</ProductRouteSurface>\n    </ProtectedRoute>',
+      '    <ProductRouteSurface>\n      <ProtectedRoute allowedRoles={allowedRoles} requiredEntitlement={requiredEntitlement}>{children}</ProtectedRoute>\n    </ProductRouteSurface>',
+    ), (fixtureRoot) => expectVerifierFailure('guard before ProductRouteSurface', fixtureRoot));
+  });
+
   test('accepts a pathless layout route whose Route child is inside nested JSX fragments', () => {
     withTemporaryFixture((fixtureRoot) => replaceFixtureSource(
       fixtureRoot,
@@ -720,6 +798,62 @@ describe('product maturity CI boundary', () => {
       'All Clients',
       replacement,
     ), (fixtureRoot) => expectVerifierFailure('Customer-facing Legacy violation', fixtureRoot));
+  });
+
+  test.each([
+    ['literal replace', "{'LeXacy'.replace('X', 'g')}"],
+    ['fragmented literal replaceAll', "{'L_e_g_a_c_y'.replaceAll('_', '')}"],
+    ['element-access replaceAll', "{'L-e-g-a-c-y'['replaceAll']('-', '')}"],
+    ['chained literal replace', "{'L_Xacy'.replace('_', 'e').replace('X', 'g')}"],
+  ])('rejects Legacy assembled through %s', (_label, replacement) => {
+    withTemporaryFixture((fixtureRoot) => replaceFixtureSource(
+      fixtureRoot,
+      'src/pages/ClientDetail.tsx',
+      'All Clients',
+      replacement,
+    ), (fixtureRoot) => expectVerifierFailure('Customer-facing Legacy violation', fixtureRoot));
+  });
+
+  test('rejects Legacy assembled through a parameterised static replace helper', () => {
+    withTemporaryFixture((fixtureRoot) => {
+      const filePath = fixturePath(fixtureRoot, 'src/pages/ClientDetail.tsx');
+      const source = readFileSync(filePath, 'utf8');
+      writeFileSync(
+        filePath,
+        `${source}\nconst repairReplace = (value: string, search: string, replacement: string) => value.replace(search, replacement);\nexport const repairReplaceFixture = <span>{repairReplace('LeXacy', 'X', 'g')}</span>;\n`,
+        'utf8',
+      );
+    }, (fixtureRoot) => expectVerifierFailure('Customer-facing Legacy violation', fixtureRoot));
+  });
+
+  test.each([
+    ['a non-Legacy replacement', "{'LeXacy'.replace('X', '-')}"],
+    ['replace first-match semantics', "{'LeXXacy'.replace('X', 'g')}"],
+    ['replaceAll non-Legacy semantics', "{'L_e_g_a_c_y'.replaceAll('_', '-')}"],
+    ['removal of an existing Legacy receiver', "{'Legacy'.replace('Legacy', 'Current')}"],
+    ['literal replacement token semantics', "{'LeXacy'.replace('X', '$&')}"],
+  ])('allows %s with static string transform semantics', (_label, replacement) => {
+    withTemporaryFixture((fixtureRoot) => replaceFixtureSource(
+      fixtureRoot,
+      'src/pages/ClientDetail.tsx',
+      'All Clients',
+      replacement,
+    ), expectVerifierSuccess);
+  });
+
+  test.each([
+    ['dynamic search', "{'LeXacy'.replace(dynamicSearch, 'g')}"],
+    ['dynamic replacement', "{'LeXacy'.replace('X', dynamicReplacement)}"],
+    ['regular-expression search', "{'LeXacy'.replace(/X/g, 'g')}"],
+    ['an unresolved static receiver chain', "{'LeXacy'.replace(/X/g, 'g').replace('x', 'x')}"],
+    ['non-executable replacement callback', "{'LeXacy'.replace('X', () => { throw new Error('must not execute'); })}"],
+  ])('fails closed on a rendered transform with %s', (_label, replacement) => {
+    withTemporaryFixture((fixtureRoot) => replaceFixtureSource(
+      fixtureRoot,
+      'src/pages/ClientDetail.tsx',
+      'All Clients',
+      replacement,
+    ), (fixtureRoot) => expectVerifierFailure('rendered string transform could not be resolved safely', fixtureRoot));
   });
 
   test('fails closed when a rendered join receiver has static copy but a dynamic separator', () => {

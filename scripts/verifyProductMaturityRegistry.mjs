@@ -160,7 +160,173 @@ function assertExactRegistryEntries(entries, registry, sourceName) {
   });
 }
 
-function discoverReactRouterPaths(sourceFile, checker) {
+const authLifecycleRouteComponents = new Map([
+  ['/login', 'Login'],
+  ['/auth/callback', 'AuthCallback'],
+  ['/forgot-password', 'ForgotPassword'],
+  ['/reset-password', 'ResetPassword'],
+]);
+const publicProductSurfaceRouteComponents = new Map([
+  ['/register', 'Register'],
+  ['/customer-acceptance/:token', 'CustomerAcceptancePublic'],
+]);
+
+function unwrapTransparentExpression(expression) {
+  let unwrapped = expression;
+  while (ts.isParenthesizedExpression(unwrapped)
+    || ts.isAsExpression(unwrapped)
+    || ts.isTypeAssertionExpression(unwrapped)
+    || ts.isNonNullExpression(unwrapped)
+    || ts.isSatisfiesExpression(unwrapped)) {
+    unwrapped = unwrapped.expression;
+  }
+  return unwrapped;
+}
+
+function jsxTagIdentifier(element, expectedName) {
+  const opening = ts.isJsxElement(element) ? element.openingElement : element;
+  return ts.isIdentifier(opening.tagName) && opening.tagName.text === expectedName;
+}
+
+function significantJsxChildren(element) {
+  if (!ts.isJsxElement(element)) return [];
+  return element.children.filter((child) => (
+    !(ts.isJsxText(child) && child.text.trim().length === 0)
+      && !(ts.isJsxExpression(child) && !child.expression)
+  ));
+}
+
+function isExactJsxComponent(element, componentName) {
+  const opening = ts.isJsxElement(element) ? element.openingElement : element;
+  return jsxTagIdentifier(element, componentName)
+    && opening.attributes.properties.length === 0
+    && (!ts.isJsxElement(element) || significantJsxChildren(element).length === 0);
+}
+
+function isExactJsxWrapper(element, componentName, childPredicate) {
+  if (!ts.isJsxElement(element)
+    || !jsxTagIdentifier(element, componentName)
+    || element.openingElement.attributes.properties.length !== 0) return false;
+  const children = significantJsxChildren(element);
+  return children.length === 1 && childPredicate(children[0]);
+}
+
+function routeElementExpression(routeOpening, errorMessage) {
+  const elementAttributes = routeOpening.attributes.properties.filter((attribute) => (
+    ts.isJsxAttribute(attribute) && attribute.name.text === 'element'
+  ));
+  if (elementAttributes.length !== 1
+    || !elementAttributes[0].initializer
+    || !ts.isJsxExpression(elementAttributes[0].initializer)
+    || !elementAttributes[0].initializer.expression) {
+    throw new Error(errorMessage);
+  }
+  return elementAttributes[0].initializer.expression;
+}
+
+function isChildrenJsxExpression(node) {
+  return ts.isJsxExpression(node)
+    && Boolean(node.expression)
+    && ts.isIdentifier(node.expression)
+    && node.expression.text === 'children';
+}
+
+function hasExactExpressionAttribute(element, sourceFile, name, expressionText) {
+  return element.openingElement.attributes.properties.some((attribute) => (
+    ts.isJsxAttribute(attribute)
+      && attribute.name.text === name
+      && attribute.initializer
+      && ts.isJsxExpression(attribute.initializer)
+      && attribute.initializer.expression?.getText(sourceFile) === expressionText
+  ));
+}
+
+function assertProductRouteHelperComposition(sourceFile) {
+  const declarations = [];
+  const visit = (node) => {
+    if (ts.isVariableDeclaration(node)
+      && ts.isIdentifier(node.name)
+      && node.name.text === 'productRoute') declarations.push(node);
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+
+  const declaration = declarations.length === 1 ? declarations[0] : null;
+  const initializer = declaration?.initializer;
+  const body = initializer && ts.isArrowFunction(initializer)
+    ? unwrapTransparentExpression(initializer.body)
+    : null;
+  if (!body
+    || !ts.isJsxElement(body)
+    || !jsxTagIdentifier(body, 'AuthorisedProductRoute')) {
+    throw new Error('App productRoute helper must use the approved AuthorisedProductRoute composition.');
+  }
+
+  const attributes = body.openingElement.attributes.properties;
+  const children = significantJsxChildren(body);
+  if (attributes.length !== 2
+    || !hasExactExpressionAttribute(body, sourceFile, 'allowedRoles', 'options.allowedRoles')
+    || !hasExactExpressionAttribute(body, sourceFile, 'requiredEntitlement', 'options.requiredEntitlement')
+    || children.length !== 1
+    || !isChildrenJsxExpression(children[0])) {
+    throw new Error('App productRoute helper must use the approved AuthorisedProductRoute composition.');
+  }
+}
+
+function directFunctionReturnExpression(declaration) {
+  if (!declaration?.body) return null;
+  if (!ts.isBlock(declaration.body)) return unwrapTransparentExpression(declaration.body);
+  const returns = declaration.body.statements.filter(ts.isReturnStatement);
+  return returns.length === 1 && returns[0].expression
+    ? unwrapTransparentExpression(returns[0].expression)
+    : null;
+}
+
+function assertCanonicalAuthorisedProductRouteComposition(program) {
+  const sourceFile = program.getSourceFiles().find((candidate) => (
+    candidate.fileName.endsWith('/components/productMaturity/AuthorisedProductRoute.tsx')
+  ));
+  const functions = new Map((sourceFile?.statements ?? [])
+    .filter((statement) => ts.isFunctionDeclaration(statement) && statement.name)
+    .map((statement) => [statement.name.text, statement]));
+  const productSurface = directFunctionReturnExpression(functions.get('ProductRouteSurface'));
+  const authorisedRoute = directFunctionReturnExpression(functions.get('AuthorisedProductRoute'));
+
+  const surfaceChildren = ts.isJsxElement(productSurface)
+    ? significantJsxChildren(productSurface)
+    : [];
+  const validProductSurface = sourceFile
+    && ts.isJsxElement(productSurface)
+    && jsxTagIdentifier(productSurface, 'ProductMaturitySurface')
+    && productSurface.openingElement.attributes.properties.length === 2
+    && hasExactExpressionAttribute(productSurface, sourceFile, 'pathname', 'location.pathname')
+    && hasExactExpressionAttribute(productSurface, sourceFile, 'search', 'location.search')
+    && surfaceChildren.length === 1
+    && isChildrenJsxExpression(surfaceChildren[0]);
+
+  const authorisedChildren = ts.isJsxElement(authorisedRoute)
+    ? significantJsxChildren(authorisedRoute)
+    : [];
+  const surfaceChild = authorisedChildren.length === 1 ? authorisedChildren[0] : null;
+  const nestedChildren = ts.isJsxElement(surfaceChild) ? significantJsxChildren(surfaceChild) : [];
+  const validAuthorisedRoute = sourceFile
+    && ts.isJsxElement(authorisedRoute)
+    && jsxTagIdentifier(authorisedRoute, 'ProtectedRoute')
+    && authorisedRoute.openingElement.attributes.properties.length === 2
+    && hasExactExpressionAttribute(authorisedRoute, sourceFile, 'allowedRoles', 'allowedRoles')
+    && hasExactExpressionAttribute(authorisedRoute, sourceFile, 'requiredEntitlement', 'requiredEntitlement')
+    && ts.isJsxElement(surfaceChild)
+    && jsxTagIdentifier(surfaceChild, 'ProductRouteSurface')
+    && surfaceChild.openingElement.attributes.properties.length === 0
+    && nestedChildren.length === 1
+    && isChildrenJsxExpression(nestedChildren[0]);
+
+  if (!validProductSurface || !validAuthorisedRoute) {
+    throw new Error('Canonical AuthorisedProductRoute must compose its guard before ProductRouteSurface.');
+  }
+}
+
+function discoverReactRouterPaths(sourceFile, checker, approvedRoutePaths) {
   const directRouteImportSymbols = new Set();
   const namespaceImportSymbols = new Set();
 
@@ -221,6 +387,8 @@ function discoverReactRouterPaths(sourceFile, checker) {
   });
 
   const paths = [];
+  const routeRecords = [];
+  const layoutRecords = [];
   function visit(node) {
     if (ts.isJsxOpeningElement(node) || ts.isJsxSelfClosingElement(node)) {
       if (isReactRouterRouteTag(node.tagName)) {
@@ -238,6 +406,7 @@ function discoverReactRouterPaths(sourceFile, checker) {
           if (!isStructuralLayoutRoute) {
             throw new Error('Every reachable React Router Route in App.tsx requires a path.');
           }
+          layoutRecords.push({ opening: node, element: node.parent });
         } else {
           if (pathAttributes.length !== 1) {
             throw new Error('React Router Route path in App.tsx must be declared exactly once.');
@@ -257,6 +426,7 @@ function discoverReactRouterPaths(sourceFile, checker) {
             throw new Error('React Router Route path in App.tsx requires a non-empty static string literal.');
           }
           paths.push(routePath);
+          routeRecords.push({ path: routePath, opening: node });
         }
       }
     }
@@ -265,6 +435,125 @@ function discoverReactRouterPaths(sourceFile, checker) {
   visit(sourceFile);
 
   if (paths.length === 0) throw new Error('App route source contains no route paths.');
+
+  const isDescendantOf = (node, ancestor) => {
+    let current = node.parent;
+    while (current) {
+      if (current === ancestor) return true;
+      current = current.parent;
+    }
+    return false;
+  };
+  const layoutKind = new Map();
+  layoutRecords.forEach((layout) => {
+    const descendantPaths = routeRecords
+      .filter((record) => isDescendantOf(record.opening, layout.element))
+      .map((record) => record.path);
+    const containsPlatformRoute = descendantPaths.includes('/platform');
+    const expression = routeElementExpression(
+      layout.opening,
+      containsPlatformRoute
+        ? 'Platform structural route requires the approved platform guard-before-maturity composition.'
+        : 'Organisation structural route requires the approved organisation structural route composition.',
+    );
+
+    if (containsPlatformRoute) {
+      const validPlatformLayout = isExactJsxWrapper(
+        expression,
+        'PlatformProtectedRoute',
+        (surface) => isExactJsxWrapper(
+          surface,
+          'ProductRouteSurface',
+          (shell) => isExactJsxComponent(shell, 'PlatformShell'),
+        ),
+      );
+      if (!validPlatformLayout || descendantPaths.some((path) => path !== '/platform')) {
+        throw new Error('Platform structural route requires the approved platform guard-before-maturity composition.');
+      }
+      layoutKind.set(layout, 'platform');
+      return;
+    }
+
+    const validOrganisationLayout = isExactJsxWrapper(
+      expression,
+      'ProtectedRoute',
+      (providers) => isExactJsxWrapper(
+        providers,
+        'WorkflowProviders',
+        (shell) => isExactJsxComponent(shell, 'Layout'),
+      ),
+    );
+    if (!validOrganisationLayout) {
+      throw new Error('Organisation structural route requires the approved organisation structural route composition.');
+    }
+    layoutKind.set(layout, 'organisation');
+  });
+
+  const platformLayouts = layoutRecords.filter((layout) => layoutKind.get(layout) === 'platform');
+  const organisationLayouts = layoutRecords.filter((layout) => layoutKind.get(layout) === 'organisation');
+  if (platformLayouts.length !== 1 || organisationLayouts.length !== 1) {
+    throw new Error('App.tsx must contain exactly the approved platform and organisation structural routes.');
+  }
+
+  const nearestLayout = (routeOpening) => {
+    let current = routeOpening.parent;
+    while (current) {
+      const layout = layoutRecords.find((candidate) => candidate.element === current);
+      if (layout) return layout;
+      current = current.parent;
+    }
+    return null;
+  };
+
+  assertProductRouteHelperComposition(sourceFile);
+  routeRecords.forEach(({ path: routePath, opening }) => {
+    if (!approvedRoutePaths.has(routePath)) return;
+    const expression = routeElementExpression(
+      opening,
+      `App route ${routePath} requires an approved route composition.`,
+    );
+    const layout = nearestLayout(opening);
+    const kind = layout ? layoutKind.get(layout) : null;
+    const authComponent = authLifecycleRouteComponents.get(routePath);
+    if (authComponent) {
+      if (kind !== null || !isExactJsxComponent(expression, authComponent)) {
+        throw new Error(`App route ${routePath} requires its approved auth lifecycle composition.`);
+      }
+      return;
+    }
+
+    const publicComponent = publicProductSurfaceRouteComponents.get(routePath);
+    if (publicComponent) {
+      const validPublicSurface = kind === null && isExactJsxWrapper(
+        expression,
+        'ProductRouteSurface',
+        (child) => isExactJsxComponent(child, publicComponent),
+      );
+      if (!validPublicSurface) {
+        throw new Error(`App route ${routePath} requires its approved public ProductRouteSurface composition.`);
+      }
+      return;
+    }
+
+    if (routePath === '/platform') {
+      if (kind !== 'platform' || !isExactJsxComponent(expression, 'PlatformAdmin')) {
+        throw new Error('App route /platform requires its approved platform guard-before-maturity composition.');
+      }
+      return;
+    }
+
+    const unwrapped = unwrapTransparentExpression(expression);
+    const validProductRoute = kind === 'organisation'
+      && ts.isCallExpression(unwrapped)
+      && ts.isIdentifier(unwrapped.expression)
+      && unwrapped.expression.text === 'productRoute'
+      && (unwrapped.arguments.length === 1 || unwrapped.arguments.length === 2)
+      && (ts.isJsxElement(unwrapped.arguments[0]) || ts.isJsxSelfClosingElement(unwrapped.arguments[0]));
+    if (!validProductRoute) {
+      throw new Error(`App route ${routePath} requires the approved productRoute composition.`);
+    }
+  });
+
   return paths;
 }
 
@@ -621,6 +910,91 @@ function evaluateStaticConcat(receiverValues, argumentValueSets) {
   ), receiverValues);
 }
 
+function expandStaticStringReplacement(replacement, receiver, matchIndex, search) {
+  const prefix = receiver.slice(0, matchIndex);
+  const suffix = receiver.slice(matchIndex + search.length);
+  let result = '';
+  for (let index = 0; index < replacement.length; index += 1) {
+    if (replacement[index] !== '$' || index + 1 >= replacement.length) {
+      result += replacement[index];
+      continue;
+    }
+    const token = replacement[index + 1];
+    if (token === '$') result += '$';
+    else if (token === '&') result += search;
+    else if (token === '`') result += prefix;
+    else if (token === "'") result += suffix;
+    else {
+      result += '$';
+      continue;
+    }
+    index += 1;
+  }
+  return result;
+}
+
+function replaceStaticString(receiver, search, replacement, replaceAll) {
+  if (!replaceAll) {
+    const matchIndex = receiver.indexOf(search);
+    if (matchIndex < 0) return receiver;
+    return `${receiver.slice(0, matchIndex)}${expandStaticStringReplacement(
+      replacement,
+      receiver,
+      matchIndex,
+      search,
+    )}${receiver.slice(matchIndex + search.length)}`;
+  }
+
+  if (search.length === 0) {
+    let result = '';
+    for (let index = 0; index <= receiver.length; index += 1) {
+      result += expandStaticStringReplacement(replacement, receiver, index, search);
+      if (index < receiver.length) result += receiver.slice(index, index + 1);
+    }
+    return result;
+  }
+
+  let result = '';
+  let cursor = 0;
+  while (cursor <= receiver.length) {
+    const matchIndex = receiver.indexOf(search, cursor);
+    if (matchIndex < 0) return `${result}${receiver.slice(cursor)}`;
+    result += receiver.slice(cursor, matchIndex);
+    result += expandStaticStringReplacement(replacement, receiver, matchIndex, search);
+    cursor = matchIndex + search.length;
+  }
+  return result;
+}
+
+function evaluateStaticStringTransform(receiverValues, searchValues, replacementValues, replaceAll) {
+  if (!receiverValues || !searchValues || !replacementValues
+    || receiverValues.some((value) => value.kind !== 'string')
+    || searchValues.some((value) => value.kind !== 'string')
+    || replacementValues.some((value) => value.kind !== 'string')) return null;
+
+  const results = new Map();
+  receiverValues.forEach((receiverValue) => {
+    searchValues.forEach((searchValue) => {
+      replacementValues.forEach((replacementValue) => {
+        const transformed = {
+          kind: 'string',
+          value: replaceStaticString(
+            receiverValue.value,
+            searchValue.value,
+            replacementValue.value,
+            replaceAll,
+          ),
+        };
+        results.set(`${transformed.kind}:${JSON.stringify(transformed.value)}`, transformed);
+        if (results.size > visibleStringCandidateBudget) {
+          throw new Error(`visible-string candidate budget exceeded (${visibleStringCandidateBudget}).`);
+        }
+      });
+    });
+  });
+  return [...results.values()];
+}
+
 function resolveVisibleStrings(
   expression,
   checker,
@@ -804,9 +1178,152 @@ function resolveVisibleStrings(
         : null;
     };
 
+    const resolveStaticTransformValues = (
+      candidate,
+      transformSymbolPath = new Set(symbolPath),
+      transformDepth = depth + 1,
+    ) => {
+      if (transformDepth > visibleStringDepthBudget) {
+        throw new Error(`visible-string resolution depth exceeded (${visibleStringDepthBudget}).`);
+      }
+      const unwrapped = unwrapStaticExpression(candidate);
+      if (ts.isStringLiteralLike(unwrapped)) return resolveStaticValues(unwrapped);
+      if (ts.isConditionalExpression(unwrapped)) {
+        const whenTrue = resolveStaticTransformValues(
+          unwrapped.whenTrue,
+          new Set(transformSymbolPath),
+          transformDepth + 1,
+        );
+        const whenFalse = resolveStaticTransformValues(
+          unwrapped.whenFalse,
+          new Set(transformSymbolPath),
+          transformDepth + 1,
+        );
+        return whenTrue && whenFalse
+          ? boundedStaticValues([...whenTrue, ...whenFalse])
+          : null;
+      }
+      if (ts.isIdentifier(unwrapped) || ts.isPropertyAccessExpression(unwrapped)) {
+        recordVisibleStringNodeVisit(state);
+        let transformSymbol = checker.getSymbolAtLocation(
+          ts.isPropertyAccessExpression(unwrapped) ? unwrapped.name : unwrapped,
+        );
+        if (transformSymbol) recordVisibleStringSymbolVisit(state);
+        if (transformSymbol && bindings.has(transformSymbol)) {
+          return boundedStaticValues(bindings.get(transformSymbol).map((value) => ({
+            kind: 'string',
+            value,
+          })));
+        }
+        if (transformSymbol && (transformSymbol.flags & ts.SymbolFlags.Alias)) {
+          transformSymbol = checker.getAliasedSymbol(transformSymbol);
+        }
+        if (transformSymbol && transformSymbolPath.has(transformSymbol)) return null;
+        const nestedTransformSymbolPath = new Set(transformSymbolPath);
+        if (transformSymbol) nestedTransformSymbolPath.add(transformSymbol);
+        const declarationValueSets = (transformSymbol?.declarations ?? []).map((declaration) => {
+          const initializer = ts.isVariableDeclaration(declaration)
+            ? declaration.initializer
+            : ts.isPropertyAssignment(declaration)
+              ? declaration.initializer
+              : null;
+          return initializer
+            ? resolveStaticTransformValues(
+              initializer,
+              nestedTransformSymbolPath,
+              transformDepth + 1,
+            )
+            : null;
+        });
+        if (declarationValueSets.length === 0 || declarationValueSets.some((values) => !values)) return null;
+        return boundedStaticValues(declarationValueSets.flat());
+      }
+      if (ts.isCallExpression(unwrapped)) {
+        const nestedCallee = unwrapStaticExpression(unwrapped.expression);
+        const nestedPropertyAccess = ts.isPropertyAccessExpression(nestedCallee) ? nestedCallee : null;
+        const nestedElementAccess = ts.isElementAccessExpression(nestedCallee) ? nestedCallee : null;
+        const nestedMethodAccess = nestedPropertyAccess ?? nestedElementAccess;
+        const nestedElementName = nestedElementAccess?.argumentExpression
+          ? unwrapStaticExpression(nestedElementAccess.argumentExpression)
+          : null;
+        const nestedMethodName = nestedPropertyAccess?.name.text
+          ?? (nestedElementName && ts.isStringLiteralLike(nestedElementName)
+            ? nestedElementName.text
+            : null);
+        if (!nestedMethodAccess) return null;
+        if (nestedMethodName === 'replace' || nestedMethodName === 'replaceAll') {
+          if (unwrapped.arguments.length !== 2) return null;
+          const nestedReceiverValues = resolveStaticTransformValues(
+            nestedMethodAccess.expression,
+            new Set(transformSymbolPath),
+            transformDepth + 1,
+          );
+          const transformedValues = evaluateStaticStringTransform(
+            nestedReceiverValues,
+            resolveStaticTransformValues(
+              unwrapped.arguments[0],
+              new Set(transformSymbolPath),
+              transformDepth + 1,
+            ),
+            resolveStaticTransformValues(
+              unwrapped.arguments[1],
+              new Set(transformSymbolPath),
+              transformDepth + 1,
+            ),
+            nestedMethodName === 'replaceAll',
+          );
+          if (!transformedValues && nestedReceiverValues) {
+            throw new Error('visible-string rendered string transform could not be resolved safely.');
+          }
+          return transformedValues;
+        }
+        if (nestedMethodName === 'concat') {
+          const receiverValues = resolveStaticTransformValues(
+            nestedMethodAccess.expression,
+            new Set(transformSymbolPath),
+            transformDepth + 1,
+          );
+          const argumentValueSets = unwrapped.arguments.map((argument) => resolveStaticTransformValues(
+            argument,
+            new Set(transformSymbolPath),
+            transformDepth + 1,
+          ));
+          const values = evaluateStaticConcat(receiverValues, argumentValueSets);
+          return values?.every((value) => value.kind === 'string') ? values : null;
+        }
+        if (nestedMethodName === 'join') {
+          const receiverValues = resolveStaticValues(nestedMethodAccess.expression);
+          const separatorValues = unwrapped.arguments.length === 0
+            ? [{ kind: 'string', value: ',' }]
+            : unwrapped.arguments.length === 1
+              ? resolveStaticTransformValues(
+                unwrapped.arguments[0],
+                new Set(transformSymbolPath),
+                transformDepth + 1,
+              )
+              : null;
+          if (!receiverValues
+            || receiverValues.some((value) => value.kind !== 'string-array')
+            || !separatorValues) return null;
+          return boundedStaticValues(receiverValues.flatMap((receiverValue) => separatorValues.map(
+            (separatorValue) => ({
+              kind: 'string',
+              value: receiverValue.value.join(separatorValue.value),
+            }),
+          )));
+        }
+        return null;
+      }
+      return null;
+    };
+
     const staticMethodReceiverValues = methodAccess
       && (methodName === 'join' || methodName === 'concat')
       ? resolveStaticValues(methodAccess.expression)
+      : null;
+    const isStaticTransformMethod = methodName === 'replace' || methodName === 'replaceAll';
+    const staticTransformReceiverValues = methodAccess && isStaticTransformMethod
+      ? resolveStaticTransformValues(methodAccess.expression)
       : null;
 
     if (methodAccess && methodName === 'join') {
@@ -834,6 +1351,24 @@ function resolveVisibleStrings(
       if (concatenatedValues) return staticValuesToVisibleStrings(concatenatedValues);
     }
 
+    if (methodAccess && (methodName === 'replace' || methodName === 'replaceAll')) {
+      const searchValues = expression.arguments.length === 2
+        ? resolveStaticTransformValues(expression.arguments[0])
+        : null;
+      const replacementValues = expression.arguments.length === 2
+        ? resolveStaticTransformValues(expression.arguments[1])
+        : null;
+      const transformedValues = expression.arguments.length === 2
+        ? evaluateStaticStringTransform(
+          staticTransformReceiverValues,
+          searchValues,
+          replacementValues,
+          methodName === 'replaceAll',
+        )
+        : null;
+      if (transformedValues) return staticValuesToVisibleStrings(transformedValues);
+    }
+
     const argumentValueSets = expression.arguments.map(resolveNested);
     const argumentStrings = argumentValueSets.flat();
     const receiverExpression = methodAccess ? unwrapStaticExpression(methodAccess.expression) : null;
@@ -846,8 +1381,12 @@ function resolveVisibleStrings(
     );
     const receiverStrings = staticMethodReceiverValues
       ? staticValuesToVisibleStrings(staticMethodReceiverValues)
-      : methodAccess && (
-        receiverHasDirectStaticCopy || methodName === 'join' || methodName === 'concat'
+      : staticTransformReceiverValues
+        ? staticValuesToVisibleStrings(staticTransformReceiverValues)
+        : methodAccess && !isStaticTransformMethod && (
+        receiverHasDirectStaticCopy
+          || methodName === 'join'
+          || methodName === 'concat'
       )
         ? resolveNested(methodAccess.expression)
         : [];
@@ -886,6 +1425,9 @@ function resolveVisibleStrings(
       const unresolvedVisibleStrings = boundedVisibleStringCandidates([...receiverStrings, ...argumentStrings]);
       if (methodName === 'join' || methodName === 'concat') {
         throw new Error('visible-string rendered call receiver could not be resolved safely.');
+      }
+      if (methodName === 'replace' || methodName === 'replaceAll') {
+        throw new Error('visible-string rendered string transform could not be resolved safely.');
       }
       return unresolvedVisibleStrings;
     }
@@ -1013,10 +1555,15 @@ async function verifyProductMaturityRegistry(root) {
   const querySurfaces = parseSurfaceEntries(querySurfaceBlock, 'Query-driven product surface manifest', 'routePattern');
   assertExactRegistryEntries(querySurfaces, registry, 'Query-driven product surface manifest');
   assertWorkflowBoundaryReferences(root, productionSourcePaths, registry, productionProgram);
+  assertCanonicalAuthorisedProductRouteComposition(productionProgram);
 
   const appSourceFile = productionProgram.getSourceFile(appPath);
   if (!appSourceFile) throw new Error('App route source is missing from the TypeScript Program.');
-  const appRoutePaths = discoverReactRouterPaths(appSourceFile, productionProgram.getTypeChecker());
+  const appRoutePaths = discoverReactRouterPaths(
+    appSourceFile,
+    productionProgram.getTypeChecker(),
+    new Set(reachableRoutes.map(({ path: routePath }) => routePath)),
+  );
   assertExactRoutePathMultiset(appRoutePaths, reachableRoutes);
 
   const legacyViolations = findCustomerVisibleLegacyViolations(root, customerUiSourcePaths, productionProgram);
