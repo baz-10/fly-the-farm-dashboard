@@ -156,6 +156,43 @@ function assertExactRegistryEntries(entries, registry, sourceName) {
   });
 }
 
+function assertWorkflowBoundaryReferences(root, customerUiSourcePaths, registry) {
+  const rootNames = customerUiSourcePaths.map((sourcePath) => resolve(root, sourcePath));
+  const program = ts.createProgram(rootNames, {
+    jsx: ts.JsxEmit.ReactJSX,
+    module: ts.ModuleKind.ESNext,
+    moduleResolution: ts.ModuleResolutionKind.NodeJs,
+    target: ts.ScriptTarget.ESNext,
+  });
+  const registryKeys = new Set(registry.map((entry) => `${entry.moduleCode}::${entry.workflowCode ?? ''}`));
+
+  customerUiSourcePaths.forEach((sourcePath, index) => {
+    const sourceFile = program.getSourceFile(rootNames[index]);
+    if (!sourceFile) return;
+    function visit(node) {
+      if (ts.isJsxOpeningElement(node) || ts.isJsxSelfClosingElement(node)) {
+        const tagName = ts.isPropertyAccessExpression(node.tagName) ? node.tagName.name.text : node.tagName.getText(sourceFile);
+        if (tagName === 'WorkflowMaturityBoundary') {
+          const attributes = new Map(node.attributes.properties
+            .filter(ts.isJsxAttribute)
+            .map((attribute) => [attribute.name.text, attribute.initializer]));
+          const readLiteral = (name) => {
+            const initializer = attributes.get(name);
+            return initializer && ts.isStringLiteral(initializer) ? initializer.text : null;
+          };
+          const moduleCode = readLiteral('moduleCode');
+          const workflowCode = readLiteral('workflowCode');
+          if (moduleCode && workflowCode && !registryKeys.has(`${moduleCode}::${workflowCode}`)) {
+            throw new Error(`WorkflowMaturityBoundary reference in ${sourcePath} does not have an exact registry override: ${moduleCode}/${workflowCode}.`);
+          }
+        }
+      }
+      ts.forEachChild(node, visit);
+    }
+    visit(sourceFile);
+  });
+}
+
 async function listCustomerUiSourcePaths(root) {
   const sourcePaths = [];
 
@@ -254,10 +291,10 @@ function functionReturnExpressions(declaration) {
   return returns;
 }
 
-function resolveVisibleStrings(expression, checker, seen = new Set(), depth = 0) {
+function resolveVisibleStrings(expression, checker, seen = new Set(), depth = 0, bindings = new Map()) {
   if (!expression || depth > 32 || seen.has(expression)) return [];
   seen.add(expression);
-  const resolveNested = (nested) => resolveVisibleStrings(nested, checker, seen, depth + 1);
+  const resolveNested = (nested) => resolveVisibleStrings(nested, checker, seen, depth + 1, bindings);
 
   if (ts.isStringLiteralLike(expression)) return [expression.text];
   if (ts.isParenthesizedExpression(expression)) return resolveNested(expression.expression);
@@ -273,8 +310,13 @@ function resolveVisibleStrings(expression, checker, seen = new Set(), depth = 0)
       ...resolveNested(expression.whenFalse),
     ];
   }
+  if (ts.isBinaryExpression(expression) && expression.operatorToken.kind === ts.SyntaxKind.PlusToken) {
+    const leftValues = resolveNested(expression.left);
+    const rightValues = resolveNested(expression.right);
+    if (leftValues.length === 0 || rightValues.length === 0) return [...leftValues, ...rightValues];
+    return leftValues.flatMap((left) => rightValues.map((right) => `${left}${right}`));
+  }
   if (ts.isBinaryExpression(expression) && [
-    ts.SyntaxKind.PlusToken,
     ts.SyntaxKind.AmpersandAmpersandToken,
     ts.SyntaxKind.BarBarToken,
     ts.SyntaxKind.QuestionQuestionToken,
@@ -285,13 +327,13 @@ function resolveVisibleStrings(expression, checker, seen = new Set(), depth = 0)
     ];
   }
   if (ts.isTemplateExpression(expression)) {
-    return [
-      expression.head.text,
-      ...expression.templateSpans.flatMap((span) => [
-        ...resolveNested(span.expression),
-        span.literal.text,
-      ]),
-    ];
+    return expression.templateSpans.reduce((compositions, span) => {
+      const values = resolveNested(span.expression);
+      if (values.length === 0) return compositions.map((value) => `${value}${span.literal.text}`);
+      return compositions.flatMap((composition) => values.map(
+        (value) => `${composition}${value}${span.literal.text}`,
+      ));
+    }, [expression.head.text]);
   }
   if (ts.isArrayLiteralExpression(expression)) {
     return expression.elements.flatMap(resolveNested);
@@ -305,26 +347,39 @@ function resolveVisibleStrings(expression, checker, seen = new Set(), depth = 0)
     });
   }
   if (ts.isCallExpression(expression)) {
-    const argumentStrings = expression.arguments.flatMap(resolveNested);
-    if (expression.arguments.length > 0) return argumentStrings;
-
+    const argumentValueSets = expression.arguments.map(resolveNested);
+    const argumentStrings = argumentValueSets.flat();
     const symbolLocation = ts.isPropertyAccessExpression(expression.expression)
       ? expression.expression.name
       : expression.expression;
     let symbol = checker.getSymbolAtLocation(symbolLocation);
     if (symbol && (symbol.flags & ts.SymbolFlags.Alias)) symbol = checker.getAliasedSymbol(symbol);
+    let resolvedFunction = false;
     const returnStrings = (symbol?.declarations ?? []).flatMap((declaration) => {
       let functionDeclaration = declaration;
       if (ts.isVariableDeclaration(declaration) && declaration.initializer) {
         functionDeclaration = declaration.initializer;
       }
-      if (!ts.isFunctionLike(functionDeclaration) || functionDeclaration.parameters.length !== 0) return [];
-      return functionReturnExpressions(functionDeclaration).flatMap(resolveNested);
+      if (!ts.isFunctionLike(functionDeclaration)
+        || functionDeclaration.parameters.length !== expression.arguments.length) return [];
+      const callBindings = new Map(bindings);
+      for (const [index, parameter] of functionDeclaration.parameters.entries()) {
+        if (!ts.isIdentifier(parameter.name)) return [];
+        const parameterSymbol = checker.getSymbolAtLocation(parameter.name);
+        const argumentValues = argumentValueSets[index];
+        if (!parameterSymbol || argumentValues.length === 0) return [];
+        callBindings.set(parameterSymbol, argumentValues);
+      }
+      resolvedFunction = true;
+      return functionReturnExpressions(functionDeclaration).flatMap((returnExpression) => resolveVisibleStrings(
+        returnExpression, checker, new Set(seen), depth + 1, callBindings,
+      ));
     });
-    return [...argumentStrings, ...returnStrings];
+    return resolvedFunction ? returnStrings : argumentStrings;
   }
   if (ts.isIdentifier(expression) || ts.isPropertyAccessExpression(expression)) {
     let symbol = checker.getSymbolAtLocation(ts.isPropertyAccessExpression(expression) ? expression.name : expression);
+    if (symbol && bindings.has(symbol)) return bindings.get(symbol);
     if (symbol && (symbol.flags & ts.SymbolFlags.Alias)) symbol = checker.getAliasedSymbol(symbol);
     return (symbol?.declarations ?? []).flatMap((declaration) => {
       if (ts.isVariableDeclaration(declaration) && declaration.initializer) {
@@ -433,6 +488,7 @@ async function verifyProductMaturityRegistry(root) {
 
   const querySurfaces = parseSurfaceEntries(querySurfaceBlock, 'Query-driven product surface manifest', 'routePattern');
   assertExactRegistryEntries(querySurfaces, registry, 'Query-driven product surface manifest');
+  assertWorkflowBoundaryReferences(root, customerUiSourcePaths, registry);
 
   const manifestPaths = new Set(reachableRoutes.map((route) => route.path));
   const appRoutePaths = Array.from(

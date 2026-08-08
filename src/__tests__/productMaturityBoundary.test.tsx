@@ -134,6 +134,18 @@ describe('product maturity CI boundary', () => {
     ), (fixtureRoot) => expectVerifierFailure('does not have an exact registry entry', fixtureRoot));
   });
 
+  test.each([
+    ['moduleCode="organisation-administration"', 'moduleCode="missing-administration"'],
+    ['workflowCode="network-source-manager"', 'workflowCode="missing-source-manager"'],
+  ])('fails closed when a WorkflowMaturityBoundary literal lacks an exact registry override', (find, replace) => {
+    withTemporaryFixture((fixtureRoot) => replaceFixtureSource(
+      fixtureRoot,
+      'src/pages/Admin.tsx',
+      find,
+      replace,
+    ), (fixtureRoot) => expectVerifierFailure('WorkflowMaturityBoundary reference', fixtureRoot));
+  });
+
   test('allows a Commercially Ready entry with no promotion blockers when Founder approval is present', () => {
     withTemporaryFixture((fixtureRoot) => updateFixtureRegistry(fixtureRoot, (registry) => {
       const approvalPath = fixturePath(fixtureRoot, 'docs/commercial-release-decision.md');
@@ -281,6 +293,19 @@ describe('product maturity CI boundary', () => {
     ), (fixtureRoot) => expectVerifierFailure('Customer-facing Legacy violation', fixtureRoot));
   });
 
+  test.each([
+    ["{'Leg' + 'acy Records'}", 'concatenation'],
+    ['{`Leg${"acy"} Records`}', 'template composition'],
+    ["{true ? 'Leg' + 'acy Records' : 'Records'}", 'conditional composition'],
+  ])('rejects visible Legacy assembled through %s', (replacement) => {
+    withTemporaryFixture((fixtureRoot) => replaceFixtureSource(
+      fixtureRoot,
+      'src/pages/ClientDetail.tsx',
+      'All Clients',
+      replacement,
+    ), (fixtureRoot) => expectVerifierFailure('Customer-facing Legacy violation', fixtureRoot));
+  });
+
   test('rejects nested customer-message values in object, array, and call argument forms', () => {
     withTemporaryFixture((fixtureRoot) => {
       const filePath = fixturePath(fixtureRoot, 'src/pages/ClientDetail.tsx');
@@ -316,6 +341,36 @@ describe('product maturity CI boundary', () => {
       const filePath = fixturePath(fixtureRoot, 'src/pages/ClientDetail.tsx');
       const source = readFileSync(filePath, 'utf8');
       writeFileSync(filePath, `${source}\nconst repairLabel = () => 'Legacy Records';\nexport const repairHelperFixture = <span>{repairLabel()}</span>;\n`, 'utf8');
+    }, (fixtureRoot) => expectVerifierFailure('Customer-facing Legacy violation', fixtureRoot));
+  });
+
+  test('rejects composed visible copy returned by a parameterised local helper', () => {
+    withTemporaryFixture((fixtureRoot) => {
+      const filePath = fixturePath(fixtureRoot, 'src/pages/ClientDetail.tsx');
+      const source = readFileSync(filePath, 'utf8');
+      writeFileSync(filePath, `${source}\nconst repairLabel = (left: string, right: string) => left + right;\nexport const repairHelperFixture = <span>{repairLabel('Leg', 'acy Records')}</span>;\n`, 'utf8');
+    }, (fixtureRoot) => expectVerifierFailure('Customer-facing Legacy violation', fixtureRoot));
+  });
+
+  test('rejects composed visible copy returned by a parameterised imported helper', () => {
+    withTemporaryFixture((fixtureRoot) => {
+      writeFileSync(
+        fixturePath(fixtureRoot, 'src/customerCopy.ts'),
+        'export const importedLabel = (left: string, right: string) => left + right;\n',
+        'utf8',
+      );
+      replaceFixtureSource(
+        fixtureRoot,
+        'src/pages/ClientDetail.tsx',
+        "import React, { useState } from 'react';",
+        "import React, { useState } from 'react';\nimport { importedLabel } from '../customerCopy';",
+      );
+      replaceFixtureSource(
+        fixtureRoot,
+        'src/pages/ClientDetail.tsx',
+        'All Clients',
+        "{importedLabel('Leg', 'acy Records')}",
+      );
     }, (fixtureRoot) => expectVerifierFailure('Customer-facing Legacy violation', fixtureRoot));
   });
 
