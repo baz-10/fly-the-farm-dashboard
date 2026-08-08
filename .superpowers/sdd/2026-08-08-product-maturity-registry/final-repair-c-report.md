@@ -40,3 +40,18 @@ Fresh final verification:
 - Diff hygiene: `git diff --check` exited 0.
 
 No push or deployment was performed.
+
+## Encoded-path security follow-up
+
+The Critical follow-up identified that React Router decodes percent-encoded pathname segments before matching, while the maturity resolver previously compared the raw pathname. Paths such as `/%71uotes` therefore mounted the Quotes route but resolved no maturity surface.
+
+The resolver now mirrors React Router's supported decoding semantics before applying existing exact matching: each segment is decoded independently, decoded slashes remain encoded within their segment, static segments remain case-insensitive, and dynamic/query/specificity behavior is preserved. Malformed percent encoding throws a dedicated path error that the maturity surface converts into a customer-safe “Page unavailable” state after authorization; it never falls through to route children.
+
+Real MemoryRouter mount-sentinel coverage now includes `/%71uotes`, `/%66inancials`, `/%63ompliance/transport`, `/jobs/%69mport`, and `/%61dmin`. It also covers malformed encoded dynamic paths for both authorised and unauthorised roles, proving guards still execute first and browser-local writers never mount.
+
+Fresh encoded-path follow-up verification:
+
+- Focused resolver/route/security suite: 4 suites and 52 tests passed.
+- Full test suite: 206 suites and 947 tests passed.
+- Registry verifier: 46 modules and 12 workflows classified; 53 App routes, 116 customer UI source files, and 64 evidence references checked; 0 customer-facing Legacy violations.
+- Production build: exited 0 with existing repository lint and bundle-size warnings.

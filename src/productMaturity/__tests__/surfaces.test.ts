@@ -69,6 +69,24 @@ describe('product maturity route surfaces', () => {
     expect(resolveProductSurface('/JOBS', '?view=JOBS')).toMatchObject({ moduleCode: 'clients' });
   });
 
+  test.each([
+    ['/%71uotes', 'quotes', null],
+    ['/%66inancials', 'financials', null],
+    ['/%63ompliance/transport', 'transport-storage', null],
+    ['/quotes/%6eew', 'quotes', null],
+    ['/quotes/%71uote-1', 'quotes', 'pdf-export'],
+  ])('decodes pathname segments before applying route specificity for %s', (pathname, moduleCode, workflowCode) => {
+    const { resolveProductSurface } = surfaces();
+
+    expect(resolveProductSurface(pathname, '')).toMatchObject({ moduleCode, workflowCode });
+  });
+
+  test.each(['/quotes/%', '/treatment/%ZZ', '/%E0%A4%A'])('rejects malformed pathname encoding instead of treating %s as an unknown surface', pathname => {
+    const { resolveProductSurface, ProductMaturityConfigurationError } = surfaces();
+
+    expect(() => resolveProductSurface(pathname, '')).toThrow(ProductMaturityConfigurationError);
+  });
+
   test('keeps Chemical treatment details inside the usable Beta Chemical Database surface', () => {
     const { resolveProductSurface } = surfaces();
 

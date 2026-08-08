@@ -21,6 +21,13 @@ interface ProductSurface {
   matchesSearch?: (search: URLSearchParams) => boolean;
 }
 
+export class ProductMaturityPathError extends ProductMaturityConfigurationError {
+  constructor() {
+    super('The product route pathname contains malformed percent encoding.');
+    this.name = 'ProductMaturityPathError';
+  }
+}
+
 export const REACHABLE_PRODUCT_ROUTES = [
   { path: '/login', moduleCode: 'authentication', workflowCode: null },
   { path: '/register', moduleCode: 'organisation-onboarding', workflowCode: null },
@@ -123,6 +130,20 @@ const matchesRoute = (routePattern: string, pathname: string): boolean => {
   );
 };
 
+// React Router decodes each pathname segment before matching and preserves an
+// encoded slash inside a segment. Malformed encoding is rejected here so a
+// missing maturity match can never expose the underlying route.
+const decodePathname = (pathname: string): string => {
+  try {
+    return pathname
+      .split('/')
+      .map(segment => decodeURIComponent(segment).replace(/\//g, '%2F'))
+      .join('/');
+  } catch {
+    throw new ProductMaturityPathError();
+  }
+};
+
 const resolveSurface = (surface: ProductSurface): ResolvedProductSurface => {
   const entry = getMaturityEntry(surface.moduleCode, surface.workflowCode ?? undefined);
 
@@ -141,15 +162,16 @@ const resolveSurface = (surface: ProductSurface): ResolvedProductSurface => {
 };
 
 export function resolveProductSurface(pathname: string, search: string): ResolvedProductSurface | null {
+  const decodedPathname = decodePathname(pathname);
   const searchParams = new URLSearchParams(search.startsWith('?') ? search.slice(1) : search);
   const querySurface = PRODUCT_SURFACES.find(surface =>
-    surface.matchesSearch && matchesRoute(surface.routePattern, pathname) && surface.matchesSearch(searchParams)
+    surface.matchesSearch && matchesRoute(surface.routePattern, decodedPathname) && surface.matchesSearch(searchParams)
   );
 
   if (querySurface) return resolveSurface(querySurface);
 
   const routeSurface = PRODUCT_SURFACES.find(surface =>
-    !surface.matchesSearch && matchesRoute(surface.routePattern, pathname)
+    !surface.matchesSearch && matchesRoute(surface.routePattern, decodedPathname)
   );
 
   return routeSurface ? resolveSurface(routeSurface) : null;

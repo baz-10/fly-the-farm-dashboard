@@ -76,8 +76,23 @@ test.each([
 });
 
 test.each([
+  ['/%71uotes', '/quotes', 'Quotes'],
+  ['/%66inancials', '/financials', 'Financials'],
+  ['/%63ompliance/transport', '/compliance/transport', 'Transport and Storage'],
+  ['/jobs/%69mport', '/jobs/import', 'Spray Recommendation Import'],
+])('authorised encoded navigation to %s preserves the Coming Soon boundary before local code mounts', async (path, routePattern, heading) => {
+  renderProtectedPath(path, routePattern);
+
+  expect(await screen.findByRole('heading', { name: heading })).toBeVisible();
+  expect(screen.getByText('Coming Soon')).toBeVisible();
+  expect(screen.queryByRole('button', { name: 'Run browser-local workflow' })).not.toBeInTheDocument();
+  expect(window.localStorage.getItem('browser-local-workflow-mounted')).toBeNull();
+});
+
+test.each([
   ['/QUOTES', '/quotes', 'client'],
   ['/COMPLIANCE/TRANSPORT', '/compliance/transport', 'production_beta_acceptance'],
+  ['/%71uotes', '/quotes', 'production_beta_acceptance'],
 ])('unauthorised navigation to %s fails its role guard before maturity presentation', async (path, routePattern, role) => {
   renderProtectedPath(path, routePattern, role);
 
@@ -94,4 +109,39 @@ test.each(['/ADMIN', '/Admin'])('case-insensitive admin navigation keeps nested 
   expect(screen.getByRole('heading', { name: 'Organisation Network and Source Manager', level: 2 })).toBeVisible();
   expect(screen.queryByRole('button', { name: 'Run browser-local workflow' })).not.toBeInTheDocument();
   expect(window.localStorage.getItem('browser-local-workflow-mounted')).toBeNull();
+});
+
+test('encoded admin navigation keeps nested browser-local workflows constrained', async () => {
+  renderProtectedPath('/%61dmin', '/admin', 'admin', <Admin />);
+
+  expect(await screen.findByRole('heading', { name: 'Organisation Administration' })).toBeVisible();
+  expect(screen.getAllByText('Coming Soon')).toHaveLength(3);
+  expect(screen.queryByRole('button', { name: 'Run browser-local workflow' })).not.toBeInTheDocument();
+  expect(window.localStorage.getItem('browser-local-workflow-mounted')).toBeNull();
+});
+
+test('malformed dynamic path encoding fails closed without mounting an authorised child', async () => {
+  const warning = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+  try {
+    renderProtectedPath('/treatment/%ZZ', '/treatment/:id');
+
+    expect(await screen.findByRole('heading', { name: 'Page unavailable' })).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Run browser-local workflow' })).not.toBeInTheDocument();
+    expect(window.localStorage.getItem('browser-local-workflow-mounted')).toBeNull();
+  } finally {
+    warning.mockRestore();
+  }
+});
+
+test('malformed dynamic path still fails an unauthorised role guard before availability presentation', async () => {
+  const warning = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+  try {
+    renderProtectedPath('/treatment/%ZZ', '/treatment/:id', 'client');
+
+    expect(await screen.findByText('Home redirect')).toBeVisible();
+    expect(screen.queryByRole('heading', { name: 'Page unavailable' })).not.toBeInTheDocument();
+    expect(window.localStorage.getItem('browser-local-workflow-mounted')).toBeNull();
+  } finally {
+    warning.mockRestore();
+  }
 });
