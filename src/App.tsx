@@ -63,6 +63,8 @@ import OperationsManualWorkspace from './pages/OperationsManualWorkspace';
 import ControlledChecklists from './pages/ControlledChecklists';
 import WeatherCentre from './pages/WeatherCentre';
 
+export { REACHABLE_PRODUCT_ROUTES } from './productMaturity/surfaces';
+
 function WorkflowProviders({ children }: { children: React.ReactNode }) {
   const { user } = useAuth();
   if (user?.role !== 'admin' && user?.role !== 'contractor' && !user?.delegatedSupport) return <>{children}</>;
