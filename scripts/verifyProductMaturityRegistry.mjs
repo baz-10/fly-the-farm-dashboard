@@ -2,10 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const registryPath = resolve(root, 'src/productMaturity/product-maturity-registry.json');
-const routeManifestPath = resolve(root, 'src/productMaturity/surfaces.ts');
-const appPath = resolve(root, 'src/App.tsx');
+const defaultRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const customerFacingSourcePaths = [
   'src/navigation/organisationNavigation.tsx',
   'src/components/Layout.tsx',
@@ -28,6 +25,15 @@ const requiredArrayFields = [
   'requiredManualAcceptance',
   'requiredOperationalEvidence',
 ];
+
+function resolveVerifierRoot(argumentsList) {
+  if (argumentsList.length === 0) return defaultRoot;
+  if (argumentsList.length === 2 && argumentsList[0] === '--root' && isNonEmptyString(argumentsList[1])) {
+    return resolve(argumentsList[1]);
+  }
+
+  throw new Error('Usage: node scripts/verifyProductMaturityRegistry.mjs [--root <fixture-root>]');
+}
 
 function isNonEmptyString(value) {
   return typeof value === 'string' && value.trim().length > 0;
@@ -137,7 +143,10 @@ function assertExactRegistryEntries(entries, registry, sourceName) {
   });
 }
 
-async function verifyProductMaturityRegistry() {
+async function verifyProductMaturityRegistry(root) {
+  const registryPath = resolve(root, 'src/productMaturity/product-maturity-registry.json');
+  const routeManifestPath = resolve(root, 'src/productMaturity/surfaces.ts');
+  const appPath = resolve(root, 'src/App.tsx');
   const [registrySource, routeManifestSource, appSource, ...customerFacingSources] = await Promise.all([
     readFile(registryPath, 'utf8'),
     readFile(routeManifestPath, 'utf8'),
@@ -189,7 +198,8 @@ async function verifyProductMaturityRegistry() {
 }
 
 try {
-  const { moduleCount, workflowCount, routeCount } = await verifyProductMaturityRegistry();
+  const root = resolveVerifierRoot(process.argv.slice(2));
+  const { moduleCount, workflowCount, routeCount } = await verifyProductMaturityRegistry(root);
   console.log(
     `Product maturity registry verified: ${moduleCount} modules and ${workflowCount} workflows classified; ${routeCount} App routes checked; 0 customer-facing Legacy violations.`,
   );

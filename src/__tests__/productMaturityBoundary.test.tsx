@@ -1,33 +1,63 @@
-import { readFileSync, writeFileSync } from 'fs';
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { spawnSync, SpawnSyncReturns } from 'child_process';
+import { tmpdir } from 'os';
 import path from 'path';
 
 const root = path.resolve(process.cwd());
-const registryPath = path.join(root, 'src/productMaturity/product-maturity-registry.json');
-const surfacesPath = path.join(root, 'src/productMaturity/surfaces.ts');
-const navigationPath = path.join(root, 'src/navigation/organisationNavigation.tsx');
+const fixturePaths = [
+  'src/productMaturity/product-maturity-registry.json',
+  'src/productMaturity/surfaces.ts',
+  'src/App.tsx',
+  'src/navigation/organisationNavigation.tsx',
+  'src/components/Layout.tsx',
+  'src/components/productMaturity',
+];
 
-const runVerifier = (): SpawnSyncReturns<string> => spawnSync(process.execPath, ['scripts/verifyProductMaturityRegistry.mjs'], {
+const runVerifier = (fixtureRoot?: string): SpawnSyncReturns<string> => spawnSync(process.execPath, [
+  'scripts/verifyProductMaturityRegistry.mjs',
+  ...(fixtureRoot ? ['--root', fixtureRoot] : []),
+], {
   cwd: root,
   encoding: 'utf8',
   env: {},
 });
 
-const withTemporarySource = (filePath: string, mutate: (source: string) => string, assertion: () => void): void => {
-  const original = readFileSync(filePath, 'utf8');
-  const modified = mutate(original);
-  if (modified === original) throw new Error(`Fixture mutation did not change ${filePath}.`);
+const fixturePath = (fixtureRoot: string, relativePath: string): string => path.join(fixtureRoot, relativePath);
 
-  writeFileSync(filePath, modified, 'utf8');
+const withTemporaryFixture = (mutate: (fixtureRoot: string) => void, assertion: (fixtureRoot: string) => void): void => {
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), 'product-maturity-registry-'));
+
+  fixturePaths.forEach((relativePath) => {
+    const destination = fixturePath(fixtureRoot, relativePath);
+    mkdirSync(path.dirname(destination), { recursive: true });
+    cpSync(path.join(root, relativePath), destination, { recursive: true });
+  });
+
   try {
-    assertion();
+    mutate(fixtureRoot);
+    assertion(fixtureRoot);
   } finally {
-    writeFileSync(filePath, original, 'utf8');
+    rmSync(fixtureRoot, { recursive: true, force: true });
   }
 };
 
-const expectVerifierFailure = (expectedMessage: string): void => {
-  const result = runVerifier();
+const replaceFixtureSource = (fixtureRoot: string, relativePath: string, find: string, replace: string): void => {
+  const filePath = fixturePath(fixtureRoot, relativePath);
+  const source = readFileSync(filePath, 'utf8');
+  const modified = source.replace(find, replace);
+  if (modified === source) throw new Error(`Fixture mutation did not change ${relativePath}.`);
+  writeFileSync(filePath, modified, 'utf8');
+};
+
+const updateFixtureRegistry = (fixtureRoot: string, update: (registry: any[]) => void): void => {
+  const filePath = fixturePath(fixtureRoot, 'src/productMaturity/product-maturity-registry.json');
+  const registry = JSON.parse(readFileSync(filePath, 'utf8'));
+  update(registry);
+  writeFileSync(filePath, JSON.stringify(registry, null, 2), 'utf8');
+};
+
+const expectVerifierFailure = (expectedMessage: string, fixtureRoot: string): void => {
+  const result = runVerifier(fixtureRoot);
 
   expect(result.error).toBeUndefined();
   expect(result.status).toBe(1);
@@ -46,31 +76,33 @@ describe('product maturity CI boundary', () => {
   });
 
   test('fails closed when a reachable route lacks an exact registry key', () => {
-    withTemporarySource(surfacesPath, (source) => source.replace(
+    withTemporaryFixture((fixtureRoot) => replaceFixtureSource(
+      fixtureRoot,
+      'src/productMaturity/surfaces.ts',
       "{ path: '/login', moduleCode: 'authentication', workflowCode: null },",
       "{ path: '/login', moduleCode: 'unregistered-module', workflowCode: null },",
-    ), () => expectVerifierFailure('does not have an exact registry entry'));
+    ), (fixtureRoot) => expectVerifierFailure('does not have an exact registry entry', fixtureRoot));
   });
 
   test('fails closed when a query-driven surface lacks an exact registry key', () => {
-    withTemporarySource(surfacesPath, (source) => source.replace(
+    withTemporaryFixture((fixtureRoot) => replaceFixtureSource(
+      fixtureRoot,
+      'src/productMaturity/surfaces.ts',
       "routePattern: '/jobs',\n    moduleCode: 'properties',\n    workflowCode: null,",
       "routePattern: '/jobs',\n    moduleCode: 'unregistered-query-module',\n    workflowCode: null,",
-    ), () => expectVerifierFailure('does not have an exact registry entry'));
+    ), (fixtureRoot) => expectVerifierFailure('does not have an exact registry entry', fixtureRoot));
   });
 
   test('allows a Commercially Ready entry with no promotion blockers when Founder approval is present', () => {
-    withTemporarySource(registryPath, (source) => {
-      const registry = JSON.parse(source);
+    withTemporaryFixture((fixtureRoot) => updateFixtureRegistry(fixtureRoot, (registry) => {
       registry[0] = {
         ...registry[0],
         maturity: 'COMMERCIALLY_READY',
         promotionBlockers: [],
         evidence: [...registry[0].evidence, 'Founder approval recorded in release decision.'],
       };
-      return JSON.stringify(registry, null, 2);
-    }, () => {
-      const result = runVerifier();
+    }), (fixtureRoot) => {
+      const result = runVerifier(fixtureRoot);
 
       expect(result.error).toBeUndefined();
       expect(result.status).toBe(0);
@@ -78,25 +110,23 @@ describe('product maturity CI boundary', () => {
   });
 
   test('retains Founder approval as a requirement for Commercially Ready entries', () => {
-    withTemporarySource(registryPath, (source) => {
-      const registry = JSON.parse(source);
+    withTemporaryFixture((fixtureRoot) => updateFixtureRegistry(fixtureRoot, (registry) => {
       registry[0] = { ...registry[0], maturity: 'COMMERCIALLY_READY', promotionBlockers: [] };
-      return JSON.stringify(registry, null, 2);
-    }, () => expectVerifierFailure('needs explicit Founder approval evidence'));
+    }), (fixtureRoot) => expectVerifierFailure('needs explicit Founder approval evidence', fixtureRoot));
   });
 
   test('rejects lowercase legacy language in registry customer-facing names', () => {
-    withTemporarySource(registryPath, (source) => {
-      const registry = JSON.parse(source);
+    withTemporaryFixture((fixtureRoot) => updateFixtureRegistry(fixtureRoot, (registry) => {
       registry[0] = { ...registry[0], customerName: 'legacy Authentication' };
-      return JSON.stringify(registry, null, 2);
-    }, () => expectVerifierFailure('invalid customer-facing name'));
+    }), (fixtureRoot) => expectVerifierFailure('invalid customer-facing name', fixtureRoot));
   });
 
   test('rejects lowercase legacy language in customer-facing navigation', () => {
-    withTemporarySource(navigationPath, (source) => source.replace(
+    withTemporaryFixture((fixtureRoot) => replaceFixtureSource(
+      fixtureRoot,
+      'src/navigation/organisationNavigation.tsx',
       "{ label: 'Clients'",
       "{ label: 'legacy Clients'",
-    ), () => expectVerifierFailure('Customer-facing Legacy violation'));
+    ), (fixtureRoot) => expectVerifierFailure('Customer-facing Legacy violation', fixtureRoot));
   });
 });
