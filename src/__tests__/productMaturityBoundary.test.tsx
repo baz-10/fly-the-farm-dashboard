@@ -200,7 +200,7 @@ describe('product maturity CI boundary', () => {
         )
         .replace('workflowCode="network-source-manager"', 'workflowCode={dynamicWorkflow}');
       writeFileSync(filePath, source, 'utf8');
-    }, (fixtureRoot) => expectVerifierFailure('exact direct named import', fixtureRoot));
+    }, (fixtureRoot) => expectVerifierFailure('exact named import', fixtureRoot));
   });
 
   test('rejects an aliased WorkflowMaturityBoundary import with exact static codes', () => {
@@ -214,7 +214,7 @@ describe('product maturity CI boundary', () => {
           'import { WorkflowMaturityBoundary as Boundary }',
         );
       writeFileSync(filePath, source, 'utf8');
-    }, (fixtureRoot) => expectVerifierFailure('exact direct named import', fixtureRoot));
+    }, (fixtureRoot) => expectVerifierFailure('exact named import', fixtureRoot));
   });
 
   test('fails closed when an aliased WorkflowMaturityBoundary tag is rebound', () => {
@@ -228,7 +228,7 @@ describe('product maturity CI boundary', () => {
           'import { WorkflowMaturityBoundary as Boundary }',
         );
       writeFileSync(filePath, `${source}\nconst Boundary = () => null;\n`, 'utf8');
-    }, (fixtureRoot) => expectVerifierFailure('exact direct named import', fixtureRoot));
+    }, (fixtureRoot) => expectVerifierFailure('exact named import', fixtureRoot));
   });
 
   test.each([
@@ -308,6 +308,43 @@ describe('product maturity CI boundary', () => {
 
   test('accepts the exact direct canonical boundary convention', () => {
     withTemporaryFixture(() => undefined, expectVerifierSuccess);
+  });
+
+  test('rejects an exported wrapper added to the canonical component file', () => {
+    withTemporaryFixture((fixtureRoot) => {
+      const filePath = fixturePath(
+        fixtureRoot,
+        'src/components/productMaturity/WorkflowMaturityBoundary.tsx',
+      );
+      const source = readFileSync(filePath, 'utf8');
+      writeFileSync(filePath, `${source}\nexport const WrappedBoundary = React.memo(WorkflowMaturityBoundary);\n`, 'utf8');
+    }, (fixtureRoot) => expectVerifierFailure('must export only its required component declaration', fixtureRoot));
+  });
+
+  test('rejects any extra named export from the canonical component file', () => {
+    withTemporaryFixture((fixtureRoot) => {
+      const filePath = fixturePath(
+        fixtureRoot,
+        'src/components/productMaturity/WorkflowMaturityBoundary.tsx',
+      );
+      const source = readFileSync(filePath, 'utf8');
+      writeFileSync(filePath, `${source}\nexport const OtherBoundary = () => null;\n`, 'utf8');
+    }, (fixtureRoot) => expectVerifierFailure('must export only its required component declaration', fixtureRoot));
+  });
+
+  test('rejects a consumer dynamic boundary imported as an extra canonical-module export', () => {
+    withTemporaryFixture((fixtureRoot) => {
+      const filePath = fixturePath(fixtureRoot, 'src/pages/Admin.tsx');
+      const source = readFileSync(filePath, 'utf8')
+        .replace(
+          'import { WorkflowMaturityBoundary }',
+          'import { WorkflowMaturityBoundary, OtherBoundary }',
+        )
+        .replace('<WorkflowMaturityBoundary', '<OtherBoundary')
+        .replace('</WorkflowMaturityBoundary>', '</OtherBoundary>')
+        .replace('workflowCode="network-source-manager"', 'workflowCode={dynamicWorkflow}');
+      writeFileSync(filePath, source, 'utf8');
+    }, (fixtureRoot) => expectVerifierFailure('permits only its exact named import', fixtureRoot));
   });
 
   test('rejects a boundary hidden behind more than 32 alias hops', () => {

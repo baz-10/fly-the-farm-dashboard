@@ -174,7 +174,7 @@ function assertWorkflowBoundaryReferences(root, productionSourcePaths, registry,
   productionSourcePaths.forEach((sourcePath) => {
     const sourceFile = program.getSourceFile(resolve(root, sourcePath));
     if (!sourceFile) return;
-    if (sourceFile === canonicalSource) return;
+    const isCanonicalSource = sourceFile === canonicalSource;
     let directImportSymbol;
     const canonicalModuleSuffix = 'components/productMaturity/WorkflowMaturityBoundary';
     const resolvesToCanonical = (symbol) => {
@@ -185,9 +185,12 @@ function assertWorkflowBoundaryReferences(root, productionSourcePaths, registry,
     };
 
     const moduleSymbol = checker.getSymbolAtLocation(sourceFile);
-    if (moduleSymbol && checker.getExportsOfModule(moduleSymbol).some((exportSymbol) => (
-      resolvesToCanonical(exportSymbol)
-    ))) {
+    const moduleExports = moduleSymbol ? checker.getExportsOfModule(moduleSymbol) : [];
+    if (isCanonicalSource
+      && (moduleExports.length !== 1 || !resolvesToCanonical(moduleExports[0]))) {
+      throw new Error('Canonical WorkflowMaturityBoundary module must export only its required component declaration.');
+    }
+    if (!isCanonicalSource && moduleExports.some((exportSymbol) => resolvesToCanonical(exportSymbol))) {
       throw new Error(`WorkflowMaturityBoundary in ${sourcePath} must not be exported or re-exported.`);
     }
 
@@ -201,6 +204,11 @@ function assertWorkflowBoundaryReferences(root, productionSourcePaths, registry,
         }
         if (bindings && ts.isNamedImports(bindings)) {
           bindings.elements.forEach((element) => {
+            if (modulePath.endsWith(canonicalModuleSuffix)
+              && ((element.propertyName ?? element.name).text !== 'WorkflowMaturityBoundary'
+                || element.name.text !== 'WorkflowMaturityBoundary')) {
+              throw new Error(`WorkflowMaturityBoundary in ${sourcePath} permits only its exact named import from the canonical module.`);
+            }
             const importSymbol = checker.getSymbolAtLocation(element.name);
             if (!resolvesToCanonical(importSymbol)) return;
             if (!modulePath.endsWith(canonicalModuleSuffix)
@@ -271,11 +279,13 @@ function assertWorkflowBoundaryReferences(root, productionSourcePaths, registry,
         }
       }
       if (ts.isIdentifier(node) && resolvesToCanonical(checker.getSymbolAtLocation(node))) {
+        const isCanonicalDeclarationName = isCanonicalSource
+          && canonicalDeclaration?.name === node;
         const isImportName = ts.isImportSpecifier(node.parent);
         const isJsxTag = (ts.isJsxOpeningElement(node.parent)
           || ts.isJsxSelfClosingElement(node.parent)
           || ts.isJsxClosingElement(node.parent)) && node.parent.tagName === node;
-        if (!isImportName && !isJsxTag) {
+        if (!isCanonicalDeclarationName && !isImportName && !isJsxTag) {
           throw new Error(`WorkflowMaturityBoundary in ${sourcePath} must only be referenced as its direct JSX tag.`);
         }
       }
