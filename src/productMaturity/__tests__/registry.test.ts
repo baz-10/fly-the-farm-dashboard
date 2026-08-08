@@ -155,6 +155,15 @@ describe('product maturity registry', () => {
       'src/pages/SprayRecImport.tsx', 'src/services/sprayRecParser.ts', 'src/App.test.tsx',
     ]));
     expect(getMaturityEntry('spray-calculator').evidence).toContain('src/pages/Calculator.tsx');
+    expect(getMaturityEntry('organisation-onboarding').evidence).toContain('src/pages/Register.tsx');
+    expect(getMaturityEntry('vegetation-pmav').evidence).toContain('src/pages/ComplianceVegetation.tsx');
+    expect(getMaturityEntry('flight-records').evidence).toContain('src/pages/ComplianceFlight.tsx');
+    expect(getMaturityEntry('application-records').evidence).toContain('src/pages/ComplianceChemical.tsx');
+    expect(getMaturityEntry('transport-storage').evidence).toContain('src/pages/ComplianceTransport.tsx');
+    expect(getMaturityEntry('licences-credentials').evidence).toContain('src/pages/ComplianceLicensing.tsx');
+    expect(getMaturityEntry('environmental-records').evidence).toContain('src/pages/ComplianceEnvironmental.tsx');
+    expect(getMaturityEntry('safety-ppe').evidence).toContain('src/pages/ComplianceSafety.tsx');
+    expect(getMaturityEntry('documentation-audit').evidence).toContain('src/pages/ComplianceDocumentation.tsx');
   });
 
   test('selects a workflow override before falling back to module metadata', () => {

@@ -170,6 +170,15 @@ describe('product maturity CI boundary', () => {
     }), (fixtureRoot) => expectVerifierFailure('invalid customer-facing name', fixtureRoot));
   });
 
+  test.each([
+    ['moduleCode', 'Invalid.Module'],
+    ['workflowCode', 'Invalid.Workflow'],
+  ])('enforces the runtime lowercase code pattern for %s', (field, invalidCode) => {
+    withTemporaryFixture((fixtureRoot) => updateFixtureRegistry(fixtureRoot, (registry) => {
+      registry[0] = { ...registry[0], [field]: invalidCode };
+    }), (fixtureRoot) => expectVerifierFailure(`invalid ${field}`, fixtureRoot));
+  });
+
   test('rejects lowercase legacy language in customer-facing navigation', () => {
     withTemporaryFixture((fixtureRoot) => replaceFixtureSource(
       fixtureRoot,
@@ -281,6 +290,39 @@ describe('product maturity CI boundary', () => {
       );
       replaceFixtureSource(fixtureRoot, 'src/pages/ClientDetail.tsx', 'All Clients', '{clientHeading}');
     }, (fixtureRoot) => expectVerifierFailure('Customer-facing Legacy violation', fixtureRoot));
+  });
+
+  test('rejects a visible string returned by a local zero-argument helper', () => {
+    withTemporaryFixture((fixtureRoot) => {
+      const filePath = fixturePath(fixtureRoot, 'src/pages/ClientDetail.tsx');
+      const source = readFileSync(filePath, 'utf8');
+      writeFileSync(filePath, `${source}\nconst repairLabel = () => 'Legacy Records';\nexport const repairHelperFixture = <span>{repairLabel()}</span>;\n`, 'utf8');
+    }, (fixtureRoot) => expectVerifierFailure('Customer-facing Legacy violation', fixtureRoot));
+  });
+
+  test('rejects a visible string returned by a statically resolvable imported helper', () => {
+    withTemporaryFixture((fixtureRoot) => {
+      writeFileSync(
+        fixturePath(fixtureRoot, 'src/customerCopy.ts'),
+        "export function importedLabel() { return 'Legacy Imported Records'; }\n",
+        'utf8',
+      );
+      replaceFixtureSource(
+        fixtureRoot,
+        'src/pages/ClientDetail.tsx',
+        "import React, { useState } from 'react';",
+        "import React, { useState } from 'react';\nimport { importedLabel } from '../customerCopy';",
+      );
+      replaceFixtureSource(fixtureRoot, 'src/pages/ClientDetail.tsx', 'All Clients', '{importedLabel()}');
+    }, (fixtureRoot) => expectVerifierFailure('Customer-facing Legacy violation', fixtureRoot));
+  });
+
+  test('ignores helper return strings that do not flow into customer-visible output', () => {
+    withTemporaryFixture((fixtureRoot) => {
+      const filePath = fixturePath(fixtureRoot, 'src/pages/ClientDetail.tsx');
+      const source = readFileSync(filePath, 'utf8');
+      writeFileSync(filePath, `${source}\nconst internalHelper = () => 'Legacy Internal Record';\n`, 'utf8');
+    }, expectVerifierSuccess);
   });
 
   test('fails closed when an evidence reference does not exist', () => {

@@ -16,6 +16,7 @@ const validMaturities = new Set([
   'COMING_SOON',
 ]);
 const validPriorities = new Set(['P0', 'P1', 'P2', 'P3']);
+const codePattern = /^[a-z][a-z0-9-]*(?:\.[a-z0-9-]+)*$/;
 const requiredArrayFields = [
   'evidence',
   'requiredAutomatedTests',
@@ -64,8 +65,11 @@ function validateRegistry(registry) {
     if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
       throw new Error(`${label} must be an object.`);
     }
-    if (!isNonEmptyString(entry.moduleCode)) throw new Error(`${label} is missing moduleCode.`);
-    if (entry.workflowCode !== null && !isNonEmptyString(entry.workflowCode)) {
+    if (!isNonEmptyString(entry.moduleCode) || !codePattern.test(entry.moduleCode)) {
+      throw new Error(`${label} has an invalid moduleCode.`);
+    }
+    if (entry.workflowCode !== null
+      && (!isNonEmptyString(entry.workflowCode) || !codePattern.test(entry.workflowCode))) {
       throw new Error(`${label} has an invalid workflowCode.`);
     }
 
@@ -229,22 +233,41 @@ async function validateRegistryReferences(root, registry) {
   return evidenceReferenceCount;
 }
 
-function resolveVisibleStrings(expression, checker, seen = new Set()) {
-  if (!expression || seen.has(expression)) return [];
+function functionReturnExpressions(declaration) {
+  const body = declaration.body;
+  if (!body) return [];
+  if (!ts.isBlock(body)) return [body];
+
+  const returns = [];
+  function visit(node) {
+    if (node !== body && ts.isFunctionLike(node)) return;
+    if (ts.isReturnStatement(node) && node.expression) {
+      returns.push(node.expression);
+      return;
+    }
+    ts.forEachChild(node, visit);
+  }
+  visit(body);
+  return returns;
+}
+
+function resolveVisibleStrings(expression, checker, seen = new Set(), depth = 0) {
+  if (!expression || depth > 32 || seen.has(expression)) return [];
   seen.add(expression);
+  const resolveNested = (nested) => resolveVisibleStrings(nested, checker, seen, depth + 1);
 
   if (ts.isStringLiteralLike(expression)) return [expression.text];
-  if (ts.isParenthesizedExpression(expression)) return resolveVisibleStrings(expression.expression, checker, seen);
+  if (ts.isParenthesizedExpression(expression)) return resolveNested(expression.expression);
   if (ts.isAsExpression(expression)
     || ts.isTypeAssertionExpression(expression)
     || ts.isNonNullExpression(expression)
     || ts.isSatisfiesExpression(expression)) {
-    return resolveVisibleStrings(expression.expression, checker, seen);
+    return resolveNested(expression.expression);
   }
   if (ts.isConditionalExpression(expression)) {
     return [
-      ...resolveVisibleStrings(expression.whenTrue, checker, seen),
-      ...resolveVisibleStrings(expression.whenFalse, checker, seen),
+      ...resolveNested(expression.whenTrue),
+      ...resolveNested(expression.whenFalse),
     ];
   }
   if (ts.isBinaryExpression(expression) && [
@@ -254,42 +277,58 @@ function resolveVisibleStrings(expression, checker, seen = new Set()) {
     ts.SyntaxKind.QuestionQuestionToken,
   ].includes(expression.operatorToken.kind)) {
     return [
-      ...resolveVisibleStrings(expression.left, checker, seen),
-      ...resolveVisibleStrings(expression.right, checker, seen),
+      ...resolveNested(expression.left),
+      ...resolveNested(expression.right),
     ];
   }
   if (ts.isTemplateExpression(expression)) {
     return [
       expression.head.text,
       ...expression.templateSpans.flatMap((span) => [
-        ...resolveVisibleStrings(span.expression, checker, seen),
+        ...resolveNested(span.expression),
         span.literal.text,
       ]),
     ];
   }
   if (ts.isArrayLiteralExpression(expression)) {
-    return expression.elements.flatMap((element) => resolveVisibleStrings(element, checker, seen));
+    return expression.elements.flatMap(resolveNested);
   }
   if (ts.isObjectLiteralExpression(expression)) {
     return expression.properties.flatMap((property) => {
-      if (ts.isPropertyAssignment(property)) return resolveVisibleStrings(property.initializer, checker, seen);
-      if (ts.isShorthandPropertyAssignment(property)) return resolveVisibleStrings(property.name, checker, seen);
-      if (ts.isSpreadAssignment(property)) return resolveVisibleStrings(property.expression, checker, seen);
+      if (ts.isPropertyAssignment(property)) return resolveNested(property.initializer);
+      if (ts.isShorthandPropertyAssignment(property)) return resolveNested(property.name);
+      if (ts.isSpreadAssignment(property)) return resolveNested(property.expression);
       return [];
     });
   }
   if (ts.isCallExpression(expression)) {
-    return expression.arguments.flatMap((argument) => resolveVisibleStrings(argument, checker, seen));
+    const argumentStrings = expression.arguments.flatMap(resolveNested);
+    if (expression.arguments.length > 0) return argumentStrings;
+
+    const symbolLocation = ts.isPropertyAccessExpression(expression.expression)
+      ? expression.expression.name
+      : expression.expression;
+    let symbol = checker.getSymbolAtLocation(symbolLocation);
+    if (symbol && (symbol.flags & ts.SymbolFlags.Alias)) symbol = checker.getAliasedSymbol(symbol);
+    const returnStrings = (symbol?.declarations ?? []).flatMap((declaration) => {
+      let functionDeclaration = declaration;
+      if (ts.isVariableDeclaration(declaration) && declaration.initializer) {
+        functionDeclaration = declaration.initializer;
+      }
+      if (!ts.isFunctionLike(functionDeclaration) || functionDeclaration.parameters.length !== 0) return [];
+      return functionReturnExpressions(functionDeclaration).flatMap(resolveNested);
+    });
+    return [...argumentStrings, ...returnStrings];
   }
   if (ts.isIdentifier(expression) || ts.isPropertyAccessExpression(expression)) {
     let symbol = checker.getSymbolAtLocation(ts.isPropertyAccessExpression(expression) ? expression.name : expression);
     if (symbol && (symbol.flags & ts.SymbolFlags.Alias)) symbol = checker.getAliasedSymbol(symbol);
     return (symbol?.declarations ?? []).flatMap((declaration) => {
       if (ts.isVariableDeclaration(declaration) && declaration.initializer) {
-        return resolveVisibleStrings(declaration.initializer, checker, seen);
+        return resolveNested(declaration.initializer);
       }
       if (ts.isPropertyAssignment(declaration)) {
-        return resolveVisibleStrings(declaration.initializer, checker, seen);
+        return resolveNested(declaration.initializer);
       }
       return [];
     });
