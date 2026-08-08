@@ -24,6 +24,8 @@ export interface NavigationItem {
   roles: UserRole[];
   entitlement?: string;
   activePrefixes?: string[];
+  moduleCode: string;
+  workflowCode?: string;
 }
 
 export interface NavigationGroup {
@@ -35,43 +37,43 @@ export interface NavigationGroup {
 const organisationRoles: UserRole[] = ['admin', 'contractor'];
 
 export const HOME_NAV_ITEM: NavigationItem = {
-  label: 'Home', shortLabel: 'Home', path: '/', icon: <HomeIcon />, roles: organisationRoles,
+  label: 'Home', shortLabel: 'Home', path: '/', icon: <HomeIcon />, roles: organisationRoles, moduleCode: 'home',
 };
 
 export const CLIENT_RESOURCE_LINKS: NavigationItem[] = [
-  { label: 'Clients', shortLabel: 'Clients', path: '/jobs', icon: <PeopleIcon />, roles: ['admin', 'contractor', 'client'], activePrefixes: ['/jobs/client'] },
-  { label: 'Properties', shortLabel: 'Properties', path: '/jobs?view=properties', icon: <GrassIcon />, roles: ['admin', 'contractor', 'client'] },
-  { label: 'Fields', shortLabel: 'Fields', path: '/jobs?view=fields', icon: <GrassIcon />, roles: ['admin', 'contractor', 'client'] },
-  { label: 'Jobs', shortLabel: 'Jobs', path: '/jobs?view=jobs', icon: <AssignmentIcon />, roles: ['admin', 'contractor', 'client'] },
+  { label: 'Clients', shortLabel: 'Clients', path: '/jobs', icon: <PeopleIcon />, roles: ['admin', 'contractor', 'client'], activePrefixes: ['/jobs/client'], moduleCode: 'clients' },
+  { label: 'Properties', shortLabel: 'Properties', path: '/jobs?view=properties', icon: <GrassIcon />, roles: ['admin', 'contractor', 'client'], moduleCode: 'properties' },
+  { label: 'Fields', shortLabel: 'Fields', path: '/jobs?view=fields', icon: <GrassIcon />, roles: ['admin', 'contractor', 'client'], moduleCode: 'fields' },
+  { label: 'Jobs', shortLabel: 'Jobs', path: '/jobs?view=jobs', icon: <AssignmentIcon />, roles: ['admin', 'contractor', 'client'], moduleCode: 'jobs' },
 ];
 
 export const ORGANISATION_NAV_GROUPS: NavigationGroup[] = [
   { id: 'clients', label: 'CLIENTS', items: CLIENT_RESOURCE_LINKS },
   { id: 'operations', label: 'OPERATIONS', items: [
-    { label: 'Missions', shortLabel: 'Missions', path: '/missions', icon: <FlightTakeoffIcon />, roles: organisationRoles },
-    { label: 'Calculator', shortLabel: 'Calculator', path: '/calculator', icon: <CalculateIcon />, roles: organisationRoles },
+    { label: 'Missions', shortLabel: 'Missions', path: '/missions', icon: <FlightTakeoffIcon />, roles: organisationRoles, moduleCode: 'mission-register' },
+    { label: 'Calculator', shortLabel: 'Calculator', path: '/calculator', icon: <CalculateIcon />, roles: organisationRoles, moduleCode: 'spray-calculator' },
   ] },
   { id: 'fleet', label: 'FLEET', items: [
-    { label: 'Aircraft', shortLabel: 'Aircraft', path: '/aircraft', icon: <AirplanemodeActiveIcon />, roles: organisationRoles },
-    { label: 'Equipment Kits & Fleet', shortLabel: 'Fleet', path: '/fleet-work-packs', icon: <LocalShippingIcon />, roles: organisationRoles },
+    { label: 'Aircraft', shortLabel: 'Aircraft', path: '/aircraft', icon: <AirplanemodeActiveIcon />, roles: organisationRoles, moduleCode: 'aircraft' },
+    { label: 'Equipment Kits & Fleet', shortLabel: 'Fleet', path: '/fleet-work-packs', icon: <LocalShippingIcon />, roles: organisationRoles, moduleCode: 'fleet-work-packs' },
   ] },
-  { id: 'people', label: 'PEOPLE', items: [{ label: 'Personnel', shortLabel: 'Personnel', path: '/personnel', icon: <PeopleIcon />, roles: organisationRoles }] },
+  { id: 'people', label: 'PEOPLE', items: [{ label: 'Personnel', shortLabel: 'Personnel', path: '/personnel', icon: <PeopleIcon />, roles: organisationRoles, moduleCode: 'personnel' }] },
   { id: 'compliance', label: 'COMPLIANCE', items: [
-    { label: 'CASA Compliance', shortLabel: 'CASA', path: '/compliance', icon: <GavelIcon />, roles: organisationRoles },
-    { label: 'Checklists', shortLabel: 'Checklists', path: '/compliance/checklists', icon: <AssignmentIcon />, roles: organisationRoles },
-    { label: 'JSA System', shortLabel: 'JSA', path: '/jsa', icon: <SecurityIcon />, roles: organisationRoles },
+    { label: 'CASA Compliance', shortLabel: 'CASA', path: '/compliance', icon: <GavelIcon />, roles: organisationRoles, moduleCode: 'casa-compliance' },
+    { label: 'Checklists', shortLabel: 'Checklists', path: '/compliance/checklists', icon: <AssignmentIcon />, roles: organisationRoles, moduleCode: 'controlled-checklists' },
+    { label: 'JSA System', shortLabel: 'JSA', path: '/jsa', icon: <SecurityIcon />, roles: organisationRoles, moduleCode: 'mission-jsa' },
   ] },
   { id: 'intelligence', label: 'INTELLIGENCE', items: [
-    { label: 'Chemical Database', shortLabel: 'Database', path: '/database', icon: <GrassIcon />, roles: ['admin', 'contractor', 'client'] },
-    { label: 'Legacy Ask FTF', shortLabel: 'Legacy Ask FTF', path: '/ask-ftf', icon: <SmartToyIcon />, roles: organisationRoles, entitlement: 'legacyAskFtf' },
+    { label: 'Chemical Database', shortLabel: 'Database', path: '/database', icon: <GrassIcon />, roles: ['admin', 'contractor', 'client'], moduleCode: 'chemical-database' },
+    { label: 'Operational Intelligence', shortLabel: 'Operational Intelligence', path: '/ask-ftf', icon: <SmartToyIcon />, roles: organisationRoles, entitlement: 'legacyAskFtf', moduleCode: 'operational-intelligence' },
   ] },
   { id: 'reports', label: 'REPORTS', items: [
-    { label: 'Quotes', shortLabel: 'Quotes', path: '/quotes', icon: <ReceiptLongIcon />, roles: organisationRoles },
-    { label: 'Financials', shortLabel: 'Financials', path: '/financials', icon: <AccountBalanceIcon />, roles: organisationRoles },
+    { label: 'Quotes', shortLabel: 'Quotes', path: '/quotes', icon: <ReceiptLongIcon />, roles: organisationRoles, moduleCode: 'quotes' },
+    { label: 'Financials', shortLabel: 'Financials', path: '/financials', icon: <AccountBalanceIcon />, roles: organisationRoles, moduleCode: 'financials' },
   ] },
   { id: 'organisation', label: 'ORGANISATION', items: [
-    { label: 'Settings', shortLabel: 'Settings', path: '/license-settings', icon: <SettingsIcon />, roles: organisationRoles },
-    { label: 'Administration', shortLabel: 'Admin', path: '/admin', icon: <AdminPanelSettingsIcon />, roles: ['admin'] },
+    { label: 'Settings', shortLabel: 'Settings', path: '/license-settings', icon: <SettingsIcon />, roles: organisationRoles, moduleCode: 'licences-credentials' },
+    { label: 'Administration', shortLabel: 'Admin', path: '/admin', icon: <AdminPanelSettingsIcon />, roles: ['admin'], moduleCode: 'organisation-administration' },
   ] },
 ];
 

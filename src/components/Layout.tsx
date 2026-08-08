@@ -31,6 +31,9 @@ import SearchIcon from '@mui/icons-material/Search';
 import SettingsIcon from '@mui/icons-material/Settings';
 import { useAuth } from '../contexts/AuthContext';
 import { findActiveNavigationGroup, HOME_NAV_ITEM, isNavigationItemActive, ORGANISATION_NAV_GROUPS } from '../navigation/organisationNavigation';
+import { getMaturityEntry } from '../productMaturity/registry';
+import { MaturityBadge } from './productMaturity/MaturityBadge';
+import { ProductMaturitySurface } from './productMaturity/ProductMaturitySurface';
 
 const ROLE_LABELS: Record<string, string> = {
   admin: 'Organisation Admin',
@@ -91,10 +94,18 @@ export default function Layout() {
     return next;
   });
 
+  const maturityEntryFor = (item: typeof HOME_NAV_ITEM) => getMaturityEntry(item.moduleCode, item.workflowCode);
+  const maturityTooltipFor = (item: typeof HOME_NAV_ITEM) => {
+    const maturity = maturityEntryFor(item).maturity;
+    const label = maturity === 'BETA' ? 'Beta' : maturity === 'COMING_SOON' ? 'Coming Soon' : null;
+    return label ? `${item.label} — ${label}` : item.label;
+  };
+
   const navList = (expanded: boolean) => (
     <List component="nav" aria-label="Organisation navigation" sx={{ px: expanded ? 1.25 : 0.75, py: 1, flex: 1 }}>
       {(() => {
         const active = location.pathname === '/';
+        const maturityEntry = maturityEntryFor(HOME_NAV_ITEM);
         const homeButton = <ListItemButton
           selected={active}
           onClick={() => navigateAndClose(HOME_NAV_ITEM.path)}
@@ -110,9 +121,9 @@ export default function Layout() {
           }}
         >
           <ListItemIcon sx={{ minWidth: expanded ? 34 : 0, color: 'inherit', justifyContent: 'center', '& .MuiSvgIcon-root': { fontSize: expanded ? 20 : 18 } }}>{HOME_NAV_ITEM.icon}</ListItemIcon>
-          {expanded ? <ListItemText primary="Home" primaryTypographyProps={{ fontSize: '0.84rem', fontWeight: active ? 850 : 700 }} /> : <Typography sx={{ fontSize: '0.52rem', fontWeight: 800, lineHeight: 1.05 }}>Home</Typography>}
+          {expanded ? <><ListItemText primary="Home" primaryTypographyProps={{ fontSize: '0.84rem', fontWeight: active ? 850 : 700 }} /><MaturityBadge entry={maturityEntry} showComingSoon /></> : <Typography sx={{ fontSize: '0.52rem', fontWeight: 800, lineHeight: 1.05 }}>Home</Typography>}
         </ListItemButton>;
-        return expanded ? homeButton : <Tooltip title="Home" placement="right">{homeButton}</Tooltip>;
+        return expanded ? homeButton : <Tooltip title={maturityTooltipFor(HOME_NAV_ITEM)} placement="right">{homeButton}</Tooltip>;
       })()}
       {navGroups.map((group) => {
         const open = expandedGroups.has(group.id);
@@ -143,11 +154,12 @@ export default function Layout() {
             <List disablePadding>
               {group.items.map((item) => {
                 const active = isNavigationItemActive(location.pathname, item);
+                const maturityEntry = maturityEntryFor(item);
                 const button = <ListItemButton key={item.path} selected={active} onClick={() => navigateAndClose(item.path)} aria-label={item.label} sx={{ minHeight: expanded ? 42 : 45, mb: 0.25, pl: expanded ? 2 : 0.5, pr: expanded ? 1 : 0.5, borderRadius: '8px', color: active ? 'white' : alpha(theme.palette.common.white, 0.68), justifyContent: expanded ? 'flex-start' : 'center', flexDirection: expanded ? 'row' : 'column', gap: expanded ? 0 : 0.25, '&.Mui-selected': { bgcolor: alpha(theme.palette.common.white, 0.14), color: 'white' }, '&:hover': { bgcolor: alpha(theme.palette.common.white, 0.09), color: 'white' } }}>
                   <ListItemIcon sx={{ minWidth: expanded ? 34 : 0, color: 'inherit', justifyContent: 'center', '& .MuiSvgIcon-root': { fontSize: expanded ? 19 : 17 } }}>{item.icon}</ListItemIcon>
-                  {expanded ? <ListItemText primary={item.label} primaryTypographyProps={{ fontSize: '0.82rem', fontWeight: active ? 800 : 650 }} /> : <Typography sx={{ fontSize: '0.52rem', fontWeight: 750, lineHeight: 1.05, textAlign: 'center' }}>{item.shortLabel}</Typography>}
+                  {expanded ? <><ListItemText primary={item.label} primaryTypographyProps={{ fontSize: '0.82rem', fontWeight: active ? 800 : 650 }} /><MaturityBadge entry={maturityEntry} showComingSoon /></> : <Typography sx={{ fontSize: '0.52rem', fontWeight: 750, lineHeight: 1.05, textAlign: 'center' }}>{item.shortLabel}</Typography>}
                 </ListItemButton>;
-                return expanded ? button : <Tooltip key={item.path} title={item.label} placement="right">{button}</Tooltip>;
+                return expanded ? button : <Tooltip key={item.path} title={maturityTooltipFor(item)} placement="right">{button}</Tooltip>;
               })}
             </List>
           </Collapse>
@@ -299,7 +311,9 @@ export default function Layout() {
           sx={{ minHeight: 'calc(100vh - 64px)', px: { xs: 2, md: 3 }, py: { xs: 2.5, md: 3 }, position: 'relative' }}
         >
           <Box sx={{ width: '100%', maxWidth: 1800, mx: 'auto', position: 'relative', zIndex: 1 }}>
-            <Outlet />
+            <ProductMaturitySurface pathname={location.pathname} search={location.search}>
+              <Outlet />
+            </ProductMaturitySurface>
           </Box>
         </Box>
       </Box>

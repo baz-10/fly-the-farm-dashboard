@@ -30,6 +30,7 @@ import AuthoritativeChemicalReviews from '../components/AuthoritativeChemicalRev
 import AdminDocumentSourcing from '../components/AdminDocumentSourcing';
 import OrganisationBranding from '../components/admin/OrganisationBranding';
 import OrganisationSupportAccess from '../components/admin/OrganisationSupportAccess';
+import { WorkflowMaturityBoundary } from '../components/productMaturity/WorkflowMaturityBoundary';
 
 export default function Admin() {
   const { user } = useAuth();
@@ -200,12 +201,16 @@ export default function Admin() {
 
       {/* Source Manager */}
       <Box sx={{ mt: 6 }} className="ftf-animate-in-delay-1">
-        <AdminSourceManager />
+        <WorkflowMaturityBoundary moduleCode="organisation-administration" workflowCode="source-manager">
+          <AdminSourceManager />
+        </WorkflowMaturityBoundary>
       </Box>
 
       {/* Source Extraction */}
       <Box sx={{ mt: 6 }} className="ftf-animate-in-delay-1">
-        <AdminSourceExtraction />
+        <WorkflowMaturityBoundary moduleCode="organisation-administration" workflowCode="source-extraction">
+          <AdminSourceExtraction />
+        </WorkflowMaturityBoundary>
       </Box>
 
       {/* Chemical Intake */}
@@ -215,7 +220,9 @@ export default function Admin() {
 
       {/* Document Sourcing */}
       <Box sx={{ mt: 6 }} className="ftf-animate-in-delay-1">
-        <AdminDocumentSourcing />
+        <WorkflowMaturityBoundary moduleCode="organisation-administration" workflowCode="document-sourcing">
+          <AdminDocumentSourcing />
+        </WorkflowMaturityBoundary>
       </Box>
     </Box>
   );
