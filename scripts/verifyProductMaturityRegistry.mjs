@@ -160,6 +160,265 @@ function assertExactRegistryEntries(entries, registry, sourceName) {
   });
 }
 
+const canonicalRouteConventionError = 'Route composition requires the canonical route import/symbol convention.';
+
+function requiredSourceFile(program, suffix) {
+  const sourceFiles = program.getSourceFiles().filter((sourceFile) => sourceFile.fileName.endsWith(suffix));
+  if (sourceFiles.length !== 1) throw new Error(canonicalRouteConventionError);
+  return sourceFiles[0];
+}
+
+function requiredFunctionSymbol(sourceFile, checker, name) {
+  const declarations = sourceFile.statements.filter((statement) => (
+    ts.isFunctionDeclaration(statement) && statement.name?.text === name
+  ));
+  const symbol = declarations.length === 1 && declarations[0].name
+    ? checker.getSymbolAtLocation(declarations[0].name)
+    : undefined;
+  if (!symbol) throw new Error(canonicalRouteConventionError);
+  return { declaration: declarations[0], symbol };
+}
+
+function requiredClassSymbol(sourceFile, checker, name) {
+  const declarations = sourceFile.statements.filter((statement) => (
+    ts.isClassDeclaration(statement) && statement.name?.text === name
+  ));
+  const symbol = declarations.length === 1 && declarations[0].name
+    ? checker.getSymbolAtLocation(declarations[0].name)
+    : undefined;
+  if (!symbol) throw new Error(canonicalRouteConventionError);
+  return { declaration: declarations[0], symbol };
+}
+
+function resolveAliasedSymbol(checker, symbol) {
+  return symbol && (symbol.flags & ts.SymbolFlags.Alias)
+    ? checker.getAliasedSymbol(symbol)
+    : symbol;
+}
+
+function exactDefaultImportSymbol(sourceFile, checker, modulePath, localName, canonicalSymbol) {
+  const imports = sourceFile.statements.filter((statement) => (
+    ts.isImportDeclaration(statement)
+      && ts.isStringLiteral(statement.moduleSpecifier)
+      && statement.moduleSpecifier.text === modulePath
+  ));
+  const clause = imports.length === 1 ? imports[0].importClause : null;
+  if (!clause
+    || clause.isTypeOnly
+    || !clause.name
+    || clause.name.text !== localName
+    || clause.namedBindings) throw new Error(canonicalRouteConventionError);
+  const symbol = checker.getSymbolAtLocation(clause.name);
+  if (!symbol || resolveAliasedSymbol(checker, symbol) !== canonicalSymbol) {
+    throw new Error(canonicalRouteConventionError);
+  }
+  return symbol;
+}
+
+function exactNamedImportSymbols(sourceFile, checker, modulePath, importNames, canonicalSymbols) {
+  const imports = sourceFile.statements.filter((statement) => (
+    ts.isImportDeclaration(statement)
+      && ts.isStringLiteral(statement.moduleSpecifier)
+      && statement.moduleSpecifier.text === modulePath
+  ));
+  const clause = imports.length === 1 ? imports[0].importClause : null;
+  const bindings = clause?.namedBindings;
+  if (!clause
+    || clause.isTypeOnly
+    || clause.name
+    || !bindings
+    || !ts.isNamedImports(bindings)
+    || bindings.elements.length !== importNames.length) throw new Error(canonicalRouteConventionError);
+
+  const symbols = new Map();
+  bindings.elements.forEach((element, index) => {
+    const expectedName = importNames[index];
+    if (element.isTypeOnly
+      || element.propertyName
+      || element.name.text !== expectedName) throw new Error(canonicalRouteConventionError);
+    const symbol = checker.getSymbolAtLocation(element.name);
+    if (!symbol || resolveAliasedSymbol(checker, symbol) !== canonicalSymbols.get(expectedName)) {
+      throw new Error(canonicalRouteConventionError);
+    }
+    symbols.set(expectedName, symbol);
+  });
+  return symbols;
+}
+
+function assertCanonicalRouteSymbolConventions(program, appSourceFile) {
+  const checker = program.getTypeChecker();
+  const protectedSource = requiredSourceFile(program, '/components/ProtectedRoute.tsx');
+  const platformProtectedSource = requiredSourceFile(program, '/components/PlatformProtectedRoute.tsx');
+  const layoutSource = requiredSourceFile(program, '/components/Layout.tsx');
+  const authorisedSource = requiredSourceFile(
+    program,
+    '/components/productMaturity/AuthorisedProductRoute.tsx',
+  );
+  const productMaturitySource = requiredSourceFile(
+    program,
+    '/components/productMaturity/ProductMaturitySurface.tsx',
+  );
+  const surfaceResolverSource = requiredSourceFile(program, '/productMaturity/surfaces.ts');
+  const comingSoonSource = requiredSourceFile(
+    program,
+    '/components/productMaturity/ComingSoonWorkspace.tsx',
+  );
+  const maturityBadgeSource = requiredSourceFile(
+    program,
+    '/components/productMaturity/MaturityBadge.tsx',
+  );
+  const protectedRoute = requiredFunctionSymbol(protectedSource, checker, 'ProtectedRoute');
+  const platformProtectedRoute = requiredFunctionSymbol(
+    platformProtectedSource,
+    checker,
+    'PlatformProtectedRoute',
+  );
+  const layout = requiredFunctionSymbol(layoutSource, checker, 'Layout');
+  const authorisedProductRoute = requiredFunctionSymbol(
+    authorisedSource,
+    checker,
+    'AuthorisedProductRoute',
+  );
+  const productRouteSurface = requiredFunctionSymbol(
+    authorisedSource,
+    checker,
+    'ProductRouteSurface',
+  );
+  const productMaturitySurface = requiredFunctionSymbol(
+    productMaturitySource,
+    checker,
+    'ProductMaturitySurface',
+  );
+  const productMaturityPathError = requiredClassSymbol(
+    surfaceResolverSource,
+    checker,
+    'ProductMaturityPathError',
+  );
+  const resolveProductSurface = requiredFunctionSymbol(
+    surfaceResolverSource,
+    checker,
+    'resolveProductSurface',
+  );
+  const comingSoonWorkspace = requiredFunctionSymbol(
+    comingSoonSource,
+    checker,
+    'ComingSoonWorkspace',
+  );
+  const maturityBadge = requiredFunctionSymbol(
+    maturityBadgeSource,
+    checker,
+    'MaturityBadge',
+  );
+
+  const authorisedModuleSymbol = checker.getSymbolAtLocation(authorisedSource);
+  const authorisedExports = authorisedModuleSymbol
+    ? checker.getExportsOfModule(authorisedModuleSymbol)
+    : [];
+  const expectedAuthorisedExports = new Set([
+    authorisedProductRoute.symbol,
+    productRouteSurface.symbol,
+  ]);
+  if (authorisedExports.length !== expectedAuthorisedExports.size
+    || authorisedExports.some((symbol) => !expectedAuthorisedExports.has(resolveAliasedSymbol(checker, symbol)))) {
+    throw new Error(canonicalRouteConventionError);
+  }
+
+  const appAuthorisedImports = exactNamedImportSymbols(
+    appSourceFile,
+    checker,
+    './components/productMaturity/AuthorisedProductRoute',
+    ['AuthorisedProductRoute', 'ProductRouteSurface'],
+    new Map([
+      ['AuthorisedProductRoute', authorisedProductRoute.symbol],
+      ['ProductRouteSurface', productRouteSurface.symbol],
+    ]),
+  );
+  const authorisedMaturityImport = exactNamedImportSymbols(
+    authorisedSource,
+    checker,
+    './ProductMaturitySurface',
+    ['ProductMaturitySurface'],
+    new Map([['ProductMaturitySurface', productMaturitySurface.symbol]]),
+  );
+  const productMaturityResolverImports = exactNamedImportSymbols(
+    productMaturitySource,
+    checker,
+    '../../productMaturity/surfaces',
+    ['ProductMaturityPathError', 'resolveProductSurface'],
+    new Map([
+      ['ProductMaturityPathError', productMaturityPathError.symbol],
+      ['resolveProductSurface', resolveProductSurface.symbol],
+    ]),
+  );
+  const productMaturityComingSoonImport = exactNamedImportSymbols(
+    productMaturitySource,
+    checker,
+    './ComingSoonWorkspace',
+    ['ComingSoonWorkspace'],
+    new Map([['ComingSoonWorkspace', comingSoonWorkspace.symbol]]),
+  );
+  const productMaturityBadgeImport = exactNamedImportSymbols(
+    productMaturitySource,
+    checker,
+    './MaturityBadge',
+    ['MaturityBadge'],
+    new Map([['MaturityBadge', maturityBadge.symbol]]),
+  );
+
+  return {
+    checker,
+    sourceFiles: { authorised: authorisedSource, productMaturity: productMaturitySource },
+    canonical: {
+      AuthorisedProductRoute: authorisedProductRoute,
+      ProductRouteSurface: productRouteSurface,
+      ProductMaturitySurface: productMaturitySurface,
+    },
+    app: {
+      ProtectedRoute: exactDefaultImportSymbol(
+        appSourceFile,
+        checker,
+        './components/ProtectedRoute',
+        'ProtectedRoute',
+        protectedRoute.symbol,
+      ),
+      PlatformProtectedRoute: exactDefaultImportSymbol(
+        appSourceFile,
+        checker,
+        './components/PlatformProtectedRoute',
+        'PlatformProtectedRoute',
+        platformProtectedRoute.symbol,
+      ),
+      Layout: exactDefaultImportSymbol(
+        appSourceFile,
+        checker,
+        './components/Layout',
+        'Layout',
+        layout.symbol,
+      ),
+      AuthorisedProductRoute: appAuthorisedImports.get('AuthorisedProductRoute'),
+      ProductRouteSurface: appAuthorisedImports.get('ProductRouteSurface'),
+    },
+    authorised: {
+      ProtectedRoute: exactDefaultImportSymbol(
+        authorisedSource,
+        checker,
+        '../ProtectedRoute',
+        'ProtectedRoute',
+        protectedRoute.symbol,
+      ),
+      ProductRouteSurface: productRouteSurface.symbol,
+      ProductMaturitySurface: authorisedMaturityImport.get('ProductMaturitySurface'),
+    },
+    productMaturity: {
+      declaration: productMaturitySurface.declaration,
+      ProductMaturityPathError: productMaturityResolverImports.get('ProductMaturityPathError'),
+      resolveProductSurface: productMaturityResolverImports.get('resolveProductSurface'),
+      ComingSoonWorkspace: productMaturityComingSoonImport.get('ComingSoonWorkspace'),
+      MaturityBadge: productMaturityBadgeImport.get('MaturityBadge'),
+    },
+  };
+}
+
 const authLifecycleRouteComponents = new Map([
   ['/login', 'Login'],
   ['/auth/callback', 'AuthCallback'],
@@ -183,9 +442,11 @@ function unwrapTransparentExpression(expression) {
   return unwrapped;
 }
 
-function jsxTagIdentifier(element, expectedName) {
+function jsxTagIdentifier(element, expectedName, checker, expectedSymbol) {
   const opening = ts.isJsxElement(element) ? element.openingElement : element;
-  return ts.isIdentifier(opening.tagName) && opening.tagName.text === expectedName;
+  return ts.isIdentifier(opening.tagName)
+    && opening.tagName.text === expectedName
+    && (!expectedSymbol || checker?.getSymbolAtLocation(opening.tagName) === expectedSymbol);
 }
 
 function significantJsxChildren(element) {
@@ -196,16 +457,16 @@ function significantJsxChildren(element) {
   ));
 }
 
-function isExactJsxComponent(element, componentName) {
+function isExactJsxComponent(element, componentName, checker, expectedSymbol) {
   const opening = ts.isJsxElement(element) ? element.openingElement : element;
-  return jsxTagIdentifier(element, componentName)
+  return jsxTagIdentifier(element, componentName, checker, expectedSymbol)
     && opening.attributes.properties.length === 0
     && (!ts.isJsxElement(element) || significantJsxChildren(element).length === 0);
 }
 
-function isExactJsxWrapper(element, componentName, childPredicate) {
+function isExactJsxWrapper(element, componentName, childPredicate, checker, expectedSymbol) {
   if (!ts.isJsxElement(element)
-    || !jsxTagIdentifier(element, componentName)
+    || !jsxTagIdentifier(element, componentName, checker, expectedSymbol)
     || element.openingElement.attributes.properties.length !== 0) return false;
   const children = significantJsxChildren(element);
   return children.length === 1 && childPredicate(children[0]);
@@ -241,7 +502,8 @@ function hasExactExpressionAttribute(element, sourceFile, name, expressionText) 
   ));
 }
 
-function assertProductRouteHelperComposition(sourceFile) {
+function assertProductRouteHelperComposition(sourceFile, routeSymbols) {
+  const { checker } = routeSymbols;
   const declarations = [];
   const visit = (node) => {
     if (ts.isVariableDeclaration(node)
@@ -258,7 +520,12 @@ function assertProductRouteHelperComposition(sourceFile) {
     : null;
   if (!body
     || !ts.isJsxElement(body)
-    || !jsxTagIdentifier(body, 'AuthorisedProductRoute')) {
+    || !jsxTagIdentifier(
+      body,
+      'AuthorisedProductRoute',
+      checker,
+      routeSymbols.app.AuthorisedProductRoute,
+    )) {
     throw new Error('App productRoute helper must use the approved AuthorisedProductRoute composition.');
   }
 
@@ -271,6 +538,9 @@ function assertProductRouteHelperComposition(sourceFile) {
     || !isChildrenJsxExpression(children[0])) {
     throw new Error('App productRoute helper must use the approved AuthorisedProductRoute composition.');
   }
+  const productRouteSymbol = checker.getSymbolAtLocation(declaration.name);
+  if (!productRouteSymbol) throw new Error(canonicalRouteConventionError);
+  return productRouteSymbol;
 }
 
 function directFunctionReturnExpression(declaration) {
@@ -282,10 +552,9 @@ function directFunctionReturnExpression(declaration) {
     : null;
 }
 
-function assertCanonicalAuthorisedProductRouteComposition(program) {
-  const sourceFile = program.getSourceFiles().find((candidate) => (
-    candidate.fileName.endsWith('/components/productMaturity/AuthorisedProductRoute.tsx')
-  ));
+function assertCanonicalAuthorisedProductRouteComposition(routeSymbols) {
+  const { checker } = routeSymbols;
+  const sourceFile = routeSymbols.sourceFiles.authorised;
   const functions = new Map((sourceFile?.statements ?? [])
     .filter((statement) => ts.isFunctionDeclaration(statement) && statement.name)
     .map((statement) => [statement.name.text, statement]));
@@ -297,7 +566,12 @@ function assertCanonicalAuthorisedProductRouteComposition(program) {
     : [];
   const validProductSurface = sourceFile
     && ts.isJsxElement(productSurface)
-    && jsxTagIdentifier(productSurface, 'ProductMaturitySurface')
+    && jsxTagIdentifier(
+      productSurface,
+      'ProductMaturitySurface',
+      checker,
+      routeSymbols.authorised.ProductMaturitySurface,
+    )
     && productSurface.openingElement.attributes.properties.length === 2
     && hasExactExpressionAttribute(productSurface, sourceFile, 'pathname', 'location.pathname')
     && hasExactExpressionAttribute(productSurface, sourceFile, 'search', 'location.search')
@@ -311,12 +585,22 @@ function assertCanonicalAuthorisedProductRouteComposition(program) {
   const nestedChildren = ts.isJsxElement(surfaceChild) ? significantJsxChildren(surfaceChild) : [];
   const validAuthorisedRoute = sourceFile
     && ts.isJsxElement(authorisedRoute)
-    && jsxTagIdentifier(authorisedRoute, 'ProtectedRoute')
+    && jsxTagIdentifier(
+      authorisedRoute,
+      'ProtectedRoute',
+      checker,
+      routeSymbols.authorised.ProtectedRoute,
+    )
     && authorisedRoute.openingElement.attributes.properties.length === 2
     && hasExactExpressionAttribute(authorisedRoute, sourceFile, 'allowedRoles', 'allowedRoles')
     && hasExactExpressionAttribute(authorisedRoute, sourceFile, 'requiredEntitlement', 'requiredEntitlement')
     && ts.isJsxElement(surfaceChild)
-    && jsxTagIdentifier(surfaceChild, 'ProductRouteSurface')
+    && jsxTagIdentifier(
+      surfaceChild,
+      'ProductRouteSurface',
+      checker,
+      routeSymbols.authorised.ProductRouteSurface,
+    )
     && surfaceChild.openingElement.attributes.properties.length === 0
     && nestedChildren.length === 1
     && isChildrenJsxExpression(nestedChildren[0]);
@@ -326,7 +610,63 @@ function assertCanonicalAuthorisedProductRouteComposition(program) {
   }
 }
 
-function discoverReactRouterPaths(sourceFile, checker, approvedRoutePaths) {
+function assertCanonicalProductMaturitySurfaceComposition(routeSymbols) {
+  const { checker } = routeSymbols;
+  const declaration = routeSymbols.productMaturity.declaration;
+  if (!declaration.body) throw new Error(canonicalRouteConventionError);
+  const counts = {
+    resolveProductSurface: 0,
+    ProductMaturityPathError: 0,
+    ComingSoonWorkspace: 0,
+    MaturityBadge: 0,
+  };
+
+  const visit = (node) => {
+    if (ts.isCallExpression(node)) {
+      const callee = unwrapTransparentExpression(node.expression);
+      if (ts.isIdentifier(callee) && callee.text === 'resolveProductSurface') {
+        if (checker.getSymbolAtLocation(callee) !== routeSymbols.productMaturity.resolveProductSurface
+          || node.arguments.length !== 2
+          || node.arguments[0].getText(routeSymbols.sourceFiles.productMaturity) !== 'pathname'
+          || node.arguments[1].getText(routeSymbols.sourceFiles.productMaturity) !== 'search') {
+          throw new Error(canonicalRouteConventionError);
+        }
+        counts.resolveProductSurface += 1;
+      }
+    }
+    if (ts.isBinaryExpression(node)
+      && node.operatorToken.kind === ts.SyntaxKind.InstanceOfKeyword
+      && ts.isIdentifier(node.right)
+      && node.right.text === 'ProductMaturityPathError') {
+      if (checker.getSymbolAtLocation(node.right) !== routeSymbols.productMaturity.ProductMaturityPathError) {
+        throw new Error(canonicalRouteConventionError);
+      }
+      counts.ProductMaturityPathError += 1;
+    }
+    if (ts.isJsxOpeningElement(node) || ts.isJsxSelfClosingElement(node)) {
+      if (ts.isIdentifier(node.tagName) && node.tagName.text === 'ComingSoonWorkspace') {
+        if (checker.getSymbolAtLocation(node.tagName) !== routeSymbols.productMaturity.ComingSoonWorkspace) {
+          throw new Error(canonicalRouteConventionError);
+        }
+        counts.ComingSoonWorkspace += 1;
+      }
+      if (ts.isIdentifier(node.tagName) && node.tagName.text === 'MaturityBadge') {
+        if (checker.getSymbolAtLocation(node.tagName) !== routeSymbols.productMaturity.MaturityBadge) {
+          throw new Error(canonicalRouteConventionError);
+        }
+        counts.MaturityBadge += 1;
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(declaration.body);
+
+  if (Object.values(counts).some((count) => count !== 1)) {
+    throw new Error(canonicalRouteConventionError);
+  }
+}
+
+function discoverReactRouterPaths(sourceFile, checker, approvedRoutePaths, routeSymbols) {
   const directRouteImportSymbols = new Set();
   const namespaceImportSymbols = new Set();
 
@@ -465,7 +805,11 @@ function discoverReactRouterPaths(sourceFile, checker, approvedRoutePaths) {
           surface,
           'ProductRouteSurface',
           (shell) => isExactJsxComponent(shell, 'PlatformShell'),
+          checker,
+          routeSymbols.app.ProductRouteSurface,
         ),
+        checker,
+        routeSymbols.app.PlatformProtectedRoute,
       );
       if (!validPlatformLayout || descendantPaths.some((path) => path !== '/platform')) {
         throw new Error('Platform structural route requires the approved platform guard-before-maturity composition.');
@@ -480,8 +824,15 @@ function discoverReactRouterPaths(sourceFile, checker, approvedRoutePaths) {
       (providers) => isExactJsxWrapper(
         providers,
         'WorkflowProviders',
-        (shell) => isExactJsxComponent(shell, 'Layout'),
+        (shell) => isExactJsxComponent(
+          shell,
+          'Layout',
+          checker,
+          routeSymbols.app.Layout,
+        ),
       ),
+      checker,
+      routeSymbols.app.ProtectedRoute,
     );
     if (!validOrganisationLayout) {
       throw new Error('Organisation structural route requires the approved organisation structural route composition.');
@@ -505,7 +856,7 @@ function discoverReactRouterPaths(sourceFile, checker, approvedRoutePaths) {
     return null;
   };
 
-  assertProductRouteHelperComposition(sourceFile);
+  const productRouteSymbol = assertProductRouteHelperComposition(sourceFile, routeSymbols);
   routeRecords.forEach(({ path: routePath, opening }) => {
     if (!approvedRoutePaths.has(routePath)) return;
     const expression = routeElementExpression(
@@ -528,6 +879,8 @@ function discoverReactRouterPaths(sourceFile, checker, approvedRoutePaths) {
         expression,
         'ProductRouteSurface',
         (child) => isExactJsxComponent(child, publicComponent),
+        checker,
+        routeSymbols.app.ProductRouteSurface,
       );
       if (!validPublicSurface) {
         throw new Error(`App route ${routePath} requires its approved public ProductRouteSurface composition.`);
@@ -543,10 +896,17 @@ function discoverReactRouterPaths(sourceFile, checker, approvedRoutePaths) {
     }
 
     const unwrapped = unwrapTransparentExpression(expression);
+    if (ts.isCallExpression(unwrapped)
+      && ts.isIdentifier(unwrapped.expression)
+      && unwrapped.expression.text === 'productRoute'
+      && checker.getSymbolAtLocation(unwrapped.expression) !== productRouteSymbol) {
+      throw new Error(canonicalRouteConventionError);
+    }
     const validProductRoute = kind === 'organisation'
       && ts.isCallExpression(unwrapped)
       && ts.isIdentifier(unwrapped.expression)
       && unwrapped.expression.text === 'productRoute'
+      && checker.getSymbolAtLocation(unwrapped.expression) === productRouteSymbol
       && (unwrapped.arguments.length === 1 || unwrapped.arguments.length === 2)
       && (ts.isJsxElement(unwrapped.arguments[0]) || ts.isJsxSelfClosingElement(unwrapped.arguments[0]));
     if (!validProductRoute) {
@@ -1555,14 +1915,17 @@ async function verifyProductMaturityRegistry(root) {
   const querySurfaces = parseSurfaceEntries(querySurfaceBlock, 'Query-driven product surface manifest', 'routePattern');
   assertExactRegistryEntries(querySurfaces, registry, 'Query-driven product surface manifest');
   assertWorkflowBoundaryReferences(root, productionSourcePaths, registry, productionProgram);
-  assertCanonicalAuthorisedProductRouteComposition(productionProgram);
 
   const appSourceFile = productionProgram.getSourceFile(appPath);
   if (!appSourceFile) throw new Error('App route source is missing from the TypeScript Program.');
+  const routeSymbols = assertCanonicalRouteSymbolConventions(productionProgram, appSourceFile);
+  assertCanonicalAuthorisedProductRouteComposition(routeSymbols);
+  assertCanonicalProductMaturitySurfaceComposition(routeSymbols);
   const appRoutePaths = discoverReactRouterPaths(
     appSourceFile,
     productionProgram.getTypeChecker(),
     new Set(reachableRoutes.map(({ path: routePath }) => routePath)),
+    routeSymbols,
   );
   assertExactRoutePathMultiset(appRoutePaths, reachableRoutes);
 

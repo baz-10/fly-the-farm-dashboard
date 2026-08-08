@@ -291,6 +291,139 @@ describe('product maturity CI boundary', () => {
     ), (fixtureRoot) => expectVerifierFailure('guard before ProductRouteSurface', fixtureRoot));
   });
 
+  test.each([
+    ['ProtectedRoute', (fixtureRoot: string) => {
+      writeFileSync(
+        fixturePath(fixtureRoot, 'src/components/ProtectedRouteFixtureNoop.tsx'),
+        "import React from 'react';\nexport default function ProtectedRoute({ children }: { children: React.ReactNode }) { return <>{children}</>; }\n",
+        'utf8',
+      );
+      replaceFixtureSource(
+        fixtureRoot,
+        'src/App.tsx',
+        "import ProtectedRoute from './components/ProtectedRoute';",
+        "import ProtectedRoute from './components/ProtectedRouteFixtureNoop';",
+      );
+    }],
+    ['PlatformProtectedRoute', (fixtureRoot: string) => {
+      writeFileSync(
+        fixturePath(fixtureRoot, 'src/components/PlatformProtectedRouteFixtureNoop.tsx'),
+        "import React from 'react';\nexport default function PlatformProtectedRoute({ children }: { children: React.ReactNode }) { return <>{children}</>; }\n",
+        'utf8',
+      );
+      replaceFixtureSource(
+        fixtureRoot,
+        'src/App.tsx',
+        "import PlatformProtectedRoute from './components/PlatformProtectedRoute';",
+        "import PlatformProtectedRoute from './components/PlatformProtectedRouteFixtureNoop';",
+      );
+    }],
+    ['Layout', (fixtureRoot: string) => {
+      writeFileSync(
+        fixturePath(fixtureRoot, 'src/components/LayoutFixtureNoop.tsx'),
+        "import React from 'react';\nexport default function Layout() { return null; }\n",
+        'utf8',
+      );
+      replaceFixtureSource(
+        fixtureRoot,
+        'src/App.tsx',
+        "import Layout from './components/Layout';",
+        "import Layout from './components/LayoutFixtureNoop';",
+      );
+    }],
+    ['ProductRouteSurface and AuthorisedProductRoute', (fixtureRoot: string) => {
+      writeFileSync(
+        fixturePath(fixtureRoot, 'src/components/productMaturity/AuthorisedProductRouteFixtureNoop.tsx'),
+        "import React from 'react';\nexport function ProductRouteSurface({ children }: { children: React.ReactNode }) { return <>{children}</>; }\nexport function AuthorisedProductRoute({ children }: { children: React.ReactNode }) { return <>{children}</>; }\n",
+        'utf8',
+      );
+      replaceFixtureSource(
+        fixtureRoot,
+        'src/App.tsx',
+        "from './components/productMaturity/AuthorisedProductRoute';",
+        "from './components/productMaturity/AuthorisedProductRouteFixtureNoop';",
+      );
+    }],
+    ['aliased route-surface import', (fixtureRoot: string) => {
+      replaceFixtureSource(
+        fixtureRoot,
+        'src/App.tsx',
+        "import { AuthorisedProductRoute, ProductRouteSurface } from './components/productMaturity/AuthorisedProductRoute';",
+        "import { AuthorisedProductRoute as CanonicalAuthorisedProductRoute, ProductRouteSurface as CanonicalProductRouteSurface } from './components/productMaturity/AuthorisedProductRoute';",
+      );
+      const filePath = fixturePath(fixtureRoot, 'src/App.tsx');
+      const source = readFileSync(filePath, 'utf8')
+        .replaceAll('<AuthorisedProductRoute', '<CanonicalAuthorisedProductRoute')
+        .replaceAll('</AuthorisedProductRoute>', '</CanonicalAuthorisedProductRoute>')
+        .replaceAll('<ProductRouteSurface', '<CanonicalProductRouteSurface')
+        .replaceAll('</ProductRouteSurface>', '</CanonicalProductRouteSurface>');
+      writeFileSync(filePath, source, 'utf8');
+    }],
+    ['route-surface barrel import', (fixtureRoot: string) => {
+      writeFileSync(
+        fixturePath(fixtureRoot, 'src/components/productMaturity/RouteSurfaceFixtureBarrel.ts'),
+        "export { AuthorisedProductRoute, ProductRouteSurface } from './AuthorisedProductRoute';\n",
+        'utf8',
+      );
+      replaceFixtureSource(
+        fixtureRoot,
+        'src/App.tsx',
+        "from './components/productMaturity/AuthorisedProductRoute';",
+        "from './components/productMaturity/RouteSurfaceFixtureBarrel';",
+      );
+    }],
+    ['productRoute helper call', (fixtureRoot: string) => replaceFixtureSource(
+      fixtureRoot,
+      'src/App.tsx',
+      '          <Route path="/quotes" element={productRoute(<QuoteList />, { allowedRoles: [\'admin\', \'contractor\'] })} />',
+      '          {[1].map((productRoute) => <Route path="/quotes" element={productRoute(<QuoteList />, { allowedRoles: [\'admin\', \'contractor\'] })} />)}',
+    )],
+    ['ProductMaturitySurface dependency', (fixtureRoot: string) => {
+      writeFileSync(
+        fixturePath(fixtureRoot, 'src/components/productMaturity/ProductMaturitySurfaceFixtureNoop.tsx'),
+        "import React from 'react';\nexport function ProductMaturitySurface({ children }: { children: React.ReactNode }) { return <>{children}</>; }\n",
+        'utf8',
+      );
+      replaceFixtureSource(
+        fixtureRoot,
+        'src/components/productMaturity/AuthorisedProductRoute.tsx',
+        "import { ProductMaturitySurface } from './ProductMaturitySurface';",
+        "import { ProductMaturitySurface } from './ProductMaturitySurfaceFixtureNoop';",
+      );
+    }],
+    ['ProductMaturitySurface resolver dependency', (fixtureRoot: string) => {
+      writeFileSync(
+        fixturePath(fixtureRoot, 'src/productMaturity/surfacesFixtureNoop.ts'),
+        "export class ProductMaturityPathError extends Error {}\nexport function resolveProductSurface() { return null; }\n",
+        'utf8',
+      );
+      replaceFixtureSource(
+        fixtureRoot,
+        'src/components/productMaturity/ProductMaturitySurface.tsx',
+        "from '../../productMaturity/surfaces';",
+        "from '../../productMaturity/surfacesFixtureNoop';",
+      );
+    }],
+    ['ProductMaturitySurface implementation', (fixtureRoot: string) => {
+      const filePath = fixturePath(
+        fixtureRoot,
+        'src/components/productMaturity/ProductMaturitySurface.tsx',
+      );
+      const source = readFileSync(filePath, 'utf8');
+      const modified = source.replace(
+        /export function ProductMaturitySurface[\s\S]*\n}\n$/,
+        "export function ProductMaturitySurface({ children }: ProductMaturitySurfaceProps) { return <>{children}</>; }\n",
+      );
+      if (modified === source) throw new Error('Fixture mutation did not replace ProductMaturitySurface.');
+      writeFileSync(filePath, modified, 'utf8');
+    }],
+  ])('rejects a non-canonical %s route symbol', (_label, mutateFixture) => {
+    withTemporaryFixture(
+      mutateFixture,
+      (fixtureRoot) => expectVerifierFailure('canonical route import/symbol convention', fixtureRoot),
+    );
+  });
+
   test('accepts a pathless layout route whose Route child is inside nested JSX fragments', () => {
     withTemporaryFixture((fixtureRoot) => replaceFixtureSource(
       fixtureRoot,
