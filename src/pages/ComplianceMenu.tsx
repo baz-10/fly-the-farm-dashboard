@@ -4,9 +4,9 @@ import {
   Typography,
   Box,
   Card,
+  CardActionArea,
   CardContent,
   Grid,
-  Button,
   useTheme,
   alpha,
 } from '@mui/material';
@@ -114,9 +114,7 @@ export default function ComplianceMenu() {
   const theme = useTheme();
 
   const handleAreaClick = (area: ComplianceArea) => {
-    if (getMaturityEntry(area.moduleCode).maturity !== 'COMING_SOON') {
-      navigate(area.route);
-    }
+    navigate(area.route);
   };
 
   const getPriorityColor = (priority: string) => {
@@ -170,18 +168,20 @@ export default function ComplianceMenu() {
                   height: '100%',
                   border: `2px solid ${isActive ? theme.palette.primary.main : alpha(theme.palette.primary.main, 0.1)}`,
                   borderRadius: '16px',
-                  cursor: isComingSoon ? 'default' : 'pointer',
                   transition: 'all 0.3s ease',
-                  opacity: isComingSoon ? 0.6 : 1,
-                  '&:hover': !isComingSoon ? {
+                  '&:hover': {
                     transform: 'translateY(-4px)',
                     boxShadow: `0 8px 32px ${alpha(theme.palette.primary.main, 0.15)}`,
                     borderColor: theme.palette.primary.main,
-                  } : {},
+                  },
                   bgcolor: isActive ? alpha(theme.palette.primary.main, 0.02) : 'background.paper',
                 }}
-                onClick={() => handleAreaClick(area)}
               >
+                <CardActionArea
+                  aria-label={area.title}
+                  onClick={() => handleAreaClick(area)}
+                  sx={{ height: '100%', alignItems: 'stretch' }}
+                >
                 <CardContent sx={{ p: 3, height: '100%', display: 'flex', flexDirection: 'column' }}>
                   {/* Header */}
                   <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 2, mb: 2 }}>
@@ -218,7 +218,7 @@ export default function ComplianceMenu() {
                         >
                           {priorityInfo.label}
                         </Box>
-                        <MaturityBadge entry={maturityEntry} showComingSoon />
+                        <MaturityBadge entry={maturityEntry} showComingSoon interactive={false} />
                       </Box>
                     </Box>
                   </Box>
@@ -236,39 +236,25 @@ export default function ComplianceMenu() {
                     {area.description}
                   </Typography>
 
-                  {/* Action Button */}
-                  {!isComingSoon && (
-                    <Button
-                      variant={isActive ? 'contained' : 'outlined'}
-                      endIcon={<ArrowForwardIcon />}
-                      sx={{
-                        borderRadius: '10px',
-                        fontWeight: 700,
-                        py: 1,
-                        alignSelf: 'flex-start',
-                      }}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleAreaClick(area);
-                      }}
-                    >
-                      {isActive ? 'Currently Viewing' : 'Access Compliance Area'}
-                    </Button>
-                  )}
-
-                  {isComingSoon && (
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, alignSelf: 'flex-start' }}>
                     <Typography
                       variant="caption"
                       sx={{
-                        color: 'text.disabled',
-                        fontStyle: 'italic',
-                        alignSelf: 'flex-start',
+                        color: isComingSoon ? 'text.secondary' : 'primary.main',
+                        fontStyle: isComingSoon ? 'italic' : 'normal',
+                        fontWeight: 700,
                       }}
                     >
-                      Available in a future release
+                      {isComingSoon
+                        ? 'Available in a future release'
+                        : isActive
+                          ? 'Currently Viewing'
+                          : 'Access Compliance Area'}
                     </Typography>
-                  )}
+                    <ArrowForwardIcon fontSize="small" color={isComingSoon ? 'disabled' : 'primary'} />
+                  </Box>
                 </CardContent>
+                </CardActionArea>
               </Card>
             </Grid>
           );

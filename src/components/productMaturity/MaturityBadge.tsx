@@ -2,7 +2,17 @@ import React from 'react';
 import { Chip, Tooltip } from '@mui/material';
 import { ProductMaturityEntry } from '../../productMaturity/types';
 
-const BETA_TOOLTIP = 'This feature is available during Private Commercial Beta and is still being refined.';
+export const BETA_AVAILABILITY_EXPLANATION =
+  'This feature is available during Private Commercial Beta and is still being refined.';
+
+export const COMING_SOON_AVAILABILITY_EXPLANATION =
+  'This feature will be available in a future release.';
+
+export const maturityAvailabilityExplanation = (entry: ProductMaturityEntry): string | null => {
+  if (entry.maturity === 'BETA') return BETA_AVAILABILITY_EXPLANATION;
+  if (entry.maturity === 'COMING_SOON') return COMING_SOON_AVAILABILITY_EXPLANATION;
+  return null;
+};
 
 interface MaturityBadgeProps {
   entry: ProductMaturityEntry;
@@ -35,7 +45,7 @@ export function MaturityBadge({ entry, showComingSoon = false, interactive }: Ma
   );
 
   return entry.maturity === 'BETA' ? (
-    <Tooltip title={BETA_TOOLTIP} enterTouchDelay={0} disableFocusListener={!isInteractive}>
+    <Tooltip title={BETA_AVAILABILITY_EXPLANATION} enterTouchDelay={0} disableFocusListener={!isInteractive}>
       {chip}
     </Tooltip>
   ) : chip;

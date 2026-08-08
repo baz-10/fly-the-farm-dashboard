@@ -1,6 +1,8 @@
 import React from 'react';
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import Layout from '../Layout';
+
+const betaExplanation = 'This feature is available during Private Commercial Beta and is still being refined.';
 
 jest.mock('@mui/material', () => ({
   ...jest.requireActual('@mui/material'),
@@ -92,6 +94,9 @@ test('shows navigation maturity beside Chemical without cluttering Operationally
   openNavigation('/database');
   const database = screen.getByRole('button', { name: 'Chemical Database' });
   expect(within(database).getByLabelText('Beta')).toBeVisible();
+  expect(database).toHaveAccessibleName('Chemical Database');
+  expect(database).toHaveAccessibleDescription(betaExplanation);
+  expect(within(database).getByLabelText('Beta')).not.toHaveAttribute('tabindex', '0');
 });
 
 test('keeps Coming Soon destinations discoverable and uses the same maturity state in mobile navigation', () => {
@@ -100,18 +105,37 @@ test('keeps Coming Soon destinations discoverable and uses the same maturity sta
 
   const intelligence = screen.getByRole('button', { name: 'Operational Intelligence' });
   expect(intelligence).toBeVisible();
+  expect(intelligence).toHaveAccessibleName('Operational Intelligence');
+  expect(intelligence).toHaveAccessibleDescription('This feature will be available in a future release.');
   expect(within(intelligence).getByLabelText('Coming Soon')).toBeVisible();
+  expect(within(intelligence).getByLabelText('Coming Soon')).not.toHaveAttribute('tabindex', '0');
   expect(screen.queryByText(/Legacy/i)).not.toBeInTheDocument();
 });
 
-test('collapsed desktop tooltips describe maturity once and retain standalone Home', async () => {
+test('collapsed desktop keyboard focus provides the full approved Beta explanation once', async () => {
   mockIsDesktop = true;
   renderLayout('/database');
 
   const database = screen.getByRole('button', { name: 'Chemical Database' });
-  fireEvent.mouseOver(database);
+  expect(database).toHaveAccessibleName('Chemical Database');
+  expect(database).toHaveAccessibleDescription(betaExplanation);
+  act(() => database.focus());
 
-  expect(await screen.findByRole('tooltip')).toHaveTextContent('Chemical Database — Beta');
+  expect(await screen.findByRole('tooltip')).toHaveTextContent(`Chemical Database — ${betaExplanation}`);
+  expect(screen.getAllByRole('tooltip')).toHaveLength(1);
+  expect(within(database).queryByLabelText('Beta')).not.toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'Home' })).toBeVisible();
   expect(screen.queryByRole('button', { name: 'HOME navigation group' })).not.toBeInTheDocument();
+});
+
+test('expanded desktop navigation groups expose maturity through the item description without adding a nested tab stop', () => {
+  mockIsDesktop = true;
+  renderLayout('/database');
+
+  const intelligenceGroup = screen.getByRole('button', { name: 'INTELLIGENCE navigation group' });
+  expect(intelligenceGroup).toHaveAttribute('aria-expanded', 'true');
+  const database = screen.getByRole('button', { name: 'Chemical Database' });
+  expect(database).toHaveAccessibleName('Chemical Database');
+  expect(database).toHaveAccessibleDescription(betaExplanation);
+  expect(within(database).queryByRole('button')).not.toBeInTheDocument();
 });
