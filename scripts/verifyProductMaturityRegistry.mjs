@@ -4,7 +4,10 @@ import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
 
 const defaultRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const customerUiSourceRoots = ['src/pages', 'src/components', 'src/navigation'];
+const excludedCustomerUiDirectories = new Set([
+  '__tests__', 'ai', 'data', 'productMaturity', 'security', 'services', 'theme', 'utils',
+]);
+const excludedCustomerUiFiles = new Set(['react-app-env.d.ts', 'reportWebVitals.ts', 'setupTests.ts']);
 
 const validMaturities = new Set([
   'COMMERCIALLY_READY',
@@ -70,7 +73,7 @@ function validateRegistry(registry) {
     if (keys.has(key)) throw new Error(`${label} duplicates a module/workflow key.`);
     keys.add(key);
 
-    if (!isNonEmptyString(entry.customerName) || /\bLegacy\b/i.test(entry.customerName)) {
+    if (!isNonEmptyString(entry.customerName) || /legacy/i.test(entry.customerName)) {
       throw new Error(`${label} has an invalid customer-facing name.`);
     }
     if (!validMaturities.has(entry.maturity)) throw new Error(`${label} has an invalid maturity.`);
@@ -154,16 +157,19 @@ async function listCustomerUiSourcePaths(root) {
     await Promise.all(entries.map(async (entry) => {
       const relativePath = `${relativeDirectory}/${entry.name}`;
       if (entry.isDirectory()) {
-        if (entry.name !== '__tests__') await visit(relativePath);
+        if (!excludedCustomerUiDirectories.has(entry.name)) await visit(relativePath);
         return;
       }
-      if (entry.isFile() && entry.name.endsWith('.tsx') && !entry.name.endsWith('.test.tsx')) {
+      if (entry.isFile()
+        && /\.tsx?$/.test(entry.name)
+        && !/\.test\.tsx?$/.test(entry.name)
+        && !excludedCustomerUiFiles.has(entry.name)) {
         sourcePaths.push(relativePath);
       }
     }));
   }
 
-  await Promise.all(customerUiSourceRoots.map(visit));
+  await visit('src');
   return sourcePaths.sort();
 }
 
@@ -193,11 +199,17 @@ async function validateRepositoryReference(root, realRoot, reference, label) {
   }
 }
 
-async function validateEvidenceReferences(root, registry) {
+async function validateRegistryReferences(root, registry) {
   const realRoot = await realpath(root);
   let evidenceReferenceCount = 0;
 
   for (const [entryIndex, entry] of registry.entries()) {
+    await validateRepositoryReference(
+      root,
+      realRoot,
+      entry.changelogReference,
+      `entry ${entryIndex + 1} changelog reference`,
+    );
     for (const evidenceReference of entry.evidence) {
       await validateRepositoryReference(root, realRoot, evidenceReference, `entry ${entryIndex + 1} evidence reference`);
       evidenceReferenceCount += 1;
@@ -295,11 +307,12 @@ function customerVisibleStrings(sourceFile, checker) {
 
   function visit(node) {
     if (ts.isJsxText(node)) visibleStrings.push(node.text);
-    if (ts.isJsxAttribute(node)
-      && node.initializer
-      && visibleJsxAttributes.has(node.name.text.toLowerCase())) {
-      const expression = ts.isJsxExpression(node.initializer) ? node.initializer.expression : node.initializer;
-      visibleStrings.push(...resolveVisibleStrings(expression, checker));
+    if (ts.isJsxAttribute(node)) {
+      if (node.initializer && visibleJsxAttributes.has(node.name.text.toLowerCase())) {
+        const expression = ts.isJsxExpression(node.initializer) ? node.initializer.expression : node.initializer;
+        visibleStrings.push(...resolveVisibleStrings(expression, checker));
+      }
+      return;
     }
     if (ts.isJsxExpression(node) && node.expression) {
       visibleStrings.push(...resolveVisibleStrings(node.expression, checker));
@@ -342,7 +355,7 @@ function findCustomerVisibleLegacyViolations(root, customerUiSourcePaths) {
 
   return customerUiSourcePaths.filter((sourcePath, index) => {
     const sourceFile = program.getSourceFile(rootNames[index]);
-    return sourceFile && customerVisibleStrings(sourceFile, checker).some((value) => /\bLegacy\b/i.test(value));
+    return sourceFile && customerVisibleStrings(sourceFile, checker).some((value) => /legacy/i.test(value));
   });
 }
 
@@ -359,7 +372,7 @@ async function verifyProductMaturityRegistry(root) {
   const registry = JSON.parse(registrySource);
 
   validateRegistry(registry);
-  const evidenceReferenceCount = await validateEvidenceReferences(root, registry);
+  const evidenceReferenceCount = await validateRegistryReferences(root, registry);
 
   const manifestBlock = routeManifestSource.match(
     /export const REACHABLE_PRODUCT_ROUTES\s*=\s*\[([\s\S]*?)\]\s*as const/,

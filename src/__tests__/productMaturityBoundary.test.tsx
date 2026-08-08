@@ -8,6 +8,8 @@ const fixturePaths = [
   'src/productMaturity/product-maturity-registry.json',
   'src/productMaturity/surfaces.ts',
   'src/App.tsx',
+  'src/brand',
+  'src/contexts',
   'src/pages',
   'src/components',
   'src/navigation',
@@ -18,6 +20,9 @@ const registryFixture = JSON.parse(readFileSync(
 ));
 const evidenceFixturePaths = Array.from(new Set<string>(
   registryFixture.flatMap((entry: { evidence: string[] }) => entry.evidence),
+));
+const changelogFixturePaths = Array.from(new Set<string>(
+  registryFixture.map((entry: { changelogReference: string }) => entry.changelogReference),
 ));
 
 const runVerifier = (fixtureRoot?: string): SpawnSyncReturns<string> => spawnSync(process.execPath, [
@@ -59,7 +64,7 @@ const withTemporaryFixture = (
   const fixtureRoot = mkdtempSync(path.join(tmpdir(), 'product-maturity-registry-'));
 
   try {
-    [...fixturePaths, ...evidenceFixturePaths, ...additionalFixturePaths]
+    [...fixturePaths, ...evidenceFixturePaths, ...changelogFixturePaths, ...additionalFixturePaths]
       .forEach((relativePath) => copyFixtureSource(fixtureRoot, relativePath));
     mutate(fixtureRoot);
     assertion(fixtureRoot);
@@ -106,7 +111,7 @@ describe('product maturity CI boundary', () => {
     expect(result.status).toBe(0);
     expect(result.stderr).toBe('');
     expect(result.stdout).toContain('46 modules and 12 workflows classified');
-    expect(result.stdout).toContain('116 customer UI source files checked');
+    expect(result.stdout).toContain('143 customer UI source files checked');
     expect(result.stdout).toContain('64 evidence references checked');
     expect(result.stdout).toContain('0 customer-facing Legacy violations');
   });
@@ -181,6 +186,34 @@ describe('product maturity CI boundary', () => {
       'All Clients',
       'legacy Clients',
     ), (fixtureRoot) => expectVerifierFailure('Customer-facing Legacy violation', fixtureRoot));
+  });
+
+  test('rejects Legacy as a substring in visible customer copy', () => {
+    withTemporaryFixture((fixtureRoot) => replaceFixtureSource(
+      fixtureRoot,
+      'src/pages/ClientDetail.tsx',
+      'All Clients',
+      'LegacyReport Clients',
+    ), (fixtureRoot) => expectVerifierFailure('Customer-facing Legacy violation', fixtureRoot));
+  });
+
+  test('rejects customer-visible copy in the production brand surface', () => {
+    withTemporaryFixture((fixtureRoot) => {
+      const filePath = fixturePath(fixtureRoot, 'src/brand/PlatformBrand.tsx');
+      const source = readFileSync(filePath, 'utf8');
+      writeFileSync(filePath, `${source}\nexport const repairBrandFixture = <span>Legacy Brand</span>;\n`, 'utf8');
+    }, (fixtureRoot) => expectVerifierFailure('src/brand/PlatformBrand.tsx', fixtureRoot));
+  });
+
+  test.each([
+    ['src/App.tsx', 'Legacy App'],
+    ['src/contexts/AuthContext.tsx', 'Legacy Context'],
+  ])('rejects customer-rendered copy in %s', (relativePath, visibleCopy) => {
+    withTemporaryFixture((fixtureRoot) => {
+      const filePath = fixturePath(fixtureRoot, relativePath);
+      const source = readFileSync(filePath, 'utf8');
+      writeFileSync(filePath, `${source}\nexport const repairUiFixture = <span>${visibleCopy}</span>;\n`, 'utf8');
+    }, (fixtureRoot) => expectVerifierFailure(relativePath, fixtureRoot));
   });
 
   test('ignores comments and internal string literals that are not supplied to rendered UI', () => {
@@ -266,6 +299,36 @@ describe('product maturity CI boundary', () => {
           registry[0] = { ...registry[0], evidence: ['docs/evidence-link.md'] };
         });
       }, (fixtureRoot) => expectVerifierFailure('evidence reference resolves outside the repository', fixtureRoot));
+    } finally {
+      rmSync(outsideRoot, { recursive: true, force: true });
+    }
+  });
+
+  test('fails closed when a changelog reference does not exist', () => {
+    withTemporaryFixture((fixtureRoot) => updateFixtureRegistry(fixtureRoot, (registry) => {
+      registry[0] = { ...registry[0], changelogReference: 'docs/missing-changelog.md' };
+    }), (fixtureRoot) => expectVerifierFailure('changelog reference does not exist', fixtureRoot));
+  });
+
+  test('fails closed when a changelog reference leaves the repository root', () => {
+    withTemporaryFixture((fixtureRoot) => updateFixtureRegistry(fixtureRoot, (registry) => {
+      registry[0] = { ...registry[0], changelogReference: '../outside-changelog.md' };
+    }), (fixtureRoot) => expectVerifierFailure('changelog reference must be a repository-relative path', fixtureRoot));
+  });
+
+  test('fails closed when a changelog symlink resolves outside the repository root', () => {
+    const outsideRoot = mkdtempSync(path.join(tmpdir(), 'product-maturity-changelog-outside-'));
+    try {
+      const outsideChangelog = path.join(outsideRoot, 'changelog.md');
+      writeFileSync(outsideChangelog, '# External changelog\n', 'utf8');
+      withTemporaryFixture((fixtureRoot) => {
+        const linkPath = fixturePath(fixtureRoot, 'docs/changelog-link.md');
+        mkdirSync(path.dirname(linkPath), { recursive: true });
+        symlinkSync(outsideChangelog, linkPath);
+        updateFixtureRegistry(fixtureRoot, (registry) => {
+          registry[0] = { ...registry[0], changelogReference: 'docs/changelog-link.md' };
+        });
+      }, (fixtureRoot) => expectVerifierFailure('changelog reference resolves outside the repository', fixtureRoot));
     } finally {
       rmSync(outsideRoot, { recursive: true, force: true });
     }
