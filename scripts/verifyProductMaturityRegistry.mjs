@@ -157,14 +157,7 @@ function assertExactRegistryEntries(entries, registry, sourceName) {
   });
 }
 
-function assertWorkflowBoundaryReferences(root, customerUiSourcePaths, registry) {
-  const rootNames = customerUiSourcePaths.map((sourcePath) => resolve(root, sourcePath));
-  const program = ts.createProgram(rootNames, {
-    jsx: ts.JsxEmit.ReactJSX,
-    module: ts.ModuleKind.ESNext,
-    moduleResolution: ts.ModuleResolutionKind.NodeJs,
-    target: ts.ScriptTarget.ESNext,
-  });
+function assertWorkflowBoundaryReferences(root, productionSourcePaths, registry, program) {
   const checker = program.getTypeChecker();
   const registryKeys = new Set(registry.map((entry) => `${entry.moduleCode}::${entry.workflowCode ?? ''}`));
   const canonicalSource = program.getSourceFiles().find((sourceFile) => (
@@ -178,9 +171,10 @@ function assertWorkflowBoundaryReferences(root, customerUiSourcePaths, registry)
     : undefined;
   if (!canonicalSymbol) throw new Error('Canonical WorkflowMaturityBoundary declaration is missing.');
 
-  customerUiSourcePaths.forEach((sourcePath, index) => {
-    const sourceFile = program.getSourceFile(rootNames[index]);
+  productionSourcePaths.forEach((sourcePath) => {
+    const sourceFile = program.getSourceFile(resolve(root, sourcePath));
     if (!sourceFile) return;
+    if (sourceFile === canonicalSource) return;
     let directImportSymbol;
     const canonicalModuleSuffix = 'components/productMaturity/WorkflowMaturityBoundary';
     const resolvesToCanonical = (symbol) => {
@@ -189,6 +183,13 @@ function assertWorkflowBoundaryReferences(root, customerUiSourcePaths, registry)
       return Boolean(symbol.flags & ts.SymbolFlags.Alias)
         && checker.getAliasedSymbol(symbol) === canonicalSymbol;
     };
+
+    const moduleSymbol = checker.getSymbolAtLocation(sourceFile);
+    if (moduleSymbol && checker.getExportsOfModule(moduleSymbol).some((exportSymbol) => (
+      resolvesToCanonical(exportSymbol)
+    ))) {
+      throw new Error(`WorkflowMaturityBoundary in ${sourcePath} must not be exported or re-exported.`);
+    }
 
     sourceFile.statements.forEach((statement) => {
       if (ts.isImportDeclaration(statement) && ts.isStringLiteral(statement.moduleSpecifier)) {
@@ -229,9 +230,16 @@ function assertWorkflowBoundaryReferences(root, customerUiSourcePaths, registry)
       }
       if (ts.isJsxOpeningElement(node) || ts.isJsxSelfClosingElement(node)) {
         const tagText = node.tagName.getText(sourceFile);
-        const tagSymbol = ts.isIdentifier(node.tagName)
-          ? checker.getSymbolAtLocation(node.tagName)
-          : undefined;
+        const tagSymbolLocation = ts.isPropertyAccessExpression(node.tagName)
+          ? node.tagName.name
+          : node.tagName;
+        const tagSymbol = checker.getSymbolAtLocation(tagSymbolLocation);
+        if (resolvesToCanonical(tagSymbol)
+          && (!ts.isIdentifier(node.tagName)
+            || tagText !== 'WorkflowMaturityBoundary'
+            || tagSymbol !== directImportSymbol)) {
+          throw new Error(`WorkflowMaturityBoundary JSX tag in ${sourcePath} must use its exact direct identifier import.`);
+        }
         if (tagText === 'WorkflowMaturityBoundary' && tagSymbol !== directImportSymbol) {
           throw new Error(`WorkflowMaturityBoundary JSX tag in ${sourcePath} is shadowed or unrelated.`);
         }
@@ -262,8 +270,7 @@ function assertWorkflowBoundaryReferences(root, customerUiSourcePaths, registry)
           }
         }
       }
-      if (ts.isIdentifier(node) && directImportSymbol
-        && checker.getSymbolAtLocation(node) === directImportSymbol) {
+      if (ts.isIdentifier(node) && resolvesToCanonical(checker.getSymbolAtLocation(node))) {
         const isImportName = ts.isImportSpecifier(node.parent);
         const isJsxTag = (ts.isJsxOpeningElement(node.parent)
           || ts.isJsxSelfClosingElement(node.parent)
@@ -300,6 +307,26 @@ async function listCustomerUiSourcePaths(root) {
     }));
   }
 
+  await visit('src');
+  return sourcePaths.sort();
+}
+
+async function listProductionTypeScriptSourcePaths(root) {
+  const sourcePaths = [];
+  async function visit(relativeDirectory) {
+    const entries = await readdir(resolve(root, relativeDirectory), { withFileTypes: true });
+    await Promise.all(entries.map(async (entry) => {
+      const relativePath = `${relativeDirectory}/${entry.name}`;
+      if (entry.isDirectory()) {
+        if (entry.name !== '__tests__') await visit(relativePath);
+        return;
+      }
+      if (entry.isFile()
+        && /\.tsx?$/.test(entry.name)
+        && !/\.test\.tsx?$/.test(entry.name)
+        && entry.name !== 'setupTests.ts') sourcePaths.push(relativePath);
+    }));
+  }
   await visit('src');
   return sourcePaths.sort();
 }
@@ -540,19 +567,11 @@ function customerVisibleStrings(sourceFile, checker) {
   return visibleStrings;
 }
 
-function findCustomerVisibleLegacyViolations(root, customerUiSourcePaths) {
-  const rootNames = customerUiSourcePaths.map((sourcePath) => resolve(root, sourcePath));
-  const program = ts.createProgram(rootNames, {
-    allowJs: false,
-    jsx: ts.JsxEmit.ReactJSX,
-    module: ts.ModuleKind.ESNext,
-    moduleResolution: ts.ModuleResolutionKind.NodeJs,
-    target: ts.ScriptTarget.ESNext,
-  });
+function findCustomerVisibleLegacyViolations(root, customerUiSourcePaths, program) {
   const checker = program.getTypeChecker();
 
-  return customerUiSourcePaths.filter((sourcePath, index) => {
-    const sourceFile = program.getSourceFile(rootNames[index]);
+  return customerUiSourcePaths.filter((sourcePath) => {
+    const sourceFile = program.getSourceFile(resolve(root, sourcePath));
     return sourceFile && customerVisibleStrings(sourceFile, checker).some((value) => /legacy/i.test(value));
   });
 }
@@ -561,12 +580,23 @@ async function verifyProductMaturityRegistry(root) {
   const registryPath = resolve(root, 'src/productMaturity/product-maturity-registry.json');
   const routeManifestPath = resolve(root, 'src/productMaturity/surfaces.ts');
   const appPath = resolve(root, 'src/App.tsx');
-  const [registrySource, routeManifestSource, appSource, customerUiSourcePaths] = await Promise.all([
+  const [registrySource, routeManifestSource, appSource, customerUiSourcePaths, productionSourcePaths] = await Promise.all([
     readFile(registryPath, 'utf8'),
     readFile(routeManifestPath, 'utf8'),
     readFile(appPath, 'utf8'),
     listCustomerUiSourcePaths(root),
+    listProductionTypeScriptSourcePaths(root),
   ]);
+  const productionProgram = ts.createProgram(
+    productionSourcePaths.map((sourcePath) => resolve(root, sourcePath)),
+    {
+      allowJs: false,
+      jsx: ts.JsxEmit.ReactJSX,
+      module: ts.ModuleKind.ESNext,
+      moduleResolution: ts.ModuleResolutionKind.NodeJs,
+      target: ts.ScriptTarget.ESNext,
+    },
+  );
   const registry = JSON.parse(registrySource);
 
   validateRegistry(registry);
@@ -587,7 +617,7 @@ async function verifyProductMaturityRegistry(root) {
 
   const querySurfaces = parseSurfaceEntries(querySurfaceBlock, 'Query-driven product surface manifest', 'routePattern');
   assertExactRegistryEntries(querySurfaces, registry, 'Query-driven product surface manifest');
-  assertWorkflowBoundaryReferences(root, customerUiSourcePaths, registry);
+  assertWorkflowBoundaryReferences(root, productionSourcePaths, registry, productionProgram);
 
   const manifestPaths = new Set(reachableRoutes.map((route) => route.path));
   const appRoutePaths = Array.from(
@@ -600,7 +630,7 @@ async function verifyProductMaturityRegistry(root) {
     throw new Error(`Reachable route manifest is missing ${missingManifestRoutes.length} App route literal(s).`);
   }
 
-  const legacyViolations = findCustomerVisibleLegacyViolations(root, customerUiSourcePaths);
+  const legacyViolations = findCustomerVisibleLegacyViolations(root, customerUiSourcePaths, productionProgram);
   if (legacyViolations.length > 0) {
     throw new Error(`Customer-facing Legacy violation(s): ${legacyViolations.join(', ')}.`);
   }

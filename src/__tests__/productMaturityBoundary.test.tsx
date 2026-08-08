@@ -275,7 +275,39 @@ describe('product maturity CI boundary', () => {
         "import { WorkflowMaturityBoundary as Boundary } from '../components/productMaturity';",
         '',
       );
-    }, (fixtureRoot) => expectVerifierFailure('must not be re-exported', fixtureRoot));
+    }, (fixtureRoot) => expectVerifierFailure('exported or re-exported', fixtureRoot));
+  });
+
+  test('rejects an export-star barrel in an excluded non-UI directory', () => {
+    withTemporaryFixture((fixtureRoot) => {
+      const filePath = fixturePath(fixtureRoot, 'src/utils/boundaryBarrel.ts');
+      mkdirSync(path.dirname(filePath), { recursive: true });
+      writeFileSync(
+        filePath,
+        "export * from '../components/productMaturity/WorkflowMaturityBoundary';\n",
+        'utf8',
+      );
+    }, (fixtureRoot) => expectVerifierFailure('must not be exported or re-exported', fixtureRoot));
+  });
+
+  test('rejects namespace JSX use in an excluded non-UI directory', () => {
+    withTemporaryFixture((fixtureRoot) => {
+      const filePath = fixturePath(fixtureRoot, 'src/utils/boundaryNamespace.tsx');
+      mkdirSync(path.dirname(filePath), { recursive: true });
+      writeFileSync(filePath, "import * as Maturity from '../components/productMaturity/WorkflowMaturityBoundary';\nexport const BoundaryNamespace = <Maturity.WorkflowMaturityBoundary moduleCode=\"organisation-administration\" workflowCode=\"network-source-manager\">content</Maturity.WorkflowMaturityBoundary>;\n", 'utf8');
+    }, (fixtureRoot) => expectVerifierFailure('exact direct named import', fixtureRoot));
+  });
+
+  test('rejects a boundary wrapper in an excluded non-UI directory', () => {
+    withTemporaryFixture((fixtureRoot) => {
+      const filePath = fixturePath(fixtureRoot, 'src/services/boundaryWrapper.tsx');
+      mkdirSync(path.dirname(filePath), { recursive: true });
+      writeFileSync(filePath, "import React from 'react';\nimport { WorkflowMaturityBoundary } from '../components/productMaturity/WorkflowMaturityBoundary';\nexport const WrappedBoundary = React.memo(WorkflowMaturityBoundary);\n", 'utf8');
+    }, (fixtureRoot) => expectVerifierFailure('direct JSX tag', fixtureRoot));
+  });
+
+  test('accepts the exact direct canonical boundary convention', () => {
+    withTemporaryFixture(() => undefined, expectVerifierSuccess);
   });
 
   test('rejects a boundary hidden behind more than 32 alias hops', () => {
