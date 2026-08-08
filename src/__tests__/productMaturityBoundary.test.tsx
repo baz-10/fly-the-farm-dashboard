@@ -111,7 +111,7 @@ describe('product maturity CI boundary', () => {
     expect(result.status).toBe(0);
     expect(result.stderr).toBe('');
     expect(result.stdout).toContain('46 modules and 12 workflows classified');
-    expect(result.stdout).toContain('143 customer UI source files checked');
+    expect(result.stdout).toContain('148 customer UI source files checked');
     expect(result.stdout).toContain('64 evidence references checked');
     expect(result.stdout).toContain('0 customer-facing Legacy violations');
   });
@@ -203,6 +203,15 @@ describe('product maturity CI boundary', () => {
       const source = readFileSync(filePath, 'utf8');
       writeFileSync(filePath, `${source}\nexport const repairBrandFixture = <span>Legacy Brand</span>;\n`, 'utf8');
     }, (fixtureRoot) => expectVerifierFailure('src/brand/PlatformBrand.tsx', fixtureRoot));
+  });
+
+  test('rejects customer-visible copy in a product maturity component', () => {
+    withTemporaryFixture((fixtureRoot) => {
+      const relativePath = 'src/components/productMaturity/MaturityBadge.tsx';
+      const filePath = fixturePath(fixtureRoot, relativePath);
+      const source = readFileSync(filePath, 'utf8');
+      writeFileSync(filePath, `${source}\nexport const repairMaturityFixture = <span>LegacyReport maturity</span>;\n`, 'utf8');
+    }, (fixtureRoot) => expectVerifierFailure('src/components/productMaturity/MaturityBadge.tsx', fixtureRoot));
   });
 
   test.each([

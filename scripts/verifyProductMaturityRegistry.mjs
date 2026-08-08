@@ -4,8 +4,8 @@ import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
 
 const defaultRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const excludedCustomerUiDirectories = new Set([
-  '__tests__', 'ai', 'data', 'productMaturity', 'security', 'services', 'theme', 'utils',
+const excludedCustomerUiDirectoryPaths = new Set([
+  'src/ai', 'src/data', 'src/productMaturity', 'src/security', 'src/services', 'src/theme', 'src/utils',
 ]);
 const excludedCustomerUiFiles = new Set(['react-app-env.d.ts', 'reportWebVitals.ts', 'setupTests.ts']);
 
@@ -157,7 +157,9 @@ async function listCustomerUiSourcePaths(root) {
     await Promise.all(entries.map(async (entry) => {
       const relativePath = `${relativeDirectory}/${entry.name}`;
       if (entry.isDirectory()) {
-        if (!excludedCustomerUiDirectories.has(entry.name)) await visit(relativePath);
+        if (entry.name !== '__tests__' && !excludedCustomerUiDirectoryPaths.has(relativePath)) {
+          await visit(relativePath);
+        }
         return;
       }
       if (entry.isFile()
