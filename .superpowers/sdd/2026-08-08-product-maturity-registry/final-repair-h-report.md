@@ -8,7 +8,7 @@ Completed locally. No push or deployment was performed.
 
 - Wired `mission-workspace/reports` to the actual report workflow surfaces:
   - Mission readiness and PIC authorisation remain available in `MissionAuthorisation`; only Mission Pack generation and report status are constrained.
-  - Mission Summary and Mission Record retain their stage headings and explanatory context while only `ReportArtefactStatus` is constrained.
+  - In completed Mission closeout, one composition-level boundary wraps `MissionSummary` and `MissionRecord`; when constrained, one Mission Reports workspace replaces the combined subtree and neither child mounts.
 - Wired `operating-authority/authority-records` below the ReOC page heading and Back navigation. The extracted record-management body owns its API and hooks, so it does not mount when constrained.
 - Wired `controlled-checklists/administration` below the Checklists page heading and explanation. The extracted administration body and template API do not mount when constrained.
 - Wired `controlled-checklists/execution` around an extracted Mission checklist execution body. The containing Mission stage remains responsible for parent context, while checklist and Personnel APIs do not mount when constrained.
@@ -25,7 +25,7 @@ Completed locally. No push or deployment was performed.
 ## Governance correction
 
 - The first strict verifier run rejected component-relative imports that resolved correctly but did not use the repository's literal canonical path suffix.
-- The four mission components now use the exact direct `../../components/productMaturity/WorkflowMaturityBoundary` import convention; pages use the exact direct `../components/productMaturity/WorkflowMaturityBoundary` convention.
+- The Mission Authorisation and Mission Operational Closeout composition points use the exact direct `../../components/productMaturity/WorkflowMaturityBoundary` import convention; pages use the exact direct `../components/productMaturity/WorkflowMaturityBoundary` convention.
 
 ## Review corrections
 

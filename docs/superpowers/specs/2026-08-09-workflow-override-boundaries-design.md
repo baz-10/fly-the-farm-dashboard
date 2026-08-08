@@ -6,7 +6,7 @@ Connect the four inert workflow maturity overrides to the narrowest customer-vis
 
 ## Boundary placement
 
-- `mission-workspace/reports`: keep Mission readiness and authorisation controls outside the boundary. Gate Mission Pack generation/status together in `MissionAuthorisation`, and gate only `ReportArtefactStatus` in `MissionSummary` and `MissionRecord` so their explanatory stage context remains visible.
+- `mission-workspace/reports`: keep Mission readiness and authorisation controls outside the boundary. Gate Mission Pack generation/status together in `MissionAuthorisation`. In completed Mission closeout, one composition-level boundary wraps the combined `MissionSummary` and `MissionRecord` subtree, so neither child mounts when the workflow is Coming Soon.
 - `operating-authority/authority-records`: preserve ReOC back navigation and page heading. Gate an extracted authority-record management body containing its messages, add controls, editor, and register.
 - `controlled-checklists/administration`: preserve the Checklists heading and explanation. Gate an extracted administration body containing create/version/publish controls and template history.
 - `controlled-checklists/execution`: gate an extracted `MissionChecklists` execution body, leaving the containing Mission workspace stage visible.
@@ -19,7 +19,7 @@ Extracted child components own workflow hooks and API creation. When an override
 
 ## Presentation deduplication
 
-`WorkflowMaturityBoundary` always resolves and validates the exact workflow override and its parent module entry. When both entries have the same maturity, the parent surface already communicates that state, so the workflow boundary renders children directly without a second badge or workspace. When the states differ, the workflow boundary presents the override normally.
+`WorkflowMaturityBoundary` always resolves and validates the exact workflow override and its parent module entry. When the active parent surface is for the same module and both entries have the same maturity, the parent surface already communicates that state, so the workflow boundary renders children directly without a second badge or workspace. When the module or states differ, the workflow boundary presents the override normally.
 
 The completed-Mission report boundary belongs at the `MissionOperationalCloseout` composition point around the combined Mission Summary and Mission Record subtree. This produces one Coming Soon workspace with one valid heading ID and prevents both report-status children from mounting. `MissionAuthorisation` retains its separate single report boundary because Mission Pack generation is a distinct stage. Mission Summary and Mission Record do not own boundaries individually.
 
