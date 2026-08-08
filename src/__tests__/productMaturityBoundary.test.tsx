@@ -88,6 +88,26 @@ const updateFixtureRegistry = (fixtureRoot: string, update: (registry: any[]) =>
   writeFileSync(filePath, JSON.stringify(registry, null, 2), 'utf8');
 };
 
+const rewriteAdminBoundaryAlias = (
+  fixtureRoot: string,
+  replacementImport: string,
+  aliasDeclaration: string,
+  dynamic = false,
+): void => {
+  const filePath = fixturePath(fixtureRoot, 'src/pages/Admin.tsx');
+  let source = readFileSync(filePath, 'utf8')
+    .replaceAll('<WorkflowMaturityBoundary', '<Boundary')
+    .replaceAll('</WorkflowMaturityBoundary', '</Boundary')
+    .replace(
+      "import { WorkflowMaturityBoundary } from '../components/productMaturity/WorkflowMaturityBoundary';",
+      `${replacementImport}\n${aliasDeclaration}`,
+    );
+  if (dynamic) {
+    source = source.replace('workflowCode="network-source-manager"', 'workflowCode={dynamicWorkflow}');
+  }
+  writeFileSync(filePath, source, 'utf8');
+};
+
 const expectVerifierSuccess = (fixtureRoot: string): void => {
   const result = runVerifier(fixtureRoot);
   expect(result.error).toBeUndefined();
@@ -208,7 +228,65 @@ describe('product maturity CI boundary', () => {
           'import { WorkflowMaturityBoundary as Boundary }',
         );
       writeFileSync(filePath, `${source}\nconst Boundary = () => null;\n`, 'utf8');
-    }, (fixtureRoot) => expectVerifierFailure('rebound or shadowed', fixtureRoot));
+    }, (fixtureRoot) => expectVerifierFailure('unsupported alias or wrapper', fixtureRoot));
+  });
+
+  test.each([
+    [
+      'multi-hop alias',
+      "import { WorkflowMaturityBoundary as BoundaryBase } from '../components/productMaturity/WorkflowMaturityBoundary';",
+      'const BoundaryOne = BoundaryBase;\nconst Boundary = BoundaryOne;',
+    ],
+    [
+      'parenthesized type wrapper',
+      "import { WorkflowMaturityBoundary as BoundaryBase } from '../components/productMaturity/WorkflowMaturityBoundary';",
+      'const Boundary = (BoundaryBase as typeof BoundaryBase)!;',
+    ],
+    [
+      'memo wrapper',
+      "import { WorkflowMaturityBoundary as BoundaryBase } from '../components/productMaturity/WorkflowMaturityBoundary';",
+      'const Boundary = React.memo(BoundaryBase);',
+    ],
+    [
+      'namespace property assignment',
+      "import * as Maturity from '../components/productMaturity/WorkflowMaturityBoundary';",
+      'const Boundary = Maturity.WorkflowMaturityBoundary;',
+    ],
+  ])('resolves a %s to the canonical boundary and validates its props', (_label, replacementImport, declaration) => {
+    withTemporaryFixture((fixtureRoot) => rewriteAdminBoundaryAlias(
+      fixtureRoot, replacementImport, declaration,
+    ), expectVerifierSuccess);
+    withTemporaryFixture((fixtureRoot) => rewriteAdminBoundaryAlias(
+      fixtureRoot, replacementImport, declaration, true,
+    ), (fixtureRoot) => expectVerifierFailure('static string literal', fixtureRoot));
+  });
+
+  test('resolves a barrel re-export to the canonical boundary', () => {
+    withTemporaryFixture((fixtureRoot) => {
+      writeFileSync(
+        fixturePath(fixtureRoot, 'src/components/productMaturity/index.ts'),
+        "export { WorkflowMaturityBoundary } from './WorkflowMaturityBoundary';\n",
+        'utf8',
+      );
+      rewriteAdminBoundaryAlias(
+        fixtureRoot,
+        "import { WorkflowMaturityBoundary as Boundary } from '../components/productMaturity';",
+        '',
+      );
+    }, expectVerifierSuccess);
+    withTemporaryFixture((fixtureRoot) => {
+      writeFileSync(
+        fixturePath(fixtureRoot, 'src/components/productMaturity/index.ts'),
+        "export { WorkflowMaturityBoundary } from './WorkflowMaturityBoundary';\n",
+        'utf8',
+      );
+      rewriteAdminBoundaryAlias(
+        fixtureRoot,
+        "import { WorkflowMaturityBoundary as Boundary } from '../components/productMaturity';",
+        '',
+        true,
+      );
+    }, (fixtureRoot) => expectVerifierFailure('static string literal', fixtureRoot));
   });
 
   test('allows a Commercially Ready entry with no promotion blockers when Founder approval is present', () => {
