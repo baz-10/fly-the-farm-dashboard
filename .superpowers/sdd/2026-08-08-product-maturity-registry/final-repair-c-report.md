@@ -51,7 +51,7 @@ Real MemoryRouter mount-sentinel coverage now includes `/%71uotes`, `/%66inancia
 
 Fresh encoded-path follow-up verification:
 
-- Focused resolver/route/security suite: 4 suites and 52 tests passed.
-- Full test suite: 206 suites and 947 tests passed.
+- Focused resolver/route/security suite: 4 suites and 53 tests passed.
+- Full test suite: 206 suites and 948 tests passed.
 - Registry verifier: 46 modules and 12 workflows classified; 53 App routes, 116 customer UI source files, and 64 evidence references checked; 0 customer-facing Legacy violations.
 - Production build: exited 0 with existing repository lint and bundle-size warnings.
