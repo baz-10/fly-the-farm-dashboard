@@ -19,14 +19,17 @@ jest.mock('../../services/quoteStore', () => ({
 
 test('keeps Quote Detail controls available while constraining only PDF export', () => {
   const entry = (PRODUCT_MATURITY_REGISTRY as ProductMaturityEntry[]).find(item => item.moduleCode === 'quotes' && item.workflowCode === null)!;
+  const workflowEntry = (PRODUCT_MATURITY_REGISTRY as ProductMaturityEntry[]).find(item => item.moduleCode === 'quotes' && item.workflowCode === 'pdf-export')!;
   const previous = entry.maturity;
+  const previousWorkflow = workflowEntry.maturity;
   entry.maturity = 'OPERATIONALLY_READY';
+  workflowEntry.maturity = 'COMING_SOON';
   try {
     render(<ProductMaturitySurface pathname="/quotes/quote-1" search=""><QuoteDetail /></ProductMaturitySurface>);
 
     expect(screen.getByRole('heading', { name: 'Q-001', level: 4 })).toBeVisible();
     expect(screen.getByRole('button', { name: 'Delete' })).toBeEnabled();
     expect(screen.getByRole('heading', { name: 'Quote PDF Export' })).toBeVisible();
-    expect(screen.getByRole('button', { name: 'Print' })).toBeEnabled();
-  } finally { entry.maturity = previous; }
+    expect(screen.queryByRole('button', { name: 'Print' })).not.toBeInTheDocument();
+  } finally { entry.maturity = previous; workflowEntry.maturity = previousWorkflow; }
 });

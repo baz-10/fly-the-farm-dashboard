@@ -124,11 +124,10 @@ export default function QuoteDetail() {
                 <MenuItem key={s} value={s} sx={{ textTransform: 'capitalize' }}>{s}</MenuItem>
               ))}
             </TextField>
-            <Button variant="outlined" startIcon={<PrintIcon />} onClick={handlePrint}>
-              Print
-            </Button>
             <WorkflowMaturityBoundary moduleCode="quotes" workflowCode="pdf-export">
-              <Button variant="outlined" disabled>Export PDF</Button>
+              <Button variant="outlined" startIcon={<PrintIcon />} onClick={handlePrint}>
+                Print
+              </Button>
             </WorkflowMaturityBoundary>
             {quote.status === 'accepted' && quote.fieldIds?.[0] && (
               <Button

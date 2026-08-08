@@ -24,8 +24,14 @@ jest.mock('../../utils/actualReportPdf', () => ({ generateActualReport: jest.fn(
 
 test('keeps Actual record controls and operational PDF available while narrow financial workflows are constrained', () => {
   const entry = (PRODUCT_MATURITY_REGISTRY as ProductMaturityEntry[]).find(item => item.moduleCode === 'financials' && item.workflowCode === null)!;
+  const marginEntry = (PRODUCT_MATURITY_REGISTRY as ProductMaturityEntry[]).find(item => item.moduleCode === 'financials' && item.workflowCode === 'margin-analysis')!;
+  const invoiceEntry = (PRODUCT_MATURITY_REGISTRY as ProductMaturityEntry[]).find(item => item.moduleCode === 'financials' && item.workflowCode === 'invoice-export')!;
   const previous = entry.maturity;
+  const previousMargin = marginEntry.maturity;
+  const previousInvoice = invoiceEntry.maturity;
   entry.maturity = 'OPERATIONALLY_READY';
+  marginEntry.maturity = 'COMING_SOON';
+  invoiceEntry.maturity = 'COMING_SOON';
   try {
     render(<ProductMaturitySurface pathname="/financials/actual-1" search=""><ActualDetail /></ProductMaturitySurface>);
 
@@ -35,5 +41,5 @@ test('keeps Actual record controls and operational PDF available while narrow fi
     expect(screen.getByRole('heading', { name: 'Margin Analysis' })).toBeVisible();
     expect(screen.getByRole('heading', { name: 'Invoice Export' })).toBeVisible();
     expect(screen.queryByText('50.0%')).not.toBeInTheDocument();
-  } finally { entry.maturity = previous; }
+  } finally { entry.maturity = previous; marginEntry.maturity = previousMargin; invoiceEntry.maturity = previousInvoice; }
 });

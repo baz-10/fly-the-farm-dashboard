@@ -13,8 +13,14 @@ jest.mock('../../services/financialsStore', () => ({ saveActual: jest.fn() }));
 
 test('keeps Actual creation available while margin analysis and invoice export remain constrained', () => {
   const entry = (PRODUCT_MATURITY_REGISTRY as ProductMaturityEntry[]).find(item => item.moduleCode === 'financials' && item.workflowCode === null)!;
+  const marginEntry = (PRODUCT_MATURITY_REGISTRY as ProductMaturityEntry[]).find(item => item.moduleCode === 'financials' && item.workflowCode === 'margin-analysis')!;
+  const invoiceEntry = (PRODUCT_MATURITY_REGISTRY as ProductMaturityEntry[]).find(item => item.moduleCode === 'financials' && item.workflowCode === 'invoice-export')!;
   const previous = entry.maturity;
+  const previousMargin = marginEntry.maturity;
+  const previousInvoice = invoiceEntry.maturity;
   entry.maturity = 'OPERATIONALLY_READY';
+  marginEntry.maturity = 'COMING_SOON';
+  invoiceEntry.maturity = 'COMING_SOON';
   try {
     render(<ProductMaturitySurface pathname="/financials/new" search=""><ActualCreate /></ProductMaturitySurface>);
 
@@ -22,5 +28,5 @@ test('keeps Actual creation available while margin analysis and invoice export r
     expect(screen.getByRole('heading', { name: 'Margin Analysis' })).toBeVisible();
     expect(screen.getByRole('heading', { name: 'Invoice Export' })).toBeVisible();
     expect(screen.queryByText('P&L Summary')).not.toBeInTheDocument();
-  } finally { entry.maturity = previous; }
+  } finally { entry.maturity = previous; marginEntry.maturity = previousMargin; invoiceEntry.maturity = previousInvoice; }
 });
