@@ -1405,6 +1405,126 @@ describe('product maturity CI boundary', () => {
     }, (fixtureRoot) => expectVerifierFailure('Customer-facing Legacy violation', fixtureRoot));
   });
 
+  test('rejects Legacy assembled through the exact nested helper factory', () => {
+    withTemporaryFixture((fixtureRoot) => {
+      const filePath = fixturePath(fixtureRoot, 'src/pages/ClientDetail.tsx');
+      const source = readFileSync(filePath, 'utf8');
+      writeFileSync(
+        filePath,
+        `${source}\nconst repairMakeHelper = () => () => 'LeXacy';\nexport const repairFactoryFixture = <span>{repairMakeHelper()().replace('X', 'g')}</span>;\n`,
+        'utf8',
+      );
+    }, (fixtureRoot) => expectVerifierFailure('Customer-facing Legacy violation', fixtureRoot));
+  });
+
+  test('rejects Legacy assembled through a nested static argument helper factory', () => {
+    withTemporaryFixture((fixtureRoot) => {
+      const filePath = fixturePath(fixtureRoot, 'src/pages/ClientDetail.tsx');
+      const source = readFileSync(filePath, 'utf8');
+      writeFileSync(
+        filePath,
+        `${source}\nconst repairMakeNestedHelper = (value: string) => () => () => value;\nexport const repairNestedFactoryFixture = <span>{repairMakeNestedHelper('LeXacy')()().replace('X', 'g')}</span>;\n`,
+        'utf8',
+      );
+    }, (fixtureRoot) => expectVerifierFailure('Customer-facing Legacy violation', fixtureRoot));
+  });
+
+  test('allows a clean nested static argument helper factory', () => {
+    withTemporaryFixture((fixtureRoot) => {
+      const filePath = fixturePath(fixtureRoot, 'src/pages/ClientDetail.tsx');
+      const source = readFileSync(filePath, 'utf8');
+      writeFileSync(
+        filePath,
+        `${source}\nconst repairMakeSafeHelper = (value: string) => () => value;\nexport const repairSafeFactoryFixture = <span>{repairMakeSafeHelper('Current')().replace('x', 'x')}</span>;\n`,
+        'utf8',
+      );
+    }, expectVerifierSuccess);
+  });
+
+  test('fails closed on an unresolved helper factory', () => {
+    withTemporaryFixture((fixtureRoot) => {
+      const filePath = fixturePath(fixtureRoot, 'src/pages/ClientDetail.tsx');
+      const source = readFileSync(filePath, 'utf8');
+      writeFileSync(
+        filePath,
+        `${source}\ndeclare const repairUnresolvedFactory: () => () => string;\nexport const repairUnresolvedFactoryFixture = <span>{repairUnresolvedFactory()().replace('x', 'x')}</span>;\n`,
+        'utf8',
+      );
+    }, (fixtureRoot) => expectVerifierFailure(
+      'rendered string transform could not be resolved safely',
+      fixtureRoot,
+    ));
+  });
+
+  test('fails closed on a dynamic helper factory argument', () => {
+    withTemporaryFixture((fixtureRoot) => {
+      const filePath = fixturePath(fixtureRoot, 'src/pages/ClientDetail.tsx');
+      const source = readFileSync(filePath, 'utf8');
+      writeFileSync(
+        filePath,
+        `${source}\ndeclare const repairDynamicFactoryValue: string;\nconst repairMakeDynamicHelper = (value: string) => () => value;\nexport const repairDynamicFactoryFixture = <span>{repairMakeDynamicHelper(repairDynamicFactoryValue)().replace('x', 'x')}</span>;\n`,
+        'utf8',
+      );
+    }, (fixtureRoot) => expectVerifierFailure(
+      'rendered string transform could not be resolved safely',
+      fixtureRoot,
+    ));
+  });
+
+  test('fails closed on a cyclic helper factory', () => {
+    withTemporaryFixture((fixtureRoot) => {
+      const filePath = fixturePath(fixtureRoot, 'src/pages/ClientDetail.tsx');
+      const source = readFileSync(filePath, 'utf8');
+      writeFileSync(
+        filePath,
+        `${source}\ntype RepairCyclicFactory = () => () => string;\nconst repairCyclicFactory: RepairCyclicFactory = () => repairCyclicFactory();\nexport const repairCyclicFactoryFixture = <span>{repairCyclicFactory()().replace('x', 'x')}</span>;\n`,
+        'utf8',
+      );
+    }, (fixtureRoot) => expectVerifierFailure(
+      'rendered string transform could not be resolved safely',
+      fixtureRoot,
+    ));
+  });
+
+  test('allows clean path-local conditional helper factory siblings', () => {
+    withTemporaryFixture((fixtureRoot) => {
+      const filePath = fixturePath(fixtureRoot, 'src/pages/ClientDetail.tsx');
+      const source = readFileSync(filePath, 'utf8');
+      writeFileSync(
+        filePath,
+        `${source}\ndeclare const repairChooseSafeFactorySibling: boolean;\nconst repairSafeFactoryLeaf = () => 'Current';\nconst repairSafeFactorySiblingB = () => repairSafeFactoryLeaf;\nconst repairSafeFactorySiblingA = () => repairSafeFactorySiblingB();\nconst repairSafeFactorySibling = repairChooseSafeFactorySibling ? repairSafeFactorySiblingA : repairSafeFactorySiblingB;\nexport const repairSafeFactorySiblingFixture = <span>{repairSafeFactorySibling()().replace('x', 'x')}</span>;\n`,
+        'utf8',
+      );
+    }, expectVerifierSuccess);
+  });
+
+  test('rejects Legacy through path-local conditional helper factory siblings', () => {
+    withTemporaryFixture((fixtureRoot) => {
+      const filePath = fixturePath(fixtureRoot, 'src/pages/ClientDetail.tsx');
+      const source = readFileSync(filePath, 'utf8');
+      writeFileSync(
+        filePath,
+        `${source}\ndeclare const repairChooseLegacyFactorySibling: boolean;\nconst repairLegacyFactoryLeaf = () => 'LeXacy';\nconst repairLegacyFactorySiblingB = () => repairLegacyFactoryLeaf;\nconst repairLegacyFactorySiblingA = () => repairLegacyFactorySiblingB();\nconst repairLegacyFactorySibling = repairChooseLegacyFactorySibling ? repairLegacyFactorySiblingA : repairLegacyFactorySiblingB;\nexport const repairLegacyFactorySiblingFixture = <span>{repairLegacyFactorySibling()().replace('X', 'g')}</span>;\n`,
+        'utf8',
+      );
+    }, (fixtureRoot) => expectVerifierFailure('Customer-facing Legacy violation', fixtureRoot));
+  });
+
+  test('fails closed on unresolved path-local conditional helper factory siblings', () => {
+    withTemporaryFixture((fixtureRoot) => {
+      const filePath = fixturePath(fixtureRoot, 'src/pages/ClientDetail.tsx');
+      const source = readFileSync(filePath, 'utf8');
+      writeFileSync(
+        filePath,
+        `${source}\ndeclare const repairChooseUnresolvedFactorySibling: boolean;\ndeclare const repairUnresolvedFactoryLeaf: () => string;\nconst repairUnresolvedFactorySiblingB = () => repairUnresolvedFactoryLeaf;\nconst repairUnresolvedFactorySiblingA = () => repairUnresolvedFactorySiblingB();\nconst repairUnresolvedFactorySibling = repairChooseUnresolvedFactorySibling ? repairUnresolvedFactorySiblingA : repairUnresolvedFactorySiblingB;\nexport const repairUnresolvedFactorySiblingFixture = <span>{repairUnresolvedFactorySibling()().replace('x', 'x')}</span>;\n`,
+        'utf8',
+      );
+    }, (fixtureRoot) => expectVerifierFailure(
+      'rendered string transform could not be resolved safely',
+      fixtureRoot,
+    ));
+  });
+
   test('rejects Legacy assembled through a local helper-function alias', () => {
     withTemporaryFixture((fixtureRoot) => {
       const filePath = fixturePath(fixtureRoot, 'src/pages/ClientDetail.tsx');

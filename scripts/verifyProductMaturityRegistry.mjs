@@ -2511,6 +2511,9 @@ function resolveVisibleStrings(
           result.unresolvedAlias = true;
         }
       });
+      if (result.functions.length > visibleStringCandidateBudget) {
+        throw new Error(`visible-string candidate budget exceeded (${visibleStringCandidateBudget}).`);
+      }
       return result;
     };
 
@@ -2518,7 +2521,13 @@ function resolveVisibleStrings(
       functions: [], symbols, recognizedAlias: true, unresolvedAlias: true,
     });
 
-    function resolveHelperArraySymbol(candidateSymbol, arrayIndex, helperSymbolPath, helperDepth) {
+    function resolveHelperArraySymbol(
+      candidateSymbol,
+      arrayIndex,
+      helperSymbolPath,
+      helperDepth,
+      helperBindings,
+    ) {
       if (helperDepth > visibleStringDepthBudget) {
         throw new Error(`visible-string resolution depth exceeded (${visibleStringDepthBudget}).`);
       }
@@ -2544,6 +2553,7 @@ function resolveVisibleStrings(
               arrayIndex,
               new Set(nestedHelperSymbolPath),
               helperDepth + 1,
+              helperBindings,
             ));
           }
           return;
@@ -2554,6 +2564,7 @@ function resolveVisibleStrings(
             arrayIndex,
             new Set(nestedHelperSymbolPath),
             helperDepth + 1,
+            helperBindings,
           ));
         }
       });
@@ -2562,7 +2573,13 @@ function resolveVisibleStrings(
       return result;
     }
 
-    function resolveHelperArrayElement(candidate, arrayIndex, helperSymbolPath, helperDepth) {
+    function resolveHelperArrayElement(
+      candidate,
+      arrayIndex,
+      helperSymbolPath,
+      helperDepth,
+      helperBindings,
+    ) {
       if (helperDepth > visibleStringDepthBudget) {
         throw new Error(`visible-string resolution depth exceeded (${visibleStringDepthBudget}).`);
       }
@@ -2579,6 +2596,7 @@ function resolveVisibleStrings(
           unwrapped.elements[arrayIndex],
           new Set(helperSymbolPath),
           helperDepth + 1,
+          helperBindings,
         );
       }
       if (ts.isConditionalExpression(unwrapped)) {
@@ -2588,12 +2606,14 @@ function resolveVisibleStrings(
             arrayIndex,
             new Set(helperSymbolPath),
             helperDepth + 1,
+            helperBindings,
           ),
           resolveHelperArrayElement(
             unwrapped.whenFalse,
             arrayIndex,
             new Set(helperSymbolPath),
             helperDepth + 1,
+            helperBindings,
           ),
         ]);
       }
@@ -2603,12 +2623,18 @@ function resolveVisibleStrings(
           arrayIndex,
           new Set(helperSymbolPath),
           helperDepth + 1,
+          helperBindings,
         );
       }
       return unresolvedHelperAlias();
     }
 
-    function resolveHelperAliasExpression(candidate, helperSymbolPath, helperDepth) {
+    function resolveHelperAliasExpression(
+      candidate,
+      helperSymbolPath,
+      helperDepth,
+      helperBindings = new Map(),
+    ) {
       if (helperDepth > visibleStringDepthBudget) {
         throw new Error(`visible-string resolution depth exceeded (${visibleStringDepthBudget}).`);
       }
@@ -2616,7 +2642,14 @@ function resolveVisibleStrings(
       recordVisibleStringNodeVisit(state);
       if (ts.isFunctionLike(unwrapped) && unwrapped.body) {
         return {
-          functions: [unwrapped], symbols: new Set(), recognizedAlias: true, unresolvedAlias: false,
+          functions: [{
+            declaration: unwrapped,
+            bindings: new Map(helperBindings),
+            symbols: new Set(helperSymbolPath),
+          }],
+          symbols: new Set(),
+          recognizedAlias: true,
+          unresolvedAlias: false,
         };
       }
       if (ts.isIdentifier(unwrapped) || ts.isPropertyAccessExpression(unwrapped)) {
@@ -2624,6 +2657,7 @@ function resolveVisibleStrings(
           helperAliasSymbol(unwrapped),
           new Set(helperSymbolPath),
           helperDepth + 1,
+          helperBindings,
         );
       }
       if (ts.isConditionalExpression(unwrapped)) {
@@ -2632,11 +2666,13 @@ function resolveVisibleStrings(
             unwrapped.whenTrue,
             new Set(helperSymbolPath),
             helperDepth + 1,
+            helperBindings,
           ),
           resolveHelperAliasExpression(
             unwrapped.whenFalse,
             new Set(helperSymbolPath),
             helperDepth + 1,
+            helperBindings,
           ),
         ]);
       }
@@ -2657,14 +2693,78 @@ function resolveVisibleStrings(
           arrayIndex,
           new Set(helperSymbolPath),
           helperDepth + 1,
+          helperBindings,
         );
+      }
+      if (ts.isCallExpression(unwrapped)) {
+        const calleeResolution = resolveHelperAliasExpression(
+          unwrapped.expression,
+          new Set(helperSymbolPath),
+          helperDepth + 1,
+          helperBindings,
+        );
+        const factorySymbols = new Set(calleeResolution.symbols);
+        if (calleeResolution.unresolvedAlias || calleeResolution.functions.length === 0) {
+          return unresolvedHelperAlias(factorySymbols);
+        }
+
+        const argumentValueSets = unwrapped.arguments.map((argument) => resolveStaticTransformValues(
+          argument,
+          new Set(helperSymbolPath),
+          helperDepth + 1,
+          helperBindings,
+        ));
+        if (argumentValueSets.some((values) => !values)) {
+          return unresolvedHelperAlias(factorySymbols);
+        }
+
+        const returnResolutions = [];
+        for (const factoryDescriptor of calleeResolution.functions) {
+          const factoryFunction = factoryDescriptor.declaration;
+          if (factoryFunction.parameters.length !== unwrapped.arguments.length
+            || factoryFunction.parameters.some((parameter) => (
+              !ts.isIdentifier(parameter.name)
+                || parameter.dotDotDotToken
+                || parameter.initializer
+            ))) {
+            return unresolvedHelperAlias(factorySymbols);
+          }
+
+          const factoryBindings = new Map(factoryDescriptor.bindings);
+          for (const [index, parameter] of factoryFunction.parameters.entries()) {
+            const parameterSymbol = checker.getSymbolAtLocation(parameter.name);
+            if (parameterSymbol) recordVisibleStringSymbolVisit(state);
+            if (!parameterSymbol) return unresolvedHelperAlias(factorySymbols);
+            factoryBindings.set(parameterSymbol, argumentValueSets[index]);
+          }
+
+          const returnExpressions = functionReturnExpressions(factoryFunction, state);
+          if (returnExpressions.length === 0) return unresolvedHelperAlias(factorySymbols);
+          returnExpressions.forEach((returnExpression) => {
+            returnResolutions.push(resolveHelperAliasExpression(
+              returnExpression,
+              new Set(factoryDescriptor.symbols),
+              helperDepth + 1,
+              factoryBindings,
+            ));
+          });
+        }
+
+        const result = mergeHelperResolutions(returnResolutions);
+        factorySymbols.forEach((symbol) => result.symbols.add(symbol));
+        return result;
       }
       return {
         functions: [], symbols: new Set(), recognizedAlias: false, unresolvedAlias: false,
       };
     }
 
-    function resolveHelperFunctionDeclarations(candidateSymbol, helperSymbolPath, helperDepth) {
+    function resolveHelperFunctionDeclarations(
+      candidateSymbol,
+      helperSymbolPath,
+      helperDepth,
+      helperBindings,
+    ) {
       if (helperDepth > visibleStringDepthBudget) {
         throw new Error(`visible-string resolution depth exceeded (${visibleStringDepthBudget}).`);
       }
@@ -2695,7 +2795,11 @@ function resolveVisibleStrings(
         recordVisibleStringNodeVisit(state);
         if (ts.isFunctionLike(declaration) && declaration.body) {
           result.recognizedAlias = true;
-          result.functions.push(declaration);
+          result.functions.push({
+            declaration,
+            bindings: new Map(helperBindings),
+            symbols: new Set(nestedHelperSymbolPath),
+          });
           return;
         }
         if (ts.isVariableDeclaration(declaration) || ts.isPropertyAssignment(declaration)) {
@@ -2705,6 +2809,7 @@ function resolveVisibleStrings(
             declaration.initializer,
             new Set(nestedHelperSymbolPath),
             helperDepth + 1,
+            helperBindings,
           );
           nestedResult.symbols.forEach((symbol) => result.symbols.add(symbol));
           result.functions.push(...nestedResult.functions);
@@ -2719,6 +2824,7 @@ function resolveVisibleStrings(
             checker.getShorthandAssignmentValueSymbol(declaration),
             new Set(nestedHelperSymbolPath),
             helperDepth + 1,
+            helperBindings,
           );
           nestedResult.symbols.forEach((symbol) => result.symbols.add(symbol));
           result.functions.push(...nestedResult.functions);
@@ -2757,6 +2863,7 @@ function resolveVisibleStrings(
             aliasTargetSymbol,
             nestedHelperSymbolPath,
             helperDepth + 1,
+            helperBindings,
           );
           nestedResult.symbols.forEach((symbol) => result.symbols.add(symbol));
           result.functions.push(...nestedResult.functions);
@@ -2766,6 +2873,10 @@ function resolveVisibleStrings(
           return;
         }
       });
+
+      if (result.functions.length > visibleStringCandidateBudget) {
+        throw new Error(`visible-string candidate budget exceeded (${visibleStringCandidateBudget}).`);
+      }
 
       return result;
     }
@@ -2938,6 +3049,7 @@ function resolveVisibleStrings(
           nestedCallee,
           new Set(transformSymbolPath),
           transformDepth + 1,
+          transformBindings,
         );
         if (helperResolution.unresolvedAlias) {
           throw new Error('visible-string rendered string transform could not be resolved safely.');
@@ -2955,9 +3067,9 @@ function resolveVisibleStrings(
           throw new Error('visible-string rendered string transform could not be resolved safely.');
         }
 
-        const nestedHelperSymbolPath = new Set(transformSymbolPath);
-        helperResolution.symbols.forEach((symbol) => nestedHelperSymbolPath.add(symbol));
-        const helperReturnValueSets = helperFunctions.flatMap((helperFunction) => {
+        const helperReturnValueSets = helperFunctions.flatMap((helperDescriptor) => {
+          const helperFunction = helperDescriptor.declaration;
+          const nestedHelperSymbolPath = new Set(helperDescriptor.symbols);
           if (helperFunction.parameters.length !== unwrapped.arguments.length
             || helperFunction.parameters.some((parameter) => (
               !ts.isIdentifier(parameter.name)
@@ -2966,7 +3078,7 @@ function resolveVisibleStrings(
             ))) {
             throw new Error('visible-string rendered string transform could not be resolved safely.');
           }
-          const helperBindings = new Map(transformBindings);
+          const helperBindings = new Map(helperDescriptor.bindings);
           helperFunction.parameters.forEach((parameter, index) => {
             const parameterSymbol = checker.getSymbolAtLocation(parameter.name);
             if (parameterSymbol) recordVisibleStringSymbolVisit(state);

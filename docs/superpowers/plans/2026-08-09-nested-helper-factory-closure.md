@@ -48,18 +48,18 @@ Use a factory whose returned function closes over an identifier parameter:
 const repairMakeBoundHelper = (value: string) => () => value;
 ```
 
-Assert `repairMakeBoundHelper('LeXacy')().replace('X', 'g')` detects Legacy, while `repairMakeBoundHelper('Current')().replace('x', 'x')` passes.
+Assert `repairMakeBoundHelper('LeXacy')().replace('X', 'g')` detects Legacy, while `repairMakeBoundHelper('Current')().replace('x', 'x')` passes. Also assert `((value: string) => () => () => value)('LeXacy')()().replace('X', 'g')` detects Legacy so more than one function-valued return preserves the original static binding.
 
 - [ ] **Step 3: Add fail-closed controls**
 
-Add independent fixtures for a declaration-only factory, a factory invoked with a declared dynamic string argument, and a recursively returning factory. Assert each contains `rendered string transform could not be resolved safely`.
+Add independent fixtures for a declaration-only factory, a factory invoked with a declared dynamic string argument, and a recursively returning factory. Assert each contains `rendered string transform could not be resolved safely`. Add clean, Legacy-producing, and unresolved conditional factory alternatives where one branch calls its sibling; these prove symbol ancestry remains path-local rather than becoming a false cycle through the merged alternative set.
 
 - [ ] **Step 4: Run the focused tests for RED**
 
 Run:
 
 ```bash
-npm test -- --runInBand src/__tests__/productMaturityBoundary.test.tsx -t 'nested helper factory|static argument helper factory|unresolved helper factory|dynamic helper factory|cyclic helper factory'
+CI=true npm test -- --runInBand src/__tests__/productMaturityBoundary.test.tsx -t 'nested helper factory|static argument helper factory|unresolved helper factory|dynamic helper factory|cyclic helper factory'
 ```
 
 Expected: prohibited and fail-closed fixtures fail because the verifier exits `0`; the safe control passes.
@@ -74,17 +74,21 @@ Expected: prohibited and fail-closed fixtures fail because the verifier exits `0
 
 **Interfaces:**
 - Consumes: `resolveHelperAliasExpression`, `resolveHelperFunctionDeclarations`, `resolveStaticTransformValues`, `functionReturnExpressions`, and the existing visible-string budgets/state.
-- Produces: helper alternatives shaped as `{ declaration, bindings }` and bounded `CallExpression` factory-return resolution.
+- Produces: helper alternatives shaped as `{ declaration, bindings, symbols }` and bounded `CallExpression` factory-return resolution.
 
 - [ ] **Step 1: Preserve closure bindings on direct and aliased functions**
 
 Change helper-resolution `functions` entries from raw function nodes to descriptors:
 
 ```js
-{ declaration: functionLikeNode, bindings: new Map(inheritedBindings) }
+{
+  declaration: functionLikeNode,
+  bindings: new Map(inheritedBindings),
+  symbols: new Set(branchLocalSymbolPath),
+}
 ```
 
-Thread inherited bindings through alias-expression, alias-symbol, conditional, and array resolution without changing their recognized/unresolved merge semantics.
+Thread inherited bindings through alias-expression, alias-symbol, conditional, and array resolution without changing their recognized/unresolved merge semantics. Preserve branch-local symbol ancestry on each descriptor so a merged sibling alternative cannot create a false cycle.
 
 - [ ] **Step 2: Resolve a helper-alias `CallExpression` structurally**
 
@@ -107,7 +111,7 @@ Run the Task 1 command. Expected: all new prohibited, safe, and fail-closed outc
 Run:
 
 ```bash
-npm test -- --runInBand src/__tests__/productMaturityBoundary.test.tsx -t 'helper-return transform|helper-function alias|indexed helper|conditional helper|helper factory'
+CI=true npm test -- --runInBand src/__tests__/productMaturityBoundary.test.tsx -t 'helper-return transform|helper-function alias|indexed helper|conditional helper|helper factory'
 ```
 
 Expected: all matching tests pass with zero failures.
@@ -144,7 +148,7 @@ Expected: syntax exits `0`; verifier reports zero customer-facing violations.
 Run:
 
 ```bash
-npm test -- --runInBand src/__tests__/productMaturityBoundary.test.tsx
+CI=true npm test -- --runInBand src/__tests__/productMaturityBoundary.test.tsx
 ```
 
 Expected: all boundary tests pass; copy the exact count and elapsed time into the report.
