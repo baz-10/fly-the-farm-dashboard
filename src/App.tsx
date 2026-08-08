@@ -51,6 +51,7 @@ import { MissionProvider } from './contexts/MissionContext';
 import { WorkPackProvider } from './contexts/WorkPackContext';
 import FleetWorkPacks from './pages/FleetWorkPacks';
 import { useAuth, UserRole } from './contexts/AuthContext';
+import OperationalFeatureGate from './components/OperationalFeatureGate';
 import Personnel from './pages/Personnel';
 import CustomerAcceptancePublic from './pages/CustomerAcceptancePublic';
 import PlatformProtectedRoute from './components/PlatformProtectedRoute';
@@ -129,7 +130,7 @@ function App() {
           <Route path="/treatment/:id" element={productRoute(<TreatmentDetail />)} />
           <Route path="/calculator" element={productRoute(<Calculator />, { allowedRoles: ['admin', 'contractor'] })} />
           <Route path="/jobs" element={productRoute(<ClientList />)} />
-          <Route path="/jobs/import" element={productRoute(<SprayRecImport />)} />
+          <Route path="/jobs/import" element={productRoute(<OperationalFeatureGate feature="Spray Recommendation Import"><SprayRecImport /></OperationalFeatureGate>)} />
           <Route path="/jobs/history" element={productRoute(<JobHistory />)} />
           <Route path="/jobs/client/:clientId" element={productRoute(<ClientDetail />)} />
           <Route path="/jobs/client/:clientId/property/:propertyId" element={productRoute(<PropertyDetail />)} />

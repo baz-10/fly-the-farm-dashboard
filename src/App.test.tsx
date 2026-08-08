@@ -90,22 +90,22 @@ jest.mock('./contexts/AircraftContext', () => ({ AircraftProvider: ({ children }
 jest.mock('./contexts/MissionContext', () => ({ MissionProvider: ({ children }: { children: React.ReactNode }) => <>{children}</> }));
 jest.mock('./contexts/WorkPackContext', () => ({ WorkPackProvider: ({ children }: { children: React.ReactNode }) => <>{children}</> }));
 jest.mock('./pages/JobHistory', () => () => <div>Legacy browser job history</div>);
-jest.mock('./pages/SprayRecImport', () => () => <div>Legacy browser spray recommendation importer</div>);
 jest.mock('./pages/ReocComplianceWorkspace', () => () => <div>Dedicated ReOC workspace</div>);
 jest.mock('./pages/OperationsManualWorkspace', () => () => <div>Dedicated Operations Manual workspace</div>);
 
 describe('App', () => {
   afterEach(cleanup);
 
-  test('presents Spray Recommendation Import as a usable Beta workflow in remote mode', () => {
+  test('does not expose the browser-local Spray Recommendation Import workflow in remote mode', () => {
     mockOperationalMode = 'remote';
     window.history.pushState({}, '', '/jobs/import');
 
     render(<App />);
 
-    expect(screen.getByLabelText('Beta')).toBeVisible();
-    expect(screen.getByText('Legacy browser spray recommendation importer')).toBeInTheDocument();
-    expect(screen.queryByText(/not yet connected to production data/i)).not.toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Spray Recommendation Import' })).toBeVisible();
+    expect(screen.getByText('Coming Soon')).toBeVisible();
+    expect(screen.queryByText(/upload a spray recommendation pdf/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Choose PDF File' })).not.toBeInTheDocument();
   });
 
   test.each([

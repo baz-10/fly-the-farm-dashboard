@@ -33,7 +33,7 @@ describe('product maturity registry', () => {
       ['personnel', 'casa-credentials', 'BETA'], ['casa-compliance', null, 'OPERATIONALLY_READY'],
       ['organisation-branding', null, 'OPERATIONALLY_READY'], ['organisation-assisted-support', null, 'OPERATIONALLY_READY'],
       ['chemical-review-permissions', null, 'OPERATIONALLY_READY'], ['organisation-onboarding', null, 'BETA'],
-      ['home', null, 'BETA'], ['customer-portal', null, 'BETA'], ['spray-recommendation-import', null, 'BETA'],
+      ['home', null, 'BETA'], ['customer-portal', null, 'BETA'], ['spray-recommendation-import', null, 'COMING_SOON'],
       ['fleet-work-packs', null, 'BETA'], ['weather-centre', null, 'BETA'], ['chemical-database', null, 'BETA'],
       ['spray-calculator', null, 'BETA'], ['operating-authority', null, 'BETA'],
       ['operating-authority', 'authority-records', 'BETA'], ['operations-manual', null, 'BETA'],
