@@ -155,6 +155,28 @@ describe('product maturity CI boundary', () => {
     ), (fixtureRoot) => expectVerifierFailure('does not have an exact registry entry', fixtureRoot));
   });
 
+  test('rejects a weakened canonical product maturity resolver implementation', () => {
+    withTemporaryFixture((fixtureRoot) => {
+      const filePath = fixturePath(fixtureRoot, 'src/productMaturity/surfaces.ts');
+      const source = readFileSync(filePath, 'utf8');
+      const modified = source.replace(
+        /export function resolveProductSurface\(pathname: string, search: string\): ResolvedProductSurface \| null \{[\s\S]*?\n}\n\nexport \{ ProductMaturityConfigurationError \}/,
+        [
+          'export function resolveProductSurface(pathname: string, search: string): ResolvedProductSurface | null {',
+          '  return null;',
+          '}',
+          '',
+          "export { ProductMaturityConfigurationError }",
+        ].join('\n'),
+      );
+      if (modified === source) throw new Error('Fixture mutation did not weaken resolveProductSurface.');
+      writeFileSync(filePath, modified, 'utf8');
+    }, (fixtureRoot) => expectVerifierFailure(
+      'canonical product maturity resolver source integrity',
+      fixtureRoot,
+    ));
+  });
+
   test('discovers an unclassified App route written as a static JSX expression', () => {
     withTemporaryFixture((fixtureRoot) => replaceFixtureSource(
       fixtureRoot,
@@ -162,6 +184,94 @@ describe('product maturity CI boundary', () => {
       'path="/login"',
       "path={'/unclassified-login'}",
     ), (fixtureRoot) => expectVerifierFailure('App route manifest mismatch', fixtureRoot));
+  });
+
+  test('rejects a reachable React Router Route hidden behind a component alias', () => {
+    withTemporaryFixture((fixtureRoot) => {
+      const filePath = fixturePath(fixtureRoot, 'src/App.tsx');
+      const source = readFileSync(filePath, 'utf8');
+      const withAlias = source.replace(
+        'function App() {\n  const productRoute',
+        'function App() {\n  const HiddenRoute = Route;\n  const productRoute',
+      );
+      const modified = withAlias.replace(
+        '        <Route path="/login" element={<Login />} />',
+        '        <HiddenRoute path="/hidden" element={<QuoteList />} />\n        <Route path="/login" element={<Login />} />',
+      );
+      if (withAlias === source || modified === withAlias) {
+        throw new Error('Fixture mutation did not add the hidden route alias and leaf.');
+      }
+      writeFileSync(filePath, modified, 'utf8');
+    }, (fixtureRoot) => expectVerifierFailure(
+      'canonical direct JSX-only import/symbol convention',
+      fixtureRoot,
+    ));
+  });
+
+  test.each([
+    [
+      'react-router-dom ESM variable',
+      "import { Route } from 'react-router-dom';\nexport const HiddenRoute = Route;\n",
+    ],
+    [
+      'CommonJS acquisition',
+      "const HiddenRoute = require('react-router-dom').Route;\nexport { HiddenRoute };\n",
+    ],
+    [
+      'underlying react-router ESM alias',
+      "import { Route as HiddenRoute } from 'react-router';\nexport { HiddenRoute };\n",
+    ],
+  ])('rejects an unguarded duplicate route hidden via %s', (_label, hiddenRouteSource) => {
+    withTemporaryFixture((fixtureRoot) => {
+      writeFileSync(
+        fixturePath(fixtureRoot, 'src/components/HiddenRoute.tsx'),
+        hiddenRouteSource,
+        'utf8',
+      );
+      const filePath = fixturePath(fixtureRoot, 'src/App.tsx');
+      const source = readFileSync(filePath, 'utf8');
+      const withImport = source.replace(
+        "import { BrowserRouter, Navigate, Routes, Route } from 'react-router-dom';",
+        "import { BrowserRouter, Navigate, Routes, Route } from 'react-router-dom';\nimport { HiddenRoute } from './components/HiddenRoute';",
+      );
+      const modified = withImport.replace(
+        '        <Route path="/login" element={<Login />} />',
+        '        <HiddenRoute path="/admin" element={<Admin />} />\n        <Route path="/login" element={<Login />} />',
+      );
+      if (withImport === source || modified === withImport) {
+        throw new Error('Fixture mutation did not add the imported route alias and duplicate leaf.');
+      }
+      writeFileSync(filePath, modified, 'utf8');
+    }, (fixtureRoot) => expectVerifierFailure(
+      'canonical direct JSX-only import/symbol convention',
+      fixtureRoot,
+    ));
+  });
+
+  test('rejects a parallel useRoutes routing channel beside the canonical Routes tree', () => {
+    withTemporaryFixture((fixtureRoot) => {
+      const filePath = fixturePath(fixtureRoot, 'src/App.tsx');
+      const source = readFileSync(filePath, 'utf8');
+      const withImport = source.replace(
+        'BrowserRouter, Navigate, Routes, Route',
+        'BrowserRouter, Navigate, Routes, Route, useRoutes',
+      );
+      const withComponent = withImport.replace(
+        'function App() {',
+        "function HiddenRoutes() { return useRoutes([{ path: '/hidden', element: <QuoteList /> }]); }\n\nfunction App() {",
+      );
+      const modified = withComponent.replace(
+        '      </Routes>\n    </BrowserRouter>',
+        '      </Routes>\n      <HiddenRoutes />\n    </BrowserRouter>',
+      );
+      if (withImport === source || withComponent === withImport || modified === withComponent) {
+        throw new Error('Fixture mutation did not add the parallel useRoutes channel.');
+      }
+      writeFileSync(filePath, modified, 'utf8');
+    }, (fixtureRoot) => expectVerifierFailure(
+      'canonical direct JSX-only import/symbol convention',
+      fixtureRoot,
+    ));
   });
 
   test.each([
@@ -175,6 +285,21 @@ describe('product maturity CI boundary', () => {
       'path="/login"',
       replacement,
     ), (fixtureRoot) => expectVerifierFailure(expectedMessage, fixtureRoot));
+  });
+
+  test.each([
+    ['Component override', 'Component={QuoteList}'],
+    ['lazy override', 'lazy={async () => ({ Component: QuoteList })}'],
+  ])('rejects a competing React Router %s on an audited leaf route', (_label, competingProp) => {
+    withTemporaryFixture((fixtureRoot) => replaceFixtureSource(
+      fixtureRoot,
+      'src/App.tsx',
+      '<Route path="/jobs" element={productRoute(<ClientList />)} />',
+      `<Route path="/jobs" ${competingProp} element={productRoute(<ClientList />)} />`,
+    ), (fixtureRoot) => expectVerifierFailure(
+      'requires exactly the canonical path and element attributes',
+      fixtureRoot,
+    ));
   });
 
   test.each([
@@ -373,12 +498,6 @@ describe('product maturity CI boundary', () => {
         "from './components/productMaturity/RouteSurfaceFixtureBarrel';",
       );
     }],
-    ['productRoute helper call', (fixtureRoot: string) => replaceFixtureSource(
-      fixtureRoot,
-      'src/App.tsx',
-      '          <Route path="/quotes" element={productRoute(<QuoteList />, { allowedRoles: [\'admin\', \'contractor\'] })} />',
-      '          {[1].map((productRoute) => <Route path="/quotes" element={productRoute(<QuoteList />, { allowedRoles: [\'admin\', \'contractor\'] })} />)}',
-    )],
     ['ProductMaturitySurface dependency', (fixtureRoot: string) => {
       writeFileSync(
         fixturePath(fixtureRoot, 'src/components/productMaturity/ProductMaturitySurfaceFixtureNoop.tsx'),
@@ -476,6 +595,126 @@ describe('product maturity CI boundary', () => {
     withTemporaryFixture(
       mutateFixture,
       (fixtureRoot) => expectVerifierFailure('canonical route import/symbol convention', fixtureRoot),
+    );
+  });
+
+  test('rejects a non-canonical productRoute helper call route symbol', () => {
+    withTemporaryFixture((fixtureRoot) => {
+      replaceFixtureSource(
+        fixtureRoot,
+        'src/App.tsx',
+        '  return (\n    <BrowserRouter>',
+        '  const alternateProductRoute = productRoute;\n\n  return (\n    <BrowserRouter>',
+      );
+      replaceFixtureSource(
+        fixtureRoot,
+        'src/App.tsx',
+        '          <Route path="/quotes" element={productRoute(<QuoteList />, { allowedRoles: [\'admin\', \'contractor\'] })} />',
+        '          <Route path="/quotes" element={alternateProductRoute(<QuoteList />, { allowedRoles: [\'admin\', \'contractor\'] })} />',
+      );
+    }, (fixtureRoot) => expectVerifierFailure('approved productRoute composition', fixtureRoot));
+  });
+
+  test.each([
+    ['/jobs path swap', (fixtureRoot: string) => replaceFixtureSource(
+      fixtureRoot,
+      'src/App.tsx',
+      '<Route path="/jobs" element={productRoute(<ClientList />)} />',
+      '<Route path="/jobs" element={productRoute(<QuoteList />)} />',
+    )],
+    ['same-name alternate Login', (fixtureRoot: string) => {
+      writeFileSync(
+        fixturePath(fixtureRoot, 'src/pages/LoginFixtureAlternate.tsx'),
+        'export default function Login() { return null; }\n',
+        'utf8',
+      );
+      replaceFixtureSource(
+        fixtureRoot,
+        'src/App.tsx',
+        "import Login from './pages/Login';",
+        "import Login from './pages/LoginFixtureAlternate';",
+      );
+    }],
+    ['canonical Login module re-exporting an alternate default', (fixtureRoot: string) => {
+      writeFileSync(
+        fixturePath(fixtureRoot, 'src/pages/LoginFixtureAlternate.tsx'),
+        'export default function Login() { return null; }\n',
+        'utf8',
+      );
+      writeFileSync(
+        fixturePath(fixtureRoot, 'src/pages/Login.tsx'),
+        "export { default } from './LoginFixtureAlternate';\n",
+        'utf8',
+      );
+    }],
+    ['canonical Login module locally aliasing an alternate default', (fixtureRoot: string) => {
+      writeFileSync(
+        fixturePath(fixtureRoot, 'src/pages/LoginFixtureAlternate.tsx'),
+        'export default function AlternateLogin() { return null; }\n',
+        'utf8',
+      );
+      writeFileSync(
+        fixturePath(fixtureRoot, 'src/pages/Login.tsx'),
+        "import AlternateLogin from './LoginFixtureAlternate';\nconst Login = AlternateLogin;\nexport default Login;\n",
+        'utf8',
+      );
+    }],
+    ['dynamic /jobs component alias', (fixtureRoot: string) => {
+      replaceFixtureSource(
+        fixtureRoot,
+        'src/App.tsx',
+        'function App() {',
+        'const DynamicJobsDestination = true ? ClientList : QuoteList;\n\nfunction App() {',
+      );
+      replaceFixtureSource(
+        fixtureRoot,
+        'src/App.tsx',
+        '<Route path="/jobs" element={productRoute(<ClientList />)} />',
+        '<Route path="/jobs" element={productRoute(<DynamicJobsDestination />)} />',
+      );
+    }],
+    ['unapproved /jobs wrapper', (fixtureRoot: string) => replaceFixtureSource(
+      fixtureRoot,
+      'src/App.tsx',
+      '<Route path="/jobs" element={productRoute(<ClientList />)} />',
+      '<Route path="/jobs" element={productRoute(<div><ClientList /></div>)} />',
+    )],
+    ['same-name alternate PlatformShell structural component', (fixtureRoot: string) => {
+      writeFileSync(
+        fixturePath(fixtureRoot, 'src/components/PlatformShellFixtureAlternate.tsx'),
+        'export default function PlatformShell() { return null; }\n',
+        'utf8',
+      );
+      replaceFixtureSource(
+        fixtureRoot,
+        'src/App.tsx',
+        "import PlatformShell from './components/PlatformShell';",
+        "import PlatformShell from './components/PlatformShellFixtureAlternate';",
+      );
+    }],
+    ['same-name alternate PlatformAdmin leaf', (fixtureRoot: string) => {
+      writeFileSync(
+        fixturePath(fixtureRoot, 'src/pages/PlatformAdminFixtureAlternate.tsx'),
+        'export default function PlatformAdmin() { return null; }\n',
+        'utf8',
+      );
+      replaceFixtureSource(
+        fixtureRoot,
+        'src/App.tsx',
+        "import PlatformAdmin from './pages/PlatformAdmin';",
+        "import PlatformAdmin from './pages/PlatformAdminFixtureAlternate';",
+      );
+    }],
+    ['swapped gated spray-import leaf', (fixtureRoot: string) => replaceFixtureSource(
+      fixtureRoot,
+      'src/App.tsx',
+      '<OperationalFeatureGate feature="Spray Recommendation Import"><SprayRecImport /></OperationalFeatureGate>',
+      '<OperationalFeatureGate feature="Spray Recommendation Import"><QuoteList /></OperationalFeatureGate>',
+    )],
+  ])('rejects a non-canonical %s destination', (_label, mutateFixture) => {
+    withTemporaryFixture(
+      mutateFixture,
+      (fixtureRoot) => expectVerifierFailure('canonical route destination contract', fixtureRoot),
     );
   });
 
@@ -601,7 +840,10 @@ describe('product maturity CI boundary', () => {
       'src/App.tsx',
       '          <Route path="/platform" element={<PlatformAdmin />} />',
       '          <>\n            <>\n              <PlatformAdmin />\n            </>\n          </>',
-    ), (fixtureRoot) => expectVerifierFailure('requires a path', fixtureRoot));
+    ), (fixtureRoot) => expectVerifierFailure(
+      'canonical direct JSX-only import/symbol convention',
+      fixtureRoot,
+    ));
   });
 
   test('rejects a missing leaf path inside nested JSX fragments', () => {
@@ -1250,6 +1492,180 @@ describe('product maturity CI boundary', () => {
         'utf8',
       );
     }, expectVerifierSuccess);
+  });
+
+  test('rejects Legacy from any conditional helper-function alias alternative', () => {
+    withTemporaryFixture((fixtureRoot) => {
+      const filePath = fixturePath(fixtureRoot, 'src/pages/ClientDetail.tsx');
+      const source = readFileSync(filePath, 'utf8');
+      writeFileSync(
+        filePath,
+        `${source}\ndeclare const repairChooseConditionalHelper: boolean;\nconst repairConditionalLegacy = () => 'LeXacy';\nconst repairConditionalSafe = () => 'Current';\nconst repairConditionalHelper = repairChooseConditionalHelper ? repairConditionalLegacy : repairConditionalSafe;\nexport const repairConditionalAliasFixture = <span>{repairConditionalHelper().replace('X', 'g')}</span>;\n`,
+        'utf8',
+      );
+    }, (fixtureRoot) => expectVerifierFailure('Customer-facing Legacy violation', fixtureRoot));
+  });
+
+  test('rejects the exact reviewer conditional function-expression alias', () => {
+    withTemporaryFixture((fixtureRoot) => {
+      const filePath = fixturePath(fixtureRoot, 'src/pages/ClientDetail.tsx');
+      const source = readFileSync(filePath, 'utf8');
+      writeFileSync(
+        filePath,
+        `${source}\ndeclare const repairChooseDirectConditionalHelper: boolean;\nconst repairDirectConditionalHelper = repairChooseDirectConditionalHelper ? (() => 'LeXacy') : (() => 'Current');\nexport const repairDirectConditionalAliasFixture = <span>{repairDirectConditionalHelper().replace('X', 'g')}</span>;\n`,
+        'utf8',
+      );
+    }, (fixtureRoot) => expectVerifierFailure('Customer-facing Legacy violation', fixtureRoot));
+  });
+
+  test('allows safe static alternatives through a conditional helper-function alias', () => {
+    withTemporaryFixture((fixtureRoot) => {
+      const filePath = fixturePath(fixtureRoot, 'src/pages/ClientDetail.tsx');
+      const source = readFileSync(filePath, 'utf8');
+      writeFileSync(
+        filePath,
+        `${source}\ndeclare const repairChooseSafeConditionalHelper: boolean;\nconst repairConditionalSafeLeft = () => 'Current';\nconst repairConditionalSafeRight = () => 'Present';\nconst repairSafeConditionalHelper = repairChooseSafeConditionalHelper ? repairConditionalSafeLeft : repairConditionalSafeRight;\nexport const repairSafeConditionalAliasFixture = <span>{repairSafeConditionalHelper().replace('x', 'x')}</span>;\n`,
+        'utf8',
+      );
+    }, expectVerifierSuccess);
+  });
+
+  test('fails closed when a conditional helper-function alias has an unresolved alternative', () => {
+    withTemporaryFixture((fixtureRoot) => {
+      const filePath = fixturePath(fixtureRoot, 'src/pages/ClientDetail.tsx');
+      const source = readFileSync(filePath, 'utf8');
+      writeFileSync(
+        filePath,
+        `${source}\ndeclare const repairChooseUnresolvedConditionalHelper: boolean;\ndeclare const repairUnresolvedConditionalHelper: () => string;\nconst repairResolvedConditionalHelper = () => 'Current';\nconst repairConditionalHelper = repairChooseUnresolvedConditionalHelper ? repairResolvedConditionalHelper : repairUnresolvedConditionalHelper;\nexport const repairUnresolvedConditionalAliasFixture = <span>{repairConditionalHelper().replace('x', 'x')}</span>;\n`,
+        'utf8',
+      );
+    }, (fixtureRoot) => expectVerifierFailure(
+      'rendered string transform could not be resolved safely',
+      fixtureRoot,
+    ));
+  });
+
+  test('rejects Legacy from a statically indexed helper-function array alias', () => {
+    withTemporaryFixture((fixtureRoot) => {
+      const filePath = fixturePath(fixtureRoot, 'src/pages/ClientDetail.tsx');
+      const source = readFileSync(filePath, 'utf8');
+      writeFileSync(
+        filePath,
+        `${source}\nconst repairIndexedSafe = () => 'Current';\nconst repairIndexedLegacy = () => 'LeXacy';\nconst repairIndexedAliases = [repairIndexedSafe, repairIndexedLegacy] as const;\nconst repairIndexedHelper = repairIndexedAliases[1];\nexport const repairIndexedAliasFixture = <span>{repairIndexedHelper().replace('X', 'g')}</span>;\n`,
+        'utf8',
+      );
+    }, (fixtureRoot) => expectVerifierFailure('Customer-facing Legacy violation', fixtureRoot));
+  });
+
+  test('rejects the exact reviewer direct indexed-array helper call', () => {
+    withTemporaryFixture((fixtureRoot) => {
+      const filePath = fixturePath(fixtureRoot, 'src/pages/ClientDetail.tsx');
+      const source = readFileSync(filePath, 'utf8');
+      writeFileSync(
+        filePath,
+        `${source}\nconst repairDirectIndexedHelpers = [() => 'LeXacy'];\nexport const repairDirectIndexedAliasFixture = <span>{repairDirectIndexedHelpers[0]().replace('X', 'g')}</span>;\n`,
+        'utf8',
+      );
+    }, (fixtureRoot) => expectVerifierFailure('Customer-facing Legacy violation', fixtureRoot));
+  });
+
+  test('rejects Legacy from every conditional helper-function array alternative', () => {
+    withTemporaryFixture((fixtureRoot) => {
+      const filePath = fixturePath(fixtureRoot, 'src/pages/ClientDetail.tsx');
+      const source = readFileSync(filePath, 'utf8');
+      writeFileSync(
+        filePath,
+        `${source}\ndeclare const repairChooseIndexedArray: boolean;\nconst repairConditionalIndexedHelpers = repairChooseIndexedArray ? [() => 'LeXacy'] : [() => 'Current'];\nexport const repairConditionalIndexedFixture = <span>{repairConditionalIndexedHelpers[0]().replace('X', 'g')}</span>;\n`,
+        'utf8',
+      );
+    }, (fixtureRoot) => expectVerifierFailure('Customer-facing Legacy violation', fixtureRoot));
+  });
+
+  test('fails closed on a direct indexed-array helper with an unresolved selected element', () => {
+    withTemporaryFixture((fixtureRoot) => {
+      const filePath = fixturePath(fixtureRoot, 'src/pages/ClientDetail.tsx');
+      const source = readFileSync(filePath, 'utf8');
+      writeFileSync(
+        filePath,
+        `${source}\ndeclare const repairUnresolvedIndexedElement: () => string;\nconst repairUnresolvedIndexedHelpers = [repairUnresolvedIndexedElement];\nexport const repairUnresolvedIndexedElementFixture = <span>{repairUnresolvedIndexedHelpers[0]().replace('x', 'x')}</span>;\n`,
+        'utf8',
+      );
+    }, (fixtureRoot) => expectVerifierFailure(
+      'rendered string transform could not be resolved safely',
+      fixtureRoot,
+    ));
+  });
+
+  test('fails closed on a statically indexed helper-function array containing a spread', () => {
+    withTemporaryFixture((fixtureRoot) => {
+      const filePath = fixturePath(fixtureRoot, 'src/pages/ClientDetail.tsx');
+      const source = readFileSync(filePath, 'utf8');
+      writeFileSync(
+        filePath,
+        `${source}\nconst repairSpreadIndexedBase = [() => 'Current'] as const;\nconst repairSpreadIndexedHelpers = [...repairSpreadIndexedBase];\nexport const repairSpreadIndexedFixture = <span>{repairSpreadIndexedHelpers[0]().replace('x', 'x')}</span>;\n`,
+        'utf8',
+      );
+    }, (fixtureRoot) => expectVerifierFailure(
+      'rendered string transform could not be resolved safely',
+      fixtureRoot,
+    ));
+  });
+
+  test('allows the selected safe helper in a statically indexed function array', () => {
+    withTemporaryFixture((fixtureRoot) => {
+      const filePath = fixturePath(fixtureRoot, 'src/pages/ClientDetail.tsx');
+      const source = readFileSync(filePath, 'utf8');
+      writeFileSync(
+        filePath,
+        `${source}\nconst repairSafeIndexedHelper = () => 'Current';\nconst repairUnselectedLegacyHelper = () => 'LeXacy';\nconst repairSafeIndexedAliases = [repairSafeIndexedHelper, repairUnselectedLegacyHelper] as const;\nconst repairSelectedSafeHelper = repairSafeIndexedAliases[0];\nexport const repairSafeIndexedAliasFixture = <span>{repairSelectedSafeHelper().replace('x', 'x')}</span>;\n`,
+        'utf8',
+      );
+    }, expectVerifierSuccess);
+  });
+
+  test('fails closed on a dynamic helper-function array alias index', () => {
+    withTemporaryFixture((fixtureRoot) => {
+      const filePath = fixturePath(fixtureRoot, 'src/pages/ClientDetail.tsx');
+      const source = readFileSync(filePath, 'utf8');
+      writeFileSync(
+        filePath,
+        `${source}\ndeclare const repairDynamicAliasIndex: number;\nconst repairDynamicIndexedSource = () => 'Current';\nconst repairDynamicIndexedAliases = [repairDynamicIndexedSource] as const;\nconst repairDynamicIndexedHelper = repairDynamicIndexedAliases[repairDynamicAliasIndex];\nexport const repairDynamicIndexedAliasFixture = <span>{repairDynamicIndexedHelper().replace('x', 'x')}</span>;\n`,
+        'utf8',
+      );
+    }, (fixtureRoot) => expectVerifierFailure(
+      'rendered string transform could not be resolved safely',
+      fixtureRoot,
+    ));
+  });
+
+  test('fails closed on an out-of-range helper-function array alias index', () => {
+    withTemporaryFixture((fixtureRoot) => {
+      const filePath = fixturePath(fixtureRoot, 'src/pages/ClientDetail.tsx');
+      const source = readFileSync(filePath, 'utf8');
+      writeFileSync(
+        filePath,
+        `${source}\nconst repairShortIndexedSource = () => 'Current';\nconst repairShortIndexedAliases = [repairShortIndexedSource] as const;\nconst repairMissingIndexedHelper = repairShortIndexedAliases[2];\nexport const repairMissingIndexedAliasFixture = <span>{repairMissingIndexedHelper().replace('x', 'x')}</span>;\n`,
+        'utf8',
+      );
+    }, (fixtureRoot) => expectVerifierFailure(
+      'rendered string transform could not be resolved safely',
+      fixtureRoot,
+    ));
+  });
+
+  test('fails closed on a non-canonical string helper-function array index', () => {
+    withTemporaryFixture((fixtureRoot) => {
+      const filePath = fixturePath(fixtureRoot, 'src/pages/ClientDetail.tsx');
+      const source = readFileSync(filePath, 'utf8');
+      writeFileSync(
+        filePath,
+        `${source}\nconst repairStringIndexedHelpers = [() => 'Current', () => 'Present'] as const;\nconst repairStringIndexedHelper = repairStringIndexedHelpers['01'];\nexport const repairStringIndexedAliasFixture = <span>{repairStringIndexedHelper().replace('x', 'x')}</span>;\n`,
+        'utf8',
+      );
+    }, (fixtureRoot) => expectVerifierFailure(
+      'rendered string transform could not be resolved safely',
+      fixtureRoot,
+    ));
   });
 
   test('rejects Legacy assembled through a re-exported helper-function alias', () => {

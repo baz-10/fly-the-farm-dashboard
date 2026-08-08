@@ -2,7 +2,7 @@
 
 ## Status
 
-The initial two final-signoff findings, the subsequent Critical/two-Important review findings, and the Critical/Important second-pass findings were repaired locally from `71f8332eab9eb01e67241a2130c78a0ed5824875`. No runtime route, permission, entitlement, tenant, feature-gate, or persistence behaviour was changed. No push or deployment was performed.
+The initial two final-signoff findings, the subsequent Critical/two-Important findings, the Critical/Important second-pass findings, and the final external-rereview findings were repaired locally from `71f8332eab9eb01e67241a2130c78a0ed5824875`. No runtime route, permission, entitlement, tenant, feature-gate, resolver, or persistence behaviour was changed. No push or deployment was performed.
 
 ## Commit
 
@@ -12,6 +12,8 @@ The initial two final-signoff findings, the subsequent Critical/two-Important re
 - Canonical route symbols: `781948a`
 - Exact route access contracts: `14b4646`
 - Static helper transform inputs: `8266d66`
+- First review closure: `dba2dba`
+- External-rereview design and plan: `749253d`
 - Review closure: the commit containing this updated report.
 
 ## Route Composition Gate
@@ -23,7 +25,12 @@ The initial two final-signoff findings, the subsequent Critical/two-Important re
 - The App `productRoute` helper and canonical `AuthorisedProductRoute`/`ProductRouteSurface` definitions are audited so `ProtectedRoute` remains outside maturity presentation.
 - The TypeScript checker resolves canonical declarations and exact direct-import symbols across App, `AuthorisedProductRoute`, and `ProductMaturitySurface`. Same-name no-ops, shadowed helper calls, aliases, barrels, wrappers, alternate imports, weakened canonical maturity implementations, and replaced maturity-resolver dependencies fail.
 - The canonical `ProductMaturitySurface` body is audited as an exact six-stage top-level flow: resolver assignment and guarded path-error fallback, unclassified children, ready children/context, coming-soon workspace, and beta badge/children. Required symbol references hidden in dead or nested code fail, and the path-error Alert must retain its exact static unavailable copy without rendering route children.
+- A reviewed verifier-only SHA-256 covers the complete canonical `surfaces.ts` source. Resolver or manifest implementation changes now require an intentional metadata update in the same review; runtime maturity authority remains in `surfaces.ts` and the registry.
 - A complete 53-path verifier-only access-contract map checks each route's access class, exact ordered roles, exact entitlement, and default-auth policy. It is validation metadata only, not runtime permission authority, entitlement authority, or maturity metadata.
+- A separate complete 53-path verifier-only destination map resolves the exact canonical source/export and direct App import for every public, platform, and organisation leaf. The checker also validates the canonical platform shell, local provider symbol, and exact Operational Feature Gate/Spray Import chain. Path swaps, same-name alternates, component aliases, dynamic leaves, and extra wrappers fail; App remains runtime routing authority.
+- Canonical destination modules must retain their approved in-file default-export declaration shape; direct re-exports and local/imported component aliases fail provenance checks.
+- The actual `App` return is bound to one direct canonical `BrowserRouter` whose only significant child is one direct canonical `Routes` tree. Only canonical `Route` nodes and JSX fragments may form that tree, and discovery is limited to it. Program-wide React Router provenance rejects route-component aliases, namespaces, re-exports, underlying-package imports, dynamic/CommonJS acquisition, and alternate route-building APIs such as `useRoutes`.
+- Audited leaf `Route` nodes must be self-closing and contain exactly `path` plus `element`; structural `Route` nodes contain exactly `element`. Competing `Component`, `lazy`, `children`, error-boundary, or future alternate render props cannot override the checked composition.
 - Restricted organisation leaves require a direct static options object with exact properties; dynamic objects, dynamic role values, spreads, computed/shorthand/method/extra properties, reordered or changed roles, removed entitlements, and changed helper defaults fail.
 - Bare destinations, guard-only, maturity-only, reversed guard/maturity order, direct equivalent wrappers, weakened helpers, weakened canonical wrappers, and unsupported pathless layouts fail closed.
 - Existing public lifecycle, role sets, delegated support, the `legacyAskFtf` entitlement, operational feature gates, provider nesting, and nested JSX-fragment route discovery remain unchanged.
@@ -34,7 +41,7 @@ The initial two final-signoff findings, the subsequent Critical/two-Important re
 - The evaluator distinguishes first-match `replace` from all-match `replaceAll` and models literal replacement tokens without executing application code.
 - Dynamic searches, dynamic replacements, callbacks, and regular expressions on a fully static rendered receiver fail closed. Regex and callbacks are never executed.
 - Strict typed receiver resolution follows safe local and imported helper calls, binds fully static arguments to identifier parameters, and resolves all return expressions. Legacy-producing helper results are evaluated, while helper-hidden regex, callback, dynamic-search, and dynamic-return paths fail closed without execution.
-- Function provenance follows local, imported, property, shorthand-property, destructured-property, and re-exported aliases recursively under the existing cycle and resource budgets. Cyclic or unresolved aliases fail closed; typed string-array helper arguments flow through the same binding-aware resolver into `join`.
+- Function provenance follows local, imported, property, shorthand-property, destructured-property, re-exported, conditional-alternative, and statically indexed array aliases recursively under the existing cycle and resource budgets. All conditional function/array alternatives are retained, canonical non-negative static indexes select their exact element, and dynamic/non-canonical/out-of-range/spread-backed indexes or unresolved alternatives fail closed; typed string-array helper arguments flow through the same binding-aware resolver into `join`.
 - Partially resolved dynamic receivers are not promoted from isolated fallback fragments, preserving existing safe UI transformations while retaining conservative argument scanning.
 - Existing typed string/string-array `join` and `concat` coercion, wrapper unwrapping, path-local cycles, and the 256-candidate, 32-depth, 4096-node, and 1024-symbol budgets remain in force.
 
@@ -48,11 +55,12 @@ The initial two final-signoff findings, the subsequent Critical/two-Important re
 - Access-contract TDD proved eight leaf mutations and one altered helper default passed incorrectly before implementation. Focused coverage now includes exact `/quotes` roles, `/ask-ftf` entitlement, role ordering, dynamic/spread/extra options, default-auth calls, complete route metadata, and canonical mission roles.
 - Helper-return TDD proved seven prohibited or unresolved local/imported helper cases were accepted and one legitimate Legacy-removal result was rejected before implementation. Focused coverage now spans local functions, parameter bindings, imported helpers, nested `join`, regex, callbacks, dynamic searches/returns, safe transformations, and direct dynamic-receiver controls.
 - Independent re-review first reproduced dead-code-only maturity references, local/imported/cyclic function-alias escapes, and rejected static string-array helper inputs. Follow-up fixtures now cover exact top-level maturity control/data flow; local, imported, explicit-property, shorthand-property, destructured-property, re-exported, and cyclic aliases; and both Legacy-producing and safe typed-array inputs. Later passes proved and closed an error-Alert `{children}` exposure, the shorthand-value-symbol regression, and the destructured binding-element alias bypass.
+- External-rereview TDD proved that an unchanged resolver declaration could return `null`, nine canonical destination mutations passed through text-only checks, conditional aliases discarded a Legacy/unresolved branch, and static array indexes failed closed without modeling even safe or Legacy-producing selected functions. Focused coverage now includes the resolver integrity mutation; `/jobs` path swaps; alternate/re-exported/locally aliased Login, Platform Shell, and Platform Admin modules; dynamic/wrapped destinations; gated leaf swaps; safe/prohibited conditional function and array alternatives; safe/prohibited static indexes; and dynamic, unresolved, spread-backed, non-canonical, and out-of-range fail-closed controls. Independent adversarial review then reproduced React Router `Component`/`lazy` override props, local/imported/CommonJS/underlying-package Route aliases, a parallel `useRoutes` channel, and the non-canonical `['01']` index collapse. Each was watched RED before exact router-tree/attribute/provenance contracts and the canonical index parser closed them.
 
 ## Verification
 
 - Verifier passed: 46 modules, 12 workflows, 53 App routes, 148 customer UI sources, 64 evidence references, and zero customer-facing violations.
-- Complete boundary suite passed all 188 tests in 391.496 seconds.
+- Complete boundary suite passed all 218 tests in 463.782 seconds.
 - Production build completed successfully with the repository's existing Browserslist, lint, hook-dependency, and bundle-size warnings only.
 - `git diff --check` passed; the scoped review closure contains only the verifier, boundary fixtures, governance/design/plan documentation, and this report. No runtime App or permission file changed.
 - No push or deployment was performed.

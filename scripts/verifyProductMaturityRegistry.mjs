@@ -1,4 +1,5 @@
 import { readFile, readdir, realpath } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
@@ -21,6 +22,8 @@ const visibleStringCandidateBudget = 256;
 const visibleStringDepthBudget = 32;
 const visibleStringNodeBudget = 4096;
 const visibleStringSymbolBudget = 1024;
+// Verifier-only integrity metadata. Runtime maturity authority remains in surfaces.ts.
+const canonicalProductMaturityResolverSourceSha256 = 'd883fb00b4f9cf0e3f151e6818da3f035381b38bfa0dbc9e1ad8df5106eea10d';
 const requiredArrayFields = [
   'evidence',
   'requiredAutomatedTests',
@@ -127,6 +130,13 @@ function validateRegistry(registry) {
   });
 }
 
+function assertCanonicalResolverSourceIntegrity(source) {
+  const sourceSha256 = createHash('sha256').update(source, 'utf8').digest('hex');
+  if (sourceSha256 !== canonicalProductMaturityResolverSourceSha256) {
+    throw new Error('Verifier-only canonical product maturity resolver source integrity contract changed.');
+  }
+}
+
 function readSurfaceProperty(source, property, sourceName) {
   const match = source.match(new RegExp(`\\b${property}:\\s*(?:'([^']+)'|\"([^\"]+)\"|(null))`));
   if (!match) throw new Error(`${sourceName} is missing ${property}.`);
@@ -161,6 +171,7 @@ function assertExactRegistryEntries(entries, registry, sourceName) {
 }
 
 const canonicalRouteConventionError = 'Route composition requires the canonical route import/symbol convention.';
+const canonicalRouteDestinationError = 'Verifier-only canonical route destination contract changed.';
 
 function requiredSourceFile(program, suffix) {
   const sourceFiles = program.getSourceFiles().filter((sourceFile) => sourceFile.fileName.endsWith(suffix));
@@ -203,6 +214,63 @@ function requiredVariableSymbol(sourceFile, checker, name) {
     : undefined;
   if (!symbol || !declarations[0].initializer) throw new Error(canonicalRouteConventionError);
   return { declaration: declarations[0], symbol };
+}
+
+function requiredDefaultExportSymbol(sourceFile, checker, localName, exportKind = 'defaultFunction') {
+  const moduleSymbol = checker.getSymbolAtLocation(sourceFile);
+  const defaultExports = moduleSymbol
+    ? checker.getExportsOfModule(moduleSymbol).filter((symbol) => symbol.getName() === 'default')
+    : [];
+  const symbol = defaultExports.length === 1
+    ? resolveAliasedSymbol(checker, defaultExports[0])
+    : null;
+  const defaultFunctionDeclarations = sourceFile.statements.filter((statement) => (
+    ts.isFunctionDeclaration(statement)
+    && statement.name?.text === localName
+    && Boolean(statement.body)
+    && statement.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword)
+    && statement.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.DefaultKeyword)
+  ));
+  const defaultAssignments = sourceFile.statements.filter((statement) => (
+    ts.isExportAssignment(statement) && !statement.isExportEquals
+  ));
+  let canonicalDeclarationSymbol = exportKind === 'defaultFunction'
+    && defaultFunctionDeclarations.length === 1
+    && defaultAssignments.length === 0
+    ? checker.getSymbolAtLocation(defaultFunctionDeclarations[0].name)
+    : null;
+
+  if (exportKind === 'functionVariable'
+    && !canonicalDeclarationSymbol
+    && defaultFunctionDeclarations.length === 0
+    && defaultAssignments.length === 1
+    && ts.isIdentifier(defaultAssignments[0].expression)
+    && defaultAssignments[0].expression.text === localName) {
+    const variableDeclarations = sourceFile.statements.flatMap((statement) => (
+      ts.isVariableStatement(statement)
+        ? statement.declarationList.declarations.filter((declaration) => (
+          ts.isIdentifier(declaration.name) && declaration.name.text === localName
+        ))
+        : []
+    ));
+    const variableDeclaration = variableDeclarations.length === 1 ? variableDeclarations[0] : null;
+    const initializer = variableDeclaration?.initializer
+      ? unwrapTransparentExpression(variableDeclaration.initializer)
+      : null;
+    if (variableDeclaration
+      && initializer
+      && ts.isFunctionLike(initializer)
+      && initializer.body) {
+      canonicalDeclarationSymbol = checker.getSymbolAtLocation(variableDeclaration.name);
+    }
+  }
+
+  if (!symbol
+    || !canonicalDeclarationSymbol
+    || resolveAliasedSymbol(checker, canonicalDeclarationSymbol) !== symbol) {
+    throw new Error(canonicalRouteDestinationError);
+  }
+  return symbol;
 }
 
 function resolveAliasedSymbol(checker, symbol) {
@@ -555,6 +623,174 @@ const routeAccessContracts = new Map([
   }],
 ]);
 
+const routeDestinationContracts = new Map([
+  ['/login', { modulePath: './pages/Login', localName: 'Login' }],
+  ['/register', { modulePath: './pages/Register', localName: 'Register' }],
+  ['/auth/callback', { modulePath: './pages/AuthCallback', localName: 'AuthCallback' }],
+  ['/forgot-password', { modulePath: './pages/ForgotPassword', localName: 'ForgotPassword' }],
+  ['/reset-password', { modulePath: './pages/ResetPassword', localName: 'ResetPassword' }],
+  ['/customer-acceptance/:token', {
+    modulePath: './pages/CustomerAcceptancePublic',
+    localName: 'CustomerAcceptancePublic',
+  }],
+  ['/platform', { modulePath: './pages/PlatformAdmin', localName: 'PlatformAdmin' }],
+  ['/', { localName: 'HomeRoute', local: true }],
+  ['/database', { modulePath: './pages/Dashboard', localName: 'Dashboard' }],
+  ['/search', { modulePath: './pages/SearchResults', localName: 'SearchResults' }],
+  ['/treatment/:id', { modulePath: './pages/TreatmentDetail', localName: 'TreatmentDetail' }],
+  ['/calculator', { modulePath: './pages/Calculator', localName: 'Calculator' }],
+  ['/jobs', { modulePath: './pages/ClientList', localName: 'ClientList' }],
+  ['/jobs/import', {
+    modulePath: './components/OperationalFeatureGate',
+    localName: 'OperationalFeatureGate',
+    requiredStringAttribute: ['feature', 'Spray Recommendation Import'],
+    child: { modulePath: './pages/SprayRecImport', localName: 'SprayRecImport' },
+  }],
+  ['/jobs/history', { modulePath: './pages/JobHistory', localName: 'JobHistory' }],
+  ['/jobs/client/:clientId', { modulePath: './pages/ClientDetail', localName: 'ClientDetail' }],
+  ['/jobs/client/:clientId/property/:propertyId', {
+    modulePath: './pages/PropertyDetail',
+    localName: 'PropertyDetail',
+  }],
+  ['/jobs/client/:clientId/property/:propertyId/field/:fieldId', {
+    modulePath: './pages/FieldDetail',
+    localName: 'FieldDetail',
+  }],
+  ['/jobs/client/:clientId/property/:propertyId/field/:fieldId/new-job', {
+    modulePath: './pages/JobCreate',
+    localName: 'JobCreate',
+  }],
+  ['/jobs/client/:clientId/property/:propertyId/field/:fieldId/job/:jobId', {
+    modulePath: './pages/JobDetail',
+    localName: 'JobDetail',
+  }],
+  ['/jobs/client/:clientId/property/:propertyId/field/:fieldId/job/:jobId/new-mission', {
+    modulePath: './pages/MissionPlanning',
+    localName: 'MissionPlanning',
+  }],
+  ['/quotes', { modulePath: './pages/QuoteList', localName: 'QuoteList' }],
+  ['/quotes/new', { modulePath: './pages/QuoteCreate', localName: 'QuoteCreate' }],
+  ['/quotes/settings', { modulePath: './pages/QuoteSettings', localName: 'QuoteSettings' }],
+  ['/quotes/:quoteId', { modulePath: './pages/QuoteDetail', localName: 'QuoteDetail' }],
+  ['/financials', { modulePath: './pages/FinancialsList', localName: 'FinancialsList' }],
+  ['/financials/new', { modulePath: './pages/ActualCreate', localName: 'ActualCreate' }],
+  ['/financials/:actualId', { modulePath: './pages/ActualDetail', localName: 'ActualDetail' }],
+  ['/ask-ftf', {
+    modulePath: './pages/AskFTF',
+    localName: 'AskFTF',
+    exportKind: 'functionVariable',
+  }],
+  ['/aircraft', { modulePath: './pages/AircraftManagement', localName: 'AircraftManagement' }],
+  ['/personnel', { modulePath: './pages/Personnel', localName: 'Personnel' }],
+  ['/fleet-work-packs', { modulePath: './pages/FleetWorkPacks', localName: 'FleetWorkPacks' }],
+  ['/jsa', { modulePath: './pages/JSAManagement', localName: 'JSAManagement' }],
+  ['/missions', { modulePath: './pages/MissionRegister', localName: 'MissionRegister' }],
+  ['/missions/new', { modulePath: './pages/MissionPlanning', localName: 'MissionPlanning' }],
+  ['/missions/:missionId', { modulePath: './pages/MissionPlanning', localName: 'MissionPlanning' }],
+  ['/weather', { modulePath: './pages/WeatherCentre', localName: 'WeatherCentre' }],
+  ['/mission-planning', {
+    modulePath: './components/MissionRouteRedirect',
+    localName: 'MissionRouteRedirect',
+  }],
+  ['/compliance', {
+    modulePath: './pages/CasaComplianceOverview',
+    localName: 'CasaComplianceOverview',
+  }],
+  ['/compliance/reoc', {
+    modulePath: './pages/ReocComplianceWorkspace',
+    localName: 'ReocComplianceWorkspace',
+  }],
+  ['/compliance/operations-manual', {
+    modulePath: './pages/OperationsManualWorkspace',
+    localName: 'OperationsManualWorkspace',
+  }],
+  ['/compliance/library', { modulePath: './pages/ComplianceMenu', localName: 'ComplianceMenu' }],
+  ['/compliance/checklists', {
+    modulePath: './pages/ControlledChecklists',
+    localName: 'ControlledChecklists',
+  }],
+  ['/compliance/flight', { modulePath: './pages/ComplianceFlight', localName: 'ComplianceFlight' }],
+  ['/compliance/chemical', {
+    modulePath: './pages/ComplianceChemical',
+    localName: 'ComplianceChemical',
+  }],
+  ['/compliance/transport', {
+    modulePath: './pages/ComplianceTransport',
+    localName: 'ComplianceTransport',
+  }],
+  ['/compliance/licensing', {
+    modulePath: './pages/ComplianceLicensing',
+    localName: 'ComplianceLicensing',
+  }],
+  ['/compliance/environmental', {
+    modulePath: './pages/ComplianceEnvironmental',
+    localName: 'ComplianceEnvironmental',
+  }],
+  ['/compliance/vegetation', {
+    modulePath: './pages/ComplianceVegetation',
+    localName: 'ComplianceVegetation',
+  }],
+  ['/compliance/safety', { modulePath: './pages/ComplianceSafety', localName: 'ComplianceSafety' }],
+  ['/compliance/documentation', {
+    modulePath: './pages/ComplianceDocumentation',
+    localName: 'ComplianceDocumentation',
+  }],
+  ['/license-settings', {
+    modulePath: './pages/UserLicenseSettings',
+    localName: 'UserLicenseSettings',
+  }],
+  ['/admin', { modulePath: './pages/Admin', localName: 'Admin' }],
+]);
+
+const structuralDestinationContracts = {
+  PlatformShell: { modulePath: './components/PlatformShell', localName: 'PlatformShell' },
+};
+
+function assertCanonicalRouteDestinationSymbolConventions(program, appSourceFile) {
+  const checker = program.getTypeChecker();
+  const importSymbolCache = new Map();
+  const exactDestinationImport = (contract) => {
+    const key = `${contract.modulePath}::${contract.localName}`;
+    if (importSymbolCache.has(key)) return importSymbolCache.get(key);
+    try {
+      const sourceFile = requiredSourceFile(program, `${contract.modulePath.slice(1)}.tsx`);
+      const canonicalSymbol = requiredDefaultExportSymbol(
+        sourceFile,
+        checker,
+        contract.localName,
+        contract.exportKind,
+      );
+      const importSymbol = exactDefaultImportSymbol(
+        appSourceFile,
+        checker,
+        contract.modulePath,
+        contract.localName,
+        canonicalSymbol,
+      );
+      importSymbolCache.set(key, importSymbol);
+      return importSymbol;
+    } catch {
+      throw new Error(canonicalRouteDestinationError);
+    }
+  };
+
+  const homeRoute = requiredFunctionSymbol(appSourceFile, checker, 'HomeRoute');
+  const workflowProviders = requiredFunctionSymbol(appSourceFile, checker, 'WorkflowProviders');
+  const routes = new Map([...routeDestinationContracts].map(([routePath, contract]) => {
+    const symbol = contract.local ? homeRoute.symbol : exactDestinationImport(contract);
+    const child = contract.child
+      ? { ...contract.child, symbol: exactDestinationImport(contract.child) }
+      : null;
+    return [routePath, { ...contract, symbol, child }];
+  }));
+
+  return {
+    routes,
+    WorkflowProviders: workflowProviders.symbol,
+    PlatformShell: exactDestinationImport(structuralDestinationContracts.PlatformShell),
+  };
+}
+
 function unwrapTransparentExpression(expression) {
   let unwrapped = expression;
   while (ts.isParenthesizedExpression(unwrapped)
@@ -587,6 +823,31 @@ function isExactJsxComponent(element, componentName, checker, expectedSymbol) {
   return jsxTagIdentifier(element, componentName, checker, expectedSymbol)
     && opening.attributes.properties.length === 0
     && (!ts.isJsxElement(element) || significantJsxChildren(element).length === 0);
+}
+
+function isExactRouteDestination(element, contract, checker) {
+  if (!contract?.child) {
+    return isExactJsxComponent(element, contract?.localName, checker, contract?.symbol);
+  }
+  if (!ts.isJsxElement(element)
+    || !jsxTagIdentifier(element, contract.localName, checker, contract.symbol)
+    || !contract.requiredStringAttribute
+    || element.openingElement.attributes.properties.length !== 1) return false;
+  const [attributeName, attributeValue] = contract.requiredStringAttribute;
+  const attribute = element.openingElement.attributes.properties[0];
+  const children = significantJsxChildren(element);
+  return ts.isJsxAttribute(attribute)
+    && attribute.name.text === attributeName
+    && attribute.initializer
+    && ts.isStringLiteral(attribute.initializer)
+    && attribute.initializer.text === attributeValue
+    && children.length === 1
+    && isExactJsxComponent(
+      children[0],
+      contract.child.localName,
+      checker,
+      contract.child.symbol,
+    );
 }
 
 function isExactJsxWrapper(element, componentName, childPredicate, checker, expectedSymbol) {
@@ -689,6 +950,14 @@ function assertExactRouteAccessContractKeys(reachableRoutes) {
   if (routeAccessContracts.size !== manifestPaths.size
     || [...routeAccessContracts.keys()].some((routePath) => !manifestPaths.has(routePath))) {
     throw new Error('Verifier-only exact route access contract metadata does not match reachable routes.');
+  }
+}
+
+function assertExactRouteDestinationContractKeys(reachableRoutes) {
+  const manifestPaths = new Set(reachableRoutes.map(({ path: routePath }) => routePath));
+  if (routeDestinationContracts.size !== manifestPaths.size
+    || [...routeDestinationContracts.keys()].some((routePath) => !manifestPaths.has(routePath))) {
+    throw new Error('Verifier-only canonical route destination contract metadata does not match reachable routes.');
   }
 }
 
@@ -1130,42 +1399,196 @@ function assertCanonicalProductMaturitySurfaceComposition(routeSymbols) {
   }
 }
 
-function discoverReactRouterPaths(sourceFile, checker, approvedRoutePaths, routeSymbols) {
+function discoverReactRouterPaths(program, sourceFile, checker, approvedRoutePaths, routeSymbols) {
   const directRouteImportSymbols = new Set();
-  const namespaceImportSymbols = new Set();
+  const directRoutesImportSymbols = new Set();
+  const directBrowserRouterImportSymbols = new Set();
+  const routeUsageError = 'React Router Route requires its canonical direct JSX-only import/symbol convention.';
+  const controlledRouterExports = new Set(['BrowserRouter', 'Route', 'Routes']);
+  const allowedRouterImports = new Set([
+    'BrowserRouter',
+    'Link',
+    'Navigate',
+    'Outlet',
+    'Route',
+    'Routes',
+    'useLocation',
+    'useNavigate',
+    'useParams',
+    'useSearchParams',
+  ]);
+  const requiredAppRouterImports = new Set(['BrowserRouter', 'Navigate', 'Route', 'Routes']);
+  const appRouterImports = [];
+  const isReactRouterModule = (modulePath) => /^react-router(?:-dom)?(?:\/|$)/.test(modulePath);
 
-  sourceFile.statements.forEach((statement) => {
-    if (!ts.isImportDeclaration(statement)
-      || !ts.isStringLiteral(statement.moduleSpecifier)
-      || statement.moduleSpecifier.text !== 'react-router-dom') return;
+  program.getSourceFiles().filter((candidate) => !candidate.isDeclarationFile).forEach((candidate) => {
+    candidate.statements.forEach((statement) => {
+      if ((ts.isImportDeclaration(statement) || ts.isExportDeclaration(statement))
+        && statement.moduleSpecifier
+        && ts.isStringLiteral(statement.moduleSpecifier)
+        && isReactRouterModule(statement.moduleSpecifier.text)) {
+        if (ts.isExportDeclaration(statement)
+          || statement.moduleSpecifier.text !== 'react-router-dom'
+          || statement.importClause?.name) throw new Error(routeUsageError);
 
-    const bindings = statement.importClause?.namedBindings;
-    if (bindings && ts.isNamedImports(bindings)) {
-      bindings.elements.forEach((element) => {
-        if ((element.propertyName ?? element.name).text !== 'Route') return;
-        const symbol = checker.getSymbolAtLocation(element.name);
-        if (symbol) directRouteImportSymbols.add(symbol);
-      });
-    }
-    if (bindings && ts.isNamespaceImport(bindings)) {
-      const symbol = checker.getSymbolAtLocation(bindings.name);
-      if (symbol) namespaceImportSymbols.add(symbol);
-    }
+        const bindings = statement.importClause?.namedBindings;
+        if (!bindings || !ts.isNamedImports(bindings)) throw new Error(routeUsageError);
+        bindings.elements.forEach((element) => {
+          const importedName = (element.propertyName ?? element.name).text;
+          if (!allowedRouterImports.has(importedName)) throw new Error(routeUsageError);
+          if (candidate === sourceFile) {
+            if (!requiredAppRouterImports.has(importedName)
+              || element.propertyName
+              || element.name.text !== importedName) throw new Error(routeUsageError);
+            appRouterImports.push(importedName);
+            const symbol = checker.getSymbolAtLocation(element.name);
+            if (symbol && importedName === 'Route') directRouteImportSymbols.add(symbol);
+            if (symbol && importedName === 'Routes') directRoutesImportSymbols.add(symbol);
+            if (symbol && importedName === 'BrowserRouter') {
+              directBrowserRouterImportSymbols.add(symbol);
+            }
+            return;
+          }
+          if (controlledRouterExports.has(importedName)) throw new Error(routeUsageError);
+        });
+      }
+    });
+
+    const auditDynamicRouterAcquisition = (node) => {
+      if (ts.isCallExpression(node)
+        && node.arguments.length > 0
+        && ts.isStringLiteralLike(node.arguments[0])
+        && isReactRouterModule(node.arguments[0].text)
+        && ((ts.isIdentifier(node.expression) && node.expression.text === 'require')
+          || node.expression.kind === ts.SyntaxKind.ImportKeyword)) {
+        throw new Error(routeUsageError);
+      }
+      ts.forEachChild(node, auditDynamicRouterAcquisition);
+    };
+    auditDynamicRouterAcquisition(candidate);
   });
 
-  if (directRouteImportSymbols.size === 0 && namespaceImportSymbols.size === 0) {
-    throw new Error('App route source does not import React Router Route.');
+  if (directRouteImportSymbols.size !== 1
+    || directRoutesImportSymbols.size !== 1
+    || directBrowserRouterImportSymbols.size !== 1
+    || appRouterImports.length !== requiredAppRouterImports.size
+    || appRouterImports.some((importedName) => !requiredAppRouterImports.has(importedName))) {
+    throw new Error(routeUsageError);
   }
+  const resolvedRouteImportSymbols = new Set(
+    [...directRouteImportSymbols].map((symbol) => resolveAliasedSymbol(checker, symbol)),
+  );
+  const isCanonicalRouteReference = (node) => {
+    const symbol = checker.getSymbolAtLocation(node);
+    return directRouteImportSymbols.has(symbol)
+      || resolvedRouteImportSymbols.has(resolveAliasedSymbol(checker, symbol));
+  };
+  const resolvedRoutesImportSymbols = new Set(
+    [...directRoutesImportSymbols].map((symbol) => resolveAliasedSymbol(checker, symbol)),
+  );
+  const isCanonicalRoutesReference = (node) => {
+    const symbol = checker.getSymbolAtLocation(node);
+    return directRoutesImportSymbols.has(symbol)
+      || resolvedRoutesImportSymbols.has(resolveAliasedSymbol(checker, symbol));
+  };
+  const resolvedBrowserRouterImportSymbols = new Set(
+    [...directBrowserRouterImportSymbols].map((symbol) => resolveAliasedSymbol(checker, symbol)),
+  );
+  const isCanonicalBrowserRouterReference = (node) => {
+    const symbol = checker.getSymbolAtLocation(node);
+    return directBrowserRouterImportSymbols.has(symbol)
+      || resolvedBrowserRouterImportSymbols.has(resolveAliasedSymbol(checker, symbol));
+  };
 
   const isReactRouterRouteTag = (tagName) => {
-    if (ts.isIdentifier(tagName)) {
-      return directRouteImportSymbols.has(checker.getSymbolAtLocation(tagName));
-    }
-    return ts.isPropertyAccessExpression(tagName)
-      && tagName.name.text === 'Route'
-      && ts.isIdentifier(tagName.expression)
-      && namespaceImportSymbols.has(checker.getSymbolAtLocation(tagName.expression));
+    return ts.isIdentifier(tagName)
+      && tagName.text === 'Route'
+      && isCanonicalRouteReference(tagName);
   };
+  const isReactRouterRoutesTag = (tagName) => ts.isIdentifier(tagName)
+    && tagName.text === 'Routes'
+    && isCanonicalRoutesReference(tagName);
+  const isReactRouterBrowserRouterTag = (tagName) => ts.isIdentifier(tagName)
+    && tagName.text === 'BrowserRouter'
+    && isCanonicalBrowserRouterReference(tagName);
+
+  const isApprovedDirectRouterReference = (identifier) => {
+    const { parent } = identifier;
+    if (ts.isImportSpecifier(parent) && parent.name === identifier) return true;
+    return ((ts.isJsxOpeningElement(parent)
+        || ts.isJsxSelfClosingElement(parent)
+        || ts.isJsxClosingElement(parent))
+      && parent.tagName === identifier);
+  };
+  const auditRouteReferences = (node) => {
+    if (ts.isIdentifier(node)
+      && controlledRouterExports.has(node.text)
+      && !isApprovedDirectRouterReference(node)) {
+      throw new Error(`${routeUsageError} Unexpected reference: ${node.getText(sourceFile)}.`);
+    }
+    ts.forEachChild(node, auditRouteReferences);
+  };
+  auditRouteReferences(sourceFile);
+
+  const routesContainers = [];
+  const findRoutesContainers = (node) => {
+    if (ts.isJsxOpeningElement(node)
+      && isReactRouterRoutesTag(node.tagName)
+      && ts.isJsxElement(node.parent)) {
+      routesContainers.push(node.parent);
+    }
+    ts.forEachChild(node, findRoutesContainers);
+  };
+  findRoutesContainers(sourceFile);
+  if (routesContainers.length !== 1
+    || routesContainers[0].openingElement.attributes.properties.length !== 0) {
+    throw new Error(routeUsageError);
+  }
+
+  const appFunctions = sourceFile.statements.filter((statement) => (
+    ts.isFunctionDeclaration(statement) && statement.name?.text === 'App' && statement.body
+  ));
+  const appReturns = appFunctions.length === 1
+    ? appFunctions[0].body.statements.filter((statement) => ts.isReturnStatement(statement))
+    : [];
+  const appReturnExpression = appReturns.length === 1 && appReturns[0].expression
+    ? unwrapTransparentExpression(appReturns[0].expression)
+    : null;
+  const browserRouterChildren = appReturnExpression && ts.isJsxElement(appReturnExpression)
+    ? significantJsxChildren(appReturnExpression)
+    : [];
+  if (!appReturnExpression
+    || !ts.isJsxElement(appReturnExpression)
+    || !isReactRouterBrowserRouterTag(appReturnExpression.openingElement.tagName)
+    || appReturnExpression.openingElement.attributes.properties.length !== 0
+    || browserRouterChildren.length !== 1
+    || browserRouterChildren[0] !== routesContainers[0]) {
+    throw new Error(routeUsageError);
+  }
+
+  const significantRouteTreeChildren = (element) => element.children.filter((child) => (
+    !(ts.isJsxText(child) && child.text.trim().length === 0)
+      && !(ts.isJsxExpression(child) && !child.expression)
+  ));
+  const assertCanonicalRouteTreeChildren = (element) => {
+    significantRouteTreeChildren(element).forEach((child) => {
+      if (ts.isJsxSelfClosingElement(child)) {
+        if (!isReactRouterRouteTag(child.tagName)) throw new Error(routeUsageError);
+        return;
+      }
+      if (ts.isJsxElement(child)) {
+        if (!isReactRouterRouteTag(child.openingElement.tagName)) throw new Error(routeUsageError);
+        assertCanonicalRouteTreeChildren(child);
+        return;
+      }
+      if (ts.isJsxFragment(child)) {
+        assertCanonicalRouteTreeChildren(child);
+        return;
+      }
+      throw new Error(routeUsageError);
+    });
+  };
+  assertCanonicalRouteTreeChildren(routesContainers[0]);
 
   const containsRouteChild = (element) => element.children.some((child) => {
     if (ts.isJsxElement(child)) {
@@ -1203,6 +1626,23 @@ function discoverReactRouterPaths(sourceFile, checker, approvedRoutePaths, route
         const pathAttributes = node.attributes.properties.filter((attribute) => (
           ts.isJsxAttribute(attribute) && attribute.name.text === 'path'
         ));
+        const expectedAttributeNames = pathAttributes.length > 0
+          ? ['path', 'element']
+          : ['element'];
+        const attributeNames = node.attributes.properties.map((attribute) => (
+          ts.isJsxAttribute(attribute) && ts.isIdentifier(attribute.name)
+            ? attribute.name.text
+            : null
+        ));
+        if (attributeNames.length !== expectedAttributeNames.length
+          || attributeNames.some((attributeName) => !expectedAttributeNames.includes(attributeName))
+          || expectedAttributeNames.some((expectedName) => (
+            attributeNames.filter((attributeName) => attributeName === expectedName).length !== 1
+          ))) {
+          throw new Error(pathAttributes.length > 0
+            ? 'React Router leaf Route requires exactly the canonical path and element attributes.'
+            : 'React Router structural Route requires exactly the canonical element attribute.');
+        }
         if (pathAttributes.length === 0) {
           const isStructuralLayoutRoute = ts.isJsxOpeningElement(node)
             && ts.isJsxElement(node.parent)
@@ -1212,6 +1652,9 @@ function discoverReactRouterPaths(sourceFile, checker, approvedRoutePaths, route
           }
           layoutRecords.push({ opening: node, element: node.parent });
         } else {
+          if (!ts.isJsxSelfClosingElement(node)) {
+            throw new Error('React Router leaf Route must be a self-closing element.');
+          }
           if (pathAttributes.length !== 1) {
             throw new Error('React Router Route path in App.tsx must be declared exactly once.');
           }
@@ -1236,7 +1679,7 @@ function discoverReactRouterPaths(sourceFile, checker, approvedRoutePaths, route
     }
     ts.forEachChild(node, visit);
   }
-  visit(sourceFile);
+  visit(routesContainers[0]);
 
   if (paths.length === 0) throw new Error('App route source contains no route paths.');
 
@@ -1268,7 +1711,12 @@ function discoverReactRouterPaths(sourceFile, checker, approvedRoutePaths, route
         (surface) => isExactJsxWrapper(
           surface,
           'ProductRouteSurface',
-          (shell) => isExactJsxComponent(shell, 'PlatformShell'),
+          (shell) => isExactJsxComponent(
+            shell,
+            'PlatformShell',
+            checker,
+            routeSymbols.destinations.PlatformShell,
+          ),
           checker,
           routeSymbols.app.ProductRouteSurface,
         ),
@@ -1294,6 +1742,8 @@ function discoverReactRouterPaths(sourceFile, checker, approvedRoutePaths, route
           checker,
           routeSymbols.app.Layout,
         ),
+        checker,
+        routeSymbols.destinations.WorkflowProviders,
       ),
       checker,
       routeSymbols.app.ProtectedRoute,
@@ -1330,12 +1780,16 @@ function discoverReactRouterPaths(sourceFile, checker, approvedRoutePaths, route
     );
     const layout = nearestLayout(opening);
     const kind = layout ? layoutKind.get(layout) : null;
+    const destination = routeSymbols.destinations.routes.get(routePath);
     const authComponent = authLifecycleRouteComponents.get(routePath);
     if (authComponent) {
       if (accessContract?.kind !== 'public'
         || kind !== null
         || !isExactJsxComponent(expression, authComponent)) {
         throw new Error(`App route ${routePath} requires its approved auth lifecycle composition.`);
+      }
+      if (!destination || !isExactRouteDestination(expression, destination, checker)) {
+        throw new Error(canonicalRouteDestinationError);
       }
       return;
     }
@@ -1353,6 +1807,12 @@ function discoverReactRouterPaths(sourceFile, checker, approvedRoutePaths, route
       if (!validPublicSurface) {
         throw new Error(`App route ${routePath} requires its approved public ProductRouteSurface composition.`);
       }
+      const publicChildren = significantJsxChildren(expression);
+      if (!destination
+        || publicChildren.length !== 1
+        || !isExactRouteDestination(publicChildren[0], destination, checker)) {
+        throw new Error(canonicalRouteDestinationError);
+      }
       return;
     }
 
@@ -1361,6 +1821,9 @@ function discoverReactRouterPaths(sourceFile, checker, approvedRoutePaths, route
         || kind !== 'platform'
         || !isExactJsxComponent(expression, 'PlatformAdmin')) {
         throw new Error('App route /platform requires its approved platform guard-before-maturity composition.');
+      }
+      if (!destination || !isExactRouteDestination(expression, destination, checker)) {
+        throw new Error(canonicalRouteDestinationError);
       }
       return;
     }
@@ -1389,6 +1852,9 @@ function discoverReactRouterPaths(sourceFile, checker, approvedRoutePaths, route
       routeSymbols,
     )) {
       throw new Error(`App route ${routePath} does not match its exact route access contract.`);
+    }
+    if (!destination || !isExactRouteDestination(unwrapped.arguments[0], destination, checker)) {
+      throw new Error(canonicalRouteDestinationError);
     }
   });
 
@@ -2031,11 +2497,174 @@ function resolveVisibleStrings(
       return undefined;
     };
 
-    const resolveHelperFunctionDeclarations = (
-      candidateSymbol,
-      helperSymbolPath,
-      helperDepth,
-    ) => {
+    const mergeHelperResolutions = (resolutions, attributable = true) => {
+      const result = {
+        functions: [],
+        symbols: new Set(),
+        recognizedAlias: attributable || resolutions.some((resolution) => resolution.recognizedAlias),
+        unresolvedAlias: resolutions.length === 0,
+      };
+      resolutions.forEach((resolution) => {
+        result.functions.push(...resolution.functions);
+        resolution.symbols.forEach((symbol) => result.symbols.add(symbol));
+        if (resolution.unresolvedAlias || !resolution.recognizedAlias) {
+          result.unresolvedAlias = true;
+        }
+      });
+      return result;
+    };
+
+    const unresolvedHelperAlias = (symbols = new Set()) => ({
+      functions: [], symbols, recognizedAlias: true, unresolvedAlias: true,
+    });
+
+    function resolveHelperArraySymbol(candidateSymbol, arrayIndex, helperSymbolPath, helperDepth) {
+      if (helperDepth > visibleStringDepthBudget) {
+        throw new Error(`visible-string resolution depth exceeded (${visibleStringDepthBudget}).`);
+      }
+      if (!candidateSymbol) return unresolvedHelperAlias();
+
+      recordVisibleStringSymbolVisit(state);
+      const helperSymbol = (candidateSymbol.flags & ts.SymbolFlags.Alias)
+        ? checker.getAliasedSymbol(candidateSymbol)
+        : candidateSymbol;
+      if (helperSymbolPath.has(helperSymbol)) {
+        return unresolvedHelperAlias(new Set([helperSymbol]));
+      }
+
+      const nestedHelperSymbolPath = new Set(helperSymbolPath);
+      nestedHelperSymbolPath.add(helperSymbol);
+      const resolutions = [];
+      (helperSymbol.declarations ?? []).forEach((declaration) => {
+        recordVisibleStringNodeVisit(state);
+        if (ts.isVariableDeclaration(declaration) || ts.isPropertyAssignment(declaration)) {
+          if (declaration.initializer) {
+            resolutions.push(resolveHelperArrayElement(
+              declaration.initializer,
+              arrayIndex,
+              new Set(nestedHelperSymbolPath),
+              helperDepth + 1,
+            ));
+          }
+          return;
+        }
+        if (ts.isShorthandPropertyAssignment(declaration)) {
+          resolutions.push(resolveHelperArraySymbol(
+            checker.getShorthandAssignmentValueSymbol(declaration),
+            arrayIndex,
+            new Set(nestedHelperSymbolPath),
+            helperDepth + 1,
+          ));
+        }
+      });
+      const result = mergeHelperResolutions(resolutions);
+      result.symbols.add(helperSymbol);
+      return result;
+    }
+
+    function resolveHelperArrayElement(candidate, arrayIndex, helperSymbolPath, helperDepth) {
+      if (helperDepth > visibleStringDepthBudget) {
+        throw new Error(`visible-string resolution depth exceeded (${visibleStringDepthBudget}).`);
+      }
+      const unwrapped = unwrapStaticExpression(candidate);
+      recordVisibleStringNodeVisit(state);
+      if (ts.isArrayLiteralExpression(unwrapped)) {
+        if (unwrapped.elements.some(ts.isSpreadElement)
+          || arrayIndex < 0
+          || arrayIndex >= unwrapped.elements.length
+          || ts.isOmittedExpression(unwrapped.elements[arrayIndex])) {
+          return unresolvedHelperAlias();
+        }
+        return resolveHelperAliasExpression(
+          unwrapped.elements[arrayIndex],
+          new Set(helperSymbolPath),
+          helperDepth + 1,
+        );
+      }
+      if (ts.isConditionalExpression(unwrapped)) {
+        return mergeHelperResolutions([
+          resolveHelperArrayElement(
+            unwrapped.whenTrue,
+            arrayIndex,
+            new Set(helperSymbolPath),
+            helperDepth + 1,
+          ),
+          resolveHelperArrayElement(
+            unwrapped.whenFalse,
+            arrayIndex,
+            new Set(helperSymbolPath),
+            helperDepth + 1,
+          ),
+        ]);
+      }
+      if (ts.isIdentifier(unwrapped) || ts.isPropertyAccessExpression(unwrapped)) {
+        return resolveHelperArraySymbol(
+          helperAliasSymbol(unwrapped),
+          arrayIndex,
+          new Set(helperSymbolPath),
+          helperDepth + 1,
+        );
+      }
+      return unresolvedHelperAlias();
+    }
+
+    function resolveHelperAliasExpression(candidate, helperSymbolPath, helperDepth) {
+      if (helperDepth > visibleStringDepthBudget) {
+        throw new Error(`visible-string resolution depth exceeded (${visibleStringDepthBudget}).`);
+      }
+      const unwrapped = unwrapStaticExpression(candidate);
+      recordVisibleStringNodeVisit(state);
+      if (ts.isFunctionLike(unwrapped) && unwrapped.body) {
+        return {
+          functions: [unwrapped], symbols: new Set(), recognizedAlias: true, unresolvedAlias: false,
+        };
+      }
+      if (ts.isIdentifier(unwrapped) || ts.isPropertyAccessExpression(unwrapped)) {
+        return resolveHelperFunctionDeclarations(
+          helperAliasSymbol(unwrapped),
+          new Set(helperSymbolPath),
+          helperDepth + 1,
+        );
+      }
+      if (ts.isConditionalExpression(unwrapped)) {
+        return mergeHelperResolutions([
+          resolveHelperAliasExpression(
+            unwrapped.whenTrue,
+            new Set(helperSymbolPath),
+            helperDepth + 1,
+          ),
+          resolveHelperAliasExpression(
+            unwrapped.whenFalse,
+            new Set(helperSymbolPath),
+            helperDepth + 1,
+          ),
+        ]);
+      }
+      if (ts.isElementAccessExpression(unwrapped)) {
+        const indexExpression = unwrapped.argumentExpression
+          ? unwrapStaticExpression(unwrapped.argumentExpression)
+          : null;
+        const indexText = indexExpression
+          && (ts.isNumericLiteral(indexExpression) || ts.isStringLiteralLike(indexExpression))
+          ? indexExpression.text
+          : null;
+        const arrayIndex = indexText === null ? Number.NaN : Number(indexText);
+        if (indexText === null
+          || !/^(?:0|[1-9]\d*)$/.test(indexText)
+          || !Number.isSafeInteger(arrayIndex)) return unresolvedHelperAlias();
+        return resolveHelperArrayElement(
+          unwrapped.expression,
+          arrayIndex,
+          new Set(helperSymbolPath),
+          helperDepth + 1,
+        );
+      }
+      return {
+        functions: [], symbols: new Set(), recognizedAlias: false, unresolvedAlias: false,
+      };
+    }
+
+    function resolveHelperFunctionDeclarations(candidateSymbol, helperSymbolPath, helperDepth) {
       if (helperDepth > visibleStringDepthBudget) {
         throw new Error(`visible-string resolution depth exceeded (${visibleStringDepthBudget}).`);
       }
@@ -2050,9 +2679,7 @@ function resolveVisibleStrings(
         ? checker.getAliasedSymbol(candidateSymbol)
         : candidateSymbol;
       if (helperSymbolPath.has(helperSymbol)) {
-        return {
-          functions: [], symbols: new Set([helperSymbol]), recognizedAlias: true, unresolvedAlias: true,
-        };
+        return unresolvedHelperAlias(new Set([helperSymbol]));
       }
 
       const nestedHelperSymbolPath = new Set(helperSymbolPath);
@@ -2066,17 +2693,41 @@ function resolveVisibleStrings(
 
       (helperSymbol.declarations ?? []).forEach((declaration) => {
         recordVisibleStringNodeVisit(state);
-        let functionDeclaration = declaration;
-        let initializer = null;
-        let aliasTargetSymbol;
+        if (ts.isFunctionLike(declaration) && declaration.body) {
+          result.recognizedAlias = true;
+          result.functions.push(declaration);
+          return;
+        }
         if (ts.isVariableDeclaration(declaration) || ts.isPropertyAssignment(declaration)) {
-          initializer = declaration.initializer;
-          functionDeclaration = declaration.initializer;
-        } else if (ts.isShorthandPropertyAssignment(declaration)) {
-          initializer = declaration.name;
-          functionDeclaration = declaration.name;
-          aliasTargetSymbol = checker.getShorthandAssignmentValueSymbol(declaration);
-        } else if (ts.isBindingElement(declaration)) {
+          if (!declaration.initializer) return;
+          result.recognizedAlias = true;
+          const nestedResult = resolveHelperAliasExpression(
+            declaration.initializer,
+            new Set(nestedHelperSymbolPath),
+            helperDepth + 1,
+          );
+          nestedResult.symbols.forEach((symbol) => result.symbols.add(symbol));
+          result.functions.push(...nestedResult.functions);
+          if (nestedResult.unresolvedAlias || !nestedResult.recognizedAlias) {
+            result.unresolvedAlias = true;
+          }
+          return;
+        }
+        if (ts.isShorthandPropertyAssignment(declaration)) {
+          result.recognizedAlias = true;
+          const nestedResult = resolveHelperFunctionDeclarations(
+            checker.getShorthandAssignmentValueSymbol(declaration),
+            new Set(nestedHelperSymbolPath),
+            helperDepth + 1,
+          );
+          nestedResult.symbols.forEach((symbol) => result.symbols.add(symbol));
+          result.functions.push(...nestedResult.functions);
+          if (nestedResult.unresolvedAlias || !nestedResult.recognizedAlias) {
+            result.unresolvedAlias = true;
+          }
+          return;
+        }
+        if (ts.isBindingElement(declaration)) {
           result.recognizedAlias = true;
           const bindingPattern = declaration.parent;
           const variableDeclaration = ts.isObjectBindingPattern(bindingPattern)
@@ -2094,7 +2745,7 @@ function resolveVisibleStrings(
             result.unresolvedAlias = true;
             return;
           }
-          aliasTargetSymbol = checker.getPropertyOfType(
+          const aliasTargetSymbol = checker.getPropertyOfType(
             checker.getTypeAtLocation(variableDeclaration.initializer),
             propertyText,
           );
@@ -2114,34 +2765,10 @@ function resolveVisibleStrings(
           }
           return;
         }
-
-        if (ts.isFunctionLike(functionDeclaration) && functionDeclaration.body) {
-          result.recognizedAlias = true;
-          result.functions.push(functionDeclaration);
-          return;
-        }
-        if (!initializer) return;
-
-        const aliasTarget = unwrapStaticExpression(initializer);
-        if (!ts.isIdentifier(aliasTarget)
-          && !ts.isPropertyAccessExpression(aliasTarget)
-          && !ts.isElementAccessExpression(aliasTarget)) return;
-
-        result.recognizedAlias = true;
-        const nestedResult = resolveHelperFunctionDeclarations(
-          aliasTargetSymbol ?? helperAliasSymbol(aliasTarget),
-          nestedHelperSymbolPath,
-          helperDepth + 1,
-        );
-        nestedResult.symbols.forEach((symbol) => result.symbols.add(symbol));
-        result.functions.push(...nestedResult.functions);
-        if (nestedResult.unresolvedAlias || !nestedResult.recognizedAlias) {
-          result.unresolvedAlias = true;
-        }
       });
 
       return result;
-    };
+    }
 
     const resolveStaticTransformValues = (
       candidate,
@@ -2307,12 +2934,8 @@ function resolveVisibleStrings(
           )));
         }
 
-        const helperSymbolLocation = nestedPropertyAccess?.name
-          ?? nestedElementAccess
-          ?? nestedCallee;
-        let helperSymbol = checker.getSymbolAtLocation(helperSymbolLocation);
-        const helperResolution = resolveHelperFunctionDeclarations(
-          helperSymbol,
+        const helperResolution = resolveHelperAliasExpression(
+          nestedCallee,
           new Set(transformSymbolPath),
           transformDepth + 1,
         );
@@ -2613,9 +3236,14 @@ async function verifyProductMaturityRegistry(root) {
   const appSourceFile = productionProgram.getSourceFile(appPath);
   if (!appSourceFile) throw new Error('App route source is missing from the TypeScript Program.');
   const routeSymbols = assertCanonicalRouteSymbolConventions(productionProgram, appSourceFile);
+  routeSymbols.destinations = assertCanonicalRouteDestinationSymbolConventions(
+    productionProgram,
+    appSourceFile,
+  );
   assertCanonicalAuthorisedProductRouteComposition(routeSymbols);
   assertCanonicalProductMaturitySurfaceComposition(routeSymbols);
   const appRoutePaths = discoverReactRouterPaths(
+    productionProgram,
     appSourceFile,
     productionProgram.getTypeChecker(),
     new Set(reachableRoutes.map(({ path: routePath }) => routePath)),
@@ -2623,6 +3251,8 @@ async function verifyProductMaturityRegistry(root) {
   );
   assertExactRoutePathMultiset(appRoutePaths, reachableRoutes);
   assertExactRouteAccessContractKeys(reachableRoutes);
+  assertExactRouteDestinationContractKeys(reachableRoutes);
+  assertCanonicalResolverSourceIntegrity(routeManifestSource);
 
   const legacyViolations = findCustomerVisibleLegacyViolations(root, customerUiSourcePaths, productionProgram);
   if (legacyViolations.length > 0) {
