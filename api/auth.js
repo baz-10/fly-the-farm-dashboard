@@ -235,6 +235,112 @@ async function resetPassword(body) {
   };
 }
 
+function invitationActionError(statusCode, publicMessage, code, errorKind = 'onboarding') {
+  const error = createHttpError(statusCode, publicMessage, code);
+  error.code = code;
+  error.errorKind = errorKind;
+  return error;
+}
+
+function invitationOutcomeError(code) {
+  const outcomes = {
+    INVITATION_EXPIRED: [410, 'This invitation has expired. Ask your reviewer to send a new invitation.'],
+    INVITATION_REVOKED: [410, 'This invitation has been revoked. Ask your reviewer to send a new invitation.'],
+    INVITATION_ALREADY_ACCEPTED: [409, 'This invitation has already been accepted.'],
+    INVITATION_EMAIL_MISMATCH: [403, 'Sign in with the email address that received this invitation.'],
+    PLATFORM_IDENTITY_FORBIDDEN: [403, 'Platform accounts cannot accept organisation invitations.'],
+    ORGANISATION_IDENTITY_CONFLICT: [409, 'This account already belongs to another organisation.'],
+    INVITATION_DELIVERY_PENDING: [409, 'This invitation is not ready yet. Ask your reviewer to resend it.'],
+  };
+  const [status, message] = outcomes[code] || [403, 'This invitation cannot be accepted. Ask your reviewer to send a new invitation.'];
+  return invitationActionError(status, message, code);
+}
+
+async function acceptOrganisationInvitation(body) {
+  const password = String(body.password || '');
+  const invitationToken = String(body.token || '');
+  const accessToken = String(body.accessToken || '');
+  const refreshToken = String(body.refreshToken || '');
+
+  if (password.length < 8) {
+    throw invitationActionError(400, 'Password must be at least 8 characters.', 'PASSWORD_INVALID', 'authentication');
+  }
+  if (!accessToken || !refreshToken) {
+    throw invitationActionError(400, 'This authentication link is incomplete or expired.', 'AUTH_LINK_INCOMPLETE', 'authentication');
+  }
+  if (invitationToken.length < 32 || invitationToken.length > 512) {
+    throw invitationActionError(400, 'This invitation link is incomplete or expired.', 'INVITATION_INVALID');
+  }
+
+  let authUser;
+  try {
+    authUser = await supabaseRequest('auth/v1/user', {
+      keyType: 'anon', accessToken, publicMessage: 'This authentication link is invalid or expired.',
+    });
+  } catch (error) {
+    throw invitationActionError(
+      [401, 403].includes(error.statusCode) ? 401 : error.statusCode || 503,
+      'This authentication link is invalid or expired.',
+      'AUTH_LINK_INVALID',
+      'authentication',
+    );
+  }
+  if (!authUser?.id) {
+    throw invitationActionError(401, 'This authentication link is invalid or expired.', 'AUTH_LINK_INVALID', 'authentication');
+  }
+  const authenticatedUserId = authUser.id;
+
+  try {
+    authUser = await supabaseRequest('auth/v1/user', {
+      method: 'PUT', keyType: 'anon', accessToken,
+      body: JSON.stringify({ password }), publicMessage: 'Password could not be updated.',
+    });
+  } catch (error) {
+    throw invitationActionError(
+      error.statusCode || 503,
+      error.publicMessage || 'Password could not be updated.',
+      'PASSWORD_UPDATE_FAILED',
+      'authentication',
+    );
+  }
+  if (!authUser?.id || authUser.id !== authenticatedUserId) {
+    throw invitationActionError(401, 'This authentication link is invalid or expired.', 'AUTH_LINK_INVALID', 'authentication');
+  }
+
+  let acceptance;
+  try {
+    acceptance = await supabaseRequest('rest/v1/rpc/ftf_accept_commercial_invitation', {
+      method: 'POST',
+      body: JSON.stringify({ p_token: invitationToken, p_auth_user_id: authenticatedUserId }),
+      publicMessage: 'This invitation could not be accepted.',
+    });
+  } catch (error) {
+    throw invitationActionError(
+      error.statusCode || 503,
+      error.publicMessage || 'This invitation could not be accepted.',
+      'INVITATION_PROVISIONING_FAILED',
+    );
+  }
+  if (!acceptance?.accepted) throw invitationOutcomeError(String(acceptance?.code || 'INVITATION_INVALID'));
+
+  const profile = await loadProfile(authenticatedUserId).catch((error) => {
+    throw invitationActionError(
+      error.statusCode || 503,
+      'Organisation access could not be verified.',
+      'ORGANISATION_IDENTITY_UNRESOLVED',
+    );
+  });
+  if (!profile?.tenant_id || profile.tenant_id !== acceptance.organisation_id) {
+    throw invitationActionError(403, 'Organisation access could not be verified.', 'ORGANISATION_IDENTITY_UNRESOLVED');
+  }
+
+  return {
+    authUser,
+    profile,
+    session: { access_token: accessToken, refresh_token: refreshToken, expires_in: 3600 },
+  };
+}
+
 module.exports = async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store');
   const correlationId = crypto.randomUUID();
@@ -297,6 +403,12 @@ module.exports = async function handler(req, res) {
       return res.status(200).json({ user: completed.profile ? toPublicUser(completed.authUser, completed.profile) : toPublicPlatformUser(completed.authUser, completed.platformProfile) });
     }
 
+    if (body.action === 'accept-organisation-invitation') {
+      const completed = await acceptOrganisationInvitation(body);
+      setSessionCookies(req, res, completed.session);
+      return res.status(200).json({ user: toPublicUser(completed.authUser, completed.profile) });
+    }
+
     if (body.action === 'register') {
       const registration = await registerUser(body);
       if (registration.duplicate) {
@@ -315,6 +427,7 @@ module.exports = async function handler(req, res) {
     console.error(`Authentication API error [${correlationId}]:`, error);
     return res.status(status).json({
       error: error.publicMessage || 'Authentication request failed.',
+      ...(error.errorKind ? { errorKind: error.errorKind } : {}),
       correlationId,
     });
   }

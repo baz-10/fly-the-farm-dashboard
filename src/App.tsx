@@ -64,6 +64,7 @@ import ControlledChecklists from './pages/ControlledChecklists';
 import WeatherCentre from './pages/WeatherCentre';
 import { AuthorisedProductRoute, ProductRouteSurface } from './components/productMaturity/AuthorisedProductRoute';
 import CommercialApplication from './pages/CommercialApplication';
+import AcceptOrganisationInvitation from './pages/AcceptOrganisationInvitation';
 
 export { REACHABLE_PRODUCT_ROUTES } from './productMaturity/surfaces';
 
@@ -113,6 +114,7 @@ function App() {
         <Route path="/forgot-password" element={<ForgotPassword />} />
         <Route path="/reset-password" element={<ResetPassword />} />
         <Route path="/apply" element={<ProductRouteSurface><CommercialApplication /></ProductRouteSurface>} />
+        <Route path="/onboarding/accept" element={<ProductRouteSurface><AcceptOrganisationInvitation /></ProductRouteSurface>} />
         <Route path="/customer-acceptance/:token" element={<ProductRouteSurface><CustomerAcceptancePublic /></ProductRouteSurface>} />
         <Route element={<PlatformProtectedRoute><ProductRouteSurface><PlatformShell /></ProductRouteSurface></PlatformProtectedRoute>}>
           <Route path="/platform" element={<PlatformAdmin />} />

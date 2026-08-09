@@ -3,6 +3,7 @@ import { Alert, Box, Button, Card, CardContent, CircularProgress, Typography } f
 import { Link as RouterLink } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import ResetPassword from './ResetPassword';
+import AcceptOrganisationInvitation from './AcceptOrganisationInvitation';
 import PlatformBrand from '../brand/PlatformBrand';
 
 function ConfirmationCallback() {
@@ -55,6 +56,7 @@ function ConfirmationCallback() {
 
 export default function AuthCallback() {
   const parameters = new URLSearchParams(window.location.hash.replace(/^#/, ''));
-  if (['invite', 'recovery'].includes(parameters.get('type') || '')) return <ResetPassword />;
+  if (parameters.get('type') === 'invite') return <AcceptOrganisationInvitation />;
+  if (parameters.get('type') === 'recovery') return <ResetPassword />;
   return <ConfirmationCallback />;
 }

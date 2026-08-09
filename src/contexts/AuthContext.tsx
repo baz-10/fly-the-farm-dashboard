@@ -48,6 +48,7 @@ interface LoginResult {
 interface AuthActionResult {
   success: boolean;
   error?: string;
+  errorKind?: 'authentication' | 'onboarding';
 }
 
 interface AuthContextType {
@@ -59,6 +60,7 @@ interface AuthContextType {
   completeSession: (accessToken: string, refreshToken: string, expiresIn: number) => Promise<AuthActionResult>;
   requestPasswordReset: (email: string) => Promise<AuthActionResult>;
   resetPassword: (password: string, accessToken: string, refreshToken: string, expiresIn: number) => Promise<AuthActionResult>;
+  acceptOrganisationInvitation: (password: string, invitationToken: string, accessToken: string, refreshToken: string, expiresIn: number) => Promise<AuthActionResult>;
   logout: () => void;
   updateUser: (updates: Partial<User>) => void;
 }
@@ -140,7 +142,11 @@ async function requestRemoteAuth(body?: Record<string, unknown>): Promise<any> {
     body: body ? JSON.stringify(body) : undefined,
   });
   const result = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(result.error || 'Authentication request failed.');
+  if (!response.ok) {
+    const error = new Error(result.error || 'Authentication request failed.') as Error & { errorKind?: 'authentication' | 'onboarding' };
+    error.errorKind = result.errorKind;
+    throw error;
+  }
   return result;
 }
 
@@ -386,6 +392,32 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, [remoteMode]);
 
+  const acceptOrganisationInvitation = useCallback(async (
+    password: string,
+    invitationToken: string,
+    accessToken: string,
+    refreshToken: string,
+    expiresIn: number,
+  ): Promise<AuthActionResult> => {
+    if (!remoteMode) return { success: false, errorKind: 'authentication', error: 'Organisation invitations require remote persistence.' };
+    try {
+      const result = await requestRemoteAuth({
+        action: 'accept-organisation-invitation', password, token: invitationToken,
+        accessToken, refreshToken, expiresIn,
+      });
+      setUser(result.user);
+      cacheUser(result.user, false);
+      return { success: true };
+    } catch (error) {
+      const authError = error as Error & { errorKind?: 'authentication' | 'onboarding' };
+      return {
+        success: false,
+        error: authError instanceof Error ? authError.message : 'This invitation could not be accepted.',
+        errorKind: authError.errorKind || 'onboarding',
+      };
+    }
+  }, [remoteMode]);
+
   const updateUser = useCallback((updates: Partial<User>) => {
     setUser((previous) => {
       if (!previous) return null;
@@ -398,7 +430,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   return (
     <AuthContext.Provider value={{
       user, isAuthenticated: Boolean(user), isLoading, login, register, completeSession,
-      requestPasswordReset, resetPassword, logout, updateUser,
+      requestPasswordReset, resetPassword, acceptOrganisationInvitation, logout, updateUser,
     }}>
       {children}
     </AuthContext.Provider>

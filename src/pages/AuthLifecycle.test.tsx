@@ -10,12 +10,14 @@ import AuthCallback from './AuthCallback';
 const mockRequestPasswordReset = jest.fn();
 const mockResetPassword = jest.fn();
 const mockCompleteSession = jest.fn();
+const mockAcceptOrganisationInvitation = jest.fn();
 
 jest.mock('../contexts/AuthContext', () => ({
   useAuth: () => ({
     requestPasswordReset: mockRequestPasswordReset,
     resetPassword: mockResetPassword,
     completeSession: mockCompleteSession,
+    acceptOrganisationInvitation: mockAcceptOrganisationInvitation,
   }),
 }));
 
@@ -70,12 +72,13 @@ describe('deployed authentication lifecycle pages', () => {
     expect(mockCompleteSession).not.toHaveBeenCalled();
   });
 
-  test('invitation callbacks open password choice without resolving an identity plane', async () => {
-    window.history.replaceState({}, '', '/auth/callback#access_token=invite&refresh_token=refresh&expires_in=3600&type=invite');
+  test('invitation callbacks use organisation acceptance instead of the generic password-reset lifecycle', async () => {
+    window.history.replaceState({}, '', '/auth/callback?token=raw-invitation-token#access_token=invite&refresh_token=refresh&expires_in=3600&type=invite');
     renderPage(<AuthCallback />);
 
-    expect(await screen.findByText('Choose a new password')).toBeInTheDocument();
+    expect(await screen.findByText('Activate your organisation')).toBeInTheDocument();
     expect(mockCompleteSession).not.toHaveBeenCalled();
+    expect(mockResetPassword).not.toHaveBeenCalled();
     expect(screen.queryByText(/Platform identity could not be loaded/i)).not.toBeInTheDocument();
   });
 

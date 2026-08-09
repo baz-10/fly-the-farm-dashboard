@@ -8,7 +8,7 @@ function response(status: number, body: any) {
   };
 }
 
-function createResponse() {
+function createResponse(events?: string[]) {
   return {
     statusCode: 200,
     body: undefined as any,
@@ -26,6 +26,7 @@ function createResponse() {
     },
     setHeader(name: string, value: any) {
       this.headers[name.toLowerCase()] = value;
+      if (name.toLowerCase() === 'set-cookie') events?.push('trusted-cookie');
     },
     getHeader(name: string) {
       return this.headers[name.toLowerCase()];
@@ -427,6 +428,181 @@ describe('Supabase authentication API', () => {
       expect.stringContaining('ftf_access_token=confirmed-access'),
       expect.stringContaining('ftf_refresh_token=confirmed-refresh'),
     ]));
+  });
+
+  test('chooses a password before accepting an invitation and resolves the organisation before setting trusted cookies', async () => {
+    const events: string[] = [];
+    const requests: Array<{ url: string; options: RequestInit }> = [];
+    global.fetch = jest.fn(async (url: string, options: RequestInit = {}) => {
+      requests.push({ url, options });
+      if (url.includes('/auth/v1/user') && options.method === 'PUT') {
+        events.push('password-update');
+        return response(200, { id: 'invited-auth-id', email: 'admin@example.com', user_metadata: { name: 'Alex Admin' } });
+      }
+      if (url.includes('/auth/v1/user')) {
+        events.push('authentication');
+        return response(200, { id: 'invited-auth-id', email: 'admin@example.com', user_metadata: { name: 'Alex Admin' } });
+      }
+      if (url.includes('/rest/v1/rpc/ftf_accept_commercial_invitation')) {
+        events.push('invitation-acceptance');
+        return response(200, {
+          accepted: true,
+          already_provisioned: false,
+          invitation_id: 'invitation-id',
+          organisation_id: 'organisation-id',
+          organisation_reference: 'ALEX',
+          internal_user_id: 'internal-user-id',
+          membership_id: 'membership-id',
+          operating_location_id: 'location-id',
+        });
+      }
+      if (url.includes('/rest/v1/ftf_profiles')) {
+        events.push('profile-resolution');
+        return response(200, [{
+          user_id: 'invited-auth-id', tenant_id: 'organisation-id', role: 'admin', name: 'Alex Admin', tier: 'free',
+        }]);
+      }
+      return response(500, { message: `unexpected request: ${url}` });
+    }) as any;
+    const res = createResponse(events);
+
+    await authHandler({
+      method: 'POST', headers: { host: 'localhost:3001' },
+      body: {
+        action: 'accept-organisation-invitation',
+        token: 'raw-invitation-token-with-at-least-thirty-two-characters',
+        password: 'new-password', accessToken: 'invite-access', refreshToken: 'invite-refresh', expiresIn: 999999,
+        authUserId: 'browser-user', organisationId: 'browser-org', role: 'platform', seatId: 'browser-seat', locationId: 'browser-location',
+      },
+    }, res);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body.user).toMatchObject({ id: 'invited-auth-id', tenantId: 'organisation-id', role: 'admin' });
+    const rpc = requests.find(({ url }) => url.includes('/rpc/ftf_accept_commercial_invitation'));
+    expect(JSON.parse(String(rpc?.options.body))).toEqual({
+      p_token: 'raw-invitation-token-with-at-least-thirty-two-characters',
+      p_auth_user_id: 'invited-auth-id',
+    });
+    expect(events.indexOf('authentication')).toBeLessThan(events.indexOf('password-update'));
+    expect(events.indexOf('password-update')).toBeLessThan(events.indexOf('invitation-acceptance'));
+    expect(events.indexOf('invitation-acceptance')).toBeLessThan(events.indexOf('profile-resolution'));
+    expect(events.indexOf('profile-resolution')).toBeLessThan(events.indexOf('trusted-cookie'));
+    expect(res.headers['set-cookie']).toEqual(expect.arrayContaining([
+      expect.stringContaining('ftf_access_token=invite-access'),
+      expect.stringContaining('ftf_refresh_token=invite-refresh'),
+    ]));
+    expect(res.headers['set-cookie'].find((cookie: string) => cookie.startsWith('ftf_access_token='))).toContain('Max-Age=3600');
+  });
+
+  test.each([
+    ['INVITATION_EXPIRED', 410, 'This invitation has expired. Ask your reviewer to send a new invitation.'],
+    ['INVITATION_REVOKED', 410, 'This invitation has been revoked. Ask your reviewer to send a new invitation.'],
+    ['INVITATION_ALREADY_ACCEPTED', 409, 'This invitation has already been accepted.'],
+    ['INVITATION_EMAIL_MISMATCH', 403, 'Sign in with the email address that received this invitation.'],
+    ['PLATFORM_IDENTITY_FORBIDDEN', 403, 'Platform accounts cannot accept organisation invitations.'],
+    ['ORGANISATION_IDENTITY_CONFLICT', 409, 'This account already belongs to another organisation.'],
+  ])('fails closed for the %s onboarding outcome', async (code, expectedStatus, expectedMessage) => {
+    global.fetch = jest.fn(async (url: string, options: RequestInit = {}) => {
+      if (url.includes('/auth/v1/user')) {
+        return response(200, { id: 'invited-auth-id', email: 'admin@example.com', user_metadata: {} });
+      }
+      if (url.includes('/rest/v1/rpc/ftf_accept_commercial_invitation')) {
+        return response(200, { accepted: false, code });
+      }
+      return response(500, { message: `unexpected request: ${url}`, method: options.method });
+    }) as any;
+    const res = createResponse();
+
+    await authHandler({
+      method: 'POST', headers: { host: 'localhost:3001' },
+      body: {
+        action: 'accept-organisation-invitation',
+        token: 'raw-invitation-token-with-at-least-thirty-two-characters',
+        password: 'new-password', accessToken: 'invite-access', refreshToken: 'invite-refresh', expiresIn: 3600,
+      },
+    }, res);
+
+    expect(res.statusCode).toBe(expectedStatus);
+    expect(res.body).toMatchObject({ error: expectedMessage, errorKind: 'onboarding' });
+    expect(res.headers['set-cookie']).toBeUndefined();
+  });
+
+  test('failed provisioning creates no trusted session', async () => {
+    global.fetch = jest.fn(async (url: string) => {
+      if (url.includes('/auth/v1/user')) {
+        return response(200, { id: 'invited-auth-id', email: 'admin@example.com', user_metadata: {} });
+      }
+      if (url.includes('/rest/v1/rpc/ftf_accept_commercial_invitation')) {
+        return response(403, { message: 'provisioning failed' });
+      }
+      return response(500, { message: `unexpected request: ${url}` });
+    }) as any;
+    const res = createResponse();
+
+    await authHandler({
+      method: 'POST', headers: { host: 'localhost:3001' },
+      body: {
+        action: 'accept-organisation-invitation',
+        token: 'raw-invitation-token-with-at-least-thirty-two-characters',
+        password: 'new-password', accessToken: 'invite-access', refreshToken: 'invite-refresh', expiresIn: 3600,
+      },
+    }, res);
+
+    expect(res.statusCode).toBe(403);
+    expect(res.body).toMatchObject({ errorKind: 'onboarding' });
+    expect(res.headers['set-cookie']).toBeUndefined();
+  });
+
+  test('accepts a duplicate callback for the same confirmed Auth user without reprovisioning', async () => {
+    global.fetch = jest.fn(async (url: string) => {
+      if (url.includes('/auth/v1/user')) {
+        return response(200, { id: 'existing-confirmed-user', email: 'admin@example.com', user_metadata: { name: 'Alex Admin' } });
+      }
+      if (url.includes('/rest/v1/rpc/ftf_accept_commercial_invitation')) {
+        return response(200, {
+          accepted: true, already_provisioned: true, invitation_id: 'invitation-id', organisation_id: 'organisation-id',
+        });
+      }
+      if (url.includes('/rest/v1/ftf_profiles')) {
+        return response(200, [{ user_id: 'existing-confirmed-user', tenant_id: 'organisation-id', role: 'admin', name: 'Alex Admin', tier: 'free' }]);
+      }
+      return response(500, { message: `unexpected request: ${url}` });
+    }) as any;
+    const res = createResponse();
+
+    await authHandler({
+      method: 'POST', headers: { host: 'localhost:3001' },
+      body: {
+        action: 'accept-organisation-invitation',
+        token: 'raw-invitation-token-with-at-least-thirty-two-characters',
+        password: 'new-password', accessToken: 'magic-link-access', refreshToken: 'magic-link-refresh', expiresIn: 3600,
+      },
+    }, res);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body.user).toMatchObject({ id: 'existing-confirmed-user', tenantId: 'organisation-id' });
+    expect(res.headers['set-cookie']).toBeDefined();
+  });
+
+  test('rejects an authentication failure without presenting it as an onboarding decision', async () => {
+    global.fetch = jest.fn(async (url: string) => {
+      if (url.includes('/auth/v1/user')) return response(401, { message: 'expired provider token' });
+      return response(500, { message: `unexpected request: ${url}` });
+    }) as any;
+    const res = createResponse();
+
+    await authHandler({
+      method: 'POST', headers: { host: 'localhost:3001' },
+      body: {
+        action: 'accept-organisation-invitation',
+        token: 'raw-invitation-token-with-at-least-thirty-two-characters',
+        password: 'new-password', accessToken: 'expired-access', refreshToken: 'expired-refresh', expiresIn: 3600,
+      },
+    }, res);
+
+    expect(res.statusCode).toBe(401);
+    expect(res.body).toMatchObject({ error: 'This authentication link is invalid or expired.', errorKind: 'authentication' });
+    expect(res.headers['set-cookie']).toBeUndefined();
   });
 
   test('returns a non-enumerating response and production reset callback for forgot password', async () => {
