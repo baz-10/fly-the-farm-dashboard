@@ -132,7 +132,7 @@ describe('product maturity CI boundary', () => {
     expect(result.status).toBe(0);
     expect(result.stderr).toBe('');
     expect(result.stdout).toContain('46 modules and 12 workflows classified');
-    expect(result.stdout).toContain('148 customer UI source files checked');
+    expect(result.stdout).toContain('150 customer UI source files checked');
     expect(result.stdout).toContain('64 evidence references checked');
     expect(result.stdout).toContain('0 customer-facing Legacy violations');
   });
@@ -317,7 +317,7 @@ describe('product maturity CI boundary', () => {
       expect(result.error).toBeUndefined();
       expect(result.status).toBe(0);
       expect(result.stderr).toBe('');
-      expect(result.stdout).toContain('53 App routes checked');
+      expect(result.stdout).toContain('54 App routes checked');
     });
   });
 

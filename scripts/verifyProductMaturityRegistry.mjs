@@ -23,7 +23,7 @@ const visibleStringDepthBudget = 32;
 const visibleStringNodeBudget = 4096;
 const visibleStringSymbolBudget = 1024;
 // Verifier-only integrity metadata. Runtime maturity authority remains in surfaces.ts.
-const canonicalProductMaturityResolverSourceSha256 = 'd883fb00b4f9cf0e3f151e6818da3f035381b38bfa0dbc9e1ad8df5106eea10d';
+const canonicalProductMaturityResolverSourceSha256 = '062140fe43d7e2c4225b1106761d08246947048c9ab0f6d434d1f1f95a35aaad';
 const requiredArrayFields = [
   'evidence',
   'requiredAutomatedTests',
@@ -530,6 +530,7 @@ const authLifecycleRouteComponents = new Map([
 ]);
 const publicProductSurfaceRouteComponents = new Map([
   ['/register', 'Register'],
+  ['/apply', 'CommercialApplication'],
   ['/customer-acceptance/:token', 'CustomerAcceptancePublic'],
 ]);
 
@@ -541,6 +542,7 @@ const publicAccessRoutePaths = [
   '/auth/callback',
   '/forgot-password',
   '/reset-password',
+  '/apply',
   '/customer-acceptance/:token',
 ];
 const defaultOrganisationAccessRoutePaths = [
@@ -629,6 +631,7 @@ const routeDestinationContracts = new Map([
   ['/auth/callback', { modulePath: './pages/AuthCallback', localName: 'AuthCallback' }],
   ['/forgot-password', { modulePath: './pages/ForgotPassword', localName: 'ForgotPassword' }],
   ['/reset-password', { modulePath: './pages/ResetPassword', localName: 'ResetPassword' }],
+  ['/apply', { modulePath: './pages/CommercialApplication', localName: 'CommercialApplication' }],
   ['/customer-acceptance/:token', {
     modulePath: './pages/CustomerAcceptancePublic',
     localName: 'CustomerAcceptancePublic',

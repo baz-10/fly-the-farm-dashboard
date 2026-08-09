@@ -2,6 +2,7 @@ import React from 'react';
 import { Alert, Box, Card, CardContent, Chip, Stack, Typography } from '@mui/material';
 import AdminPanelSettingsOutlinedIcon from '@mui/icons-material/AdminPanelSettingsOutlined';
 import AssistedSupport from './platform/AssistedSupport';
+import CommercialOnboardingReview from '../components/platform/CommercialOnboardingReview';
 
 export default function PlatformAdmin() {
   return (
@@ -21,6 +22,7 @@ export default function PlatformAdmin() {
         <Typography variant="h6" fontWeight={750}>Delegated access only</Typography>
         <Typography color="text.secondary">Support requests, organisation approvals and time-limited sessions will appear here.</Typography>
       </CardContent></Card>
+      <CommercialOnboardingReview />
       <AssistedSupport />
     </Box>
   );

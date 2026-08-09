@@ -34,6 +34,7 @@ export const REACHABLE_PRODUCT_ROUTES = [
   { path: '/auth/callback', moduleCode: 'authentication', workflowCode: null },
   { path: '/forgot-password', moduleCode: 'authentication', workflowCode: null },
   { path: '/reset-password', moduleCode: 'authentication', workflowCode: null },
+  { path: '/apply', moduleCode: 'organisation-onboarding', workflowCode: null },
   { path: '/customer-acceptance/:token', moduleCode: 'customer-portal', workflowCode: null },
   { path: '/platform', moduleCode: 'platform-identity', workflowCode: null },
   { path: '/', moduleCode: 'home', workflowCode: null },
