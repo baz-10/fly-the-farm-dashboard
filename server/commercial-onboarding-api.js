@@ -41,11 +41,11 @@ class CommercialOnboardingRepository {
     });
   }
 
-  issueInvitation(applicationId, platformUserId, expectedVersion, token, notes, expiresAt) {
+  issueInvitation(applicationId, platformUserId, expectedVersion, token, notes, expiresAt, replaceActive) {
     return rpc('ftf_issue_commercial_invitation', {
       p_application_id: applicationId, p_platform_user_id: platformUserId,
       p_expected_application_version: expectedVersion, p_token: token,
-      p_notes: notes || null, p_expires_at: expiresAt,
+      p_notes: notes || null, p_expires_at: expiresAt, p_replace_active: Boolean(replaceActive),
     });
   }
 
@@ -168,8 +168,8 @@ function invitationOrigin(configuredOrigin) {
   }
 }
 
-function authLinkTtlSeconds(configuredTtl) {
-  const value = String(configuredTtl ?? '').trim();
+function acceptanceWindowSeconds(configuredWindow) {
+  const value = String(configuredWindow ?? '').trim();
   if (!/^\d+$/.test(value)) throw apiError(500, 'CONFIGURATION_ERROR', 'Commercial onboarding request failed.');
   const seconds = Number(value);
   if (!Number.isSafeInteger(seconds) || seconds < 300 || seconds > 86400) throw apiError(500, 'CONFIGURATION_ERROR', 'Commercial onboarding request failed.');
@@ -296,7 +296,7 @@ function createCommercialOnboardingHandler(dependencies = {}) {
   const fingerprintSecret = dependencies.fingerprintSecret || process.env.COMMERCIAL_ONBOARDING_FINGERPRINT_SECRET;
   const trustedProxyHeader = dependencies.trustedProxyHeader || process.env.COMMERCIAL_ONBOARDING_TRUSTED_IP_HEADER;
   const appOrigin = dependencies.appOrigin || process.env.COMMERCIAL_ONBOARDING_APP_ORIGIN;
-  const configuredAuthLinkTtl = dependencies.authLinkTtlSeconds ?? process.env.COMMERCIAL_ONBOARDING_AUTH_LINK_TTL_SECONDS;
+  const configuredAcceptanceWindow = dependencies.acceptanceWindowSeconds ?? process.env.COMMERCIAL_ONBOARDING_ACCEPTANCE_WINDOW_SECONDS;
   return async function commercialOnboardingHandler(req, res) {
     const requestCorrelationId = correlationId(req);
     req.correlationId = requestCorrelationId;
@@ -333,11 +333,11 @@ function createCommercialOnboardingHandler(dependencies = {}) {
       if (action === 'issue' || action === 'resend') {
         requirePermission(context, INVITATION_ISSUE);
         const redirectOrigin = invitationOrigin(appOrigin);
-        const ttlSeconds = authLinkTtlSeconds(configuredAuthLinkTtl);
+        const ttlSeconds = acceptanceWindowSeconds(configuredAcceptanceWindow);
         const issuedAt = now();
         const token = randomToken();
         const expiresAt = new Date(issuedAt.getTime() + ttlSeconds * 1000).toISOString();
-        const prepared = checkDomainResult(await repository.issueInvitation(requiredText(body, 'applicationId', 1, 100), context.platformUser.id, requiredVersion(body.expectedVersion), token, requiredText(body, 'notes', 3, 4000), expiresAt));
+        const prepared = checkDomainResult(await repository.issueInvitation(requiredText(body, 'applicationId', 1, 100), context.platformUser.id, requiredVersion(body.expectedVersion), token, requiredText(body, 'notes', 3, 4000), expiresAt, action === 'resend'));
         if (!prepared?.issued || prepared.status !== 'PENDING' || !prepared.intended_administrator_email) throw apiError(500, 'INVITATION_PREPARATION_FAILED', 'Commercial onboarding request failed.');
         try {
           const redirectUrl = `${redirectOrigin}/onboarding/accept?token=${encodeURIComponent(token)}`;

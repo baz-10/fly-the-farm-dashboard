@@ -88,7 +88,7 @@ test('shows request and decision evidence without rendering customer operational
   expect(screen.getByText('Business and Base evidence verified.')).toBeVisible();
   expect(screen.getAllByText('Jordan Reviewer').length).toBeGreaterThan(0);
   expect(screen.getByText(/WDAA/)).toBeVisible();
-  expect(screen.getByText('Auth link expires')).toBeVisible();
+  expect(screen.getByText('Spray Command acceptance expires')).toBeVisible();
   expect(screen.queryByText(/Customer Secret|client-secret|mission-secret|revenue/i)).not.toBeInTheDocument();
 });
 
@@ -100,13 +100,15 @@ test('requires confirmation and reports only authoritative provider delivery', a
   expect(send).toBeEnabled();
   await user.click(send);
   expect(screen.getByRole('dialog', { name: 'Confirm invitation' })).toBeVisible();
-  expect(screen.getByText(/Supabase Auth link and onboarding invitation expire together/i)).toBeVisible();
+  expect(screen.getByText(/Email security links are time-limited independently by Supabase/i)).toBeVisible();
+  expect(screen.queryByText(/expire together|link remains active|link is active/i)).not.toBeInTheDocument();
   expect(screen.getByText(/Western Downs Aerial Application.*SC-APP-A1B2C3D4E5F6.*alex@example.com/i)).toBeVisible();
   expect(issue).not.toHaveBeenCalled();
   await user.type(screen.getByLabelText(/^Invitation notes/), 'Approved launch invitation.');
   await user.click(screen.getByRole('button', { name: 'Confirm and send invitation' }));
   await waitFor(() => expect(issue).toHaveBeenCalledWith(expect.objectContaining({ applicationId: 'application-1', expectedVersion: 3, notes: 'Approved launch invitation.' })));
   expect(await screen.findByText(/Invitation delivered by Supabase Auth/i)).toBeVisible();
+  expect(screen.getByText(/Delivery does not guarantee the email security link is still active/i)).toBeVisible();
   expect(screen.queryByText(/token=|acceptance path|copy this path/i)).not.toBeInTheDocument();
 });
 
@@ -121,6 +123,18 @@ test('treats a time-expired SENT row as expired and offers a replacement invitat
   expect(await screen.findByRole('button', { name: 'Send another invitation' })).toBeEnabled();
   expect(screen.getByText('Expired')).toBeVisible();
   expect(screen.queryByRole('button', { name: 'Revoke invitation' })).not.toBeInTheDocument();
+});
+
+test('offers another invitation immediately after delivery without waiting for acceptance expiry', async () => {
+  list.mockResolvedValue({ items: [application({ status: 'APPROVED', rowVersion: 3, invitations: [{
+    id: 'invitation-delivered', status: 'SENT', rowVersion: 2, deliveryStatus: 'SENT', deliveryProvider: 'SUPABASE_AUTH',
+    issuedBy: { id: 'platform-1', name: 'Platform Reviewer' }, issuanceNotes: 'Delivered invitation.',
+    createdAt: '2026-08-09T02:00:00.000Z', sentAt: '2026-08-09T02:00:00.000Z', expiresAt: '2099-08-16T02:00:00.000Z',
+    revokedAt: null, revokedBy: null, revocationReason: null, acceptedAt: null, resultingOrganisation: null, events: [],
+  }] })], nextCursor: null });
+  render(<CommercialOnboardingReview permissions={allPermissions} />);
+  expect(await screen.findByRole('button', { name: 'Send another invitation' })).toBeEnabled();
+  expect(screen.getByText(/Email security links are time-limited independently by Supabase/i)).toBeVisible();
 });
 
 test('loads subsequent cursor pages without replacing current applications', async () => {

@@ -15,6 +15,7 @@ const migrationPath = path.resolve(
 );
 const sql = fs.readFileSync(migrationPath, 'utf8');
 const forwardMigrationName = '20260809110000_commercial_onboarding_delivery_and_abuse.sql';
+const resendMigrationName = '20260809120000_commercial_onboarding_immediate_resend.sql';
 const forwardMigrationPath = path.resolve(__dirname, `../../supabase/migrations/${forwardMigrationName}`);
 const forwardSql = fs.existsSync(forwardMigrationPath) ? fs.readFileSync(forwardMigrationPath, 'utf8') : '';
 
@@ -88,12 +89,12 @@ async function approveApplication(applicationId, rowVersion) {
   return reviewApplication(applicationId, rowVersion, 'APPROVE', 'Approved for invitation.');
 }
 
-async function issueInvitation(applicationId, rowVersion, rawToken, expiresAt = '2099-01-01T00:00:00Z') {
+async function issueInvitation(applicationId, rowVersion, rawToken, expiresAt = '2099-01-01T00:00:00Z', replaceActive = false) {
   const result = await db.query(
     `select public.ftf_issue_commercial_invitation(
-      $1::uuid, $2::uuid, $3::integer, $4::text, 'Initial invitation', $5::timestamptz
+      $1::uuid, $2::uuid, $3::integer, $4::text, 'Initial invitation', $5::timestamptz, $6::boolean
     ) as result`,
-    [applicationId, platformUserId, rowVersion, rawToken, expiresAt],
+    [applicationId, platformUserId, rowVersion, rawToken, expiresAt, replaceActive],
   );
   return result.rows[0].result;
 }
@@ -130,6 +131,28 @@ test('separates application approval from invitation creation', () => {
   expect(sql).toContain('commercial_onboarding_invitation_events');
   expect(sql).toContain("status = 'APPROVED'");
   expect(sql).toContain('approved_application_required');
+});
+
+if (runPgliteInThisProcess) test('atomically replaces an unexpired delivered invitation when resend is requested', async () => {
+  const application = await submitApplication('resend-now@example.com', 'ResendNow');
+  const review = await reviewApplication(application.application_id, application.row_version, 'UNDER_REVIEW');
+  const approval = await approveApplication(application.application_id, review.row_version);
+  const first = await issueInvitation(application.application_id, approval.row_version, 'first-resend-token-with-enough-entropy-0001');
+  await markInvitationDelivery(first.invitation_id, first.row_version);
+
+  const replacement = await issueInvitation(
+    application.application_id, approval.row_version,
+    'replacement-token-with-enough-entropy-0002', '2099-01-01T00:00:00Z', true,
+  );
+  expect(replacement).toMatchObject({ issued: true, status: 'PENDING' });
+  const evidence = await db.query(`
+    select id,status,revocation_reason from public.commercial_onboarding_invitations
+    where application_id=$1 order by created_at,id
+  `, [application.application_id]);
+  expect(evidence.rows).toEqual([
+    expect.objectContaining({ id: first.invitation_id, status: 'REVOKED', revocation_reason: 'REPLACED_BY_RESEND' }),
+    expect.objectContaining({ id: replacement.invitation_id, status: 'PENDING' }),
+  ]);
 });
 
 test('acceptance provisions the existing organisation identity chain without Personnel', () => {
@@ -184,6 +207,7 @@ beforeAll(async () => {
     '20260804160000_platform_identity_assisted_support.sql',
     '20260809100000_commercial_onboarding_lifecycle.sql',
     forwardMigrationName,
+    resendMigrationName,
   ];
   for (const migrationName of migrationNames) {
     if (migrationName === forwardMigrationName) {

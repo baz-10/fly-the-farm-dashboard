@@ -12,9 +12,12 @@ const root = path.resolve(__dirname, '../..');
 const migrationDirectory = path.join(root, 'supabase/migrations');
 const migrationName = '20260809100000_commercial_onboarding_lifecycle.sql';
 const forwardMigrationName = '20260809110000_commercial_onboarding_delivery_and_abuse.sql';
+const resendMigrationName = '20260809120000_commercial_onboarding_immediate_resend.sql';
 const sql = fs.readFileSync(path.join(migrationDirectory, migrationName), 'utf8');
 const forwardSql = fs.existsSync(path.join(migrationDirectory, forwardMigrationName))
   ? fs.readFileSync(path.join(migrationDirectory, forwardMigrationName), 'utf8') : '';
+const resendSql = fs.existsSync(path.join(migrationDirectory, resendMigrationName))
+  ? fs.readFileSync(path.join(migrationDirectory, resendMigrationName), 'utf8') : '';
 const runPgliteInThisProcess = process.env.MIGRATION_LINT_PGLITE_CHILD === '1';
 const pureNodeTests = [];
 const pureNodeBeforeAll = [];
@@ -43,7 +46,10 @@ test('uses only deterministic repository-controlled migration definitions', () =
     );
     expect(forwardSql).toMatch(/add column delivery_protocol_version integer/i);
     expect(forwardSql).toMatch(/alter column delivery_protocol_version set not null/i);
-    expect(forwardSql).toMatch(/delivery_protocol_version[\s\S]*'PENDING'/i);
+  expect(forwardSql).toMatch(/delivery_protocol_version[\s\S]*'PENDING'/i);
+  expect(forwardSql).not.toContain('p_replace_active');
+  expect(resendSql).toContain('p_replace_active');
+  expect(resendSql).toContain('REPLACED_BY_RESEND');
 });
 
 if (runPgliteInThisProcess) {
@@ -72,6 +78,7 @@ if (runPgliteInThisProcess) {
       '20260804160000_platform_identity_assisted_support.sql',
       migrationName,
       forwardMigrationName,
+      resendMigrationName,
     ]) {
       await db.exec(fs.readFileSync(path.join(migrationDirectory, dependency), 'utf8'));
     }
@@ -90,7 +97,7 @@ if (runPgliteInThisProcess) {
         to_regclass('public.commercial_onboarding_invitation_events') is not null as invitation_events,
         to_regprocedure('public.ftf_submit_commercial_application(jsonb)') is not null as submit_rpc,
         to_regprocedure('public.ftf_review_commercial_application(uuid,uuid,integer,text,text)') is not null as review_rpc,
-        to_regprocedure('public.ftf_issue_commercial_invitation(uuid,uuid,integer,text,text,timestamp with time zone)') is not null as issue_rpc,
+        to_regprocedure('public.ftf_issue_commercial_invitation(uuid,uuid,integer,text,text,timestamp with time zone,boolean)') is not null as issue_rpc,
         to_regprocedure('public.ftf_revoke_commercial_invitation(uuid,uuid,integer,text)') is not null as revoke_rpc,
         to_regprocedure('public.ftf_accept_commercial_invitation(text,uuid)') is not null as accept_rpc
         ,to_regclass('public.commercial_onboarding_application_requests') is not null as request_limits

@@ -48,7 +48,8 @@ beforeEach(() => {
   process.env.COMMERCIAL_ONBOARDING_FINGERPRINT_SECRET = 'test-only-fingerprint-secret-with-enough-entropy';
   process.env.COMMERCIAL_ONBOARDING_APP_ORIGIN = 'https://spray-command.test';
   process.env.COMMERCIAL_ONBOARDING_TRUSTED_IP_HEADER = 'x-forwarded-for';
-  process.env.COMMERCIAL_ONBOARDING_AUTH_LINK_TTL_SECONDS = '3600';
+  process.env.COMMERCIAL_ONBOARDING_ACCEPTANCE_WINDOW_SECONDS = '3600';
+  delete process.env.COMMERCIAL_ONBOARDING_AUTH_LINK_TTL_SECONDS;
 });
 
 function repository() {
@@ -245,7 +246,7 @@ test('delivers invitations through Supabase Auth and never returns the raw token
   expect(repo.issueInvitation).toHaveBeenCalledWith(
     'application-1', 'platform-1', 3,
     'raw-token-with-enough-entropy-for-provider-only-0001', 'Approved invitation.',
-    '2026-08-09T01:00:00.000Z',
+    '2026-08-09T01:00:00.000Z', false,
   );
   expect(provider.sendInvitation).toHaveBeenCalledWith('alex@example.com', 'https://spray-command.test/onboarding/accept?token=raw-token-with-enough-entropy-for-provider-only-0001');
   expect(repo.markInvitationDelivery).toHaveBeenCalledWith('invitation-1', 'platform-1', 1, 'SENT', 'supabase-user-1', 'Supabase Auth invitation delivered.');
@@ -268,6 +269,10 @@ test('fails closed and revokes prepared evidence when Supabase Auth delivery fai
   const res = response();
   await handler(req('POST', 'resend', { applicationId: 'application-1', expectedVersion: 3, notes: 'Replacement invitation.' }), res);
 
+  expect(repo.issueInvitation).toHaveBeenCalledWith(
+    'application-1', 'platform-1', 3, expect.any(String), 'Replacement invitation.',
+    expect.any(String), true,
+  );
   expect(repo.markInvitationDelivery).toHaveBeenCalledWith('invitation-1', 'platform-1', 1, 'FAILED', null, 'Supabase Auth invitation delivery failed.');
   expect(res.statusCode).toBe(502);
   expect(res.body.error).toEqual(expect.objectContaining({ code: 'INVITATION_DELIVERY_FAILED' }));
@@ -303,10 +308,10 @@ test('Supabase invitation delivery uses one create-user OTP path for initial and
 });
 
 test.each([undefined, '', '299', '86401', '3600.5', 'not-a-number'])(
-  'fails closed before preparation when Auth link TTL configuration is invalid: %s',
+  'fails closed before preparation when the Spray Command acceptance window is invalid: %s',
   async (configuredTtl) => {
-    if (configuredTtl === undefined) delete process.env.COMMERCIAL_ONBOARDING_AUTH_LINK_TTL_SECONDS;
-    else process.env.COMMERCIAL_ONBOARDING_AUTH_LINK_TTL_SECONDS = configuredTtl;
+    if (configuredTtl === undefined) delete process.env.COMMERCIAL_ONBOARDING_ACCEPTANCE_WINDOW_SECONDS;
+    else process.env.COMMERCIAL_ONBOARDING_ACCEPTANCE_WINDOW_SECONDS = configuredTtl;
     const repo = repository();
     const provider = delivery();
     const handler = createCommercialOnboardingHandler({
@@ -322,6 +327,21 @@ test.each([undefined, '', '299', '86401', '3600.5', 'not-a-number'])(
     expect(provider.sendInvitation).not.toHaveBeenCalled();
   },
 );
+
+test('does not treat the legacy Auth-link TTL variable as acceptance-window configuration', async () => {
+  delete process.env.COMMERCIAL_ONBOARDING_ACCEPTANCE_WINDOW_SECONDS;
+  process.env.COMMERCIAL_ONBOARDING_AUTH_LINK_TTL_SECONDS = '3600';
+  const repo = repository();
+  const handler = createCommercialOnboardingHandler({
+    repository: repo, invitationDelivery: delivery(),
+    resolvePlatformContext: async () => platformContext(['platform.onboarding.invitation.issue']),
+  });
+  const res = response();
+  await handler(req('POST', 'issue', { applicationId: 'application-1', expectedVersion: 3, notes: 'Approved invitation.' }), res);
+  expect(res.statusCode).toBe(500);
+  expect(res.body.error.code).toBe('CONFIGURATION_ERROR');
+  expect(repo.issueInvitation).not.toHaveBeenCalled();
+});
 
 test('fingerprints a trusted bounded address independently of caller-controlled User-Agent', async () => {
   const repo = repository();

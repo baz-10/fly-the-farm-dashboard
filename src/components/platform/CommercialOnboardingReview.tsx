@@ -44,11 +44,14 @@ function InvitationEvidence({ invitation, onRevoke }: { invitation: CommercialIn
     </Stack>
     <Grid container spacing={2} sx={{ mt: 0.5 }}>
       <Grid size={{ xs: 12, sm: 4 }}><EvidenceLabel label={invitation.status === 'PENDING' ? 'Prepared' : 'Sent'}>{formatTime(invitation.status === 'PENDING' ? invitation.createdAt : invitation.sentAt)}</EvidenceLabel></Grid>
-      <Grid size={{ xs: 12, sm: 4 }}><EvidenceLabel label="Auth link expires">{formatTime(invitation.expiresAt)}</EvidenceLabel></Grid>
+      <Grid size={{ xs: 12, sm: 4 }}><EvidenceLabel label="Spray Command acceptance expires">{formatTime(invitation.expiresAt)}</EvidenceLabel></Grid>
       <Grid size={{ xs: 12, sm: 4 }}><EvidenceLabel label="Accepted">{formatTime(invitation.acceptedAt)}</EvidenceLabel></Grid>
     </Grid>
     {invitation.issuanceNotes && <Typography variant="body2" sx={{ mt: 1.5 }}>{invitation.issuanceNotes}</Typography>}
     {invitation.deliveryProvider && <Typography variant="caption" color="text.secondary">Delivery provider: {formatStatus(invitation.deliveryProvider)}</Typography>}
+    {invitation.status !== 'ACCEPTED' && <Alert severity="info" sx={{ mt: 1.5 }}>
+      Email security links are time-limited independently by Supabase. Send another invitation if the administrator cannot use the emailed link.
+    </Alert>}
     {invitation.events.length > 0 && <Stack spacing={0.5} sx={{ mt: 1.5 }}>
       {invitation.events.map((event) => <Typography key={event.id} variant="caption" color="text.secondary">
         {formatStatus(event.type)} · {formatTime(event.createdAt)}{event.actor ? ` · ${event.actor.name}` : ''}
@@ -133,14 +136,14 @@ export default function CommercialOnboardingReview({ permissions }: { permission
     {error && <Alert severity="error">{error}</Alert>}
     {deliverySuccess && <Alert severity="success" onClose={() => setDeliverySuccess(false)}>
       <Typography fontWeight={750}>Invitation delivered by Supabase Auth</Typography>
-      <Typography variant="body2">The invitation is recorded as sent only after the provider confirms delivery.</Typography>
+      <Typography variant="body2">The invitation is recorded as sent only after the provider confirms delivery. Delivery does not guarantee the email security link is still active; send another invitation if needed.</Typography>
     </Alert>}
     {!canRead ? <Alert severity="info">You do not have permission to view commercial applications.</Alert>
       : loading ? <Stack spacing={1}><Skeleton height={120} /><Skeleton height={120} /></Stack>
       : applications.length === 0 ? <Alert severity="info">No commercial applications are waiting.</Alert>
       : applications.map((application) => {
-        const activeInvitation = application.invitations.find((item) => effectiveInvitationStatus(item) === 'SENT' || effectiveInvitationStatus(item) === 'PENDING');
-        const mayResend = application.invitations.some((item) => ['REVOKED', 'EXPIRED'].includes(effectiveInvitationStatus(item))) && !activeInvitation;
+        const hasAcceptedInvitation = application.invitations.some((item) => item.status === 'ACCEPTED');
+        const mayResend = application.invitations.some((item) => item.status !== 'ACCEPTED');
         return <Card key={application.id} variant="outlined" sx={{ borderLeft: '5px solid', borderLeftColor: application.status === 'APPROVED' ? 'success.main' : application.status === 'DECLINED' ? 'error.main' : 'warning.main' }}>
           <CardContent sx={{ p: { xs: 2.5, md: 3 } }}>
             <Stack direction={{ xs: 'column', md: 'row' }} justifyContent="space-between" gap={2}>
@@ -158,7 +161,7 @@ export default function CommercialOnboardingReview({ permissions }: { permission
                   <Button variant="outlined" color="error" startIcon={<CloseRoundedIcon />} onClick={() => open({ kind: 'decline', application })}>Decline application</Button>
                   <Button variant="outlined" disabled startIcon={<ForwardToInboxRoundedIcon />}>Send invitation</Button>
                 </>}
-                {canIssue && application.status === 'APPROVED' && !activeInvitation && <Button variant="contained" startIcon={<ForwardToInboxRoundedIcon />} onClick={() => open({ kind: mayResend ? 'resend' : 'issue', application })}>{mayResend ? 'Send another invitation' : 'Send invitation'}</Button>}
+                {canIssue && application.status === 'APPROVED' && !hasAcceptedInvitation && <Button variant="contained" startIcon={<ForwardToInboxRoundedIcon />} onClick={() => open({ kind: mayResend ? 'resend' : 'issue', application })}>{mayResend ? 'Send another invitation' : 'Send invitation'}</Button>}
               </Stack>
             </Stack>
 
@@ -217,7 +220,7 @@ export default function CommercialOnboardingReview({ permissions }: { permission
           {confirmation?.kind === 'approve' ? 'Approval records an authoritative decision. It does not create or send an invitation.'
             : confirmation?.kind === 'decline' ? 'Declining closes this application without creating an organisation or invitation.'
             : confirmation?.kind === 'revoke' ? 'Revocation immediately prevents this invitation from being accepted.'
-            : 'Supabase Auth sends the link. The Supabase Auth link and onboarding invitation expire together at the authoritative recorded time. Resend creates a new link after expiry.'}
+            : 'Email security links are time-limited independently by Supabase. Spray Command separately enforces the recorded invitation acceptance deadline. Send another invitation whenever the administrator cannot use the emailed link.'}
         </DialogContentText>
         {confirmation && <Typography variant="body2" sx={{ mb: 2 }}>
           {confirmation.kind === 'revoke' && confirmation.invitation
