@@ -83,3 +83,35 @@ test('keeps non-blocking compliance advice visible without changing planning rea
   expect(screen.getByText('Review your compliance position')).toBeVisible();
   expect(screen.getByText('Ready to plan')).toBeVisible();
 });
+
+test('renders distinct source advisories sharing one rule code without duplicate React keys', () => {
+  const consoleError = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+  try {
+    render(<OperationalReadiness readiness={{
+      ...ready,
+      state: 'NEEDS_OPERATIONAL_ATTENTION',
+      advisories: [
+        {
+          code: 'AIRCRAFT_NOT_SERVICEABLE',
+          label: 'Aircraft compliance needs attention',
+          reason: 'Aircraft One is not serviceable.',
+          route: '/aircraft',
+          requiresAttention: true,
+        },
+        {
+          code: 'AIRCRAFT_NOT_SERVICEABLE',
+          label: 'Aircraft compliance needs attention',
+          reason: 'Aircraft Two is not serviceable.',
+          route: '/aircraft',
+          requiresAttention: true,
+        },
+      ],
+    }} onAction={navigate} />);
+
+    expect(screen.getByText('Aircraft One is not serviceable.')).toBeVisible();
+    expect(screen.getByText('Aircraft Two is not serviceable.')).toBeVisible();
+    expect(consoleError.mock.calls.flat().join(' ')).not.toMatch(/same key/i);
+  } finally {
+    consoleError.mockRestore();
+  }
+});

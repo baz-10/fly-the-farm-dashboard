@@ -195,6 +195,38 @@ test('preserves allow-listed source routes, rejects invented routes, and dedupli
   expect(result.operationalReadiness.advisories.filter((item) => item.code.startsWith('AIRCRAFT_'))).toHaveLength(1);
 });
 
+test('retains every distinct compliance source exactly once across blockers and categories', () => {
+  const result = projectGettingStarted(context, completeSource({
+    complianceOverview: {
+      healthScore: {
+        modelVersion: 'AU-CASA-HEALTH-1', status: 'CRITICAL', percentage: 25,
+        evaluationTimestamp: '2026-08-09T00:00:00.000Z',
+        criticalBlockers: [
+          { criticalRuleCode: 'AIRCRAFT_NOT_SERVICEABLE', criticalRuleVersion: 1, reason: 'Aircraft One is not serviceable.', affectedArea: 'Aircraft compliance', sourceEntityType: 'aircraft', sourceEntityId: 'aircraft-1', route: '/aircraft', evaluationTimestamp: '2026-08-09T00:00:00.000Z' },
+          { criticalRuleCode: 'AIRCRAFT_NOT_SERVICEABLE', criticalRuleVersion: 1, reason: 'Aircraft Two is not serviceable.', affectedArea: 'Aircraft compliance', sourceEntityType: 'aircraft', sourceEntityId: 'aircraft-2', route: '/aircraft', evaluationTimestamp: '2026-08-09T00:00:00.000Z' },
+        ],
+        categories: [{
+          code: 'AIRCRAFT', label: 'Aircraft registration and technical compliance',
+          counts: { missing: 0, expired: 0, blocking: 3 },
+          sources: [
+            { state: 'OPERATIONALLY_BLOCKING', reason: 'Aircraft One is not serviceable.', sourceEntityType: 'aircraft', sourceEntityId: 'aircraft-1', route: '/aircraft' },
+            { state: 'OPERATIONALLY_BLOCKING', reason: 'Aircraft Two is not serviceable.', sourceEntityType: 'aircraft', sourceEntityId: 'aircraft-2', route: '/aircraft' },
+            { state: 'OPERATIONALLY_BLOCKING', reason: 'Aircraft Three is not serviceable.', sourceEntityType: 'aircraft', sourceEntityId: 'aircraft-3', route: '/aircraft' },
+          ],
+        }],
+      },
+    },
+  }));
+
+  expect(result.operationalReadiness.advisories).toHaveLength(3);
+  expect(result.operationalReadiness.advisories.map((item) => item.reason)).toEqual([
+    'Aircraft One is not serviceable.',
+    'Aircraft Two is not serviceable.',
+    'Aircraft Three is not serviceable.',
+  ]);
+  expect(result.operationalReadiness.advisories.every((item) => item.route === '/aircraft')).toBe(true);
+});
+
 test('stays in Getting Started until every authoritative planning prerequisite exists', () => {
   const result = projectGettingStarted(context, completeSource({
     equipmentKits: [],

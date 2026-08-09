@@ -167,15 +167,12 @@ function projectComplianceAdvisories(complianceOverview) {
     'The compliance assessment was incomplete or invalid. Review CASA Compliance before operations.',
   );
   const advisories = [];
-  const seen = new Set();
-  const blockerSources = new Set();
+  const representedSources = new Set();
   for (const blocker of Array.isArray(score.criticalBlockers) ? score.criticalBlockers : []) {
     const code = String(blocker?.criticalRuleCode || 'COMPLIANCE_CRITICAL');
-    if (seen.has(code)) continue;
-    seen.add(code);
-    if (code.startsWith('REOC_')) seen.add('REOC_EVIDENCE_ATTENTION');
     const blockerSource = sourceKey(blocker);
-    if (blockerSource) blockerSources.add(blockerSource);
+    if (blockerSource && representedSources.has(blockerSource)) continue;
+    if (blockerSource) representedSources.add(blockerSource);
     advisories.push({
       code,
       label: complianceLabel(code, blocker?.affectedArea),
@@ -193,25 +190,28 @@ function projectComplianceAdvisories(complianceOverview) {
     const blocking = Number(counts.blocking || 0);
     if (missing + expired + blocking < 1) continue;
     const code = `${String(category?.code || 'COMPLIANCE').toUpperCase()}_EVIDENCE_ATTENTION`;
-    if (seen.has(code)) continue;
     const attentionSources = category.sources.filter((source) => [
       'OPERATIONALLY_BLOCKING', 'EXPIRED_OVERDUE', 'MISSING',
     ].includes(source?.state));
     const uncoveredSources = attentionSources.filter((source) => {
       const key = sourceKey(source);
-      return !key || !blockerSources.has(key);
+      return !key || !representedSources.has(key);
     });
     if (attentionSources.length > 0 && uncoveredSources.length === 0) continue;
-    seen.add(code);
-    const firstSource = uncoveredSources[0] || attentionSources[0] || category.sources[0] || null;
-    advisories.push({
-      code,
-      label: `${category?.label || 'Compliance evidence'} needs attention`,
-      reason: String(firstSource?.reason || 'Required authoritative compliance evidence is missing, expired or blocking.'),
-      route: complianceRoute(code, firstSource?.route),
-      requiresAttention: true,
-      modelVersion: score.modelVersion || null,
-    });
+    const sourcesToProject = uncoveredSources.length > 0 ? uncoveredSources : [category.sources[0] || null];
+    for (const source of sourcesToProject) {
+      const key = sourceKey(source);
+      if (key && representedSources.has(key)) continue;
+      if (key) representedSources.add(key);
+      advisories.push({
+        code,
+        label: `${category?.label || 'Compliance evidence'} needs attention`,
+        reason: String(source?.reason || 'Required authoritative compliance evidence is missing, expired or blocking.'),
+        route: complianceRoute(code, source?.route),
+        requiresAttention: true,
+        modelVersion: score.modelVersion || null,
+      });
+    }
   }
 
   if (advisories.length === 0 && score.status === 'CRITICAL') return projectionAttention(

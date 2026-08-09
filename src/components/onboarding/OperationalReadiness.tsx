@@ -107,9 +107,9 @@ export default function OperationalReadiness({ readiness, onAction }: Operationa
             <Box component="section" role="region" aria-label={advisoryLabel}>
               <Typography fontWeight={850} sx={{ mb: 1 }}>{advisoryLabel}</Typography>
               <Stack spacing={1}>
-                {readiness.advisories.map((item) => (
+                {readiness.advisories.map((item, index) => (
                   <Alert
-                    key={item.code}
+                    key={`${item.code}:${item.route}:${index}`}
                     severity={item.requiresAttention ? 'warning' : 'info'}
                     action={<Button color="inherit" size="small" onClick={() => onAction(item.route)}>Review {item.label}</Button>}
                   >
