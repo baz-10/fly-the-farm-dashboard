@@ -179,6 +179,36 @@ describe('live-chain access prerequisites', () => {
     expect(repository.update).not.toHaveBeenCalled();
   });
 
+  test('invalidates stale Base coordinates when an authoritative address changes without new location evidence', async () => {
+    const repository = {
+      get: jest.fn().mockResolvedValue({
+        id: '33333333-3333-4333-8333-333333333333', organisation_id: '11111111-1111-4111-8111-111111111111',
+        name: 'Base', address: '1 Old Airstrip Road', timezone: 'Australia/Brisbane', latitude: -27.1817,
+        longitude: 151.2621, address_source: 'ADDRESS_SEARCH', location_confirmed_at: '2026-08-09T00:00:00.000Z', row_version: 3,
+      }),
+      update: jest.fn().mockResolvedValue({ record: {
+        id: '33333333-3333-4333-8333-333333333333', name: 'Base', address: '2 New Airstrip Road',
+        timezone: 'Australia/Brisbane', latitude: null, longitude: null, address_source: null,
+        location_confirmed_at: null, row_version: 4,
+      } }),
+    };
+    const handler = createOperationalHandler('operating_locations', {
+      resolveContext: jest.fn().mockResolvedValue(context({ permissions: ['operating_locations.update'] })), repository,
+    });
+    const res = createResponse();
+
+    await handler(request('PATCH', {
+      expectedVersion: 3, address: '2 New Airstrip Road',
+    }, { id: '33333333-3333-4333-8333-333333333333' }), res);
+
+    expect(res.statusCode).toBe(200);
+    expect(repository.update).toHaveBeenCalledWith('operating_locations', expect.any(Object),
+      '33333333-3333-4333-8333-333333333333', 3, expect.objectContaining({
+        address: '2 New Airstrip Road', latitude: null, longitude: null,
+        address_source: null, location_confirmed_at: null,
+      }));
+  });
+
   test('rejects a mission outside the actor assigned location before repository access', async () => {
     const repository = { relationshipExists: jest.fn(), create: jest.fn() };
     const handler = createOperationalHandler('missions', {

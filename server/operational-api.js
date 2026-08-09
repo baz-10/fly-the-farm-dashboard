@@ -176,7 +176,18 @@ function mapInput(resource, body, existing) {
   });
   const baseline = existing ? mapDatabaseRecord(resource, existing) : {};
   const merged = { ...baseline, ...body };
-  if (resource === 'operating_locations' && ['latitude', 'longitude', 'addressSource', 'locationConfirmedAt', 'locationConfirmed'].some((field) => body[field] !== undefined)) {
+  const baseLocationFields = ['latitude', 'longitude', 'addressSource', 'locationConfirmedAt', 'locationConfirmed'];
+  const hasNewBaseLocationEvidence = resource === 'operating_locations'
+    && baseLocationFields.some((field) => body[field] !== undefined);
+  const baseAddressChanged = resource === 'operating_locations' && Boolean(existing) && body.address !== undefined
+    && String(body.address).trim() !== String(baseline.address || '').trim();
+  if (baseAddressChanged && !hasNewBaseLocationEvidence) {
+    merged.latitude = null;
+    merged.longitude = null;
+    merged.addressSource = null;
+    merged.locationConfirmedAt = null;
+  }
+  if (hasNewBaseLocationEvidence) {
     const latitude = Number(merged.latitude);
     const longitude = Number(merged.longitude);
     if (!String(merged.address || '').trim()) throw apiError(400, 'BASE_ADDRESS_REQUIRED', 'Confirm a Base address before saving.');

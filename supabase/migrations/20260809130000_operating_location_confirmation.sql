@@ -27,6 +27,21 @@ begin
   if current_setting('ftf.base.location_confirmed_at_present', true) = 'true' then
     new.location_confirmed_at = nullif(current_setting('ftf.base.location_confirmed_at', true), '')::timestamptz;
   end if;
+  if tg_op = 'UPDATE' and new.address is distinct from old.address and not (
+    current_setting('ftf.base.latitude_present', true) = 'true'
+    and current_setting('ftf.base.longitude_present', true) = 'true'
+    and current_setting('ftf.base.address_source_present', true) = 'true'
+    and current_setting('ftf.base.location_confirmed_at_present', true) = 'true'
+    and new.latitude is not null
+    and new.longitude is not null
+    and new.address_source is not null
+    and new.location_confirmed_at is not null
+  ) then
+    new.latitude = null;
+    new.longitude = null;
+    new.address_source = null;
+    new.location_confirmed_at = null;
+  end if;
   return new;
 end;
 $$;
