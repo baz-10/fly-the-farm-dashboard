@@ -96,10 +96,23 @@ function step(definition, state, summary, count, optional = false) {
 }
 
 const PERSONNEL_ROUTE = '/personnel?onboarding=personnel&returnTo=%2Fgetting-started';
+const COMPLIANCE_MODEL_VERSION = 'AU-CASA-HEALTH-1';
+const COMPLIANCE_STATUSES = new Set(['STRONG', 'ATTENTION_REQUIRED', 'AT_RISK', 'CRITICAL']);
+const COMPLIANCE_SOURCE_STATES = new Set([
+  'OPERATIONALLY_BLOCKING', 'EXPIRED_OVERDUE', 'MISSING', 'UNDER_REVIEW', 'DUE_30', 'DUE_90', 'CURRENT',
+]);
+const COMPLIANCE_ACTION_ROUTES = new Set([
+  '/compliance',
+  '/compliance/reoc',
+  '/compliance/operations-manual',
+  '/compliance/checklists',
+  '/aircraft',
+  '/personnel',
+]);
 
 function complianceRoute(code, fallback) {
   if (['REOC_MISSING', 'REOC_EVIDENCE_MISSING', 'REOC_EXPIRED'].includes(code)) return '/compliance/reoc';
-  return typeof fallback === 'string' && fallback.startsWith('/compliance') ? fallback : '/compliance';
+  return COMPLIANCE_ACTION_ROUTES.has(fallback) ? fallback : '/compliance';
 }
 
 function complianceLabel(code, affectedArea) {
@@ -110,25 +123,59 @@ function complianceLabel(code, affectedArea) {
   return 'Compliance evidence needs attention';
 }
 
+function sourceKey(source) {
+  if (!hasText(source?.sourceEntityType)) return null;
+  return `${source.sourceEntityType}:${source.sourceEntityId || 'missing'}`;
+}
+
+function isValidComplianceHealthScore(score) {
+  if (!score || typeof score !== 'object' || Array.isArray(score)) return false;
+  if (score.modelVersion !== COMPLIANCE_MODEL_VERSION || !COMPLIANCE_STATUSES.has(score.status)) return false;
+  if (!Number.isFinite(score.percentage) || score.percentage < 0 || score.percentage > 100) return false;
+  if (!hasText(score.evaluationTimestamp) || !Number.isFinite(Date.parse(score.evaluationTimestamp))) return false;
+  if (!Array.isArray(score.criticalBlockers) || !Array.isArray(score.categories)) return false;
+  if (!score.criticalBlockers.every((blocker) => blocker && typeof blocker === 'object'
+    && hasText(blocker.criticalRuleCode) && Number.isInteger(blocker.criticalRuleVersion) && blocker.criticalRuleVersion > 0
+    && hasText(blocker.reason) && hasText(blocker.sourceEntityType) && hasText(blocker.affectedArea)
+    && hasText(blocker.route) && hasText(blocker.evaluationTimestamp)
+    && Number.isFinite(Date.parse(blocker.evaluationTimestamp)))) return false;
+  return score.categories.every((category) => category && typeof category === 'object'
+    && hasText(category.code) && hasText(category.label)
+    && category.counts && typeof category.counts === 'object'
+    && ['missing', 'expired', 'blocking'].every((key) => Number.isFinite(category.counts[key]) && category.counts[key] >= 0)
+    && Array.isArray(category.sources)
+    && category.sources.every((source) => source && typeof source === 'object'
+      && COMPLIANCE_SOURCE_STATES.has(source.state) && hasText(source.reason)
+      && hasText(source.sourceEntityType) && hasText(source.route)));
+}
+
+function projectionAttention(code, label, reason) {
+  return [{ code, label, reason, route: '/compliance', requiresAttention: true }];
+}
+
 function projectComplianceAdvisories(complianceOverview) {
-  if (complianceOverview?.unavailable === true || !complianceOverview?.healthScore) {
-    return [{
-      code: 'COMPLIANCE_EVIDENCE_UNAVAILABLE',
-      label: 'Compliance evidence could not be assessed',
-      reason: 'Review CASA Compliance before relying on the organisation’s operational evidence.',
-      route: '/compliance',
-      requiresAttention: true,
-    }];
-  }
+  if (complianceOverview?.unavailable === true || !complianceOverview?.healthScore) return projectionAttention(
+    'COMPLIANCE_EVIDENCE_UNAVAILABLE',
+    'Compliance evidence could not be assessed',
+    'Review CASA Compliance before relying on the organisation’s operational evidence.',
+  );
 
   const score = complianceOverview.healthScore;
+  if (!isValidComplianceHealthScore(score)) return projectionAttention(
+    'COMPLIANCE_PROJECTION_INVALID',
+    'Compliance evidence could not be verified',
+    'The compliance assessment was incomplete or invalid. Review CASA Compliance before operations.',
+  );
   const advisories = [];
   const seen = new Set();
+  const blockerSources = new Set();
   for (const blocker of Array.isArray(score.criticalBlockers) ? score.criticalBlockers : []) {
     const code = String(blocker?.criticalRuleCode || 'COMPLIANCE_CRITICAL');
     if (seen.has(code)) continue;
     seen.add(code);
     if (code.startsWith('REOC_')) seen.add('REOC_EVIDENCE_ATTENTION');
+    const blockerSource = sourceKey(blocker);
+    if (blockerSource) blockerSources.add(blockerSource);
     advisories.push({
       code,
       label: complianceLabel(code, blocker?.affectedArea),
@@ -147,8 +194,16 @@ function projectComplianceAdvisories(complianceOverview) {
     if (missing + expired + blocking < 1) continue;
     const code = `${String(category?.code || 'COMPLIANCE').toUpperCase()}_EVIDENCE_ATTENTION`;
     if (seen.has(code)) continue;
+    const attentionSources = category.sources.filter((source) => [
+      'OPERATIONALLY_BLOCKING', 'EXPIRED_OVERDUE', 'MISSING',
+    ].includes(source?.state));
+    const uncoveredSources = attentionSources.filter((source) => {
+      const key = sourceKey(source);
+      return !key || !blockerSources.has(key);
+    });
+    if (attentionSources.length > 0 && uncoveredSources.length === 0) continue;
     seen.add(code);
-    const firstSource = Array.isArray(category?.sources) ? category.sources[0] : null;
+    const firstSource = uncoveredSources[0] || attentionSources[0] || category.sources[0] || null;
     advisories.push({
       code,
       label: `${category?.label || 'Compliance evidence'} needs attention`,
@@ -159,7 +214,13 @@ function projectComplianceAdvisories(complianceOverview) {
     });
   }
 
-  if (advisories.length === 0 && score.status && score.status !== 'STRONG') {
+  if (advisories.length === 0 && score.status === 'CRITICAL') return projectionAttention(
+    'COMPLIANCE_CRITICAL_UNEXPLAINED',
+    'Critical compliance status needs review',
+    'CASA Compliance reported a critical status without enough source detail. Review the authoritative compliance record.',
+  );
+
+  if (advisories.length === 0 && score.status !== 'STRONG') {
     advisories.push({
       code: 'COMPLIANCE_REVIEW_RECOMMENDED',
       label: 'Review your compliance position',

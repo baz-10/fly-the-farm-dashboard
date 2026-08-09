@@ -28,6 +28,7 @@ function source(overrides = {}) {
     complianceOverview: {
       healthScore: {
         modelVersion: 'AU-CASA-HEALTH-1', status: 'STRONG', percentage: 100,
+        evaluationTimestamp: '2026-08-09T00:00:00.000Z',
         criticalBlockers: [], categories: [],
       },
     },
@@ -101,9 +102,15 @@ test('uses the existing compliance projection to show missing ReOC evidence as o
     complianceOverview: {
       healthScore: {
         modelVersion: 'AU-CASA-HEALTH-1', status: 'CRITICAL', percentage: 24,
+        evaluationTimestamp: '2026-08-09T00:00:00.000Z',
         criticalBlockers: [{
           criticalRuleCode: 'REOC_MISSING',
+          criticalRuleVersion: 1,
           reason: 'Required ReOC record is missing.',
+          sourceEntityType: 'organisation_compliance_instrument',
+          sourceEntityId: null,
+          affectedArea: 'ReOC',
+          evaluationTimestamp: '2026-08-09T00:00:00.000Z',
           route: '/compliance',
         }],
         categories: [],
@@ -118,6 +125,74 @@ test('uses the existing compliance projection to show missing ReOC evidence as o
     reason: 'Required ReOC record is missing.',
     route: '/compliance/reoc',
   }));
+});
+
+test.each([
+  ['empty health score', {}],
+  ['unknown model', { modelVersion: 'UNKNOWN', status: 'STRONG', percentage: 100, evaluationTimestamp: '2026-08-09T00:00:00Z', criticalBlockers: [], categories: [] }],
+  ['unknown status', { modelVersion: 'AU-CASA-HEALTH-1', status: 'CURRENT', percentage: 100, evaluationTimestamp: '2026-08-09T00:00:00Z', criticalBlockers: [], categories: [] }],
+  ['malformed arrays', { modelVersion: 'AU-CASA-HEALTH-1', status: 'STRONG', percentage: 100, evaluationTimestamp: '2026-08-09T00:00:00Z', criticalBlockers: null, categories: {} }],
+  ['malformed category source', { modelVersion: 'AU-CASA-HEALTH-1', status: 'STRONG', percentage: 100, evaluationTimestamp: '2026-08-09T00:00:00Z', criticalBlockers: [], categories: [{ code: 'AIRCRAFT', label: 'Aircraft', counts: { missing: 0, expired: 0, blocking: 0 }, sources: ['invalid-source'] }] }],
+])('fails closed for a malformed authoritative compliance projection: %s', (_label, healthScore) => {
+  const result = projectGettingStarted(context, completeSource({ complianceOverview: { healthScore } }));
+
+  expect(result.operationalReadiness).toMatchObject({
+    state: 'NEEDS_OPERATIONAL_ATTENTION',
+    advisories: [expect.objectContaining({
+      code: 'COMPLIANCE_PROJECTION_INVALID',
+      requiresAttention: true,
+      route: '/compliance',
+    })],
+  });
+});
+
+test('fails closed when a critical compliance status has no authoritative explanation', () => {
+  const result = projectGettingStarted(context, completeSource({
+    complianceOverview: {
+      healthScore: {
+        modelVersion: 'AU-CASA-HEALTH-1', status: 'CRITICAL', percentage: 24,
+        evaluationTimestamp: '2026-08-09T00:00:00.000Z', criticalBlockers: [], categories: [],
+      },
+    },
+  }));
+
+  expect(result.operationalReadiness).toMatchObject({
+    state: 'NEEDS_OPERATIONAL_ATTENTION',
+    advisories: [expect.objectContaining({
+      code: 'COMPLIANCE_CRITICAL_UNEXPLAINED',
+      requiresAttention: true,
+    })],
+  });
+});
+
+test('preserves allow-listed source routes, rejects invented routes, and deduplicates category advice by source', () => {
+  const result = projectGettingStarted(context, completeSource({
+    complianceOverview: {
+      healthScore: {
+        modelVersion: 'AU-CASA-HEALTH-1', status: 'CRITICAL', percentage: 40,
+        evaluationTimestamp: '2026-08-09T00:00:00.000Z',
+        criticalBlockers: [
+          { criticalRuleCode: 'AIRCRAFT_NOT_SERVICEABLE', criticalRuleVersion: 1, reason: 'Aircraft is not serviceable.', affectedArea: 'Aircraft compliance', sourceEntityType: 'aircraft', sourceEntityId: 'aircraft-1', route: '/aircraft', evaluationTimestamp: '2026-08-09T00:00:00.000Z' },
+          { criticalRuleCode: 'REQUIRED_PERSONNEL_CREDENTIAL_INVALID', criticalRuleVersion: 1, reason: 'A required credential is invalid.', affectedArea: 'Personnel credentials', sourceEntityType: 'personnel_credential', sourceEntityId: 'credential-1', route: '/personnel', evaluationTimestamp: '2026-08-09T00:00:00.000Z' },
+          { criticalRuleCode: 'CRITICAL_CORRECTIVE_ACTION_OVERDUE', criticalRuleVersion: 1, reason: 'A corrective action is overdue.', affectedArea: 'Corrective actions', sourceEntityType: 'checklist_corrective_action', sourceEntityId: 'action-1', route: '/compliance/checklists', evaluationTimestamp: '2026-08-09T00:00:00.000Z' },
+          { criticalRuleCode: 'UNSAFE_ROUTE', criticalRuleVersion: 1, reason: 'A source route is invalid.', affectedArea: 'Compliance', sourceEntityType: 'compliance_record', sourceEntityId: 'record-1', route: '/compliance-evil', evaluationTimestamp: '2026-08-09T00:00:00.000Z' },
+        ],
+        categories: [{
+          code: 'AIRCRAFT', label: 'Aircraft registration and technical compliance',
+          counts: { missing: 0, expired: 0, blocking: 1 },
+          sources: [{ state: 'OPERATIONALLY_BLOCKING', reason: 'Aircraft is not serviceable.', sourceEntityType: 'aircraft', sourceEntityId: 'aircraft-1', route: '/aircraft' }],
+        }],
+      },
+    },
+  }));
+
+  expect(result.operationalReadiness.advisories).toEqual(expect.arrayContaining([
+    expect.objectContaining({ code: 'AIRCRAFT_NOT_SERVICEABLE', route: '/aircraft' }),
+    expect.objectContaining({ code: 'REQUIRED_PERSONNEL_CREDENTIAL_INVALID', route: '/personnel' }),
+    expect.objectContaining({ code: 'CRITICAL_CORRECTIVE_ACTION_OVERDUE', route: '/compliance/checklists' }),
+    expect.objectContaining({ code: 'UNSAFE_ROUTE', route: '/compliance' }),
+  ]));
+  expect(result.operationalReadiness.advisories.filter((item) => item.code.startsWith('AIRCRAFT_'))).toHaveLength(1);
 });
 
 test('stays in Getting Started until every authoritative planning prerequisite exists', () => {
