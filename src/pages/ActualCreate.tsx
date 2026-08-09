@@ -50,6 +50,7 @@ import { JobActual, CostLineItem, ActualStatus, DailyHoursEntry } from '../types
 import { saveActual } from '../services/financialsStore';
 import type { Client } from '../types/fieldManagement';
 import type { Quote, Kit, KitSelection } from '../types/quote';
+import { WorkflowMaturityBoundary } from '../components/productMaturity/WorkflowMaturityBoundary';
 
 // ─── Module-level helper components ─────────────────────────────
 
@@ -1306,6 +1307,8 @@ export default function ActualCreate() {
           </Stack>
         </SectionCard>
 
+        <WorkflowMaturityBoundary moduleCode="financials" workflowCode="margin-analysis">
+        <Stack spacing={3}>
         {/* ─── I. P&L Summary ────────────────────────────── */}
         <Card sx={{ borderRadius: 3, border: `2px solid ${marginColor}` }}>
           <CardContent sx={{ p: { xs: 2.5, md: 3 } }}>
@@ -1478,6 +1481,17 @@ export default function ActualCreate() {
             </CardContent>
           </Card>
         )}
+        </Stack>
+        </WorkflowMaturityBoundary>
+
+        <WorkflowMaturityBoundary moduleCode="financials" workflowCode="invoice-export">
+          <Card variant="outlined" sx={{ borderRadius: 3 }}>
+            <CardContent>
+              <Typography variant="h6" fontWeight={800}>Invoice Export</Typography>
+              <Typography color="text.secondary">Invoice export availability will appear here when authoritative financial records support it.</Typography>
+            </CardContent>
+          </Card>
+        </WorkflowMaturityBoundary>
 
         {/* ─── K. Save ───────────────────────────────────── */}
         <Stack direction="row" spacing={2} justifyContent="flex-end">

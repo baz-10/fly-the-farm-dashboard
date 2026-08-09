@@ -1,0 +1,172 @@
+import fs from 'fs';
+import path from 'path';
+
+const surfaces = () => require('../surfaces');
+
+const concretePath = (routePattern: string): string => routePattern
+  .replace(':token', 'customer-token')
+  .replace(':clientId', 'client-1')
+  .replace(':propertyId', 'property-1')
+  .replace(':fieldId', 'field-1')
+  .replace(':jobId', 'job-1')
+  .replace(':quoteId', 'quote-1')
+  .replace(':actualId', 'actual-1')
+  .replace(':missionId', 'mission-1')
+  .replace(':id', 'record-1');
+
+describe('product maturity route surfaces', () => {
+  test('declares workflowCode explicitly for every reachable route', () => {
+    const { REACHABLE_PRODUCT_ROUTES } = surfaces();
+
+    REACHABLE_PRODUCT_ROUTES.forEach((route: { workflowCode?: unknown }) => {
+      expect(Object.prototype.hasOwnProperty.call(route, 'workflowCode')).toBe(true);
+      expect(route.workflowCode === null || typeof route.workflowCode === 'string').toBe(true);
+    });
+  });
+
+  test('resolves every declared reachable route to its registry metadata', () => {
+    const { REACHABLE_PRODUCT_ROUTES, resolveProductSurface } = surfaces();
+
+    REACHABLE_PRODUCT_ROUTES.forEach((route: { path: string; moduleCode: string; workflowCode?: string | null }) => {
+      const surface = resolveProductSurface(concretePath(route.path), '');
+
+      expect(surface).toMatchObject({
+        routePattern: route.path,
+        moduleCode: route.moduleCode,
+        workflowCode: route.workflowCode ?? null,
+      });
+      expect(surface.entry.moduleCode).toBe(route.moduleCode);
+      expect(surface.entry.workflowCode).toBe(route.workflowCode ?? null);
+    });
+  });
+
+  test('prefers the most specific Client, Property, Field, Job and Mission matcher', () => {
+    const { resolveProductSurface } = surfaces();
+
+    expect(resolveProductSurface('/jobs/client/client-1', '')).toMatchObject({ moduleCode: 'clients' });
+    expect(resolveProductSurface('/jobs/client/client-1/property/property-1', '')).toMatchObject({ moduleCode: 'properties' });
+    expect(resolveProductSurface('/jobs/client/client-1/property/property-1/field/field-1', '')).toMatchObject({ moduleCode: 'fields' });
+    expect(resolveProductSurface('/jobs/client/client-1/property/property-1/field/field-1/job/job-1', '')).toMatchObject({ moduleCode: 'jobs' });
+    expect(resolveProductSurface('/jobs/client/client-1/property/property-1/field/field-1/job/job-1/new-mission', '')).toMatchObject({ moduleCode: 'mission-workspace' });
+  });
+
+  test.each([
+    ['/QUOTES', '', 'quotes', null],
+    ['/Quotes', '', 'quotes', null],
+    ['/QUOTES/NEW', '', 'quotes', null],
+    ['/QUOTES/quote-1', '', 'quotes', null],
+    ['/FINANCIALS', '', 'financials', null],
+    ['/JOBS', '?view=jobs', 'jobs', null],
+  ])('matches static route segments case-insensitively without changing specificity or query semantics', (pathname, search, moduleCode, workflowCode) => {
+    const { resolveProductSurface } = surfaces();
+
+    expect(resolveProductSurface(pathname, search)).toMatchObject({ moduleCode, workflowCode });
+  });
+
+  test('keeps maturity query values case-sensitive', () => {
+    const { resolveProductSurface } = surfaces();
+
+    expect(resolveProductSurface('/JOBS', '?view=JOBS')).toMatchObject({ moduleCode: 'clients' });
+  });
+
+  test.each([
+    ['/quotes/quote-1', 'quotes'],
+    ['/financials/new', 'financials'],
+    ['/financials/actual-1', 'financials'],
+  ])('classifies %s by its parent module instead of a narrow workflow', (pathname, moduleCode) => {
+    const { resolveProductSurface } = surfaces();
+
+    expect(resolveProductSurface(pathname, '')).toMatchObject({ moduleCode, workflowCode: null });
+  });
+
+  test.each([
+    ['/%71uotes', 'quotes', null],
+    ['/%66inancials', 'financials', null],
+    ['/%63ompliance/transport', 'transport-storage', null],
+    ['/quotes/%6eew', 'quotes', null],
+    ['/quotes/%71uote-1', 'quotes', null],
+  ])('decodes pathname segments before applying route specificity for %s', (pathname, moduleCode, workflowCode) => {
+    const { resolveProductSurface } = surfaces();
+
+    expect(resolveProductSurface(pathname, '')).toMatchObject({ moduleCode, workflowCode });
+  });
+
+  test.each(['/quotes/%', '/treatment/%ZZ', '/%E0%A4%A'])('rejects malformed pathname encoding instead of treating %s as an unknown surface', pathname => {
+    const { resolveProductSurface, ProductMaturityConfigurationError } = surfaces();
+
+    expect(() => resolveProductSurface(pathname, '')).toThrow(ProductMaturityConfigurationError);
+  });
+
+  test('keeps Chemical treatment details inside the usable Beta Chemical Database surface', () => {
+    const { resolveProductSurface } = surfaces();
+
+    expect(resolveProductSurface('/treatment/product-1', '')).toMatchObject({
+      moduleCode: 'chemical-database',
+      entry: { maturity: 'BETA' },
+    });
+  });
+
+  test('resolves Jobs workspace query views before the shared Clients fallback', () => {
+    const { resolveProductSurface } = surfaces();
+
+    expect(resolveProductSurface('/jobs', '?view=properties')).toMatchObject({ moduleCode: 'properties' });
+    expect(resolveProductSurface('/jobs', '?view=fields')).toMatchObject({ moduleCode: 'fields' });
+    expect(resolveProductSurface('/jobs', '?view=jobs')).toMatchObject({ moduleCode: 'jobs' });
+    expect(resolveProductSurface('/jobs', '')).toMatchObject({ moduleCode: 'clients' });
+    expect(resolveProductSurface('/jobs', '?view=unknown')).toMatchObject({ moduleCode: 'clients' });
+  });
+
+  test('fails closed when a configured route refers to an unknown module', () => {
+    const { PRODUCT_SURFACES, resolveProductSurface } = surfaces();
+    const mutableSurfaces = PRODUCT_SURFACES as unknown as Array<unknown>;
+
+    mutableSurfaces.push({
+      routePattern: '/misconfigured-product-surface',
+      moduleCode: 'not-a-module',
+      workflowCode: null,
+    });
+
+    try {
+      expect(() => resolveProductSurface('/misconfigured-product-surface', '')).toThrow(
+        'Missing product maturity registry metadata for module not-a-module.'
+      );
+    } finally {
+      mutableSurfaces.pop();
+    }
+  });
+
+  test('fails closed when a configured route refers to an unknown workflow', () => {
+    const { PRODUCT_SURFACES, resolveProductSurface } = surfaces();
+    const mutableSurfaces = PRODUCT_SURFACES as unknown as Array<unknown>;
+
+    mutableSurfaces.push({
+      routePattern: '/misconfigured-workflow-surface',
+      moduleCode: 'jobs',
+      workflowCode: 'not-a-workflow',
+    });
+
+    try {
+      expect(() => resolveProductSurface('/misconfigured-workflow-surface', '')).toThrow(
+        'Missing product maturity registry metadata for route /misconfigured-workflow-surface.'
+      );
+    } finally {
+      mutableSurfaces.pop();
+    }
+  });
+
+  test('keeps every literal App route in the maturity route manifest', () => {
+    const { REACHABLE_PRODUCT_ROUTES } = surfaces();
+    const appSource = fs.readFileSync(path.resolve(process.cwd(), 'src/App.tsx'), 'utf8');
+    const appRoutePaths = Array.from(appSource.matchAll(/<Route\s+path="([^"]+)"/g), match => match[1]);
+    const manifestPaths = new Set(REACHABLE_PRODUCT_ROUTES.map((route: { path: string }) => route.path));
+
+    expect(appRoutePaths).not.toHaveLength(0);
+    appRoutePaths.forEach(routePath => expect(manifestPaths.has(routePath)).toBe(true));
+  });
+
+  test('returns null only for an unknown route', () => {
+    const { resolveProductSurface } = surfaces();
+
+    expect(resolveProductSurface('/not-a-reachable-route', '')).toBeNull();
+  });
+});

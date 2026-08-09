@@ -1,4 +1,5 @@
-import React from'react';import{fireEvent,render,screen,waitFor}from'@testing-library/react';import MissionOperationalCloseout from'../MissionOperationalCloseout';
+import React from'react';import{fireEvent,render,screen,waitFor}from'@testing-library/react';import MissionOperationalCloseout from'../MissionOperationalCloseout';import{PRODUCT_MATURITY_REGISTRY}from'../../../productMaturity/registry';import{ProductMaturityEntry}from'../../../productMaturity/types';
+const mockReportStatusMount=jest.fn();jest.mock('../../reports/ReportArtefactStatus',()=>({__esModule:true,default:({reportType}:any)=>{mockReportStatusMount(reportType);return <button>Generate {reportType}</button>}}));
 const state={authorisation:{id:'a1',evidence_manifest:{planning:{aircraft:[{aircraftId:'ac1',snapshot:{registration:'FTF-T100'}}],equipmentKits:[{equipmentKitId:'k1',snapshot:{name:'Broadcast Kit'}}],personnel:{assignments:[{personnelId:'p1',snapshot:{name:'Ben Trollope'}}]},chemicals:{products:[{productName:'Grazon Extra',rate:2}],application_volume_l_ha:40,treatment_area_ha:10.9}}}},imports:[{id:'i1',evidence_type:'FINAL_KML',parse_status:'PARSED',original_filename:'flight.kml'}],resources:null,chemicals:null,events:[],operationalRevision:null,completion:null};
 const api={read:jest.fn().mockResolvedValue(state),upload:jest.fn(),saveResources:jest.fn().mockResolvedValue({id:'r1',version_number:1}),saveChemicals:jest.fn().mockResolvedValue({id:'c1',version_number:1}),saveEvents:jest.fn().mockResolvedValue([{id:'e1',batch_version:1}]),submit:jest.fn().mockResolvedValue({id:'o1',version_number:1}),complete:jest.fn().mockResolvedValue({id:'x1',version_number:1})};
 beforeEach(()=>{api.read.mockResolvedValue(state);api.saveResources.mockResolvedValue({id:'r1',version_number:1});api.saveChemicals.mockResolvedValue({id:'c1',version_number:1});api.saveEvents.mockResolvedValue([{id:'e1',batch_version:1}]);api.submit.mockResolvedValue({id:'o1',version_number:1});api.complete.mockResolvedValue({id:'x1',version_number:1});});
@@ -59,4 +60,21 @@ test('keeps completed closeout evidence reviewable but removes every mutation ac
  expect(screen.queryByRole('button',{name:'No operational events'})).not.toBeInTheDocument();
  fireEvent.click(screen.getByRole('button',{name:'Operational Review'}));
  expect(screen.queryByRole('button',{name:'Submit Operational Evidence'})).not.toBeInTheDocument();
+});
+
+test('shows one reports workspace with a unique label and mounts neither completed report status when reports are coming soon',async()=>{
+ const completed={...state,resources:{id:'r1',version_number:1},chemicals:{id:'c1',version_number:1},events:[{id:'e1',batch_version:1,no_events_declaration:true}],operationalRevision:{id:'o1',version_number:1},completion:{id:'x1',version_number:1}};
+ api.read.mockResolvedValue(completed);mockReportStatusMount.mockClear();
+ const entry=(PRODUCT_MATURITY_REGISTRY as ProductMaturityEntry[]).find(item=>item.moduleCode==='mission-workspace'&&item.workflowCode==='reports')!,previous=entry.maturity;entry.maturity='COMING_SOON';
+ try{
+  render(<MissionOperationalCloseout missionId="m1" api={api as any}/>);
+  expect(await screen.findByText('Mission completed · version 1')).toBeVisible();
+  const workspaces=screen.getAllByRole('region',{name:'Mission Reports'});
+  expect(workspaces).toHaveLength(1);
+  expect(workspaces[0]).toHaveAttribute('aria-labelledby','mission-workspace-reports-coming-soon');
+  expect(document.querySelectorAll('#mission-workspace-reports-coming-soon')).toHaveLength(1);
+  expect(mockReportStatusMount).not.toHaveBeenCalled();
+  expect(screen.queryByText('Generate MISSION_SUMMARY')).not.toBeInTheDocument();
+  expect(screen.queryByText('Generate MISSION_RECORD')).not.toBeInTheDocument();
+ }finally{entry.maturity=previous;}
 });

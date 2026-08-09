@@ -839,14 +839,14 @@ function LocalJobDetail() {
                                 </Box>
                               )}
 
-                              {/* Separator between operator briefing and legacy sections */}
+                              {/* Separator between operator briefing and earlier report sections */}
                               <Divider sx={{ my: 2, opacity: 0.5 }} />
                             </Box>
                           )}
 
-                          {/* Legacy Client Report Sections (secondary) */}
+                          {/* Earlier client report sections (secondary) */}
                           <Typography variant="caption" color="text.disabled" sx={{ display: 'block', mb: 1, textTransform: 'uppercase', letterSpacing: 0.5 }}>
-                            Legacy Report Details
+                            Previous Report Details
                           </Typography>
 
                           {report.clientReport.finalRecommendation.length > 0 && (
@@ -898,7 +898,7 @@ function LocalJobDetail() {
                           {!report.operatorBriefing && (
                             <Box sx={{ mt: 1.5 }}>
                               <Alert severity="info" sx={{ fontSize: '0.75rem' }}>
-                                This report was generated before Operator Briefing feature. Only legacy client report data is available.
+                                This report was generated before Operator Briefing was available. Only the earlier client report data is available.
                               </Alert>
                             </Box>
                           )}

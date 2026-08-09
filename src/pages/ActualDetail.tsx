@@ -43,6 +43,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { JobActual, CostLineItem } from '../types/financials';
 import { Quote } from '../types/quote';
 import { generateActualReport } from '../utils/actualReportPdf';
+import { WorkflowMaturityBoundary } from '../components/productMaturity/WorkflowMaturityBoundary';
 
 // ─── Helper components (defined outside main component) ─────────
 
@@ -83,16 +84,29 @@ const getMarginColor = (margin: number) => {
   return '#c62828';
 };
 
-const getMarginBg = (margin: number) => {
-  if (margin >= 40) return alpha('#4caf50', 0.1);
-  if (margin >= 20) return alpha('#ff9800', 0.1);
-  return alpha('#f44336', 0.1);
-};
-
 const getVarianceColor = (variance: number, higherIsBetter: boolean) => {
   if (variance === 0) return 'text.secondary';
   const isBetter = higherIsBetter ? variance > 0 : variance < 0;
   return isBetter ? '#2e7d32' : '#c62828';
+};
+
+const MarginAnalysis = ({ actual, quote, border }: { actual: JobActual; quote?: Quote; border: string }) => {
+  const rows = quote?.margin ? [
+    { label: 'Revenue', quoted: quote.margin.revenue, actual: actual.revenue, higherIsBetter: true, isPercent: false },
+    { label: 'Total Cost', quoted: quote.margin.totalCost, actual: actual.totalCost, higherIsBetter: false, isPercent: false },
+    { label: 'Margin %', quoted: quote.margin.grossMarginPercent, actual: actual.grossMarginPercent, higherIsBetter: true, isPercent: true },
+  ] : [];
+  return (
+    <Card elevation={0} sx={{ border, borderRadius: '16px' }}>
+      <CardContent sx={{ p: 3 }}>
+        <Typography variant="subtitle1" fontWeight={700} color="primary.dark" sx={{ mb: 2 }}>Margin Analysis</Typography>
+        <Typography variant="h5" sx={{ fontWeight: 800, color: getMarginColor(actual.grossMarginPercent), mb: rows.length ? 2 : 0 }}>
+          {actual.grossMarginPercent.toFixed(1)}%
+        </Typography>
+        {rows.length > 0 && <TableContainer><Table size="small"><TableHead><TableRow><TableCell>Category</TableCell><TableCell align="right">Quoted</TableCell><TableCell align="right">Actual</TableCell><TableCell align="right">Variance</TableCell></TableRow></TableHead><TableBody>{rows.map(row=>{const variance=row.actual-row.quoted;return <TableRow key={row.label}><TableCell>{row.label}</TableCell><TableCell align="right">{row.isPercent?`${row.quoted.toFixed(1)}%`:formatCurrency(row.quoted)}</TableCell><TableCell align="right">{row.isPercent?`${row.actual.toFixed(1)}%`:formatCurrency(row.actual)}</TableCell><TableCell align="right"><Typography variant="body2" fontWeight={700} sx={{color:getVarianceColor(variance,row.higherIsBetter)}}>{variance>=0?'+':''}{row.isPercent?`${variance.toFixed(1)}%`:formatCurrency(variance)}</Typography></TableCell></TableRow>})}</TableBody></Table></TableContainer>}
+      </CardContent>
+    </Card>
+  );
 };
 
 // ─── Main component ─────────────────────────────────────────────
@@ -150,9 +164,6 @@ export default function ActualDetail() {
   // Travel totals
   const travelTotal =
     actual.travel.vehicleTotal + actual.travel.accommodation + actual.travel.meals;
-
-  // Quote margin for comparison
-  const quotedMargin = quote?.margin?.grossMarginPercent;
 
   const cardBorder = `1.5px solid ${alpha(theme.palette.primary.main, 0.1)}`;
 
@@ -267,6 +278,15 @@ export default function ActualDetail() {
         )}
       </Stack>
 
+      <WorkflowMaturityBoundary moduleCode="financials" workflowCode="invoice-export">
+        <Card variant="outlined" sx={{ mb: 3, borderRadius: '16px' }}>
+          <CardContent>
+            <Typography variant="h6" fontWeight={800}>Invoice Export</Typography>
+            <Typography color="text.secondary">Invoice export availability is separate from the operational PDF report.</Typography>
+          </CardContent>
+        </Card>
+      </WorkflowMaturityBoundary>
+
       <Stack spacing={3} className="ftf-animate-in-delay-1">
         {/* ─── P&L Summary ─────────────────────────────────────── */}
         <Card
@@ -308,26 +328,6 @@ export default function ActualDetail() {
                   </Typography>
                 </Box>
               ))}
-              <Box>
-                <Typography variant="caption" color="text.secondary">
-                  Margin
-                </Typography>
-                <Typography
-                  variant="h5"
-                  sx={{
-                    fontWeight: 800,
-                    fontFamily: '"Outfit", system-ui',
-                    lineHeight: 1.2,
-                    px: 1.5,
-                    py: 0.25,
-                    borderRadius: '8px',
-                    bgcolor: getMarginBg(actual.grossMarginPercent),
-                    color: getMarginColor(actual.grossMarginPercent),
-                  }}
-                >
-                  {actual.grossMarginPercent.toFixed(1)}%
-                </Typography>
-              </Box>
               {actual.rate > 0 && (
                 <Box>
                   <Typography variant="caption" color="text.secondary">
@@ -371,28 +371,12 @@ export default function ActualDetail() {
                 {actual.totalHours > 0 && ` \u00F7 ${actual.totalHours} hrs = ${formatCurrency(actual.effectiveHourlyRate)}/hr`}
               </Typography>
             )}
-            {quote && quotedMargin != null && (
-              <Typography
-                variant="body2"
-                sx={{
-                  mt: 2,
-                  px: 1.5,
-                  py: 0.75,
-                  borderRadius: '8px',
-                  bgcolor: alpha(theme.palette.primary.main, 0.04),
-                  border: `1px solid ${alpha(theme.palette.primary.main, 0.08)}`,
-                }}
-              >
-                Quoted margin:{' '}
-                <strong>{quotedMargin.toFixed(1)}%</strong>
-                {' \u2192 Actual: '}
-                <strong style={{ color: getMarginColor(actual.grossMarginPercent) }}>
-                  {actual.grossMarginPercent.toFixed(1)}%
-                </strong>
-              </Typography>
-            )}
           </CardContent>
         </Card>
+
+        <WorkflowMaturityBoundary moduleCode="financials" workflowCode="margin-analysis">
+          <MarginAnalysis actual={actual} quote={quote} border={cardBorder} />
+        </WorkflowMaturityBoundary>
 
         {/* ─── Daily Hours ────────────────────────────────────── */}
         {actual.dailyHours && actual.dailyHours.length > 1 && (
@@ -566,109 +550,6 @@ export default function ActualDetail() {
                 </Typography>
               </Box>
               <LineItemRows items={actual.otherCosts.items} />
-            </CardContent>
-          </Card>
-        )}
-
-        {/* ─── Quote Comparison ────────────────────────────────── */}
-        {quote && quote.margin && (
-          <Card elevation={0} sx={{ border: cardBorder, borderRadius: '16px' }}>
-            <CardContent sx={{ p: 3 }}>
-              <Typography variant="subtitle1" fontWeight={700} color="primary.dark" sx={{ mb: 2 }}>
-                Quote vs Actual Comparison
-              </Typography>
-              <TableContainer
-                sx={{
-                  borderRadius: '10px',
-                  border: `1px solid ${alpha(theme.palette.primary.main, 0.1)}`,
-                }}
-              >
-                <Table size="small">
-                  <TableHead>
-                    <TableRow
-                      sx={{
-                        '& th': {
-                          fontWeight: 700,
-                          fontSize: '0.75rem',
-                          color: 'text.secondary',
-                        },
-                      }}
-                    >
-                      <TableCell>Category</TableCell>
-                      <TableCell align="right">Quoted</TableCell>
-                      <TableCell align="right">Actual</TableCell>
-                      <TableCell align="right">Variance</TableCell>
-                    </TableRow>
-                  </TableHead>
-                  <TableBody>
-                    {(() => {
-                      const rows = [
-                        {
-                          label: 'Revenue',
-                          quoted: quote.margin!.revenue,
-                          actual: actual.revenue,
-                          higherIsBetter: true,
-                          isPercent: false,
-                        },
-                        {
-                          label: 'Total Cost',
-                          quoted: quote.margin!.totalCost,
-                          actual: actual.totalCost,
-                          higherIsBetter: false,
-                          isPercent: false,
-                        },
-                        {
-                          label: 'Margin %',
-                          quoted: quote.margin!.grossMarginPercent,
-                          actual: actual.grossMarginPercent,
-                          higherIsBetter: true,
-                          isPercent: true,
-                        },
-                      ];
-                      return rows.map((row) => {
-                        const variance = row.actual - row.quoted;
-                        return (
-                          <TableRow key={row.label}>
-                            <TableCell>
-                              <Typography variant="body2" fontWeight={600}>
-                                {row.label}
-                              </Typography>
-                            </TableCell>
-                            <TableCell align="right">
-                              <Typography variant="body2">
-                                {row.isPercent
-                                  ? `${row.quoted.toFixed(1)}%`
-                                  : formatCurrency(row.quoted)}
-                              </Typography>
-                            </TableCell>
-                            <TableCell align="right">
-                              <Typography variant="body2" fontWeight={600}>
-                                {row.isPercent
-                                  ? `${row.actual.toFixed(1)}%`
-                                  : formatCurrency(row.actual)}
-                              </Typography>
-                            </TableCell>
-                            <TableCell align="right">
-                              <Typography
-                                variant="body2"
-                                fontWeight={700}
-                                sx={{
-                                  color: getVarianceColor(variance, row.higherIsBetter),
-                                }}
-                              >
-                                {variance >= 0 ? '+' : ''}
-                                {row.isPercent
-                                  ? `${variance.toFixed(1)}%`
-                                  : formatCurrency(variance)}
-                              </Typography>
-                            </TableCell>
-                          </TableRow>
-                        );
-                      });
-                    })()}
-                  </TableBody>
-                </Table>
-              </TableContainer>
             </CardContent>
           </Card>
         )}

@@ -1,13 +1,17 @@
 import React from 'react';
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import Layout from '../Layout';
+
+const betaExplanation = 'This feature is available during Private Commercial Beta and is still being refined.';
 
 jest.mock('@mui/material', () => ({
   ...jest.requireActual('@mui/material'),
-  useMediaQuery: () => false,
+  useMediaQuery: () => mockIsDesktop,
 }));
 
 let mockPathname = '/';
+let mockIsDesktop = false;
+let mockEntitlements: string[] = [];
 jest.mock('react-router-dom', () => ({
   Outlet: () => <div>Page</div>,
   useLocation: () => ({ pathname: mockPathname, search: '' }),
@@ -16,7 +20,7 @@ jest.mock('react-router-dom', () => ({
 
 jest.mock('../../contexts/AuthContext', () => ({
   useAuth: () => ({
-    user: { id: 'user-1', email: 'operator@example.com', name: 'Operator', role: 'admin', tier: 'pro', entitlements: [] },
+    user: { id: 'user-1', email: 'operator@example.com', name: 'Operator', role: 'admin', tier: 'pro', entitlements: mockEntitlements },
     logout: jest.fn(),
   }),
 }));
@@ -25,6 +29,16 @@ function renderLayout(pathname = '/jobs/client/client-1/property/property-1') {
   mockPathname = pathname;
   return render(<Layout />);
 }
+
+function openNavigation(pathname = '/jobs/client/client-1/property/property-1') {
+  renderLayout(pathname);
+  fireEvent.click(screen.getByRole('button', { name: 'Open navigation' }));
+}
+
+beforeEach(() => {
+  mockIsDesktop = false;
+  mockEntitlements = [];
+});
 
 test('active CLIENTS group opens and exposes all client resources in the mobile drawer', () => {
   renderLayout();
@@ -69,4 +83,61 @@ test('Home remains visible when every accordion group is collapsed', () => {
   fireEvent.click(clients);
   expect(clients).toHaveAttribute('aria-expanded', 'false');
   expect(screen.getByRole('button', { name: 'Home' })).toBeVisible();
+});
+
+test('shows navigation maturity beside Chemical without cluttering Operationally Ready destinations', () => {
+  const aircraft = renderLayout('/aircraft');
+  expect(screen.queryByLabelText('Beta')).not.toBeInTheDocument();
+  expect(screen.queryByLabelText('Coming Soon')).not.toBeInTheDocument();
+
+  aircraft.unmount();
+  openNavigation('/database');
+  const database = screen.getByRole('button', { name: 'Chemical Database' });
+  expect(within(database).getByLabelText('Beta')).toBeVisible();
+  expect(database).toHaveAccessibleName('Chemical Database');
+  expect(database).toHaveAccessibleDescription(betaExplanation);
+  expect(within(database).getByLabelText('Beta')).not.toHaveAttribute('tabindex', '0');
+});
+
+test('keeps Coming Soon destinations discoverable and uses the same maturity state in mobile navigation', () => {
+  mockEntitlements = ['legacyAskFtf'];
+  openNavigation('/ask-ftf');
+
+  const intelligence = screen.getByRole('button', { name: 'Operational Intelligence' });
+  expect(intelligence).toBeVisible();
+  expect(intelligence).toHaveAccessibleName('Operational Intelligence');
+  expect(intelligence).toHaveAccessibleDescription('This feature will be available in a future release.');
+  expect(within(intelligence).getByLabelText('Coming Soon')).toBeVisible();
+  expect(within(intelligence).getByLabelText('Coming Soon')).not.toHaveAttribute('tabindex', '0');
+  expect(screen.queryByText(/Legacy/i)).not.toBeInTheDocument();
+});
+
+test('collapsed desktop keyboard focus provides the full approved Beta explanation once', async () => {
+  mockIsDesktop = true;
+  renderLayout('/database');
+
+  const database = screen.getByRole('button', { name: 'Chemical Database' });
+  expect(database).toHaveAccessibleName('Chemical Database');
+  expect(database).toHaveAccessibleDescription(`Chemical Database — ${betaExplanation}`);
+  act(() => database.focus());
+
+  const tooltip = await screen.findByRole('tooltip');
+  expect(tooltip).toHaveTextContent(`Chemical Database — ${betaExplanation}`);
+  expect(tooltip).toHaveAttribute('id');
+  expect(database).toHaveAttribute('aria-describedby', tooltip.id);
+  expect(screen.getAllByRole('tooltip')).toHaveLength(1);
+  expect(within(database).queryByLabelText('Beta')).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Home' })).toBeVisible();
+  expect(screen.queryByRole('button', { name: 'HOME navigation group' })).not.toBeInTheDocument();
+});
+
+test('expanded mobile navigation groups expose maturity through the item description without adding a nested tab stop', () => {
+  openNavigation('/database');
+
+  const intelligenceGroup = screen.getByRole('button', { name: 'INTELLIGENCE navigation group' });
+  expect(intelligenceGroup).toHaveAttribute('aria-expanded', 'true');
+  const database = screen.getByRole('button', { name: 'Chemical Database' });
+  expect(database).toHaveAccessibleName('Chemical Database');
+  expect(database).toHaveAccessibleDescription(betaExplanation);
+  expect(within(database).queryByRole('button')).not.toBeInTheDocument();
 });

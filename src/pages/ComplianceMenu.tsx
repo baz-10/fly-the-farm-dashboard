@@ -4,9 +4,9 @@ import {
   Typography,
   Box,
   Card,
+  CardActionArea,
   CardContent,
   Grid,
-  Button,
   useTheme,
   alpha,
 } from '@mui/material';
@@ -20,6 +20,8 @@ import ShieldIcon from '@mui/icons-material/Shield';
 import FlightTakeoffIcon from '@mui/icons-material/FlightTakeoff';
 import ForestIcon from '@mui/icons-material/Forest';
 import ArrowForwardIcon from '@mui/icons-material/ArrowForward';
+import { MaturityBadge } from '../components/productMaturity/MaturityBadge';
+import { getMaturityEntry } from '../productMaturity/registry';
 
 interface ComplianceArea {
   id: string;
@@ -27,7 +29,7 @@ interface ComplianceArea {
   description: string;
   icon: React.ReactNode;
   route: string;
-  status: 'available' | 'coming-soon';
+  moduleCode: string;
   priority: 'high' | 'medium' | 'low';
 }
 
@@ -38,7 +40,7 @@ const COMPLIANCE_AREAS: ComplianceArea[] = [
     description: 'APVMA federal requirements and state-specific chemical application regulations, spray diaries, and record keeping.',
     icon: <ScienceIcon />,
     route: '/compliance/chemical',
-    status: 'available',
+    moduleCode: 'application-records',
     priority: 'high',
   },
   {
@@ -47,7 +49,7 @@ const COMPLIANCE_AREAS: ComplianceArea[] = [
     description: 'Comprehensive flight logging system meeting CASA and Manual of Standards requirements for drone operations.',
     icon: <FlightTakeoffIcon />,
     route: '/compliance/flight',
-    status: 'available',
+    moduleCode: 'flight-records',
     priority: 'high',
   },
   {
@@ -56,7 +58,7 @@ const COMPLIANCE_AREAS: ComplianceArea[] = [
     description: 'Dangerous goods transport requirements, storage compliance, and handling protocols for agricultural chemicals.',
     icon: <LocalShippingIcon />,
     route: '/compliance/transport',
-    status: 'available',
+    moduleCode: 'transport-storage',
     priority: 'high',
   },
   {
@@ -65,7 +67,7 @@ const COMPLIANCE_AREAS: ComplianceArea[] = [
     description: 'Professional applicator certifications, drone operator licenses, and ongoing training requirements.',
     icon: <AssignmentTurnedInIcon />,
     route: '/compliance/licensing',
-    status: 'available',
+    moduleCode: 'licences-credentials',
     priority: 'medium',
   },
   {
@@ -74,7 +76,7 @@ const COMPLIANCE_AREAS: ComplianceArea[] = [
     description: 'Waterway protection, buffer zones, sensitive area compliance, and environmental impact assessments.',
     icon: <ShieldIcon />,
     route: '/compliance/environmental',
-    status: 'available',
+    moduleCode: 'environmental-records',
     priority: 'high',
   },
   {
@@ -83,7 +85,7 @@ const COMPLIANCE_AREAS: ComplianceArea[] = [
     description: 'Queensland PMAV and regulated vegetation map checks for clearing-sensitive field work and mission planning.',
     icon: <ForestIcon />,
     route: '/compliance/vegetation',
-    status: 'available',
+    moduleCode: 'vegetation-pmav',
     priority: 'high',
   },
   {
@@ -92,7 +94,7 @@ const COMPLIANCE_AREAS: ComplianceArea[] = [
     description: 'Personal protective equipment requirements, safety protocols, and workplace health and safety compliance.',
     icon: <SecurityIcon />,
     route: '/compliance/safety',
-    status: 'available',
+    moduleCode: 'safety-ppe',
     priority: 'medium',
   },
   {
@@ -101,7 +103,7 @@ const COMPLIANCE_AREAS: ComplianceArea[] = [
     description: 'Record retention requirements, audit preparation, and compliance documentation management.',
     icon: <DocumentScannerIcon />,
     route: '/compliance/documentation',
-    status: 'available',
+    moduleCode: 'documentation-audit',
     priority: 'low',
   },
 ];
@@ -112,9 +114,7 @@ export default function ComplianceMenu() {
   const theme = useTheme();
 
   const handleAreaClick = (area: ComplianceArea) => {
-    if (area.status === 'available') {
-      navigate(area.route);
-    }
+    navigate(area.route);
   };
 
   const getPriorityColor = (priority: string) => {
@@ -157,6 +157,8 @@ export default function ComplianceMenu() {
         {COMPLIANCE_AREAS.map((area) => {
           const priorityInfo = getPriorityColor(area.priority);
           const isActive = location.pathname === area.route;
+          const maturityEntry = getMaturityEntry(area.moduleCode);
+          const isComingSoon = maturityEntry.maturity === 'COMING_SOON';
 
           return (
             <Grid size={{ xs: 12, md: 6, lg: 4 }} key={area.id}>
@@ -166,18 +168,20 @@ export default function ComplianceMenu() {
                   height: '100%',
                   border: `2px solid ${isActive ? theme.palette.primary.main : alpha(theme.palette.primary.main, 0.1)}`,
                   borderRadius: '16px',
-                  cursor: area.status === 'available' ? 'pointer' : 'default',
                   transition: 'all 0.3s ease',
-                  opacity: area.status === 'coming-soon' ? 0.6 : 1,
-                  '&:hover': area.status === 'available' ? {
+                  '&:hover': {
                     transform: 'translateY(-4px)',
                     boxShadow: `0 8px 32px ${alpha(theme.palette.primary.main, 0.15)}`,
                     borderColor: theme.palette.primary.main,
-                  } : {},
+                  },
                   bgcolor: isActive ? alpha(theme.palette.primary.main, 0.02) : 'background.paper',
                 }}
-                onClick={() => handleAreaClick(area)}
               >
+                <CardActionArea
+                  aria-label={area.title}
+                  onClick={() => handleAreaClick(area)}
+                  sx={{ height: '100%', alignItems: 'stretch' }}
+                >
                 <CardContent sx={{ p: 3, height: '100%', display: 'flex', flexDirection: 'column' }}>
                   {/* Header */}
                   <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 2, mb: 2 }}>
@@ -214,23 +218,7 @@ export default function ComplianceMenu() {
                         >
                           {priorityInfo.label}
                         </Box>
-                        {area.status === 'coming-soon' && (
-                          <Box
-                            sx={{
-                              px: 1.5,
-                              py: 0.5,
-                              borderRadius: '8px',
-                              bgcolor: alpha('#757575', 0.1),
-                              color: '#757575',
-                              fontSize: '0.7rem',
-                              fontWeight: 700,
-                              textTransform: 'uppercase',
-                              letterSpacing: 0.5,
-                            }}
-                          >
-                            Coming Soon
-                          </Box>
-                        )}
+                        <MaturityBadge entry={maturityEntry} showComingSoon interactive={false} />
                       </Box>
                     </Box>
                   </Box>
@@ -248,39 +236,25 @@ export default function ComplianceMenu() {
                     {area.description}
                   </Typography>
 
-                  {/* Action Button */}
-                  {area.status === 'available' && (
-                    <Button
-                      variant={isActive ? 'contained' : 'outlined'}
-                      endIcon={<ArrowForwardIcon />}
-                      sx={{
-                        borderRadius: '10px',
-                        fontWeight: 700,
-                        py: 1,
-                        alignSelf: 'flex-start',
-                      }}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleAreaClick(area);
-                      }}
-                    >
-                      {isActive ? 'Currently Viewing' : 'Access Compliance Area'}
-                    </Button>
-                  )}
-
-                  {area.status === 'coming-soon' && (
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, alignSelf: 'flex-start' }}>
                     <Typography
                       variant="caption"
                       sx={{
-                        color: 'text.disabled',
-                        fontStyle: 'italic',
-                        alignSelf: 'flex-start',
+                        color: isComingSoon ? 'text.secondary' : 'primary.main',
+                        fontStyle: isComingSoon ? 'italic' : 'normal',
+                        fontWeight: 700,
                       }}
                     >
-                      Development in progress
+                      {isComingSoon
+                        ? 'Available in a future release'
+                        : isActive
+                          ? 'Currently Viewing'
+                          : 'Access Compliance Area'}
                     </Typography>
-                  )}
+                    <ArrowForwardIcon fontSize="small" color={isComingSoon ? 'disabled' : 'primary'} />
+                  </Box>
                 </CardContent>
+                </CardActionArea>
               </Card>
             </Grid>
           );
