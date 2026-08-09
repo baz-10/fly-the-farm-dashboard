@@ -10,6 +10,8 @@ import {
   LinearProgress,
   Stack,
   Typography,
+  useMediaQuery,
+  useTheme,
 } from '@mui/material';
 import ArrowForwardRoundedIcon from '@mui/icons-material/ArrowForwardRounded';
 import FlightTakeoffRoundedIcon from '@mui/icons-material/FlightTakeoffRounded';
@@ -18,6 +20,8 @@ import { gettingStartedApi, GettingStartedProjection } from '../services/getting
 
 export default function GettingStarted() {
   const navigate = useNavigate();
+  const theme = useTheme();
+  const isDesktopSummary = useMediaQuery(theme.breakpoints.up('md'));
   const [projection, setProjection] = React.useState<GettingStartedProjection | null>(null);
   const [error, setError] = React.useState('');
   const [loading, setLoading] = React.useState(true);
@@ -69,7 +73,7 @@ export default function GettingStarted() {
     : 0;
 
   return (
-    <Box sx={{ maxWidth: 1120, mx: 'auto', pb: 7 }}>
+    <Box sx={{ width: '100%', maxWidth: 1120, minWidth: 0, boxSizing: 'border-box', overflowWrap: 'anywhere', mx: 'auto', pb: 7 }}>
       <Box
         component="header"
         sx={{
@@ -99,7 +103,12 @@ export default function GettingStarted() {
         </Stack>
       </Box>
 
-      <Stack direction={{ xs: 'column', md: 'row' }} spacing={2.5} alignItems="stretch" sx={{ mb: 3 }}>
+      <Stack
+        direction={isDesktopSummary ? 'row' : 'column'}
+        spacing={2.5}
+        alignItems="stretch"
+        sx={{ width: '100%', minWidth: 0, mb: 3, '& > *': { minWidth: 0, maxWidth: '100%' } }}
+      >
         <Card variant="outlined" sx={{ flex: 1, borderColor: '#d6e3d3', borderRadius: 3 }}>
           <CardContent sx={{ p: { xs: 2.5, sm: 3 }, '&:last-child': { pb: { xs: 2.5, sm: 3 } } }}>
             <Stack spacing={1.5}>

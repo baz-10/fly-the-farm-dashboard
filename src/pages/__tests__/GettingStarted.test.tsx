@@ -5,6 +5,18 @@ import GettingStarted from '../GettingStarted';
 
 const mockNavigate = jest.fn();
 const mockRead = jest.fn();
+let mockViewportWidth = 1440;
+
+jest.mock('@mui/material', () => {
+  const actual = jest.requireActual('@mui/material');
+  return {
+    ...actual,
+    useMediaQuery: (query: string) => {
+      const minimum = /min-width:\s*(\d+(?:\.\d+)?)px/.exec(query)?.[1];
+      return minimum ? mockViewportWidth >= Number(minimum) : false;
+    },
+  };
+});
 
 jest.mock('react-router-dom', () => ({ useNavigate: () => mockNavigate }), { virtual: true });
 jest.mock('../../services/gettingStartedApi', () => ({
@@ -32,6 +44,7 @@ const projection = {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockViewportWidth = 1440;
   mockRead.mockResolvedValue(projection);
 });
 
@@ -40,21 +53,26 @@ describe.each([
   ['tablet', 768],
   ['desktop', 1440],
 ])('Getting Started at %s width', (_label, width) => {
-  test('keeps the recommendation, progress and complete setup path available in normal reading order', async () => {
+  test('renders the intended summary columns with explicit horizontal-overflow containment', async () => {
+    mockViewportWidth = width as number;
     Object.defineProperty(window, 'innerWidth', { configurable: true, value: width });
     window.dispatchEvent(new Event('resize'));
 
     render(<GettingStarted />);
 
-    const heading = await screen.findByRole('heading', { name: 'Getting Started' });
+    await screen.findByRole('heading', { name: 'Getting Started' });
     const recommendation = screen.getByRole('region', { name: 'Recommended next action' });
-    const setupPath = screen.getByRole('region', { name: 'Your setup path' });
-    expect(heading).toBeVisible();
-    expect(recommendation).toBeVisible();
-    expect(setupPath).toBeVisible();
-    expect(heading.compareDocumentPosition(recommendation) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(recommendation.compareDocumentPosition(setupPath) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(within(setupPath).getAllByRole('button', { name: /Complete|Needs attention|Not started|Optional/i })).toHaveLength(10);
+    const summary = recommendation.parentElement as HTMLElement;
+    const root = summary.parentElement as HTMLElement;
+    const progressCard = summary.firstElementChild as HTMLElement;
+
+    expect(getComputedStyle(summary).flexDirection).toBe(width >= 900 ? 'row' : 'column');
+    expect(getComputedStyle(root)).toMatchObject({
+      width: '100%', maxWidth: '1120px', minWidth: '0', boxSizing: 'border-box', overflowWrap: 'anywhere',
+    });
+    expect(getComputedStyle(summary)).toMatchObject({ width: '100%', minWidth: '0' });
+    expect(getComputedStyle(progressCard)).toMatchObject({ minWidth: '0', maxWidth: '100%' });
+    expect(getComputedStyle(recommendation)).toMatchObject({ minWidth: '0', maxWidth: '100%' });
   });
 });
 
