@@ -106,6 +106,20 @@ describe('product maturity route surfaces', () => {
     });
   });
 
+  test.each([
+    ['/apply', 'application-review'],
+    ['/onboarding/accept', 'invitation-provisioning'],
+    ['/getting-started', 'getting-started'],
+  ])('governs the commercial onboarding surface %s as an exact Beta workflow', (pathname, workflowCode) => {
+    const { resolveProductSurface } = surfaces();
+
+    expect(resolveProductSurface(pathname, '')).toMatchObject({
+      moduleCode: 'organisation-onboarding',
+      workflowCode,
+      entry: { maturity: 'BETA' },
+    });
+  });
+
   test('resolves Jobs workspace query views before the shared Clients fallback', () => {
     const { resolveProductSurface } = surfaces();
 

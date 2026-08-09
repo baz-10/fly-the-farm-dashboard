@@ -23,7 +23,7 @@ const visibleStringDepthBudget = 32;
 const visibleStringNodeBudget = 4096;
 const visibleStringSymbolBudget = 1024;
 // Verifier-only integrity metadata. Runtime maturity authority remains in surfaces.ts.
-const canonicalProductMaturityResolverSourceSha256 = '062140fe43d7e2c4225b1106761d08246947048c9ab0f6d434d1f1f95a35aaad';
+const canonicalProductMaturityResolverSourceSha256 = 'd83fd393fd34f59c644b107f27353f423c11320be4c098f8964a0b92826fa4d2';
 const requiredArrayFields = [
   'evidence',
   'requiredAutomatedTests',
@@ -531,6 +531,7 @@ const authLifecycleRouteComponents = new Map([
 const publicProductSurfaceRouteComponents = new Map([
   ['/register', 'Register'],
   ['/apply', 'CommercialApplication'],
+  ['/onboarding/accept', 'AcceptOrganisationInvitation'],
   ['/customer-acceptance/:token', 'CustomerAcceptancePublic'],
 ]);
 
@@ -543,6 +544,7 @@ const publicAccessRoutePaths = [
   '/forgot-password',
   '/reset-password',
   '/apply',
+  '/onboarding/accept',
   '/customer-acceptance/:token',
 ];
 const defaultOrganisationAccessRoutePaths = [
@@ -623,6 +625,11 @@ const routeAccessContracts = new Map([
     allowedRoles: ['admin'],
     requiredEntitlement: null,
   }],
+  ['/getting-started', {
+    kind: 'organisation',
+    allowedRoles: ['admin'],
+    requiredEntitlement: null,
+  }],
 ]);
 
 const routeDestinationContracts = new Map([
@@ -632,6 +639,10 @@ const routeDestinationContracts = new Map([
   ['/forgot-password', { modulePath: './pages/ForgotPassword', localName: 'ForgotPassword' }],
   ['/reset-password', { modulePath: './pages/ResetPassword', localName: 'ResetPassword' }],
   ['/apply', { modulePath: './pages/CommercialApplication', localName: 'CommercialApplication' }],
+  ['/onboarding/accept', {
+    modulePath: './pages/AcceptOrganisationInvitation',
+    localName: 'AcceptOrganisationInvitation',
+  }],
   ['/customer-acceptance/:token', {
     modulePath: './pages/CustomerAcceptancePublic',
     localName: 'CustomerAcceptancePublic',
@@ -743,6 +754,12 @@ const routeDestinationContracts = new Map([
     localName: 'UserLicenseSettings',
   }],
   ['/admin', { modulePath: './pages/Admin', localName: 'Admin' }],
+  ['/getting-started', {
+    modulePath: './components/OrganisationAdminRoute',
+    localName: 'OrganisationAdminRoute',
+    wrapper: true,
+    child: { modulePath: './pages/GettingStarted', localName: 'GettingStarted' },
+  }],
 ]);
 
 const structuralDestinationContracts = {
@@ -831,6 +848,15 @@ function isExactJsxComponent(element, componentName, checker, expectedSymbol) {
 function isExactRouteDestination(element, contract, checker) {
   if (!contract?.child) {
     return isExactJsxComponent(element, contract?.localName, checker, contract?.symbol);
+  }
+  if (contract.wrapper) {
+    return isExactJsxWrapper(
+      element,
+      contract.localName,
+      (child) => isExactJsxComponent(child, contract.child.localName, checker, contract.child.symbol),
+      checker,
+      contract.symbol,
+    );
   }
   if (!ts.isJsxElement(element)
     || !jsxTagIdentifier(element, contract.localName, checker, contract.symbol)

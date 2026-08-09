@@ -77,3 +77,70 @@ jobs:
             test-results/playwright-artifacts
           if-no-files-found: ignore
           retention-days: 7
+
+  commercial-onboarding-acceptance:
+    name: Commercial onboarding acceptance
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: production-beta-acceptance
+    env:
+      CI: 'true'
+      E2E_BASE_URL: https://spray-command-production-beta.vercel.app
+      E2E_ONBOARDING_APPLICANT_EMAIL: ${{ secrets.E2E_ONBOARDING_APPLICANT_EMAIL }}
+      E2E_ONBOARDING_APPLICANT_PASSWORD: ${{ secrets.E2E_ONBOARDING_APPLICANT_PASSWORD }}
+      E2E_PLATFORM_EMAIL: ${{ secrets.E2E_PLATFORM_EMAIL }}
+      E2E_PLATFORM_PASSWORD: ${{ secrets.E2E_PLATFORM_PASSWORD }}
+      E2E_ONBOARDING_MAILBOX_URL: ${{ secrets.E2E_ONBOARDING_MAILBOX_URL }}
+      E2E_ONBOARDING_MAILBOX_TOKEN: ${{ secrets.E2E_ONBOARDING_MAILBOX_TOKEN }}
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+
+    steps:
+      - name: Check out accepted source
+        uses: actions/checkout@v4
+
+      - name: Use Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Mask and validate onboarding secrets
+        shell: bash
+        run: |
+          set +x
+          missing=0
+          for name in E2E_ONBOARDING_APPLICANT_EMAIL E2E_ONBOARDING_APPLICANT_PASSWORD E2E_PLATFORM_EMAIL E2E_PLATFORM_PASSWORD E2E_ONBOARDING_MAILBOX_URL E2E_ONBOARDING_MAILBOX_TOKEN SUPABASE_URL SUPABASE_SERVICE_ROLE_KEY; do
+            value="${!name}"
+            if [[ -z "$value" ]]; then missing=1; else echo "::add-mask::$value"; fi
+          done
+          printf 'Commercial onboarding secrets present: %s\n' "$([[ "$missing" -eq 0 ]] && echo true || echo false)"
+          [[ "$missing" -eq 0 ]]
+
+      - name: Verify Product Maturity Registry completeness
+        run: npm run verify:product-maturity
+
+      - name: Verify authoritative onboarding PostgreSQL lifecycle
+        run: npm run verify:commercial-onboarding
+
+      - name: Install isolated Chromium runtime
+        run: npx playwright install --with-deps chromium
+
+      - name: Run unattended commercial onboarding
+        run: npx playwright test e2e/acceptance/commercial-onboarding.spec.ts --project=commercial-onboarding
+
+      - name: Archive only the controlled onboarding organisation
+        if: always()
+        run: |
+          if [[ -f test-results/commercial-onboarding-evidence.json ]]; then
+            npm run verify:commercial-onboarding -- --archive-controlled test-results/commercial-onboarding-evidence.json
+          fi
+
+      - name: Remove authentication and onboarding state
+        if: always()
+        run: |
+          rm -rf test-results/.auth
+          rm -f test-results/commercial-onboarding-evidence.json

@@ -34,6 +34,9 @@ describe('product maturity registry', () => {
       ['personnel', 'casa-credentials', 'BETA'], ['casa-compliance', null, 'OPERATIONALLY_READY'],
       ['organisation-branding', null, 'OPERATIONALLY_READY'], ['organisation-assisted-support', null, 'OPERATIONALLY_READY'],
       ['chemical-review-permissions', null, 'OPERATIONALLY_READY'], ['organisation-onboarding', null, 'BETA'],
+      ['organisation-onboarding', 'application-review', 'BETA'],
+      ['organisation-onboarding', 'invitation-provisioning', 'BETA'],
+      ['organisation-onboarding', 'getting-started', 'BETA'],
       ['home', null, 'BETA'], ['customer-portal', null, 'BETA'], ['spray-recommendation-import', null, 'COMING_SOON'],
       ['fleet-work-packs', null, 'BETA'], ['weather-centre', null, 'BETA'], ['chemical-database', null, 'BETA'],
       ['spray-calculator', null, 'BETA'], ['operating-authority', null, 'BETA'],
@@ -173,7 +176,20 @@ describe('product maturity registry', () => {
       'src/pages/SprayRecImport.tsx', 'src/services/sprayRecParser.ts', 'src/App.test.tsx',
     ]));
     expect(getMaturityEntry('spray-calculator').evidence).toContain('src/pages/Calculator.tsx');
-    expect(getMaturityEntry('organisation-onboarding').evidence).toContain('src/pages/Register.tsx');
+    expect(getMaturityEntry('organisation-onboarding').evidence).toEqual(expect.arrayContaining([
+      'server/commercial-onboarding-api.js',
+      'supabase/migrations/20260809100000_commercial_onboarding_lifecycle.sql',
+      'e2e/acceptance/commercial-onboarding.spec.ts',
+    ]));
+    expect(getWorkflowMaturityEntry('organisation-onboarding', 'application-review')).toMatchObject({
+      maturity: 'BETA', customerName: 'Application and Review',
+    });
+    expect(getWorkflowMaturityEntry('organisation-onboarding', 'invitation-provisioning')).toMatchObject({
+      maturity: 'BETA', customerName: 'Invitation and Organisation Activation',
+    });
+    expect(getWorkflowMaturityEntry('organisation-onboarding', 'getting-started')).toMatchObject({
+      maturity: 'BETA', customerName: 'Getting Started',
+    });
     expect(getMaturityEntry('vegetation-pmav').evidence).toContain('src/pages/ComplianceVegetation.tsx');
     expect(getMaturityEntry('flight-records').evidence).toContain('src/pages/ComplianceFlight.tsx');
     expect(getMaturityEntry('application-records').evidence).toContain('src/pages/ComplianceChemical.tsx');

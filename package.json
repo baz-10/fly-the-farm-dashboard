@@ -40,6 +40,8 @@
     "start": "react-scripts start",
     "build": "react-scripts build",
     "test": "react-scripts test",
+    "verify:product-maturity": "node scripts/verifyProductMaturityRegistry.mjs",
+    "verify:commercial-onboarding": "node scripts/verifyCommercialOnboardingPostgres.mjs",
     "verify:organisation-branding-reports": "node scripts/verifyOrganisationBrandingReportsPostgres.mjs",
     "verify:platform-support": "node scripts/verifyPlatformIdentitySupportPostgres.mjs",
     "verify:production-beta-acceptance-identity": "node scripts/verifyProductionBetaAcceptanceIdentity.mjs",

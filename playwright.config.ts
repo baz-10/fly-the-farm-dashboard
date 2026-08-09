@@ -37,7 +37,12 @@ export default defineConfig({
       name: 'chromium',
       use: { ...devices['Desktop Chrome'], storageState: 'test-results/.auth/organisation.json' },
       dependencies: ['auth'],
-      testIgnore: [/environment\.spec\.ts/, /auth\.setup\.ts/, /cleanup\.setup\.ts/],
+      testIgnore: [/environment\.spec\.ts/, /auth\.setup\.ts/, /cleanup\.setup\.ts/, /commercial-onboarding\.spec\.ts/],
+    },
+    {
+      name: 'commercial-onboarding',
+      testMatch: /commercial-onboarding\.spec\.ts/,
+      use: { ...devices['Desktop Chrome'], trace: 'off', screenshot: 'off', video: 'off' },
     },
   ],
 });
