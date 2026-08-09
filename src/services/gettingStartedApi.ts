@@ -21,10 +21,8 @@ export interface GettingStartedProjection {
   organisation: { id: string; name: string; displayName: string };
   steps: GettingStartedStepModel[];
   operationalReadiness: {
-    state: 'GETTING_STARTED' | 'READY_TO_PLAN' | 'NEEDS_OPERATIONAL_ATTENTION';
     completedSteps: number;
     requiredSteps: number;
-    missionAuthorisationClaim: false;
   };
   nextAction: GettingStartedAction | null;
 }

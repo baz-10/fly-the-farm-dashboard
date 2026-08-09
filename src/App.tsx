@@ -55,6 +55,7 @@ import OperationalFeatureGate from './components/OperationalFeatureGate';
 import Personnel from './pages/Personnel';
 import CustomerAcceptancePublic from './pages/CustomerAcceptancePublic';
 import PlatformProtectedRoute from './components/PlatformProtectedRoute';
+import OrganisationAdminRoute from './components/OrganisationAdminRoute';
 import PlatformShell from './components/PlatformShell';
 import PlatformAdmin from './pages/PlatformAdmin';
 import CasaComplianceOverview from './pages/CasaComplianceOverview';
@@ -130,7 +131,7 @@ function App() {
           }
         >
           <Route path="/" element={productRoute(<HomeRoute />)} />
-          <Route path="/getting-started" element={productRoute(<GettingStarted />, { allowedRoles: ['admin'] })} />
+          <Route path="/getting-started" element={productRoute(<OrganisationAdminRoute><GettingStarted /></OrganisationAdminRoute>, { allowedRoles: ['admin'] })} />
           <Route path="/database" element={productRoute(<Dashboard />)} />
           <Route path="/search" element={productRoute(<SearchResults />)} />
           <Route path="/treatment/:id" element={productRoute(<TreatmentDetail />)} />

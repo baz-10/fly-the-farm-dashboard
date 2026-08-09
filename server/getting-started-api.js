@@ -48,21 +48,29 @@ function assertGettingStartedAccess(context) {
 }
 
 function belongsToOrganisation(record, organisationId) {
-  return record && (record.organisation_id == null || record.organisation_id === organisationId);
+  return Boolean(record && record.organisation_id === organisationId);
 }
 
 function atAssignedLocation(record, assignedLocationIds) {
-  return record && (record.operating_location_id == null || assignedLocationIds.has(record.operating_location_id));
+  return Boolean(record && assignedLocationIds.has(record.operating_location_id));
+}
+
+function personnelAtAssignedLocation(record, assignedLocationIds) {
+  return Array.isArray(record?.operating_location_ids)
+    && record.operating_location_ids.some((id) => assignedLocationIds.has(id));
 }
 
 function hasConfirmedCoordinates(location) {
-  if (location?.latitude === null || location?.latitude === undefined || location?.latitude === ''
-    || location?.longitude === null || location?.longitude === undefined || location?.longitude === '') return false;
+  const hasCoordinate = (value) => (typeof value === 'number' && Number.isFinite(value))
+    || (typeof value === 'string' && value.trim().length > 0);
+  if (!hasCoordinate(location?.latitude) || !hasCoordinate(location?.longitude)) return false;
   const latitude = Number(location.latitude);
   const longitude = Number(location.longitude);
+  const confirmedAt = location?.location_confirmed_at || location?.locationConfirmedAt;
   return Number.isFinite(latitude) && latitude >= -90 && latitude <= 90
     && Number.isFinite(longitude) && longitude >= -180 && longitude <= 180
-    && Boolean(location?.location_confirmed_at || location?.locationConfirmedAt);
+    && typeof confirmedAt === 'string' && confirmedAt.trim().length > 0
+    && Number.isFinite(Date.parse(confirmedAt));
 }
 
 function hasText(value) {
@@ -100,7 +108,9 @@ function projectGettingStarted(context, records) {
     && hasConfirmedCoordinates(location));
   const aircraft = locationRecords(records.aircraft);
   const equipmentKits = locationRecords(records.equipmentKits);
-  const personnel = tenantRecords(records.personnel).filter((record) => record.is_active !== false && !record.archived_at);
+  const personnel = tenantRecords(records.personnel)
+    .filter((record) => personnelAtAssignedLocation(record, assignedLocationIds))
+    .filter((record) => record.is_active !== false && !record.archived_at);
   const clients = tenantRecords(records.clients);
   const properties = tenantRecords(records.properties);
   const fields = tenantRecords(records.fields);
@@ -113,13 +123,12 @@ function projectGettingStarted(context, records) {
     || brandingProfile.legal_business_name
     || context.organisation.name;
 
-  const personnelState = personnel.length > 0 ? 'COMPLETE' : missions.length > 0 ? 'NEEDS_ATTENTION' : 'OPTIONAL';
   const states = {
     ORGANISATION: ['COMPLETE', 'Your organisation identity is active.', 1, false],
     BASE: [confirmedBases.length > 0 ? 'COMPLETE' : bases.length > 0 ? 'NEEDS_ATTENTION' : 'NOT_STARTED', confirmedBases.length > 0 ? 'Your Base address and map location are confirmed.' : bases.length > 0 ? 'Confirm the address and map location for your Base.' : 'Add and confirm your first Base.', bases.length, false],
     AIRCRAFT: [aircraft.length > 0 ? 'COMPLETE' : 'NOT_STARTED', aircraft.length > 0 ? `${aircraft.length} aircraft available.` : 'Add the aircraft you will use for work.', aircraft.length, false],
     EQUIPMENT: [equipmentKits.length > 0 ? 'COMPLETE' : 'NOT_STARTED', equipmentKits.length > 0 ? `${equipmentKits.length} equipment kit${equipmentKits.length === 1 ? '' : 's'} available.` : 'Add the equipment kit carried by your aircraft.', equipmentKits.length, false],
-    PERSONNEL: [personnelState, personnel.length > 0 ? `${personnel.length} Personnel record${personnel.length === 1 ? '' : 's'} available.` : missions.length > 0 ? 'Add eligible Personnel before operating or authorising a Mission.' : 'Add Personnel if your team will operate or authorise Missions.', personnel.length, personnelState === 'OPTIONAL'],
+    PERSONNEL: [personnel.length > 0 ? 'COMPLETE' : 'OPTIONAL', personnel.length > 0 ? `${personnel.length} Personnel record${personnel.length === 1 ? '' : 's'} available.` : 'Add Personnel if your team will operate or authorise Missions.', personnel.length, personnel.length === 0],
     CLIENT: [clients.length > 0 ? 'COMPLETE' : 'NOT_STARTED', clients.length > 0 ? `${clients.length} Client record${clients.length === 1 ? '' : 's'} available.` : 'Add the first business or grower you will work for.', clients.length, false],
     PROPERTY: [properties.length > 0 ? 'COMPLETE' : 'NOT_STARTED', properties.length > 0 ? `${properties.length} Property record${properties.length === 1 ? '' : 's'} available.` : 'Add the first Property for a Client.', properties.length, false],
     FIELD: [fields.length > 0 ? 'COMPLETE' : 'NOT_STARTED', fields.length > 0 ? `${fields.length} Field record${fields.length === 1 ? '' : 's'} available.` : 'Add the first Field on a Property.', fields.length, false],
@@ -137,10 +146,8 @@ function projectGettingStarted(context, records) {
     organisation: { id: organisationId, name: context.organisation.name, displayName },
     steps,
     operationalReadiness: {
-      state: completedSteps === requiredSteps.length ? 'READY_TO_PLAN' : 'GETTING_STARTED',
       completedSteps,
       requiredSteps: requiredSteps.length,
-      missionAuthorisationClaim: false,
     },
     nextAction: nextStep ? { ...nextStep.action, stepCode: nextStep.code } : null,
   };
@@ -151,7 +158,16 @@ function uniqueById(records) {
 }
 
 async function readSources(repository, context) {
-  const list = (resource) => repository.list(resource, context, { pageSize: 100 });
+  const list = async (resource) => {
+    const pageSize = 100;
+    const records = [];
+    for (let page = 1; ; page += 1) {
+      const pageRecords = await repository.list(resource, context, { page, pageSize });
+      const items = Array.isArray(pageRecords) ? pageRecords : [];
+      records.push(...items);
+      if (items.length < pageSize) return records;
+    }
+  };
   const personnelReads = (context.operatingLocationIds || []).map((operatingLocationId) =>
     repository.listPersonnel(context, { operatingLocationId, includePrivate: false }));
   const [branding, operatingLocations, aircraft, equipmentKits, clients, properties, fields, jobs, missions, personnelGroups] = await Promise.all([

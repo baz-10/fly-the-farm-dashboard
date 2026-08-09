@@ -87,19 +87,59 @@ test('requires confirmed Base coordinates and an active assignment in the authen
   })).steps[1].state).toBe('NEEDS_ATTENTION');
 });
 
-test('keeps Personnel optional until authoritative Mission work makes it operationally relevant', () => {
+test('keeps Personnel optional when a Draft Mission exists because no operate decision is authoritative in this slice', () => {
   const withoutPersonnel = projectGettingStarted(context, source({
-    missions: [{ id: 'mission-1', organisation_id: 'organisation-1', operating_location_id: 'base-1' }],
+    missions: [{ id: 'mission-1', organisation_id: 'organisation-1', operating_location_id: 'base-1', status: 'DRAFT' }],
   }));
   expect(withoutPersonnel.steps.find((step) => step.code === 'PERSONNEL')).toMatchObject({
-    state: 'NEEDS_ATTENTION', optional: false,
+    state: 'OPTIONAL', optional: true,
   });
+  expect(withoutPersonnel.operationalReadiness).toEqual({ completedSteps: 2, requiredSteps: 9 });
 
   const withPersonnel = projectGettingStarted(context, source({
-    personnel: [{ id: 'personnel-1', organisation_id: 'organisation-1' }],
+    personnel: [{ id: 'personnel-1', organisation_id: 'organisation-1', operating_location_ids: ['base-1'] }],
     missions: [{ id: 'mission-1', organisation_id: 'organisation-1', operating_location_id: 'base-1' }],
   }));
   expect(withPersonnel.steps.find((step) => step.code === 'PERSONNEL').state).toBe('COMPLETE');
+});
+
+test('fails closed for records without exact tenant and assigned Base authority fields', () => {
+  const projection = projectGettingStarted(context, source({
+    operatingLocations: [
+      { id: 'base-1', address: 'Missing tenant', timezone: 'Australia/Brisbane', latitude: -27, longitude: 151, location_confirmed_at: '2026-08-09T00:00:00Z' },
+      { id: 'base-1', organisation_id: 'other-organisation', address: 'Wrong tenant', timezone: 'Australia/Brisbane', latitude: -27, longitude: 151, location_confirmed_at: '2026-08-09T00:00:00Z' },
+    ],
+    aircraft: [
+      { id: 'aircraft-unscoped', organisation_id: 'organisation-1' },
+      { id: 'aircraft-other-base', organisation_id: 'organisation-1', operating_location_id: 'base-2' },
+      { id: 'aircraft-other-tenant', organisation_id: 'other-organisation', operating_location_id: 'base-1' },
+    ],
+    equipmentKits: [{ id: 'kit-unscoped', organisation_id: 'organisation-1' }],
+    personnel: [{ id: 'person-unscoped' }, { id: 'person-other', organisation_id: 'other-organisation' }],
+    clients: [{ id: 'client-unscoped' }, { id: 'client-other', organisation_id: 'other-organisation' }],
+    properties: [{ id: 'property-unscoped' }],
+    fields: [{ id: 'field-unscoped' }],
+    jobs: [{ id: 'job-unscoped' }],
+    missions: [{ id: 'mission-unscoped', organisation_id: 'organisation-1' }],
+  }));
+
+  expect(projection.steps.slice(1).map(({ code, count }) => [code, count])).toEqual([
+    ['BASE', 0], ['AIRCRAFT', 0], ['EQUIPMENT', 0], ['PERSONNEL', 0], ['CLIENT', 0],
+    ['PROPERTY', 0], ['FIELD', 0], ['JOB', 0], ['MISSION', 0],
+  ]);
+});
+
+test('rejects blank coordinates and malformed confirmation times while accepting coordinate boundaries', () => {
+  const base = {
+    id: 'base-1', organisation_id: 'organisation-1', address: '1 Farm Road', timezone: 'Australia/Brisbane',
+    latitude: -90, longitude: 180, location_confirmed_at: '2026-08-09T00:00:00.000Z',
+  };
+
+  expect(projectGettingStarted(context, source({ operatingLocations: [base] })).steps[1].state).toBe('COMPLETE');
+  expect(projectGettingStarted(context, source({ operatingLocations: [{ ...base, latitude: '   ' }] })).steps[1].state).toBe('NEEDS_ATTENTION');
+  expect(projectGettingStarted(context, source({ operatingLocations: [{ ...base, longitude: '\t' }] })).steps[1].state).toBe('NEEDS_ATTENTION');
+  expect(projectGettingStarted(context, source({ operatingLocations: [{ ...base, location_confirmed_at: 'not-a-time' }] })).steps[1].state).toBe('NEEDS_ATTENTION');
+  expect(projectGettingStarted(context, source({ operatingLocations: [{ ...base, latitude: 90, longitude: -180 }] })).steps[1].state).toBe('COMPLETE');
 });
 
 test('reads the authenticated tenant and assigned Base scope without creating audit noise', async () => {
@@ -114,9 +154,40 @@ test('reads the authenticated tenant and assigned Base scope without creating au
   expect(res.headers['cache-control']).toBe('no-store');
   expect(res.body.data.organisation).toMatchObject({ id: 'organisation-1' });
   expect(repo.readOrganisationBranding).toHaveBeenCalledWith(context);
-  expect(repo.list).toHaveBeenCalledWith('operating_locations', context, { pageSize: 100 });
+  expect(repo.list).toHaveBeenCalledWith('operating_locations', context, { page: 1, pageSize: 100 });
   expect(repo.listPersonnel).toHaveBeenCalledWith(context, { operatingLocationId: 'base-1', includePrivate: false });
   expect(Object.keys(repo)).toEqual(expect.not.arrayContaining(['create', 'update', 'write', 'audit']));
+});
+
+test('reads every page so an assigned confirmed Base after row 100 is not truncated', async () => {
+  const firstPage = Array.from({ length: 100 }, (_, index) => ({
+    id: `unassigned-base-${index + 1}`,
+    organisation_id: 'organisation-1',
+    address: `${index + 1} Farm Road`,
+    timezone: 'Australia/Brisbane',
+    latitude: -27,
+    longitude: 151,
+    location_confirmed_at: '2026-08-09T00:00:00.000Z',
+  }));
+  const assignedBase = {
+    id: 'base-1', organisation_id: 'organisation-1', address: '1 Assigned Road',
+    timezone: 'Australia/Brisbane', latitude: -27.1817, longitude: 151.2621,
+    location_confirmed_at: '2026-08-09T00:00:00.000Z',
+  };
+  const repo = repository({
+    list: jest.fn(async (resource, _context, options) => {
+      if (resource !== 'operating_locations') return [];
+      return options.page === 1 ? firstPage : [assignedBase];
+    }),
+  });
+  const handler = createGettingStartedHandler({ repository: repo, resolveContext: async () => context });
+  const res = response();
+
+  await handler(request(), res);
+
+  expect(res.statusCode).toBe(200);
+  expect(res.body.data.steps.find((step) => step.code === 'BASE')).toMatchObject({ state: 'COMPLETE', count: 1 });
+  expect(repo.list).toHaveBeenCalledWith('operating_locations', context, { page: 2, pageSize: 100 });
 });
 
 test('denies non-admin and permission-incomplete sessions before reading tenant records', async () => {

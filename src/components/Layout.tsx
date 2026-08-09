@@ -62,7 +62,12 @@ export default function Layout() {
   const [drawerOpen, setDrawerOpen] = React.useState(false);
   const [accountAnchor, setAccountAnchor] = React.useState<null | HTMLElement>(null);
   const [search, setSearch] = React.useState('');
-  const [gettingStartedIncomplete, setGettingStartedIncomplete] = React.useState(location.pathname === '/getting-started');
+  const isGettingStartedAdmin = user?.role === 'admin' && user.identityPlane !== 'platform';
+  const isGettingStartedPage = location.pathname === '/getting-started';
+  const gettingStartedUserKey = isGettingStartedAdmin ? `${user.id}:${user.tenantId || ''}` : '';
+  const [gettingStartedState, setGettingStartedState] = React.useState({ userKey: '', incomplete: true });
+  const gettingStartedIncomplete = isGettingStartedAdmin
+    && (isGettingStartedPage || gettingStartedState.userKey !== gettingStartedUserKey || gettingStartedState.incomplete);
   const activeGroup = findActiveNavigationGroup(location.pathname);
   const [expandedGroups, setExpandedGroups] = React.useState<Set<string>>(() => new Set(activeGroup ? [activeGroup] : []));
 
@@ -73,18 +78,22 @@ export default function Layout() {
 
   React.useEffect(() => {
     let active = true;
-    if (user?.role !== 'admin') {
-      setGettingStartedIncomplete(false);
+    if (!gettingStartedUserKey) {
+      setGettingStartedState({ userKey: '', incomplete: false });
       return () => { active = false; };
     }
+    if (isGettingStartedPage) return () => { active = false; };
     void gettingStartedApi.read().then((projection) => {
       if (!active) return;
-      setGettingStartedIncomplete(projection.steps.some((step) => !step.optional && step.state !== 'COMPLETE'));
+      setGettingStartedState({
+        userKey: gettingStartedUserKey,
+        incomplete: projection.steps.some((step) => !step.optional && step.state !== 'COMPLETE'),
+      });
     }).catch(() => {
-      if (active && location.pathname !== '/getting-started') setGettingStartedIncomplete(false);
+      if (active) setGettingStartedState({ userKey: gettingStartedUserKey, incomplete: true });
     });
     return () => { active = false; };
-  }, [location.pathname, user?.id, user?.role]);
+  }, [gettingStartedUserKey, isGettingStartedPage]);
 
   const navGroups = getOrganisationNavigationGroups({ gettingStartedIncomplete }).map((group) => ({
     ...group,

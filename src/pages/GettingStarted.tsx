@@ -41,7 +41,9 @@ export default function GettingStarted() {
     navigate(route);
     if (route !== '/getting-started#base') return;
     const heading = document.getElementById('getting-started-base-heading');
-    heading?.scrollIntoView?.({ block: 'center', behavior: 'smooth' });
+    const reducedMotion = typeof window.matchMedia === 'function'
+      && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    heading?.scrollIntoView?.({ block: 'center', behavior: reducedMotion ? 'auto' : 'smooth' });
     heading?.focus();
   }, [navigate]);
 

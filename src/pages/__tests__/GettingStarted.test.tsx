@@ -14,7 +14,7 @@ jest.mock('../../services/gettingStartedApi', () => ({
 const action = (code: string, label: string, route: string) => ({ code, label, route });
 const projection = {
   organisation: { id: 'organisation-1', name: 'Western Downs Aerial Application', displayName: 'Western Downs Aerial Application' },
-  operationalReadiness: { state: 'GETTING_STARTED', completedSteps: 1, requiredSteps: 9, missionAuthorisationClaim: false },
+  operationalReadiness: { completedSteps: 1, requiredSteps: 9 },
   nextAction: { ...action('CONFIRM_BASE', 'Confirm your Base', '/getting-started#base'), stepCode: 'BASE' },
   steps: [
     { code: 'ORGANISATION', label: 'Organisation', state: 'COMPLETE', summary: 'Your organisation identity is active.', count: 1, optional: false, action: action('REVIEW_ORGANISATION', 'Review organisation details', '/admin') },
@@ -33,6 +33,29 @@ const projection = {
 beforeEach(() => {
   jest.clearAllMocks();
   mockRead.mockResolvedValue(projection);
+});
+
+describe.each([
+  ['mobile', 375],
+  ['tablet', 768],
+  ['desktop', 1440],
+])('Getting Started at %s width', (_label, width) => {
+  test('keeps the recommendation, progress and complete setup path available in normal reading order', async () => {
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: width });
+    window.dispatchEvent(new Event('resize'));
+
+    render(<GettingStarted />);
+
+    const heading = await screen.findByRole('heading', { name: 'Getting Started' });
+    const recommendation = screen.getByRole('region', { name: 'Recommended next action' });
+    const setupPath = screen.getByRole('region', { name: 'Your setup path' });
+    expect(heading).toBeVisible();
+    expect(recommendation).toBeVisible();
+    expect(setupPath).toBeVisible();
+    expect(heading.compareDocumentPosition(recommendation) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(recommendation.compareDocumentPosition(setupPath) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(within(setupPath).getAllByRole('button', { name: /Complete|Needs attention|Not started|Optional/i })).toHaveLength(10);
+  });
 });
 
 test('welcomes the administrator with Base language and one prominent recommended action', async () => {
@@ -72,6 +95,26 @@ test('moves keyboard focus to the Base section when the recommended Base action 
   expect(mockNavigate).toHaveBeenCalledWith('/getting-started#base');
   expect(screen.getByRole('button', { name: /Base.*Needs attention/i })).toHaveFocus();
   expect(document.getElementById('base')).toBeInTheDocument();
+});
+
+test('uses instant Base focus scrolling when reduced motion is preferred', async () => {
+  const user = userEvent.setup();
+  const scrollIntoView = jest.fn();
+  Object.defineProperty(window, 'matchMedia', {
+    configurable: true,
+    value: jest.fn().mockReturnValue({ matches: true }),
+  });
+  Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
+    configurable: true,
+    value: scrollIntoView,
+  });
+  render(<GettingStarted />);
+  await screen.findByRole('heading', { name: 'Getting Started' });
+
+  await user.click(within(screen.getByRole('region', { name: 'Recommended next action' })).getByRole('button', { name: 'Confirm your Base' }));
+
+  expect(window.matchMedia).toHaveBeenCalledWith('(prefers-reduced-motion: reduce)');
+  expect(scrollIntoView).toHaveBeenCalledWith({ block: 'center', behavior: 'auto' });
 });
 
 test('offers Do this later only for optional Personnel and does not manufacture completion', async () => {

@@ -47,6 +47,40 @@ beforeEach(() => {
   mockGettingStartedRead.mockReturnValue(new Promise(() => {}));
 });
 
+test('keeps Getting Started discoverable while the authoritative projection is loading', () => {
+  openNavigation('/jobs');
+
+  const navigation = screen.getByRole('navigation', { name: 'Organisation navigation' });
+  fireEvent.click(within(navigation).getByRole('button', { name: 'ORGANISATION navigation group' }));
+  expect(within(navigation).getByRole('button', { name: 'Getting Started' })).toBeVisible();
+});
+
+test('keeps Getting Started discoverable when the authoritative projection fails', async () => {
+  mockGettingStartedRead.mockRejectedValue(new Error('offline'));
+  openNavigation('/jobs');
+
+  await act(async () => { await Promise.resolve(); });
+  const navigation = screen.getByRole('navigation', { name: 'Organisation navigation' });
+  fireEvent.click(within(navigation).getByRole('button', { name: 'ORGANISATION navigation group' }));
+  expect(within(navigation).getByRole('button', { name: 'Getting Started' })).toBeVisible();
+});
+
+test('reads Getting Started navigation state once per signed-in admin instead of on pathname changes', () => {
+  const view = renderLayout('/jobs');
+  expect(mockGettingStartedRead).toHaveBeenCalledTimes(1);
+
+  mockPathname = '/aircraft';
+  view.rerender(<Layout />);
+
+  expect(mockGettingStartedRead).toHaveBeenCalledTimes(1);
+});
+
+test('lets the Getting Started page own the projection read on the workspace route', () => {
+  renderLayout('/getting-started');
+
+  expect(mockGettingStartedRead).not.toHaveBeenCalled();
+});
+
 test('shows contextual Getting Started for incomplete onboarding without hiding the main navigation', async () => {
   mockGettingStartedRead.mockResolvedValue({ steps: [{ code: 'BASE', optional: false, state: 'NEEDS_ATTENTION' }] });
   openNavigation('/jobs');
