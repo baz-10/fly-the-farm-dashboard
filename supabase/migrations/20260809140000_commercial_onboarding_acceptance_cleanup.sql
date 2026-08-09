@@ -264,7 +264,10 @@ begin
       using errcode='22023';
   end if;
 
-  perform pg_advisory_xact_lock(hashtextextended(v_organisation_id::text,0));
+  -- Coordinate with every operational and Fleet writer using the established
+  -- organisation-scoped lock protocol before taking any subordinate row lock.
+  perform pg_advisory_xact_lock(hashtext(v_organisation_id::text)::bigint);
+  perform public.ftf_lock_active_organisation(v_organisation_id);
 
   select * into v_application
   from public.commercial_onboarding_applications

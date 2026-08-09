@@ -249,6 +249,10 @@ test('defines email-bound invitation identifier preflight and acceptance boundar
 test('defines a service-role-only transactional controlled-acceptance cleanup boundary', () => {
   expect(acceptanceCleanupSql).toContain('ftf_archive_controlled_commercial_onboarding');
   expect(acceptanceCleanupSql).toContain('pg_advisory_xact_lock');
+  expect(acceptanceCleanupSql).toContain('pg_advisory_xact_lock(hashtext(v_organisation_id::text)::bigint)');
+  expect(acceptanceCleanupSql).toContain('perform public.ftf_lock_active_organisation(v_organisation_id)');
+  expect(acceptanceCleanupSql.indexOf('pg_advisory_xact_lock(hashtext(v_organisation_id::text)::bigint)'))
+    .toBeLessThan(acceptanceCleanupSql.indexOf('perform public.ftf_lock_active_organisation(v_organisation_id)'));
   expect(acceptanceCleanupSql).toContain("application_reference like 'SC-APP-%'");
   expect(acceptanceCleanupSql).toContain("business_name like 'SC ACCEPTANCE — %'");
   expect(acceptanceCleanupSql).toContain('COMMERCIAL_ONBOARDING_ACCEPTANCE_VERSION_CONFLICT');
@@ -342,6 +346,21 @@ beforeAll(async () => {
     acceptanceCleanupMigrationName,
   ];
   for (const migrationName of migrationNames) {
+    if (migrationName === acceptanceCleanupMigrationName) {
+      await db.exec(`
+        create function public.ftf_lock_active_organisation(p_organisation_id uuid)
+        returns void language plpgsql security definer set search_path=public as $$
+        begin
+          perform 1 from public.organisations organisation
+          where organisation.id=p_organisation_id
+            and organisation.organisation_id=p_organisation_id
+            and organisation.archived_at is null
+          for update;
+          if not found then raise exception 'active organisation required' using errcode='42501'; end if;
+        end;
+        $$
+      `);
+    }
     if (migrationName === forwardMigrationName) {
       await db.exec(`
         insert into auth.users(id,email)
@@ -1141,6 +1160,28 @@ test('rolls the entire cleanup back when any optimistic row version is wrong', a
     audits: 0,
     outbox: 0,
   });
+});
+
+test('fails before cleanup when the organisation is not active', async () => {
+  const onboarding = await createControlledAcceptedOnboarding(
+    'cleanup-inactive@example.com',
+    'CleanupInactive',
+    '96000000-0000-4000-8000-000000000003',
+  );
+  const evidence = await controlledCleanupEvidence(onboarding);
+  await db.query('update public.organisations set archived_at=now() where id=$1', [evidence.organisationId]);
+
+  await expect(db.query(
+    'select public.ftf_archive_controlled_commercial_onboarding($1::jsonb)',
+    [JSON.stringify(evidence)],
+  )).rejects.toThrow(/active organisation required/);
+
+  const effects = await db.query(`
+    select
+      (select count(*)::integer from public.audit_events where organisation_id=$1 and event_type='commercial_onboarding.acceptance_archived') as audits,
+      (select count(*)::integer from public.transactional_outbox where organisation_id=$1 and topic='commercial_onboarding.acceptance_archived') as outbox
+  `, [evidence.organisationId]);
+  expect(effects.rows[0]).toEqual({ audits: 0, outbox: 0 });
 });
 
 test('keeps application events, invitation events, and consumed invitations immutable', async () => {

@@ -122,6 +122,7 @@ test('uses the existing compliance projection to show missing ReOC evidence as o
   expect(result.operationalReadiness.missionAuthorisationClaim).toBe(false);
   expect(result.operationalReadiness.advisories).toContainEqual(expect.objectContaining({
     code: 'REOC_MISSING',
+    criticalRuleVersion: 1,
     reason: 'Required ReOC record is missing.',
     route: '/compliance/reoc',
   }));

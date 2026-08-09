@@ -180,6 +180,7 @@ function projectComplianceAdvisories(complianceOverview) {
       route: complianceRoute(code, blocker?.route),
       requiresAttention: true,
       modelVersion: score.modelVersion || null,
+      criticalRuleVersion: blocker.criticalRuleVersion,
     });
   }
 

@@ -1,7 +1,7 @@
 import { expect, Page, test } from '@playwright/test';
-import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { acceptanceRunLabel, findAcceptanceRecord } from './fixtures/acceptanceRecords';
+import { persistProvisionedOnboardingEvidence } from './fixtures/commercialOnboardingEvidence';
 import { classifyCommercialOnboardingInvitationLink } from './fixtures/commercialOnboardingInvitation';
 import { openMissionCreationWorkspace } from './fixtures/missionCreationWorkspace';
 
@@ -127,9 +127,15 @@ async function assertAuthoritativeOperationalReadiness(page: Page) {
     requiredActions: [],
     personnel: { state: 'NOT_RECORDED' },
   });
-  expect(projection.operationalReadiness.advisories).toEqual(expect.arrayContaining([
-    expect.objectContaining({ requiresAttention: true }),
-  ]));
+  expect(projection.operationalReadiness.advisories.filter((item: any) => item.code === 'REOC_MISSING')).toEqual([{
+    code: 'REOC_MISSING',
+    label: 'ReOC certificate missing',
+    reason: 'Required ReOC record is missing.',
+    route: '/compliance/reoc',
+    requiresAttention: true,
+    modelVersion: 'AU-CASA-HEALTH-1',
+    criticalRuleVersion: 1,
+  }]);
   return projection;
 }
 
@@ -259,14 +265,32 @@ test('Application → review → approval → invitation → first Draft Mission
     await openInvitation(page, environment, invitationLink, invitationId);
     await page.getByLabel('Create password').fill(environment.applicantPassword);
     await page.getByLabel('Confirm password').fill(environment.applicantPassword);
+    const activationResponsePromise = page.waitForResponse((response) => {
+      if (new URL(response.url()).pathname !== '/api/auth' || response.request().method() !== 'POST') return false;
+      try { return response.request().postDataJSON()?.action === 'accept-organisation-invitation'; } catch { return false; }
+    });
     await page.getByRole('button', { name: 'Activate organisation' }).click();
+    const activationResponse = await activationResponsePromise;
+    expect(activationResponse.status(), 'Atomic organisation provisioning must succeed').toBe(200);
+    const activation = await activationResponse.json();
+    expect(activation.provisioning).toEqual({
+      invitationId,
+      organisationId: expect.any(String),
+      operatingLocationId: expect.any(String),
+    });
+    organisationId = activation.provisioning.organisationId;
+    await persistProvisionedOnboardingEvidence(path.resolve('test-results/commercial-onboarding-evidence.json'), {
+      applicationId, applicationReference, invitationId, organisationId,
+      operatingLocationId: activation.provisioning.operatingLocationId,
+    });
+
     await expect(page).toHaveURL(/\/getting-started$/);
     await expect(page.getByRole('heading', { name: 'Getting Started' })).toBeVisible();
 
     const trustedSession = await page.request.get('/api/v1/session');
     expect(trustedSession.status()).toBe(200);
     const session = (await trustedSession.json()).data;
-    organisationId = session.organisation.id;
+    expect(session.organisation.id).toBe(organisationId);
     expect(session.roles).toContain('admin');
     expect(session.identityPlane).not.toBe('platform');
 
@@ -275,11 +299,7 @@ test('Application → review → approval → invitation → first Draft Mission
     const provisionedBases = (await provisionedBasesResponse.json()).data || [];
     expect(provisionedBases).toHaveLength(1);
 
-    await mkdir(path.resolve('test-results'), { recursive: true });
-    await writeFile(path.resolve('test-results/commercial-onboarding-evidence.json'), JSON.stringify({
-      applicationId, applicationReference, invitationId, organisationId,
-      operatingLocationId: provisionedBases[0].id,
-    }), { mode: 0o600 });
+    expect(provisionedBases[0].id).toBe(activation.provisioning.operatingLocationId);
 
     const baseSave = page.getByRole('button', { name: 'Save confirmed Base' });
     if (await baseSave.count()) {
@@ -353,12 +373,12 @@ test('Application → review → approval → invitation → first Draft Mission
     await assertAuthoritativeOperationalReadiness(secondPage);
     await secondContext.close();
 
-    await writeFile(path.resolve('test-results/commercial-onboarding-evidence.json'), JSON.stringify({
+    await persistProvisionedOnboardingEvidence(path.resolve('test-results/commercial-onboarding-evidence.json'), {
       applicationId, applicationReference, invitationId, organisationId, operatingLocationId: resources.operatingLocationId,
       aircraftId: resources.aircraft, equipmentId: resources.equipment,
       clientId: records.client.id, propertyId: records.property.id, fieldId: records.field.id,
       jobId: records.job.id, missionId: records.mission.id,
-    }), { mode: 0o600 });
+    });
   } finally { /* transactional cleanup is performed by the repository-controlled post-test RPC */ }
 });
 

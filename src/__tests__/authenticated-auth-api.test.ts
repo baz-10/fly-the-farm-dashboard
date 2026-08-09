@@ -500,6 +500,11 @@ describe('Supabase authentication API', () => {
 
     expect(res.statusCode).toBe(200);
     expect(res.body.user).toMatchObject({ id: 'invited-auth-id', tenantId: 'organisation-id', role: 'admin' });
+    expect(res.body.provisioning).toEqual({
+      invitationId: commercialInvitationId,
+      organisationId: 'organisation-id',
+      operatingLocationId: 'location-id',
+    });
     const acceptanceRpc = requests.find(({ url }) => url.includes('/rpc/ftf_accept_commercial_invitation_by_id'));
     expect(JSON.parse(String(acceptanceRpc?.options.body))).toEqual({
       p_invitation_id: commercialInvitationId,

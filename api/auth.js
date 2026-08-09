@@ -445,6 +445,11 @@ async function acceptOrganisationInvitation(body) {
     authUser,
     profile,
     session: freshSession,
+    provisioning: {
+      invitationId: acceptance.invitation_id,
+      organisationId: acceptance.organisation_id,
+      operatingLocationId: acceptance.operating_location_id,
+    },
   };
 }
 
@@ -514,7 +519,10 @@ module.exports = async function handler(req, res) {
     if (body.action === 'accept-organisation-invitation') {
       const completed = await acceptOrganisationInvitation(body);
       setSessionCookies(req, res, completed.session);
-      return res.status(200).json({ user: toPublicUser(completed.authUser, completed.profile) });
+      return res.status(200).json({
+        user: toPublicUser(completed.authUser, completed.profile),
+        provisioning: completed.provisioning,
+      });
     }
 
     if (body.action === 'register') {
