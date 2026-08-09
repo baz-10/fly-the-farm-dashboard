@@ -59,14 +59,18 @@ async function submitApplication(email, suffix) {
   return result.rows[0].result;
 }
 
-async function approveApplication(applicationId, rowVersion = 1) {
+async function reviewApplication(applicationId, rowVersion, decision, notes = 'Reviewed by Platform.') {
   const result = await db.query(
     `select public.ftf_review_commercial_application(
-      $1::uuid, $2::uuid, $3::integer, 'APPROVE', 'Approved for invitation.'
+      $1::uuid, $2::uuid, $3::integer, $4::text, $5::text
     ) as result`,
-    [applicationId, platformUserId, rowVersion],
+    [applicationId, platformUserId, rowVersion, decision, notes],
   );
   return result.rows[0].result;
+}
+
+async function approveApplication(applicationId, rowVersion) {
+  return reviewApplication(applicationId, rowVersion, 'APPROVE', 'Approved for invitation.');
 }
 
 async function issueInvitation(applicationId, rowVersion, rawToken, expiresAt = '2099-01-01T00:00:00Z') {
@@ -81,10 +85,16 @@ async function issueInvitation(applicationId, rowVersion, rawToken, expiresAt = 
 
 async function createIssuedInvitation(email, suffix, rawToken) {
   const application = await submitApplication(email, suffix);
-  const approval = await approveApplication(application.application_id, application.row_version);
+  const review = await reviewApplication(
+    application.application_id,
+    application.row_version,
+    'UNDER_REVIEW',
+  );
+  const approval = await approveApplication(application.application_id, review.row_version);
   const invitation = await issueInvitation(application.application_id, approval.row_version, rawToken);
+  invitation.raw_token = rawToken;
   invitation.token_hash = crypto.createHash('sha256').update(rawToken).digest('hex');
-  return { application, approval, invitation };
+  return { application, review, approval, invitation };
 }
 
 test('separates application approval from invitation creation', () => {
@@ -211,8 +221,18 @@ test('keeps submission, approval, and invitation issuance as separate transition
   );
   expect(premature).toMatchObject({ issued: false, code: 'approved_application_required' });
 
-  const approval = await approveApplication(application.application_id, application.row_version);
-  expect(approval).toMatchObject({ status: 'APPROVED', row_version: 2 });
+  const directApproval = await approveApplication(application.application_id, application.row_version);
+  expect(directApproval).toMatchObject({
+    reviewed: false,
+    code: 'APPLICATION_REVIEW_REQUIRED',
+  });
+
+  const review = await reviewApplication(
+    application.application_id,
+    application.row_version,
+    'UNDER_REVIEW',
+  );
+  expect(review).toMatchObject({ status: 'UNDER_REVIEW', row_version: 2 });
   const afterApproval = await db.query(`
     select
       (select count(*)::integer from public.organisations) as organisations,
@@ -223,6 +243,9 @@ test('keeps submission, approval, and invitation issuance as separate transition
     organisations: before.rows[0].count,
     invitations: 0,
   });
+
+  const approval = await approveApplication(application.application_id, review.row_version);
+  expect(approval).toMatchObject({ status: 'APPROVED', row_version: 3 });
 
   const rawToken = 'first-invitation-token-with-enough-entropy-0001';
   const invitation = await issueInvitation(
@@ -248,10 +271,11 @@ test('keeps submission, approval, and invitation issuance as separate transition
 
 test('enforces optimistic review and revocation transitions', async () => {
   const application = await submitApplication('versions@example.com', 'Versions');
-  const reviewConflict = await approveApplication(application.application_id, 99);
+  const reviewConflict = await reviewApplication(application.application_id, 99, 'UNDER_REVIEW');
   expect(reviewConflict).toMatchObject({ conflict: true, current_version: 1 });
 
-  const approval = await approveApplication(application.application_id, 1);
+  const review = await reviewApplication(application.application_id, 1, 'UNDER_REVIEW');
+  const approval = await approveApplication(application.application_id, review.row_version);
   const invitation = await issueInvitation(
     application.application_id,
     approval.row_version,
@@ -280,7 +304,7 @@ test('rejects expired, revoked, wrong-email, Platform, and conflicting identitie
   `, [expired.invitation.invitation_id]);
   const expiredResult = await db.query(
     'select public.ftf_accept_commercial_invitation($1,$2::uuid) as result',
-    [expired.invitation.token_hash, '91000000-0000-4000-8000-000000000001'],
+    [expired.invitation.raw_token, '91000000-0000-4000-8000-000000000001'],
   );
   expect(expiredResult.rows[0].result).toMatchObject({ accepted: false, code: 'INVITATION_EXPIRED' });
 
@@ -300,7 +324,7 @@ test('rejects expired, revoked, wrong-email, Platform, and conflicting identitie
   expect(revokeResult.rows[0].result).toMatchObject({ status: 'REVOKED', row_version: 2 });
   const revokedAcceptance = await db.query(
     'select public.ftf_accept_commercial_invitation($1,$2::uuid) as result',
-    [revoked.invitation.token_hash, '91000000-0000-4000-8000-000000000002'],
+    [revoked.invitation.raw_token, '91000000-0000-4000-8000-000000000002'],
   );
   expect(revokedAcceptance.rows[0].result).toMatchObject({ accepted: false, code: 'INVITATION_REVOKED' });
 
@@ -313,7 +337,7 @@ test('rejects expired, revoked, wrong-email, Platform, and conflicting identitie
   `);
   const wrongEmailAcceptance = await db.query(
     'select public.ftf_accept_commercial_invitation($1,$2::uuid) as result',
-    [wrongEmail.invitation.token_hash, '91000000-0000-4000-8000-000000000003'],
+    [wrongEmail.invitation.raw_token, '91000000-0000-4000-8000-000000000003'],
   );
   expect(wrongEmailAcceptance.rows[0].result).toMatchObject({ accepted: false, code: 'INVITATION_EMAIL_MISMATCH' });
 
@@ -323,12 +347,13 @@ test('rejects expired, revoked, wrong-email, Platform, and conflicting identitie
   await db.exec(`
     insert into auth.users(id,email)
     values('91000000-0000-4000-8000-000000000004','customer-platform@example.com');
-    insert into public.platform_users(auth_user_id,email,display_name)
-    values('91000000-0000-4000-8000-000000000004','customer-platform@example.com','Platform Customer');
+    insert into public.platform_users(auth_user_id,email,display_name,is_active,archived_at)
+    values('91000000-0000-4000-8000-000000000004','customer-platform@example.com',
+      'Archived Platform Customer',false,now());
   `);
   const platformAcceptance = await db.query(
     'select public.ftf_accept_commercial_invitation($1,$2::uuid) as result',
-    [platformInvitation.invitation.token_hash, '91000000-0000-4000-8000-000000000004'],
+    [platformInvitation.invitation.raw_token, '91000000-0000-4000-8000-000000000004'],
   );
   expect(platformAcceptance.rows[0].result).toMatchObject({ accepted: false, code: 'PLATFORM_IDENTITY_FORBIDDEN' });
 
@@ -346,11 +371,47 @@ test('rejects expired, revoked, wrong-email, Platform, and conflicting identitie
   const beforeConflict = await db.query('select count(*)::integer as count from public.organisations');
   const conflictingAcceptance = await db.query(
     'select public.ftf_accept_commercial_invitation($1,$2::uuid) as result',
-    [conflictingInvitation.invitation.token_hash, '91000000-0000-4000-8000-000000000005'],
+    [conflictingInvitation.invitation.raw_token, '91000000-0000-4000-8000-000000000005'],
   );
   expect(conflictingAcceptance.rows[0].result).toMatchObject({ accepted: false, code: 'ORGANISATION_IDENTITY_CONFLICT' });
   const afterConflict = await db.query('select count(*)::integer as count from public.organisations');
   expect(afterConflict.rows[0].count).toBe(beforeConflict.rows[0].count);
+});
+
+test('normalizes expired pending and sent invitations before issuing replacements', async () => {
+  for (const [suffix, expiredStatus] of [['PendingReplacement', 'PENDING'], ['SentReplacement', 'SENT']]) {
+    const issued = await createIssuedInvitation(
+      `${suffix.toLowerCase()}@example.com`,
+      suffix,
+      `${suffix.toLowerCase()}-original-token-with-enough-entropy-0001`,
+    );
+    await db.query(`
+      update public.commercial_onboarding_invitations
+      set status=$2,expires_at=now()-interval '1 minute'
+      where id=$1
+    `, [issued.invitation.invitation_id, expiredStatus]);
+
+    const replacement = await issueInvitation(
+      issued.application.application_id,
+      issued.approval.row_version,
+      `${suffix.toLowerCase()}-replacement-token-with-enough-entropy-0002`,
+    );
+    expect(replacement).toMatchObject({ issued: true, status: 'SENT' });
+
+    const evidence = await db.query(`
+      select
+        (select status from public.commercial_onboarding_invitations where id=$1) as old_status,
+        (select count(*)::integer from public.commercial_onboarding_invitations
+          where application_id=$2 and status in ('PENDING','SENT')) as active_invitations,
+        (select from_status from public.commercial_onboarding_invitation_events
+          where invitation_id=$1 and event_type='INVITATION_EXPIRED') as expired_from_status
+    `, [issued.invitation.invitation_id, issued.application.application_id]);
+    expect(evidence.rows[0]).toEqual({
+      old_status: 'EXPIRED',
+      active_invitations: 1,
+      expired_from_status: expiredStatus,
+    });
+  }
 });
 
 test('provisions one complete organisation identity atomically and is idempotent for the same user', async () => {
@@ -360,9 +421,23 @@ test('provisions one complete organisation identity atomically and is idempotent
   );
   await db.exec(`insert into auth.users(id,email) values('${authUserId}','accepted@example.com')`);
 
-  const accepted = await db.query(
+  const storedHashReplay = await db.query(
     'select public.ftf_accept_commercial_invitation($1,$2::uuid) as result',
     [issued.invitation.token_hash, authUserId],
+  );
+  expect(storedHashReplay.rows[0].result).toMatchObject({
+    accepted: false,
+    code: 'INVITATION_INVALID',
+  });
+
+  await db.query(`
+    update public.commercial_onboarding_invitations
+    set status='PENDING' where id=$1
+  `, [issued.invitation.invitation_id]);
+
+  const accepted = await db.query(
+    'select public.ftf_accept_commercial_invitation($1,$2::uuid) as result',
+    [issued.invitation.raw_token, authUserId],
   );
   expect(accepted.rows[0].result).toMatchObject({ accepted: true, already_provisioned: false });
   const organisationId = accepted.rows[0].result.organisation_id;
@@ -370,7 +445,7 @@ test('provisions one complete organisation identity atomically and is idempotent
 
   const replay = await db.query(
     'select public.ftf_accept_commercial_invitation($1,$2::uuid) as result',
-    [issued.invitation.token_hash, authUserId],
+    [issued.invitation.raw_token, authUserId],
   );
   expect(replay.rows[0].result).toMatchObject({
     accepted: true,
@@ -416,11 +491,28 @@ test('provisions one complete organisation identity atomically and is idempotent
   });
   expect(counts.rows[0].reference_prefix).toMatch(/^[A-Z0-9]{2,8}$/);
 
+  const acceptedEvent = await db.query(`
+    select from_status,to_status
+    from public.commercial_onboarding_invitation_events
+    where invitation_id=$1 and event_type='INVITATION_ACCEPTED'
+  `, [issued.invitation.invitation_id]);
+  expect(acceptedEvent.rows[0]).toEqual({ from_status: 'PENDING', to_status: 'ACCEPTED' });
+
+  const forbiddenReissue = await issueInvitation(
+    issued.application.application_id,
+    issued.approval.row_version,
+    'accepted-application-reissue-token-with-enough-entropy-0001',
+  );
+  expect(forbiddenReissue).toMatchObject({
+    issued: false,
+    code: 'APPLICATION_ALREADY_ACCEPTED',
+  });
+
   const differentUser = '92000000-0000-4000-8000-000000000002';
   await db.exec(`insert into auth.users(id,email) values('${differentUser}','replay@example.com')`);
   const replayByDifferentUser = await db.query(
     'select public.ftf_accept_commercial_invitation($1,$2::uuid) as result',
-    [issued.invitation.token_hash, differentUser],
+    [issued.invitation.raw_token, differentUser],
   );
   expect(replayByDifferentUser.rows[0].result).toMatchObject({ accepted: false, code: 'INVITATION_ALREADY_ACCEPTED' });
 });

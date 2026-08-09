@@ -7,27 +7,195 @@
 -- internal_user_seat_assignments, membership_operating_location_assignments,
 -- and the compatibility ftf_profiles record. It does not create Personnel.
 
--- The original beta bootstrap predates role-level Weather and JSA provisioning
--- triggers. Those triggers now assign their permissions as soon as the admin
--- role is inserted, so the bootstrap's later catalogue-wide assignment must be
--- conflict-safe when it is reused after all current migrations are present.
-do $migration$
+-- Version the existing beta bootstrap deterministically for the current schema.
+-- Weather and JSA role triggers now assign their permissions as soon as the
+-- administrator role is inserted, so the final catalogue-wide assignment must
+-- be conflict-safe when this established bootstrap runs after those migrations.
+create or replace function public.ftf_bootstrap_production_beta_organisation(
+  p_auth_user_id uuid,
+  p_organisation_name text,
+  p_display_name text,
+  p_operating_location_name text,
+  p_operating_location_address text default null,
+  p_timezone text default 'Australia/Brisbane'
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path=public,auth,pg_temp
+as $$
 declare
-  v_definition text;
-  v_original constant text :=
-    'from public.permissions p where p.organisation_id = v_organisation_id;';
-  v_replacement constant text :=
-    'from public.permissions p where p.organisation_id = v_organisation_id on conflict (organisation_id, role_id, permission_id) do nothing;';
+  v_organisation_id uuid;
+  v_location_id uuid;
+  v_internal_user_id uuid;
+  v_role_id uuid;
+  v_membership_id uuid;
+  v_allocation_id uuid;
+  v_existing_count integer;
 begin
-  select pg_get_functiondef(
-    'public.ftf_bootstrap_production_beta_organisation(uuid,text,text,text,text,text)'::regprocedure
-  ) into v_definition;
-  if strpos(v_definition,v_original)=0 then
-    raise exception 'production beta bootstrap permission assignment contract changed';
+  if p_auth_user_id is null then
+    raise exception 'auth user is required' using errcode='22023';
   end if;
-  execute replace(v_definition,v_original,v_replacement);
+  if length(btrim(coalesce(p_organisation_name,'')))=0
+    or length(btrim(coalesce(p_display_name,'')))=0
+    or length(btrim(coalesce(p_operating_location_name,'')))=0
+    or length(btrim(coalesce(p_timezone,'')))=0
+  then
+    raise exception 'organisation, user, location and timezone names are required'
+      using errcode='22023';
+  end if;
+
+  perform pg_advisory_xact_lock(hashtextextended(p_auth_user_id::text,0));
+  if not exists(select 1 from auth.users where id=p_auth_user_id) then
+    raise exception 'auth user does not exist' using errcode='23503';
+  end if;
+
+  select iu.organisation_id,iu.id into v_organisation_id,v_internal_user_id
+  from public.internal_users iu
+  where iu.auth_user_id=p_auth_user_id and iu.is_active=true and iu.archived_at is null
+  order by iu.created_at limit 1;
+
+  if v_internal_user_id is not null then
+    select count(*) into v_existing_count
+    from public.internal_users iu
+    join public.organisations o
+      on o.id=iu.organisation_id and o.archived_at is null
+    join public.memberships m
+      on m.organisation_id=iu.organisation_id and m.internal_user_id=iu.id
+      and m.is_active=true and m.archived_at is null
+    join public.roles r
+      on r.organisation_id=m.organisation_id and r.id=m.role_id
+      and r.code='admin' and r.archived_at is null
+    join public.internal_user_seat_assignments isa
+      on isa.organisation_id=m.organisation_id and isa.internal_user_id=iu.id
+      and isa.membership_id=m.id and isa.status='active' and isa.archived_at is null
+    join public.organisation_seat_allocations osa
+      on osa.organisation_id=isa.organisation_id
+      and osa.id=isa.organisation_seat_allocation_id and osa.archived_at is null
+    join public.membership_operating_location_assignments mla
+      on mla.organisation_id=m.organisation_id and mla.membership_id=m.id
+      and mla.is_active=true and mla.archived_at is null
+    join public.operating_locations ol
+      on ol.organisation_id=mla.organisation_id and ol.id=mla.operating_location_id
+      and ol.archived_at is null
+    join public.ftf_profiles fp
+      on fp.tenant_id=iu.organisation_id and fp.user_id=iu.auth_user_id
+    where iu.id=v_internal_user_id;
+
+    if v_existing_count<>1 then
+      raise exception 'existing user provisioning is incomplete' using errcode='55000';
+    end if;
+
+    select mla.operating_location_id,m.id into v_location_id,v_membership_id
+    from public.memberships m
+    join public.membership_operating_location_assignments mla
+      on mla.organisation_id=m.organisation_id and mla.membership_id=m.id
+    where m.organisation_id=v_organisation_id and m.internal_user_id=v_internal_user_id
+      and m.is_active=true and m.archived_at is null
+      and mla.is_active=true and mla.archived_at is null
+    order by mla.created_at limit 1;
+
+    return jsonb_build_object(
+      'organisation_id',v_organisation_id,
+      'operating_location_id',v_location_id,
+      'internal_user_id',v_internal_user_id,
+      'membership_id',v_membership_id,
+      'already_provisioned',true
+    );
+  end if;
+
+  v_organisation_id:=gen_random_uuid();
+  insert into public.organisations(id,organisation_id,name)
+  values(v_organisation_id,v_organisation_id,btrim(p_organisation_name));
+
+  insert into public.operating_locations(organisation_id,name,address,timezone)
+  values(v_organisation_id,btrim(p_operating_location_name),
+    nullif(btrim(p_operating_location_address),''),btrim(p_timezone))
+  returning id into v_location_id;
+
+  insert into public.roles(organisation_id,code,name)
+  values(v_organisation_id,'admin','Administrator')
+  returning id into v_role_id;
+
+  insert into public.permissions(organisation_id,code,description)
+  select v_organisation_id,permission_code,permission_description
+  from (values
+    ('operating_locations.read','View operating locations'),
+    ('operating_locations.create','Create operating locations'),
+    ('operating_locations.update','Update operating locations'),
+    ('operating_locations.archive','Archive operating locations'),
+    ('clients.read','View clients'),('clients.create','Create clients'),
+    ('clients.update','Update clients'),('clients.archive','Archive clients'),
+    ('properties.read','View properties'),('properties.create','Create properties'),
+    ('properties.update','Update properties'),('properties.archive','Archive properties'),
+    ('fields.read','View fields'),('fields.create','Create fields'),
+    ('fields.update','Update fields'),('fields.archive','Archive fields'),
+    ('jobs.read','View jobs'),('jobs.create','Create jobs'),
+    ('jobs.update','Update jobs'),('jobs.archive','Archive jobs'),
+    ('missions.read','View missions'),('missions.create','Create missions'),
+    ('missions.update','Update missions'),('missions.archive','Archive missions'),
+    ('field_boundary_versions.read','View field boundary versions'),
+    ('field_boundary_versions.create','Create field boundary versions')
+  ) as required_permissions(permission_code,permission_description);
+
+  insert into public.role_permissions(organisation_id,role_id,permission_id)
+  select v_organisation_id,v_role_id,p.id
+  from public.permissions p where p.organisation_id=v_organisation_id
+  on conflict(organisation_id,role_id,permission_id) do nothing;
+
+  insert into public.internal_users(organisation_id,auth_user_id,display_name)
+  values(v_organisation_id,p_auth_user_id,btrim(p_display_name))
+  returning id into v_internal_user_id;
+
+  insert into public.memberships(organisation_id,internal_user_id,role_id)
+  values(v_organisation_id,v_internal_user_id,v_role_id)
+  returning id into v_membership_id;
+
+  insert into public.organisation_seat_allocations(
+    organisation_id,allocated_seats,allocation_source
+  ) values(v_organisation_id,1,'production_beta_bootstrap')
+  returning id into v_allocation_id;
+
+  insert into public.internal_user_seat_assignments(
+    organisation_id,organisation_seat_allocation_id,internal_user_id,
+    membership_id,status,assignment_source
+  ) values(
+    v_organisation_id,v_allocation_id,v_internal_user_id,v_membership_id,
+    'active','production_beta_bootstrap'
+  );
+
+  insert into public.membership_operating_location_assignments(
+    organisation_id,membership_id,operating_location_id,assignment_source
+  ) values(v_organisation_id,v_membership_id,v_location_id,'production_beta_bootstrap');
+
+  insert into public.ftf_profiles(user_id,tenant_id,role,name,tier)
+  values(p_auth_user_id,v_organisation_id,'admin',btrim(p_display_name),'beta');
+
+  insert into public.audit_events(
+    organisation_id,actor_internal_user_id,event_type,entity_type,entity_id,event_payload
+  ) values(
+    v_organisation_id,v_internal_user_id,'beta_identity.provisioned','organisation',
+    v_organisation_id,jsonb_build_object('auth_user_id',p_auth_user_id,
+      'operating_location_id',v_location_id)
+  );
+
+  insert into public.transactional_outbox(
+    organisation_id,topic,aggregate_type,aggregate_id,payload
+  ) values(
+    v_organisation_id,'platform.beta_identity.provisioned','organisation',
+    v_organisation_id,jsonb_build_object('auth_user_id',p_auth_user_id,
+      'internal_user_id',v_internal_user_id)
+  );
+
+  return jsonb_build_object(
+    'organisation_id',v_organisation_id,
+    'operating_location_id',v_location_id,
+    'internal_user_id',v_internal_user_id,
+    'membership_id',v_membership_id,
+    'already_provisioned',false
+  );
 end;
-$migration$;
+$$;
 
 create table public.commercial_onboarding_applications (
   id uuid primary key default gen_random_uuid(),
@@ -380,9 +548,19 @@ begin
   if v_application.row_version<>p_expected_version then
     return jsonb_build_object('conflict',true,'current_version',v_application.row_version);
   end if;
-  if v_application.status not in ('SUBMITTED','UNDER_REVIEW')
-    or (v_application.status='UNDER_REVIEW' and v_target_status='UNDER_REVIEW')
+  if v_application.status='SUBMITTED' and v_target_status<>'UNDER_REVIEW' then
+    return jsonb_build_object(
+      'reviewed',false,'code','APPLICATION_REVIEW_REQUIRED',
+      'current_version',v_application.row_version,'current_status',v_application.status
+    );
+  end if;
+  if v_application.status='UNDER_REVIEW'
+    and v_target_status not in ('APPROVED','DECLINED')
   then
+    return jsonb_build_object('conflict',true,'current_version',v_application.row_version,
+      'current_status',v_application.status);
+  end if;
+  if v_application.status not in ('SUBMITTED','UNDER_REVIEW') then
     return jsonb_build_object('conflict',true,'current_version',v_application.row_version,
       'current_status',v_application.status);
   end if;
@@ -449,6 +627,8 @@ as $$
 declare
   v_application public.commercial_onboarding_applications%rowtype;
   v_invitation public.commercial_onboarding_invitations%rowtype;
+  v_expired_invitation public.commercial_onboarding_invitations%rowtype;
+  v_expired_from_status text;
   v_token_hash text;
   v_actor_auth_user_id uuid;
 begin
@@ -480,6 +660,53 @@ begin
   ) then
     return jsonb_build_object('issued',false,'code','approved_application_required');
   end if;
+
+  select auth_user_id into v_actor_auth_user_id
+  from public.platform_users where id=p_platform_user_id;
+  for v_expired_invitation in
+    select * from public.commercial_onboarding_invitations
+    where application_id=p_application_id
+      and status in ('PENDING','SENT') and expires_at<=now()
+    order by created_at,id
+    for update
+  loop
+    v_expired_from_status:=v_expired_invitation.status;
+    update public.commercial_onboarding_invitations
+    set status='EXPIRED'
+    where id=v_expired_invitation.id
+    returning * into v_expired_invitation;
+    insert into public.commercial_onboarding_invitation_events(
+      invitation_id,application_id,event_type,from_status,to_status,
+      actor_platform_user_id,event_payload
+    ) values(
+      v_expired_invitation.id,v_expired_invitation.application_id,
+      'INVITATION_EXPIRED',v_expired_from_status,'EXPIRED',p_platform_user_id,
+      jsonb_build_object('expiredAt',v_expired_invitation.expires_at,
+        'normalizedDuring','INVITATION_ISSUE')
+    );
+    insert into public.platform_audit_events(
+      actor_auth_user_id,event_type,entity_type,entity_id,event_payload
+    ) values(
+      v_actor_auth_user_id,'commercial_onboarding.invitation_expired',
+      'commercial_onboarding_invitation',v_expired_invitation.id,
+      jsonb_build_object('expiredAt',v_expired_invitation.expires_at,
+        'fromStatus',v_expired_from_status)
+    );
+    insert into public.platform_transactional_outbox(
+      topic,aggregate_type,aggregate_id,payload
+    ) values(
+      'commercial_onboarding.invitation.expired','commercial_onboarding_invitation',
+      v_expired_invitation.id,jsonb_build_object('invitationId',v_expired_invitation.id,
+        'fromStatus',v_expired_from_status)
+    );
+  end loop;
+
+  if exists(
+    select 1 from public.commercial_onboarding_invitations
+    where application_id=p_application_id and status='ACCEPTED'
+  ) then
+    return jsonb_build_object('issued',false,'code','APPLICATION_ALREADY_ACCEPTED');
+  end if;
   if exists(
     select 1 from public.commercial_onboarding_invitations
     where application_id=p_application_id and status in ('PENDING','SENT')
@@ -505,8 +732,6 @@ begin
     jsonb_build_object('expiresAt',v_invitation.expires_at,
       'intendedAdministratorEmail',v_invitation.intended_administrator_email)
   );
-  select auth_user_id into v_actor_auth_user_id
-  from public.platform_users where id=p_platform_user_id;
   insert into public.platform_audit_events(
     actor_auth_user_id,event_type,entity_type,entity_id,event_payload
   ) values (
@@ -601,7 +826,7 @@ end;
 $$;
 
 create function public.ftf_accept_commercial_invitation(
-  p_token_hash text,
+  p_token text,
   p_auth_user_id uuid
 )
 returns jsonb
@@ -618,19 +843,21 @@ declare
   v_membership_id uuid;
   v_operating_location_id uuid;
   v_organisation_reference text;
+  v_token_hash text;
+  v_previous_status text;
 begin
   if p_auth_user_id is null
-    or p_token_hash is null
-    or p_token_hash<>lower(p_token_hash)
-    or p_token_hash!~'^[0-9a-f]{64}$'
+    or length(coalesce(p_token,''))<32
+    or length(p_token)>512
   then
     return jsonb_build_object('accepted',false,'code','INVITATION_INVALID');
   end if;
 
-  perform pg_advisory_xact_lock(hashtextextended(p_token_hash,0));
+  v_token_hash:=encode(sha256(convert_to(p_token,'UTF8')),'hex');
+  perform pg_advisory_xact_lock(hashtextextended(v_token_hash,0));
   select * into v_invitation
   from public.commercial_onboarding_invitations
-  where token_hash=p_token_hash for update;
+  where token_hash=v_token_hash for update;
   if not found then
     return jsonb_build_object('accepted',false,'code','INVITATION_INVALID');
   end if;
@@ -658,13 +885,15 @@ begin
     return jsonb_build_object('accepted',false,'code','INVITATION_INVALID_STATE');
   end if;
   if v_invitation.expires_at<=now() then
+    v_previous_status:=v_invitation.status;
     update public.commercial_onboarding_invitations
     set status='EXPIRED' where id=v_invitation.id
     returning * into v_invitation;
     insert into public.commercial_onboarding_invitation_events(
       invitation_id,application_id,event_type,from_status,to_status,event_payload
     ) values (
-      v_invitation.id,v_invitation.application_id,'INVITATION_EXPIRED','SENT','EXPIRED',
+      v_invitation.id,v_invitation.application_id,'INVITATION_EXPIRED',
+      v_previous_status,'EXPIRED',
       jsonb_build_object('expiredAt',v_invitation.expires_at)
     );
     insert into public.platform_audit_events(event_type,entity_type,entity_id,event_payload)
@@ -685,8 +914,7 @@ begin
     return jsonb_build_object('accepted',false,'code','INVITATION_EMAIL_MISMATCH');
   end if;
   if exists(
-    select 1 from public.platform_users
-    where auth_user_id=p_auth_user_id and is_active=true and archived_at is null
+    select 1 from public.platform_users where auth_user_id=p_auth_user_id
   ) then
     return jsonb_build_object('accepted',false,'code','PLATFORM_IDENTITY_FORBIDDEN');
   end if;
@@ -721,6 +949,7 @@ begin
   select reference_prefix into v_organisation_reference
   from public.organisations where id=v_organisation_id;
 
+  v_previous_status:=v_invitation.status;
   update public.commercial_onboarding_invitations set
     status='ACCEPTED',accepted_at=now(),accepted_by_auth_user_id=p_auth_user_id,
     resulting_organisation_id=v_organisation_id,
@@ -735,7 +964,8 @@ begin
     invitation_id,application_id,event_type,from_status,to_status,
     actor_auth_user_id,event_payload
   ) values (
-    v_invitation.id,v_invitation.application_id,'INVITATION_ACCEPTED','SENT','ACCEPTED',
+    v_invitation.id,v_invitation.application_id,'INVITATION_ACCEPTED',
+    v_previous_status,'ACCEPTED',
     p_auth_user_id,jsonb_build_object(
       'organisationId',v_organisation_id,
       'organisationReference',v_organisation_reference,
