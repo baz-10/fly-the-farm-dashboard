@@ -1,7 +1,10 @@
 import { expect, Page, test } from '@playwright/test';
 import path from 'node:path';
 import { acceptanceRunLabel, findAcceptanceRecord } from './fixtures/acceptanceRecords';
-import { persistProvisionedOnboardingEvidence } from './fixtures/commercialOnboardingEvidence';
+import {
+  persistProvisionedOnboardingEvidence,
+  persistProvisioningResponseBeforeAssertions,
+} from './fixtures/commercialOnboardingEvidence';
 import { classifyCommercialOnboardingInvitationLink } from './fixtures/commercialOnboardingInvitation';
 import { openMissionCreationWorkspace } from './fixtures/missionCreationWorkspace';
 
@@ -271,18 +274,16 @@ test('Application → review → approval → invitation → first Draft Mission
     });
     await page.getByRole('button', { name: 'Activate organisation' }).click();
     const activationResponse = await activationResponsePromise;
-    expect(activationResponse.status(), 'Atomic organisation provisioning must succeed').toBe(200);
-    const activation = await activationResponse.json();
-    expect(activation.provisioning).toEqual({
-      invitationId,
-      organisationId: expect.any(String),
-      operatingLocationId: expect.any(String),
+    const activationBody = await activationResponse.json().catch(() => ({}));
+    const provisioning = await persistProvisioningResponseBeforeAssertions({
+      evidencePath: path.resolve('test-results/commercial-onboarding-evidence.json'),
+      applicationId,
+      applicationReference,
+      expectedInvitationId: invitationId,
+      responseStatus: activationResponse.status(),
+      responseBody: activationBody,
     });
-    organisationId = activation.provisioning.organisationId;
-    await persistProvisionedOnboardingEvidence(path.resolve('test-results/commercial-onboarding-evidence.json'), {
-      applicationId, applicationReference, invitationId, organisationId,
-      operatingLocationId: activation.provisioning.operatingLocationId,
-    });
+    organisationId = provisioning.organisationId;
 
     await expect(page).toHaveURL(/\/getting-started$/);
     await expect(page.getByRole('heading', { name: 'Getting Started' })).toBeVisible();
@@ -299,7 +300,7 @@ test('Application → review → approval → invitation → first Draft Mission
     const provisionedBases = (await provisionedBasesResponse.json()).data || [];
     expect(provisionedBases).toHaveLength(1);
 
-    expect(provisionedBases[0].id).toBe(activation.provisioning.operatingLocationId);
+    expect(provisionedBases[0].id).toBe(provisioning.operatingLocationId);
 
     const baseSave = page.getByRole('button', { name: 'Save confirmed Base' });
     if (await baseSave.count()) {
