@@ -30,9 +30,10 @@ import MenuIcon from '@mui/icons-material/Menu';
 import SearchIcon from '@mui/icons-material/Search';
 import SettingsIcon from '@mui/icons-material/Settings';
 import { useAuth } from '../contexts/AuthContext';
-import { findActiveNavigationGroup, HOME_NAV_ITEM, isNavigationItemActive, ORGANISATION_NAV_GROUPS } from '../navigation/organisationNavigation';
+import { findActiveNavigationGroup, getOrganisationNavigationGroups, HOME_NAV_ITEM, isNavigationItemActive } from '../navigation/organisationNavigation';
 import { getMaturityEntry } from '../productMaturity/registry';
 import { MaturityBadge, maturityAvailabilityExplanation } from './productMaturity/MaturityBadge';
+import { gettingStartedApi } from '../services/gettingStartedApi';
 
 const ROLE_LABELS: Record<string, string> = {
   admin: 'Organisation Admin',
@@ -61,6 +62,7 @@ export default function Layout() {
   const [drawerOpen, setDrawerOpen] = React.useState(false);
   const [accountAnchor, setAccountAnchor] = React.useState<null | HTMLElement>(null);
   const [search, setSearch] = React.useState('');
+  const [gettingStartedIncomplete, setGettingStartedIncomplete] = React.useState(location.pathname === '/getting-started');
   const activeGroup = findActiveNavigationGroup(location.pathname);
   const [expandedGroups, setExpandedGroups] = React.useState<Set<string>>(() => new Set(activeGroup ? [activeGroup] : []));
 
@@ -69,7 +71,22 @@ export default function Layout() {
     setExpandedGroups((current) => current.has(activeGroup) ? current : new Set([...Array.from(current), activeGroup]));
   }, [activeGroup]);
 
-  const navGroups = ORGANISATION_NAV_GROUPS.map((group) => ({
+  React.useEffect(() => {
+    let active = true;
+    if (user?.role !== 'admin') {
+      setGettingStartedIncomplete(false);
+      return () => { active = false; };
+    }
+    void gettingStartedApi.read().then((projection) => {
+      if (!active) return;
+      setGettingStartedIncomplete(projection.steps.some((step) => !step.optional && step.state !== 'COMPLETE'));
+    }).catch(() => {
+      if (active && location.pathname !== '/getting-started') setGettingStartedIncomplete(false);
+    });
+    return () => { active = false; };
+  }, [location.pathname, user?.id, user?.role]);
+
+  const navGroups = getOrganisationNavigationGroups({ gettingStartedIncomplete }).map((group) => ({
     ...group,
     items: group.items.filter((item) =>
       (!user?.role || item.roles.includes(user.role))

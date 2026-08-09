@@ -12,6 +12,7 @@ jest.mock('@mui/material', () => ({
 let mockPathname = '/';
 let mockIsDesktop = false;
 let mockEntitlements: string[] = [];
+const mockGettingStartedRead = jest.fn();
 jest.mock('react-router-dom', () => ({
   Outlet: () => <div>Page</div>,
   useLocation: () => ({ pathname: mockPathname, search: '' }),
@@ -23,6 +24,10 @@ jest.mock('../../contexts/AuthContext', () => ({
     user: { id: 'user-1', email: 'operator@example.com', name: 'Operator', role: 'admin', tier: 'pro', entitlements: mockEntitlements },
     logout: jest.fn(),
   }),
+}));
+
+jest.mock('../../services/gettingStartedApi', () => ({
+  gettingStartedApi: { read: () => mockGettingStartedRead() },
 }));
 
 function renderLayout(pathname = '/jobs/client/client-1/property/property-1') {
@@ -38,6 +43,32 @@ function openNavigation(pathname = '/jobs/client/client-1/property/property-1') 
 beforeEach(() => {
   mockIsDesktop = false;
   mockEntitlements = [];
+  mockGettingStartedRead.mockReset();
+  mockGettingStartedRead.mockReturnValue(new Promise(() => {}));
+});
+
+test('shows contextual Getting Started for incomplete onboarding without hiding the main navigation', async () => {
+  mockGettingStartedRead.mockResolvedValue({ steps: [{ code: 'BASE', optional: false, state: 'NEEDS_ATTENTION' }] });
+  openNavigation('/jobs');
+
+  const navigation = screen.getByRole('navigation', { name: 'Organisation navigation' });
+  fireEvent.click(within(navigation).getByRole('button', { name: 'ORGANISATION navigation group' }));
+  expect(await within(navigation).findByRole('button', { name: 'Getting Started' })).toBeVisible();
+  expect(within(navigation).getByRole('button', { name: 'Home' })).toBeVisible();
+  expect(within(navigation).getByRole('button', { name: 'CLIENTS navigation group' })).toBeVisible();
+  expect(within(navigation).getByRole('button', { name: 'OPERATIONS navigation group' })).toBeVisible();
+});
+
+test('removes only the contextual Getting Started entry when authoritative onboarding is complete', async () => {
+  mockGettingStartedRead.mockResolvedValue({ steps: [{ code: 'MISSION', optional: false, state: 'COMPLETE' }] });
+  openNavigation('/jobs');
+
+  await act(async () => { await Promise.resolve(); });
+  const navigation = screen.getByRole('navigation', { name: 'Organisation navigation' });
+  fireEvent.click(within(navigation).getByRole('button', { name: 'ORGANISATION navigation group' }));
+  expect(within(navigation).queryByRole('button', { name: 'Getting Started' })).not.toBeInTheDocument();
+  expect(within(navigation).getByRole('button', { name: 'Home' })).toBeVisible();
+  expect(within(navigation).getByRole('button', { name: 'CLIENTS navigation group' })).toBeVisible();
 });
 
 test('active CLIENTS group opens and exposes all client resources in the mobile drawer', () => {

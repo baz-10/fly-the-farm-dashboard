@@ -65,6 +65,7 @@ import WeatherCentre from './pages/WeatherCentre';
 import { AuthorisedProductRoute, ProductRouteSurface } from './components/productMaturity/AuthorisedProductRoute';
 import CommercialApplication from './pages/CommercialApplication';
 import AcceptOrganisationInvitation from './pages/AcceptOrganisationInvitation';
+import GettingStarted from './pages/GettingStarted';
 
 export { REACHABLE_PRODUCT_ROUTES } from './productMaturity/surfaces';
 
@@ -129,6 +130,7 @@ function App() {
           }
         >
           <Route path="/" element={productRoute(<HomeRoute />)} />
+          <Route path="/getting-started" element={productRoute(<GettingStarted />, { allowedRoles: ['admin'] })} />
           <Route path="/database" element={productRoute(<Dashboard />)} />
           <Route path="/search" element={productRoute(<SearchResults />)} />
           <Route path="/treatment/:id" element={productRoute(<TreatmentDetail />)} />

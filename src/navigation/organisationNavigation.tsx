@@ -14,6 +14,7 @@ import ReceiptLongIcon from '@mui/icons-material/ReceiptLong';
 import SecurityIcon from '@mui/icons-material/Security';
 import SettingsIcon from '@mui/icons-material/Settings';
 import SmartToyIcon from '@mui/icons-material/SmartToy';
+import ChecklistRoundedIcon from '@mui/icons-material/ChecklistRounded';
 import { UserRole } from '../contexts/AuthContext';
 
 export interface NavigationItem {
@@ -26,6 +27,7 @@ export interface NavigationItem {
   activePrefixes?: string[];
   moduleCode: string;
   workflowCode?: string;
+  context?: 'INCOMPLETE_ONBOARDING';
 }
 
 export interface NavigationGroup {
@@ -38,6 +40,11 @@ const organisationRoles: UserRole[] = ['admin', 'contractor'];
 
 export const HOME_NAV_ITEM: NavigationItem = {
   label: 'Home', shortLabel: 'Home', path: '/', icon: <HomeIcon />, roles: organisationRoles, moduleCode: 'home',
+};
+
+export const GETTING_STARTED_NAV_ITEM: NavigationItem = {
+  label: 'Getting Started', shortLabel: 'Start', path: '/getting-started', icon: <ChecklistRoundedIcon />,
+  roles: ['admin'], moduleCode: 'organisation-onboarding', context: 'INCOMPLETE_ONBOARDING',
 };
 
 export const CLIENT_RESOURCE_LINKS: NavigationItem[] = [
@@ -72,10 +79,18 @@ export const ORGANISATION_NAV_GROUPS: NavigationGroup[] = [
     { label: 'Financials', shortLabel: 'Financials', path: '/financials', icon: <AccountBalanceIcon />, roles: organisationRoles, moduleCode: 'financials' },
   ] },
   { id: 'organisation', label: 'ORGANISATION', items: [
+    GETTING_STARTED_NAV_ITEM,
     { label: 'Settings', shortLabel: 'Settings', path: '/license-settings', icon: <SettingsIcon />, roles: organisationRoles, moduleCode: 'licences-credentials' },
     { label: 'Administration', shortLabel: 'Admin', path: '/admin', icon: <AdminPanelSettingsIcon />, roles: ['admin'], moduleCode: 'organisation-administration' },
   ] },
 ];
+
+export function getOrganisationNavigationGroups({ gettingStartedIncomplete }: { gettingStartedIncomplete: boolean }) {
+  return ORGANISATION_NAV_GROUPS.map((group) => ({
+    ...group,
+    items: group.items.filter((item) => item.context !== 'INCOMPLETE_ONBOARDING' || gettingStartedIncomplete),
+  }));
+}
 
 function pathnameOnly(path: string) {
   return path.split('?')[0];
