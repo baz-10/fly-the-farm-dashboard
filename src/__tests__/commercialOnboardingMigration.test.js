@@ -17,10 +17,13 @@ const sql = fs.readFileSync(migrationPath, 'utf8');
 const forwardMigrationName = '20260809110000_commercial_onboarding_delivery_and_abuse.sql';
 const resendMigrationName = '20260809120000_commercial_onboarding_immediate_resend.sql';
 const identityAcceptanceMigrationName = '20260809130000_commercial_onboarding_identity_acceptance.sql';
+const acceptanceCleanupMigrationName = '20260809140000_commercial_onboarding_acceptance_cleanup.sql';
 const forwardMigrationPath = path.resolve(__dirname, `../../supabase/migrations/${forwardMigrationName}`);
 const forwardSql = fs.existsSync(forwardMigrationPath) ? fs.readFileSync(forwardMigrationPath, 'utf8') : '';
 const identityAcceptanceMigrationPath = path.resolve(__dirname, `../../supabase/migrations/${identityAcceptanceMigrationName}`);
 const identityAcceptanceSql = fs.existsSync(identityAcceptanceMigrationPath) ? fs.readFileSync(identityAcceptanceMigrationPath, 'utf8') : '';
+const acceptanceCleanupMigrationPath = path.resolve(__dirname, `../../supabase/migrations/${acceptanceCleanupMigrationName}`);
+const acceptanceCleanupSql = fs.existsSync(acceptanceCleanupMigrationPath) ? fs.readFileSync(acceptanceCleanupMigrationPath, 'utf8') : '';
 
 const runPgliteInThisProcess = process.env.COMMERCIAL_ONBOARDING_PGLITE_CHILD === '1';
 const pureNodeTests = [];
@@ -127,6 +130,107 @@ async function createIssuedInvitation(email, suffix, rawToken) {
   return { application, review, approval, invitation };
 }
 
+async function createControlledAcceptedOnboarding(email, suffix, authUserId) {
+  const applicationPayload = validApplication(email, suffix);
+  applicationPayload.businessName = `SC ACCEPTANCE — ${suffix}`;
+  const submitted = await db.query(
+    'select public.ftf_submit_commercial_application($1::jsonb) as result',
+    [JSON.stringify(applicationPayload)],
+  );
+  const application = submitted.rows[0].result;
+  const review = await reviewApplication(application.application_id, application.row_version, 'UNDER_REVIEW');
+  const approval = await approveApplication(application.application_id, review.row_version);
+  const invitation = await issueInvitation(
+    application.application_id,
+    approval.row_version,
+    `controlled-${suffix.toLowerCase()}-token-with-enough-entropy-0001`,
+  );
+  const delivered = await markInvitationDelivery(invitation.invitation_id, invitation.row_version);
+  await db.query('insert into auth.users(id,email) values($1::uuid,$2)', [authUserId, email]);
+  const accepted = await db.query(
+    'select public.ftf_accept_commercial_invitation_by_id($1::uuid,$2::uuid) as result',
+    [delivered.invitation_id, authUserId],
+  );
+  expect(accepted.rows[0].result).toMatchObject({ accepted: true, already_provisioned: false });
+  return { application, invitation: delivered, accepted: accepted.rows[0].result, authUserId };
+}
+
+async function controlledCleanupEvidence(onboarding) {
+  const accepted = onboarding.accepted;
+  const identity = await db.query(`
+    select
+      a.application_reference,a.row_version as application_version,
+      i.row_version as invitation_version,
+      o.row_version as organisation_version,
+      iu.row_version as internal_user_version,
+      m.row_version as membership_version,
+      l.row_version as operating_location_version,
+      sa.id as seat_allocation_id,sa.row_version as seat_allocation_version,
+      ss.id as seat_assignment_id,ss.row_version as seat_assignment_version,
+      la.id as base_assignment_id,la.row_version as base_assignment_version
+    from public.commercial_onboarding_applications a
+    join public.commercial_onboarding_invitations i on i.application_id=a.id
+    join public.organisations o on o.id=i.resulting_organisation_id
+    join public.internal_users iu on iu.id=i.resulting_internal_user_id and iu.organisation_id=o.id
+    join public.memberships m on m.id=i.resulting_membership_id and m.organisation_id=o.id
+    join public.operating_locations l on l.id=i.resulting_operating_location_id and l.organisation_id=o.id
+    join public.organisation_seat_allocations sa on sa.organisation_id=o.id
+    join public.internal_user_seat_assignments ss on ss.organisation_id=o.id and ss.internal_user_id=iu.id
+    join public.membership_operating_location_assignments la on la.organisation_id=o.id and la.membership_id=m.id
+    where a.id=$1 and i.id=$2
+  `, [onboarding.application.application_id, onboarding.invitation.invitation_id]);
+  const row = identity.rows[0];
+  const roleEvidence = await db.query(`
+    select 'roles' as table_name,id,row_version as "rowVersion"
+      from public.roles where organisation_id=$1 and archived_at is null
+    union all
+    select 'permissions',id,row_version
+      from public.permissions where organisation_id=$1 and archived_at is null
+    union all
+    select 'role_permissions',id,row_version
+      from public.role_permissions where organisation_id=$1 and archived_at is null
+    order by table_name,id
+  `, [accepted.organisation_id]);
+  const governanceRecords = Object.fromEntries(
+    ['roles', 'permissions', 'role_permissions'].map((tableName) => [
+      tableName,
+      roleEvidence.rows
+        .filter(({ table_name }) => table_name === tableName)
+        .map(({ id, rowVersion }) => ({ id, rowVersion })),
+    ]),
+  );
+  return {
+    applicationId: onboarding.application.application_id,
+    applicationReference: row.application_reference,
+    invitationId: onboarding.invitation.invitation_id,
+    organisationId: accepted.organisation_id,
+    authUserId: onboarding.authUserId,
+    internalUserId: accepted.internal_user_id,
+    membershipId: accepted.membership_id,
+    operatingLocationId: accepted.operating_location_id,
+    seatAllocationId: row.seat_allocation_id,
+    seatAssignmentId: row.seat_assignment_id,
+    baseAssignmentId: row.base_assignment_id,
+    expectedVersions: {
+      application: row.application_version,
+      invitation: row.invitation_version,
+      organisation: row.organisation_version,
+      internalUser: row.internal_user_version,
+      membership: row.membership_version,
+      operatingLocation: row.operating_location_version,
+      seatAllocation: row.seat_allocation_version,
+      seatAssignment: row.seat_assignment_version,
+      baseAssignment: row.base_assignment_version,
+    },
+    records: {
+      mission_versions: [], missions: [], job_fields: [], jobs: [], fields: [],
+      field_boundary_versions: [], properties: [], clients: [],
+      equipment_kit_aircraft_compatibility: [], aircraft_equipment_kit_assignments: [],
+      equipment_kits: [], aircraft: [], ...governanceRecords,
+    },
+  };
+}
+
 test('separates application approval from invitation creation', () => {
   expect(sql).toContain('commercial_onboarding_applications');
   expect(sql).toContain('commercial_onboarding_application_events');
@@ -140,6 +244,23 @@ test('defines email-bound invitation identifier preflight and acceptance boundar
   expect(identityAcceptanceSql).toContain('ftf_preflight_commercial_invitation');
   expect(identityAcceptanceSql).toContain('ftf_accept_commercial_invitation_by_id');
   expect(identityAcceptanceSql).not.toContain('p_token text');
+});
+
+test('defines a service-role-only transactional controlled-acceptance cleanup boundary', () => {
+  expect(acceptanceCleanupSql).toContain('ftf_archive_controlled_commercial_onboarding');
+  expect(acceptanceCleanupSql).toContain('pg_advisory_xact_lock');
+  expect(acceptanceCleanupSql).toContain("application_reference like 'SC-APP-%'");
+  expect(acceptanceCleanupSql).toContain("business_name like 'SC ACCEPTANCE — %'");
+  expect(acceptanceCleanupSql).toContain('COMMERCIAL_ONBOARDING_ACCEPTANCE_VERSION_CONFLICT');
+  expect(acceptanceCleanupSql).toContain('equipment_kit_aircraft_compatibility');
+  expect(acceptanceCleanupSql).toContain("'role_permissions'");
+  expect(acceptanceCleanupSql).toContain("'permissions'");
+  expect(acceptanceCleanupSql).toContain("'roles'");
+  expect(acceptanceCleanupSql).toContain('set search_path = public, pg_temp');
+  expect(acceptanceCleanupSql).toContain("'commercial_onboarding.acceptance_archived'");
+  expect(acceptanceCleanupSql).toMatch(/revoke all on function public\.ftf_archive_controlled_commercial_onboarding\(jsonb\)[\s\S]*from public,anon,authenticated/);
+  expect(acceptanceCleanupSql).toContain('grant execute on function public.ftf_archive_controlled_commercial_onboarding(jsonb) to service_role');
+  expect(acceptanceCleanupSql).not.toMatch(/update\s+public\.commercial_onboarding_(applications|application_events|invitations|invitation_events)/i);
 });
 
 if (runPgliteInThisProcess) test('atomically replaces an unexpired delivered invitation when resend is requested', async () => {
@@ -218,6 +339,7 @@ beforeAll(async () => {
     forwardMigrationName,
     resendMigrationName,
     identityAcceptanceMigrationName,
+    acceptanceCleanupMigrationName,
   ];
   for (const migrationName of migrationNames) {
     if (migrationName === forwardMigrationName) {
@@ -257,6 +379,14 @@ beforeAll(async () => {
     }
     await db.exec(fs.readFileSync(path.join(migrationDirectory, migrationName), 'utf8'));
   }
+  // This focused harness omits the larger live-chain migration that installs
+  // the production append-only boundary trigger. Install the same guard here
+  // so controlled cleanup is proven against the real immutability boundary.
+  await db.exec(`
+    create trigger field_boundary_versions_reject_mutation
+    before update or delete on public.field_boundary_versions
+    for each row execute function public.reject_append_only_mutation()
+  `);
 });
 
 afterAll(async () => {
@@ -292,6 +422,24 @@ test('creates forced-RLS lifecycle tables with service-role-only read access', a
       authenticated_can_read: false,
     });
   }
+});
+
+test('exposes only the controlled cleanup boundary to service_role', async () => {
+  const privileges = await db.query(`
+    select
+      has_function_privilege('service_role','public.ftf_archive_controlled_commercial_onboarding(jsonb)','execute') as service_execute,
+      has_function_privilege('authenticated','public.ftf_archive_controlled_commercial_onboarding(jsonb)','execute') as authenticated_execute,
+      has_function_privilege('anon','public.ftf_archive_controlled_commercial_onboarding(jsonb)','execute') as anon_execute,
+      has_function_privilege('service_role','public.ftf_archive_controlled_acceptance_rows(text,uuid,uuid,jsonb,boolean,boolean)','execute') as helper_execute,
+      has_function_privilege('service_role','public.ftf_remove_controlled_acceptance_equipment_links(uuid,jsonb)','execute') as link_helper_execute
+  `);
+  expect(privileges.rows[0]).toEqual({
+    service_execute: true,
+    authenticated_execute: false,
+    anon_execute: false,
+    helper_execute: false,
+    link_helper_execute: false,
+  });
 });
 
 test('adds only the four repository-controlled onboarding permissions', async () => {
@@ -848,6 +996,151 @@ test('accepts by public invitation identifier, rejects another email, and emits 
       coalesce((select jsonb_agg(payload)::text from public.transactional_outbox where aggregate_id=$1),'')) as recorded
   `, [issued.invitation.invitation_id]);
   expect(evidence.rows[0].recorded).not.toContain(rawBearer);
+});
+
+test('archives an exact controlled onboarding chain transactionally without rewriting immutable history', async () => {
+  const onboarding = await createControlledAcceptedOnboarding(
+    'cleanup-success@example.com',
+    'CleanupSuccess',
+    '96000000-0000-4000-8000-000000000001',
+  );
+  const evidence = await controlledCleanupEvidence(onboarding);
+  await db.exec(`
+    insert into public.clients(id,organisation_id,name)
+      values('96100000-0000-4000-8000-000000000001','${evidence.organisationId}','SC ACCEPTANCE — Client');
+    insert into public.properties(id,organisation_id,client_id,name,address)
+      values('96100000-0000-4000-8000-000000000002','${evidence.organisationId}','96100000-0000-4000-8000-000000000001','SC ACCEPTANCE — Property','Controlled address');
+    insert into public.field_boundary_versions(id,organisation_id,property_id,version_number,boundary_geojson)
+      values('96100000-0000-4000-8000-000000000003','${evidence.organisationId}','96100000-0000-4000-8000-000000000002',1,'{"type":"Polygon","coordinates":[]}'::jsonb);
+    insert into public.fields(id,organisation_id,property_id,field_boundary_version_id,name)
+      values('96100000-0000-4000-8000-000000000004','${evidence.organisationId}','96100000-0000-4000-8000-000000000002','96100000-0000-4000-8000-000000000003','SC ACCEPTANCE — Field');
+    insert into public.jobs(id,organisation_id,client_id,property_id,reference)
+      values('96100000-0000-4000-8000-000000000005','${evidence.organisationId}','96100000-0000-4000-8000-000000000001','96100000-0000-4000-8000-000000000002','SC-ACCEPTANCE-JOB');
+    insert into public.job_fields(id,organisation_id,property_id,job_id,field_id)
+      values('96100000-0000-4000-8000-000000000006','${evidence.organisationId}','96100000-0000-4000-8000-000000000002','96100000-0000-4000-8000-000000000005','96100000-0000-4000-8000-000000000004');
+    insert into public.missions(id,organisation_id,job_id,operating_location_id,mission_number)
+      values('96100000-0000-4000-8000-000000000007','${evidence.organisationId}','96100000-0000-4000-8000-000000000005','${evidence.operatingLocationId}','SC-ACCEPTANCE-MISSION');
+    insert into public.mission_versions(id,organisation_id,mission_id,version_number,snapshot)
+      values('96100000-0000-4000-8000-000000000008','${evidence.organisationId}','96100000-0000-4000-8000-000000000007',1,'{}'::jsonb)
+  `);
+  evidence.records = {
+    mission_versions: [{ id: '96100000-0000-4000-8000-000000000008', rowVersion: 1 }],
+    missions: [{ id: '96100000-0000-4000-8000-000000000007', rowVersion: 1 }],
+    job_fields: [{ id: '96100000-0000-4000-8000-000000000006', rowVersion: 1 }],
+    jobs: [{ id: '96100000-0000-4000-8000-000000000005', rowVersion: 1 }],
+    fields: [{ id: '96100000-0000-4000-8000-000000000004', rowVersion: 1 }],
+    field_boundary_versions: [{ id: '96100000-0000-4000-8000-000000000003', rowVersion: 1 }],
+    properties: [{ id: '96100000-0000-4000-8000-000000000002', rowVersion: 1 }],
+    clients: [{ id: '96100000-0000-4000-8000-000000000001', rowVersion: 1 }],
+    equipment_kit_aircraft_compatibility: [], aircraft_equipment_kit_assignments: [],
+    equipment_kits: [], aircraft: [],
+    role_permissions: evidence.records.role_permissions,
+    permissions: evidence.records.permissions,
+    roles: evidence.records.roles,
+  };
+  const historyBefore = await db.query(`
+    select
+      (select to_jsonb(a) from public.commercial_onboarding_applications a where id=$1) as application,
+      (select to_jsonb(i) from public.commercial_onboarding_invitations i where id=$2) as invitation,
+      (select count(*)::integer from public.commercial_onboarding_application_events where application_id=$1) as application_events,
+      (select count(*)::integer from public.commercial_onboarding_invitation_events where invitation_id=$2) as invitation_events
+  `, [evidence.applicationId, evidence.invitationId]);
+
+  const archived = await db.query(
+    'select public.ftf_archive_controlled_commercial_onboarding($1::jsonb) as result',
+    [JSON.stringify(evidence)],
+  );
+  expect(archived.rows[0].result).toMatchObject({
+    archived: true,
+    organisationId: evidence.organisationId,
+    applicationId: evidence.applicationId,
+    invitationId: evidence.invitationId,
+  });
+
+  const final = await db.query(`
+    select
+      (select archived_at is not null from public.organisations where id=$1) as organisation_archived,
+      (select archived_at is not null and not is_active from public.internal_users where id=$2) as user_archived,
+      (select archived_at is not null and not is_active from public.memberships where id=$3) as membership_archived,
+      (select archived_at is not null from public.operating_locations where id=$4) as base_archived,
+      (select archived_at is not null from public.organisation_seat_allocations where id=$5) as allocation_archived,
+      (select archived_at is not null and status='revoked' from public.internal_user_seat_assignments where id=$6) as seat_archived,
+      (select archived_at is not null and not is_active from public.membership_operating_location_assignments where id=$7) as base_assignment_archived,
+      (select count(*)::integer from public.ftf_profiles where user_id=$8) as profiles,
+      (select count(*)::integer from public.audit_events where organisation_id=$1 and event_type='commercial_onboarding.acceptance_archived') as audits,
+      (select count(*)::integer from public.transactional_outbox where organisation_id=$1 and topic='commercial_onboarding.acceptance_archived') as outbox,
+      (select count(*)::integer from public.mission_versions where organisation_id=$1 and archived_at is not null) as mission_versions_archived,
+      (select count(*)::integer from public.missions where organisation_id=$1 and archived_at is not null) as missions_archived,
+      (select count(*)::integer from public.job_fields where organisation_id=$1 and archived_at is not null) as job_fields_archived,
+      (select count(*)::integer from public.jobs where organisation_id=$1 and archived_at is not null) as jobs_archived,
+      (select count(*)::integer from public.fields where organisation_id=$1 and archived_at is not null) as fields_archived,
+      (select count(*)::integer from public.field_boundary_versions where organisation_id=$1 and archived_at is null) as boundaries_preserved,
+      (select count(*)::integer from public.properties where organisation_id=$1 and archived_at is not null) as properties_archived,
+      (select count(*)::integer from public.clients where organisation_id=$1 and archived_at is not null) as clients_archived,
+      (select to_jsonb(a) from public.commercial_onboarding_applications a where id=$9) as application,
+      (select to_jsonb(i) from public.commercial_onboarding_invitations i where id=$10) as invitation,
+      (select count(*)::integer from public.commercial_onboarding_application_events where application_id=$9) as application_events,
+      (select count(*)::integer from public.commercial_onboarding_invitation_events where invitation_id=$10) as invitation_events
+  `, [
+    evidence.organisationId, evidence.internalUserId, evidence.membershipId,
+    evidence.operatingLocationId, evidence.seatAllocationId, evidence.seatAssignmentId,
+    evidence.baseAssignmentId, evidence.authUserId, evidence.applicationId, evidence.invitationId,
+  ]);
+  expect(final.rows[0]).toMatchObject({
+    organisation_archived: true,
+    user_archived: true,
+    membership_archived: true,
+    base_archived: true,
+    allocation_archived: true,
+    seat_archived: true,
+    base_assignment_archived: true,
+    profiles: 0,
+    audits: 1,
+    outbox: 1,
+    mission_versions_archived: 1,
+    missions_archived: 1,
+    job_fields_archived: 1,
+    jobs_archived: 1,
+    fields_archived: 1,
+    boundaries_preserved: 1,
+    properties_archived: 1,
+    clients_archived: 1,
+    application: historyBefore.rows[0].application,
+    invitation: historyBefore.rows[0].invitation,
+    application_events: historyBefore.rows[0].application_events,
+    invitation_events: historyBefore.rows[0].invitation_events,
+  });
+});
+
+test('rolls the entire cleanup back when any optimistic row version is wrong', async () => {
+  const onboarding = await createControlledAcceptedOnboarding(
+    'cleanup-conflict@example.com',
+    'CleanupConflict',
+    '96000000-0000-4000-8000-000000000002',
+  );
+  const evidence = await controlledCleanupEvidence(onboarding);
+  evidence.expectedVersions.organisation += 1;
+
+  await expect(db.query(
+    'select public.ftf_archive_controlled_commercial_onboarding($1::jsonb)',
+    [JSON.stringify(evidence)],
+  )).rejects.toThrow(/COMMERCIAL_ONBOARDING_ACCEPTANCE_VERSION_CONFLICT/);
+
+  const unchanged = await db.query(`
+    select
+      (select archived_at is null from public.organisations where id=$1) as organisation_active,
+      (select archived_at is null and is_active from public.internal_users where id=$2) as user_active,
+      (select archived_at is null and status='active' from public.internal_user_seat_assignments where id=$3) as seat_active,
+      (select count(*)::integer from public.audit_events where organisation_id=$1 and event_type='commercial_onboarding.acceptance_archived') as audits,
+      (select count(*)::integer from public.transactional_outbox where organisation_id=$1 and topic='commercial_onboarding.acceptance_archived') as outbox
+  `, [evidence.organisationId, evidence.internalUserId, evidence.seatAssignmentId]);
+  expect(unchanged.rows[0]).toEqual({
+    organisation_active: true,
+    user_active: true,
+    seat_active: true,
+    audits: 0,
+    outbox: 0,
+  });
 });
 
 test('keeps application events, invitation events, and consumed invitations immutable', async () => {

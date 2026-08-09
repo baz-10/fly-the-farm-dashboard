@@ -45,6 +45,7 @@
     "verify:organisation-branding-reports": "node scripts/verifyOrganisationBrandingReportsPostgres.mjs",
     "verify:platform-support": "node scripts/verifyPlatformIdentitySupportPostgres.mjs",
     "verify:production-beta-acceptance-identity": "node scripts/verifyProductionBetaAcceptanceIdentity.mjs",
+    "test:ci:sharded": "node scripts/runJestShards.mjs",
     "test:e2e": "playwright test",
     "eject": "react-scripts eject"
   },

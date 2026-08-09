@@ -15,8 +15,31 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  deployment-identity:
+    name: Resolve exact deployed commit
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      commit-sha: ${{ steps.deployment.outputs.commit-sha }}
+    steps:
+      - name: Resolve exact deployed commit
+        id: deployment
+        shell: bash
+        env:
+          EXPECTED_COMMIT_SHA: ${{ github.event.client_payload.commitSha }}
+        run: |
+          set -euo pipefail
+          payload="$(curl --fail --silent --show-error --retry 4 --retry-delay 3 https://spray-command-production-beta.vercel.app/api/v1/deployment)"
+          deployed="$(node -e 'const value=JSON.parse(process.argv[1])?.data?.commitSha||""; if(!/^[0-9a-f]{40}$/.test(value)) process.exit(1); process.stdout.write(value)' "$payload")"
+          if [[ "${{ github.event_name }}" == "repository_dispatch" ]]; then
+            [[ "$EXPECTED_COMMIT_SHA" =~ ^[0-9a-fA-F]{40}$ ]]
+            [[ "${EXPECTED_COMMIT_SHA,,}" == "$deployed" ]]
+          fi
+          echo "commit-sha=$deployed" >> "$GITHUB_OUTPUT"
+
   operational-acceptance:
     name: Client to Mission operational acceptance
+    needs: deployment-identity
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: production-beta-acceptance
@@ -29,6 +52,8 @@ jobs:
     steps:
       - name: Check out accepted source
         uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.deployment-identity.outputs.commit-sha }}
 
       - name: Use Node.js 20
         uses: actions/setup-node@v4
@@ -64,7 +89,7 @@ jobs:
       - name: Prove deterministic acceptance cleanup
         run: npx playwright test --project=cleanup --no-deps
 
-      - name: Run Production Beta operational acceptance
+      - name: Run established Client-to-Mission gate
         run: npx playwright test --project=chromium --no-deps
 
       - name: Retain non-secret failure diagnostics
@@ -80,8 +105,9 @@ jobs:
 
   commercial-onboarding-acceptance:
     name: Commercial onboarding acceptance
+    needs: [deployment-identity, operational-acceptance]
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     environment: production-beta-acceptance
     env:
       CI: 'true'
@@ -98,6 +124,8 @@ jobs:
     steps:
       - name: Check out accepted source
         uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.deployment-identity.outputs.commit-sha }}
 
       - name: Use Node.js 20
         uses: actions/setup-node@v4
@@ -126,13 +154,19 @@ jobs:
       - name: Verify authoritative onboarding PostgreSQL lifecycle
         run: npm run verify:commercial-onboarding
 
+      - name: Run deterministic sharded regression
+        run: npm run test:ci:sharded
+
       - name: Install isolated Chromium runtime
         run: npx playwright install --with-deps chromium
 
       - name: Run unattended commercial onboarding
         run: npx playwright test e2e/acceptance/commercial-onboarding.spec.ts --project=commercial-onboarding
 
-      - name: Archive only the controlled onboarding organisation
+      - name: Verify exact controlled onboarding evidence
+        run: npm run verify:commercial-onboarding -- --verify-controlled test-results/commercial-onboarding-evidence.json
+
+      - name: Archive only the controlled onboarding organisation transactionally
         if: always()
         run: |
           if [[ -f test-results/commercial-onboarding-evidence.json ]]; then

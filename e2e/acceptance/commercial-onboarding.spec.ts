@@ -1,7 +1,8 @@
 import { expect, Page, test } from '@playwright/test';
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { acceptanceRunLabel, archiveAcceptanceChain, findAcceptanceRecord } from './fixtures/acceptanceRecords';
+import { acceptanceRunLabel, findAcceptanceRecord } from './fixtures/acceptanceRecords';
+import { classifyCommercialOnboardingInvitationLink } from './fixtures/commercialOnboardingInvitation';
 import { openMissionCreationWorkspace } from './fixtures/missionCreationWorkspace';
 
 type SecretSource = Record<string, string | undefined>;
@@ -13,6 +14,7 @@ type OnboardingEnvironment = {
   platformPassword: string;
   mailboxUrl: string;
   mailboxToken: string;
+  supabaseOrigin: string;
 };
 
 const required = (source: SecretSource, name: string): string => {
@@ -24,8 +26,9 @@ const required = (source: SecretSource, name: string): string => {
 export function commercialOnboardingEnvironment(source: SecretSource = process.env): OnboardingEnvironment {
   const baseUrl = new URL(required(source, 'E2E_BASE_URL')).origin;
   const mailboxUrl = new URL(required(source, 'E2E_ONBOARDING_MAILBOX_URL'));
-  if (new URL(baseUrl).protocol !== 'https:' || mailboxUrl.protocol !== 'https:') {
-    throw new Error('Commercial onboarding acceptance requires HTTPS application and mailbox endpoints.');
+  const supabaseUrl = new URL(required(source, 'SUPABASE_URL'));
+  if (new URL(baseUrl).protocol !== 'https:' || mailboxUrl.protocol !== 'https:' || supabaseUrl.protocol !== 'https:') {
+    throw new Error('Commercial onboarding acceptance requires HTTPS application, mailbox and Supabase endpoints.');
   }
   return {
     baseUrl,
@@ -35,6 +38,7 @@ export function commercialOnboardingEnvironment(source: SecretSource = process.e
     platformPassword: required(source, 'E2E_PLATFORM_PASSWORD'),
     mailboxUrl: mailboxUrl.toString(),
     mailboxToken: required(source, 'E2E_ONBOARDING_MAILBOX_TOKEN'),
+    supabaseOrigin: supabaseUrl.origin,
   };
 }
 
@@ -60,6 +64,14 @@ async function signIn(page: Page, email: string, password: string) {
   await expect(page).not.toHaveURL(/\/login(?:\?|$)/);
 }
 
+async function signOut(page: Page) {
+  const origin = new URL(page.url()).origin;
+  const response = await page.request.post('/api/auth', { headers: { Origin: origin }, data: { action: 'logout' } });
+  expect(response.status(), 'Organisation logout must succeed before re-login verification').toBe(200);
+  await page.goto('/login');
+  await expect(page.getByRole('button', { name: 'Sign In' })).toBeVisible();
+}
+
 async function waitForInvitationLink(page: Page, environment: OnboardingEnvironment, applicantEmail: string, invitationId: string, after: string) {
   const deadline = Date.now() + 90_000;
   while (Date.now() < deadline) {
@@ -75,19 +87,50 @@ async function waitForInvitationLink(page: Page, environment: OnboardingEnvironm
       const links = Array.isArray(body?.messages)
         ? body.messages.flatMap((message: any) => Array.isArray(message?.links) ? message.links : [])
         : [];
-      const match = links.find((candidate: unknown) => {
-        try {
-          const url = new URL(String(candidate));
-          return url.origin === environment.baseUrl
-            && url.pathname === '/onboarding/accept'
-            && url.searchParams.get('invitation') === invitationId;
-        } catch { return false; }
-      });
-      if (match) return String(match);
+      const match = links.map((candidate: unknown) => classifyCommercialOnboardingInvitationLink(String(candidate), {
+        applicationOrigin: environment.baseUrl,
+        supabaseOrigin: environment.supabaseOrigin,
+        invitationId,
+      })).find(Boolean);
+      if (match) return match;
     }
     await page.waitForTimeout(2_000);
   }
   throw new Error('ONBOARDING_INVITATION_EMAIL_NOT_RECEIVED');
+}
+
+async function openInvitation(page: Page, environment: OnboardingEnvironment, invitation: { url: string }, invitationId: string) {
+  try {
+    await page.goto(invitation.url);
+  } catch {
+    throw new Error('ONBOARDING_INVITATION_PROVIDER_NAVIGATION_FAILED');
+  }
+  await page.waitForURL((candidate) => candidate.origin === environment.baseUrl
+    && candidate.pathname === '/onboarding/accept'
+    && candidate.searchParams.get('invitation') === invitationId)
+    .catch(() => { throw new Error('ONBOARDING_INVITATION_CANONICAL_REDIRECT_FAILED'); });
+  await expect(page.getByRole('heading', { name: 'Activate your organisation' })).toBeVisible();
+}
+
+async function assertAuthoritativeOperationalReadiness(page: Page) {
+  const response = await page.request.get('/api/v1/getting-started');
+  expect(response.status(), 'Getting Started must return authoritative readiness').toBe(200);
+  const projection = (await response.json()).data;
+  const requiredSteps = projection.steps.filter((step: any) => !step.optional);
+  expect(requiredSteps).not.toHaveLength(0);
+  expect(requiredSteps.every((step: any) => step.state === 'COMPLETE')).toBe(true);
+  expect(projection.steps).toEqual(expect.arrayContaining([
+    expect.objectContaining({ code: 'PERSONNEL', state: 'OPTIONAL', count: 0, optional: true }),
+  ]));
+  expect(projection.operationalReadiness).toMatchObject({
+    state: 'NEEDS_OPERATIONAL_ATTENTION',
+    requiredActions: [],
+    personnel: { state: 'NOT_RECORDED' },
+  });
+  expect(projection.operationalReadiness.advisories).toEqual(expect.arrayContaining([
+    expect.objectContaining({ requiresAttention: true }),
+  ]));
+  return projection;
 }
 
 async function createAircraftAndEquipment(page: Page, label: string) {
@@ -133,6 +176,7 @@ test('Application → review → approval → invitation → first Draft Mission
   const mailboxAfter = new Date(Date.now() - 5_000).toISOString();
   const records: Record<string, any> = {};
   let applicationReference = '';
+  let applicationId = '';
   let invitationId = '';
   let organisationId = '';
 
@@ -176,6 +220,7 @@ test('Application → review → approval → invitation → first Draft Mission
     const submittedApplication = ((await applicationListResponse.json()).data || [])
       .find((candidate: any) => candidate.applicationReference === applicationReference);
     expect(submittedApplication?.id).toBeTruthy();
+    applicationId = submittedApplication.id;
 
     const unapprovedIssue = await platformPage.request.post('/api/v1/commercial-onboarding?action=issue', {
       headers: { Origin: environment.baseUrl },
@@ -211,8 +256,7 @@ test('Application → review → approval → invitation → first Draft Mission
     await platformContext.close();
 
     const invitationLink = await waitForInvitationLink(page, environment, applicantEmail, invitationId, mailboxAfter);
-    await page.goto(invitationLink);
-    await expect(page.getByRole('heading', { name: 'Activate your organisation' })).toBeVisible();
+    await openInvitation(page, environment, invitationLink, invitationId);
     await page.getByLabel('Create password').fill(environment.applicantPassword);
     await page.getByLabel('Confirm password').fill(environment.applicantPassword);
     await page.getByRole('button', { name: 'Activate organisation' }).click();
@@ -233,7 +277,7 @@ test('Application → review → approval → invitation → first Draft Mission
 
     await mkdir(path.resolve('test-results'), { recursive: true });
     await writeFile(path.resolve('test-results/commercial-onboarding-evidence.json'), JSON.stringify({
-      applicationReference, invitationId, organisationId,
+      applicationId, applicationReference, invitationId, organisationId,
       operatingLocationId: provisionedBases[0].id,
     }), { mode: 0o600 });
 
@@ -290,26 +334,32 @@ test('Application → review → approval → invitation → first Draft Mission
 
     await page.goto('/getting-started');
     await expect(page.getByRole('heading', { name: 'Getting Started' })).toBeVisible();
-    await expect(page.getByRole('heading', { name: /workspace is ready|needs operational attention/i })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Your workspace needs operational attention' })).toBeVisible();
+    await assertAuthoritativeOperationalReadiness(page);
     await page.reload();
     await expect(page.getByRole('heading', { name: 'Getting Started' })).toBeVisible();
+    await assertAuthoritativeOperationalReadiness(page);
+
+    await signOut(page);
+    await signIn(page, applicantEmail, environment.applicantPassword);
+    await page.goto('/getting-started');
+    await assertAuthoritativeOperationalReadiness(page); // re-login
 
     const secondContext = await browser.newContext();
     const secondPage = await secondContext.newPage();
     await signIn(secondPage, applicantEmail, environment.applicantPassword);
     await secondPage.goto('/getting-started');
     await expect(secondPage.getByRole('heading', { name: 'Getting Started' })).toBeVisible(); // second session
+    await assertAuthoritativeOperationalReadiness(secondPage);
     await secondContext.close();
 
     await writeFile(path.resolve('test-results/commercial-onboarding-evidence.json'), JSON.stringify({
-      applicationReference, invitationId, organisationId, operatingLocationId: resources.operatingLocationId,
+      applicationId, applicationReference, invitationId, organisationId, operatingLocationId: resources.operatingLocationId,
       aircraftId: resources.aircraft, equipmentId: resources.equipment,
       clientId: records.client.id, propertyId: records.property.id, fieldId: records.field.id,
       jobId: records.job.id, missionId: records.mission.id,
     }), { mode: 0o600 });
-  } finally {
-    if (records.client) await archiveAcceptanceChain(page.request, records, { origin: environment.baseUrl });
-  }
+  } finally { /* transactional cleanup is performed by the repository-controlled post-test RPC */ }
 });
 
 test('public application responses remain non-enumerating', async ({ request }) => {

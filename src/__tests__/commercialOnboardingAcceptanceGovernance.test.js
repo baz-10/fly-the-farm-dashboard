@@ -31,7 +31,30 @@ describe('commercial onboarding acceptance governance', () => {
     expect(playwright).toContain("trace: 'off'");
     expect(playwright).toContain("screenshot: 'off'");
     expect(playwright).toContain("video: 'off'");
+    expect(playwright).toMatch(/name: 'commercial-onboarding'[\s\S]*retries: 0/);
     expect(workflow).not.toContain('name: commercial-onboarding-acceptance-failure');
+  });
+
+  test('orders exact-deployment gates and verifies controlled production evidence before transactional cleanup', () => {
+    const workflow = read('.github/workflows/production-beta-operational-acceptance.yml');
+    const ordered = [
+      'Resolve exact deployed commit',
+      'Prove Organisation authentication',
+      'Prove deterministic acceptance cleanup',
+      'Run established Client-to-Mission gate',
+      'Run unattended commercial onboarding',
+      'Verify exact controlled onboarding evidence',
+      'Archive only the controlled onboarding organisation transactionally',
+    ];
+    let cursor = -1;
+    for (const marker of ordered) {
+      const next = workflow.indexOf(marker);
+      expect(next).toBeGreaterThan(cursor);
+      cursor = next;
+    }
+    expect(workflow).toContain('--verify-controlled test-results/commercial-onboarding-evidence.json');
+    expect(workflow).toContain('test:ci:sharded');
+    expect(workflow).toContain('github.event.client_payload.commitSha');
   });
 
   test('ships a repository-controlled PostgreSQL verifier and operator runbook', () => {
@@ -46,6 +69,8 @@ describe('commercial onboarding acceptance governance', () => {
       'audit_events', 'transactional_outbox',
     ]) expect(verifier).toContain(evidence);
     expect(verifier).toContain('commercial_onboarding.acceptance_archived');
+    expect(verifier).toContain('--verify-controlled');
+    expect(verifier).toContain('ftf_archive_controlled_commercial_onboarding');
     expect(read('docs/operations/commercial-onboarding-runbook.md')).toContain('Application → Review → Approval → Invitation');
     expect(read('docs/operations/commercial-onboarding-runbook.md')).toContain('supports `+` addressing');
   });

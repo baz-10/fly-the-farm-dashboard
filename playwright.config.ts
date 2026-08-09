@@ -41,6 +41,7 @@ export default defineConfig({
     },
     {
       name: 'commercial-onboarding',
+      retries: 0,
       testMatch: /commercial-onboarding\.spec\.ts/,
       use: { ...devices['Desktop Chrome'], trace: 'off', screenshot: 'off', video: 'off' },
     },
