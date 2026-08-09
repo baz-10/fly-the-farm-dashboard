@@ -88,7 +88,7 @@ test('shows request and decision evidence without rendering customer operational
   expect(screen.getByText('Business and Base evidence verified.')).toBeVisible();
   expect(screen.getAllByText('Jordan Reviewer').length).toBeGreaterThan(0);
   expect(screen.getByText(/WDAA/)).toBeVisible();
-  expect(screen.getByText(/Expires/)).toBeVisible();
+  expect(screen.getByText('Auth link expires')).toBeVisible();
   expect(screen.queryByText(/Customer Secret|client-secret|mission-secret|revenue/i)).not.toBeInTheDocument();
 });
 
@@ -100,6 +100,7 @@ test('requires confirmation and reports only authoritative provider delivery', a
   expect(send).toBeEnabled();
   await user.click(send);
   expect(screen.getByRole('dialog', { name: 'Confirm invitation' })).toBeVisible();
+  expect(screen.getByText(/Supabase Auth link and onboarding invitation expire together/i)).toBeVisible();
   expect(screen.getByText(/Western Downs Aerial Application.*SC-APP-A1B2C3D4E5F6.*alex@example.com/i)).toBeVisible();
   expect(issue).not.toHaveBeenCalled();
   await user.type(screen.getByLabelText(/^Invitation notes/), 'Approved launch invitation.');

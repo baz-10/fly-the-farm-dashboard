@@ -48,6 +48,7 @@ beforeEach(() => {
   process.env.COMMERCIAL_ONBOARDING_FINGERPRINT_SECRET = 'test-only-fingerprint-secret-with-enough-entropy';
   process.env.COMMERCIAL_ONBOARDING_APP_ORIGIN = 'https://spray-command.test';
   process.env.COMMERCIAL_ONBOARDING_TRUSTED_IP_HEADER = 'x-forwarded-for';
+  process.env.COMMERCIAL_ONBOARDING_AUTH_LINK_TTL_SECONDS = '3600';
 });
 
 function repository() {
@@ -239,9 +240,14 @@ test('delivers invitations through Supabase Auth and never returns the raw token
     now: () => new Date('2026-08-09T00:00:00.000Z'),
   });
   const res = response();
-  await handler(req('POST', 'issue', { applicationId: 'application-1', expectedVersion: 3, notes: 'Approved invitation.' }), res);
+  await handler(req('POST', 'issue', { applicationId: 'application-1', expectedVersion: 3, notes: 'Approved invitation.', expiresAt: '2099-01-01T00:00:00.000Z' }), res);
 
-  expect(provider.sendInvitation).toHaveBeenCalledWith('alex@example.com', 'https://spray-command.test/onboarding/accept?token=raw-token-with-enough-entropy-for-provider-only-0001', { resend: false });
+  expect(repo.issueInvitation).toHaveBeenCalledWith(
+    'application-1', 'platform-1', 3,
+    'raw-token-with-enough-entropy-for-provider-only-0001', 'Approved invitation.',
+    '2026-08-09T01:00:00.000Z',
+  );
+  expect(provider.sendInvitation).toHaveBeenCalledWith('alex@example.com', 'https://spray-command.test/onboarding/accept?token=raw-token-with-enough-entropy-for-provider-only-0001');
   expect(repo.markInvitationDelivery).toHaveBeenCalledWith('invitation-1', 'platform-1', 1, 'SENT', 'supabase-user-1', 'Supabase Auth invitation delivered.');
   expect(res.statusCode).toBe(201);
   expect(res.body.data).toMatchObject({ delivered: true, status: 'SENT' });
@@ -279,29 +285,43 @@ test('maps durable public rate limiting to one generic non-enumerating response'
   expect(JSON.stringify(res.body)).not.toMatch(/email|fingerprint|rate.limit/i);
 });
 
-test('Supabase invitation delivery uses the server Auth endpoint and redirect URL', async () => {
+test('Supabase invitation delivery uses one create-user OTP path for initial and repeat sends', async () => {
   supabaseRequest.mockResolvedValue({ id: 'supabase-user-1' });
-  const result = await new SupabaseInvitationDelivery().sendInvitation(
-    'alex@example.com',
-    'https://spray-command.test/onboarding/accept?token=server-only-token',
-  );
-  expect(result).toEqual({ providerReference: 'supabase-user-1' });
-  expect(supabaseRequest).toHaveBeenCalledWith(
-    expect.stringContaining('auth/v1/invite?redirect_to=https%3A%2F%2Fspray-command.test%2Fonboarding%2Faccept%3Ftoken%3Dserver-only-token'),
-    expect.objectContaining({ method: 'POST', body: JSON.stringify({ email: 'alex@example.com' }) }),
-  );
-
-  supabaseRequest.mockClear();
-  await new SupabaseInvitationDelivery().sendInvitation(
-    'alex@example.com',
-    'https://spray-command.test/onboarding/accept?token=server-only-token',
-    { resend: true },
-  );
-  expect(supabaseRequest).toHaveBeenCalledWith(
-    expect.stringContaining('auth/v1/otp?redirect_to='),
-    expect.objectContaining({ method: 'POST', body: JSON.stringify({ email: 'alex@example.com', create_user: true }) }),
-  );
+  for (const resend of [false, true]) {
+    supabaseRequest.mockClear();
+    const result = await new SupabaseInvitationDelivery().sendInvitation(
+      'alex@example.com',
+      'https://spray-command.test/onboarding/accept?token=server-only-token',
+      { resend },
+    );
+    expect(result).toEqual({ providerReference: 'supabase-user-1' });
+    expect(supabaseRequest).toHaveBeenCalledWith(
+      expect.stringContaining('auth/v1/otp?redirect_to=https%3A%2F%2Fspray-command.test%2Fonboarding%2Faccept%3Ftoken%3Dserver-only-token'),
+      expect.objectContaining({ method: 'POST', body: JSON.stringify({ email: 'alex@example.com', create_user: true }) }),
+    );
+  }
 });
+
+test.each([undefined, '', '299', '86401', '3600.5', 'not-a-number'])(
+  'fails closed before preparation when Auth link TTL configuration is invalid: %s',
+  async (configuredTtl) => {
+    if (configuredTtl === undefined) delete process.env.COMMERCIAL_ONBOARDING_AUTH_LINK_TTL_SECONDS;
+    else process.env.COMMERCIAL_ONBOARDING_AUTH_LINK_TTL_SECONDS = configuredTtl;
+    const repo = repository();
+    const provider = delivery();
+    const handler = createCommercialOnboardingHandler({
+      repository: repo, invitationDelivery: provider,
+      resolvePlatformContext: async () => platformContext(['platform.onboarding.invitation.issue']),
+      now: () => new Date('2026-08-09T00:00:00.000Z'),
+    });
+    const res = response();
+    await handler(req('POST', 'issue', { applicationId: 'application-1', expectedVersion: 3, notes: 'Approved invitation.' }), res);
+    expect(res.statusCode).toBe(500);
+    expect(res.body.error.code).toBe('CONFIGURATION_ERROR');
+    expect(repo.issueInvitation).not.toHaveBeenCalled();
+    expect(provider.sendInvitation).not.toHaveBeenCalled();
+  },
+);
 
 test('fingerprints a trusted bounded address independently of caller-controlled User-Agent', async () => {
   const repo = repository();

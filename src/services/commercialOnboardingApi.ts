@@ -83,7 +83,7 @@ export function decideCommercialApplication(input: { applicationId: string; expe
   return request<Record<string, unknown>>(action, 'POST', { applicationId: input.applicationId, expectedVersion: input.expectedVersion, notes: input.notes });
 }
 
-export function issueCommercialInvitation(input: { applicationId: string; expectedVersion: number; notes: string; expiresAt?: string; resend?: boolean }) {
+export function issueCommercialInvitation(input: { applicationId: string; expectedVersion: number; notes: string; resend?: boolean }) {
   return request<{ delivered: true; invitation_id: string; status: 'SENT'; row_version: number; sent_at: string }>(input.resend ? 'resend' : 'issue', 'POST', input);
 }
 

@@ -27,12 +27,84 @@ create index commercial_onboarding_application_requests_fingerprint_window_idx
 create index commercial_onboarding_application_requests_email_window_idx
   on public.commercial_onboarding_application_requests(normalized_email_hash,created_at desc);
 
+-- Invitations created by the earlier browser-handoff implementation cannot be
+-- trusted: the bearer token may already have been exposed outside the server.
+-- Quarantine them before this migration makes provider delivery authoritative.
+-- SHARE ROW EXCLUSIVE conflicts with the ROW EXCLUSIVE lock taken by INSERT.
+-- The required protocol column is the durable fence: legacy issuers omit it, so
+-- calls waiting on this lock (and old instances still running after deploy) fail.
+lock table public.commercial_onboarding_invitations in share row exclusive mode;
+
+alter table public.commercial_onboarding_invitations
+  add column delivery_protocol_version integer;
+update public.commercial_onboarding_invitations set delivery_protocol_version=1;
+alter table public.commercial_onboarding_invitations
+  alter column delivery_protocol_version set not null,
+  add constraint commercial_onboarding_invitation_delivery_protocol_check
+    check (delivery_protocol_version in (1,2));
+
+do $$
+declare
+  v_invitation public.commercial_onboarding_invitations%rowtype;
+  v_from_status text;
+  v_actor_auth_user_id uuid;
+begin
+  for v_invitation in
+    select * from public.commercial_onboarding_invitations
+    where status in ('PENDING','SENT')
+    order by created_at,id
+    for update
+  loop
+    v_from_status:=v_invitation.status;
+    select auth_user_id into v_actor_auth_user_id
+    from public.platform_users where id=v_invitation.issued_by_platform_user_id;
+
+    update public.commercial_onboarding_invitations set
+      status='REVOKED',revoked_at=now(),
+      revoked_by_platform_user_id=v_invitation.issued_by_platform_user_id,
+      revocation_reason='LEGACY_UNVERIFIED_DELIVERY'
+    where id=v_invitation.id returning * into v_invitation;
+
+    insert into public.commercial_onboarding_invitation_events(
+      invitation_id,application_id,event_type,from_status,to_status,
+      actor_platform_user_id,event_payload
+    ) values (
+      v_invitation.id,v_invitation.application_id,'LEGACY_UNVERIFIED_DELIVERY',
+      v_from_status,'REVOKED',v_invitation.issued_by_platform_user_id,
+      jsonb_build_object('reason','LEGACY_UNVERIFIED_DELIVERY',
+        'quarantinedAt',v_invitation.revoked_at)
+    );
+    insert into public.platform_audit_events(
+      actor_auth_user_id,event_type,entity_type,entity_id,event_payload
+    ) values (
+      v_actor_auth_user_id,'commercial_onboarding.legacy_unverified_delivery',
+      'commercial_onboarding_invitation',v_invitation.id,
+      jsonb_build_object('fromStatus',v_from_status,'toStatus','REVOKED',
+        'reason','LEGACY_UNVERIFIED_DELIVERY')
+    );
+    insert into public.platform_transactional_outbox(
+      topic,aggregate_type,aggregate_id,payload
+    ) values (
+      'commercial_onboarding.invitation.legacy_unverified_delivery',
+      'commercial_onboarding_invitation',v_invitation.id,
+      jsonb_build_object('invitationId',v_invitation.id,'fromStatus',v_from_status,
+        'status','REVOKED','reason','LEGACY_UNVERIFIED_DELIVERY')
+    );
+  end loop;
+end;
+$$;
+
 alter table public.commercial_onboarding_invitations
   add column delivery_status text not null default 'PREPARED'
     check (delivery_status in ('PREPARED','SENT','FAILED')),
   add column delivery_provider text,
   add column delivery_reference text,
   add column delivery_attempted_at timestamptz;
+
+update public.commercial_onboarding_invitations set
+  delivery_status='FAILED',delivery_provider='LEGACY_UNVERIFIED',
+  delivery_attempted_at=revoked_at
+where status='REVOKED' and revocation_reason='LEGACY_UNVERIFIED_DELIVERY';
 
 alter table public.commercial_onboarding_application_location_evidence enable row level security;
 alter table public.commercial_onboarding_application_location_evidence force row level security;
@@ -250,11 +322,12 @@ begin
   insert into public.commercial_onboarding_invitations(
     application_id,token_hash,intended_administrator_email,
     approved_organisation_snapshot,approved_base_snapshot,status,
-    issued_by_platform_user_id,issuance_notes,expires_at,sent_at,delivery_status
+    issued_by_platform_user_id,issuance_notes,expires_at,sent_at,
+    delivery_protocol_version,delivery_status
   ) values (
     v_application.id,v_token_hash,v_application.intended_administrator_email,
     v_application.approved_organisation_snapshot,v_application.approved_base_snapshot,
-    'PENDING',p_platform_user_id,nullif(btrim(p_notes),''),p_expires_at,null,'PREPARED'
+    'PENDING',p_platform_user_id,nullif(btrim(p_notes),''),p_expires_at,null,2,'PREPARED'
   ) returning * into v_invitation;
 
   insert into public.commercial_onboarding_invitation_events(

@@ -44,7 +44,7 @@ function InvitationEvidence({ invitation, onRevoke }: { invitation: CommercialIn
     </Stack>
     <Grid container spacing={2} sx={{ mt: 0.5 }}>
       <Grid size={{ xs: 12, sm: 4 }}><EvidenceLabel label={invitation.status === 'PENDING' ? 'Prepared' : 'Sent'}>{formatTime(invitation.status === 'PENDING' ? invitation.createdAt : invitation.sentAt)}</EvidenceLabel></Grid>
-      <Grid size={{ xs: 12, sm: 4 }}><EvidenceLabel label="Expires">{formatTime(invitation.expiresAt)}</EvidenceLabel></Grid>
+      <Grid size={{ xs: 12, sm: 4 }}><EvidenceLabel label="Auth link expires">{formatTime(invitation.expiresAt)}</EvidenceLabel></Grid>
       <Grid size={{ xs: 12, sm: 4 }}><EvidenceLabel label="Accepted">{formatTime(invitation.acceptedAt)}</EvidenceLabel></Grid>
     </Grid>
     {invitation.issuanceNotes && <Typography variant="body2" sx={{ mt: 1.5 }}>{invitation.issuanceNotes}</Typography>}
@@ -217,7 +217,7 @@ export default function CommercialOnboardingReview({ permissions }: { permission
           {confirmation?.kind === 'approve' ? 'Approval records an authoritative decision. It does not create or send an invitation.'
             : confirmation?.kind === 'decline' ? 'Declining closes this application without creating an organisation or invitation.'
             : confirmation?.kind === 'revoke' ? 'Revocation immediately prevents this invitation from being accepted.'
-            : 'Supabase Auth sends the invitation. It is recorded as sent only after provider confirmation.'}
+            : 'Supabase Auth sends the link. The Supabase Auth link and onboarding invitation expire together at the authoritative recorded time. Resend creates a new link after expiry.'}
         </DialogContentText>
         {confirmation && <Typography variant="body2" sx={{ mb: 2 }}>
           {confirmation.kind === 'revoke' && confirmation.invitation

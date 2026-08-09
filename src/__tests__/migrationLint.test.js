@@ -37,6 +37,13 @@ test('uses only deterministic repository-controlled migration definitions', () =
   expect(forwardSql).not.toContain('execute replace(v_definition');
   expect(forwardSql).toContain('ftf_submit_commercial_application_guarded');
   expect(forwardSql).toContain('ftf_mark_commercial_invitation_delivery');
+    expect(forwardSql).toContain('LEGACY_UNVERIFIED_DELIVERY');
+    expect(forwardSql).toMatch(
+      /lock table (?:public\.)?commercial_onboarding_invitations in share row exclusive mode;[\s\S]*for update/i,
+    );
+    expect(forwardSql).toMatch(/add column delivery_protocol_version integer/i);
+    expect(forwardSql).toMatch(/alter column delivery_protocol_version set not null/i);
+    expect(forwardSql).toMatch(/delivery_protocol_version[\s\S]*'PENDING'/i);
 });
 
 if (runPgliteInThisProcess) {

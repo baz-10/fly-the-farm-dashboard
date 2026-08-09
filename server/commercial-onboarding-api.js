@@ -120,12 +120,10 @@ class CommercialOnboardingRepository {
 }
 
 class SupabaseInvitationDelivery {
-  async sendInvitation(email, redirectUrl, options = {}) {
-    const resend = options.resend === true;
-    const endpoint = resend ? 'auth/v1/otp' : 'auth/v1/invite';
-    const body = resend ? { email, create_user: true } : { email };
-    const result = await supabaseRequest(`${endpoint}?redirect_to=${encodeURIComponent(redirectUrl)}`, {
-      method: 'POST', body: JSON.stringify(body), publicMessage: 'Invitation delivery failed.',
+  async sendInvitation(email, redirectUrl) {
+    const result = await supabaseRequest(`auth/v1/otp?redirect_to=${encodeURIComponent(redirectUrl)}`, {
+      method: 'POST', body: JSON.stringify({ email, create_user: true }),
+      publicMessage: 'Invitation delivery failed.',
     });
     return { providerReference: result?.id || null };
   }
@@ -168,6 +166,14 @@ function invitationOrigin(configuredOrigin) {
   } catch {
     throw apiError(500, 'CONFIGURATION_ERROR', 'Commercial onboarding request failed.');
   }
+}
+
+function authLinkTtlSeconds(configuredTtl) {
+  const value = String(configuredTtl ?? '').trim();
+  if (!/^\d+$/.test(value)) throw apiError(500, 'CONFIGURATION_ERROR', 'Commercial onboarding request failed.');
+  const seconds = Number(value);
+  if (!Number.isSafeInteger(seconds) || seconds < 300 || seconds > 86400) throw apiError(500, 'CONFIGURATION_ERROR', 'Commercial onboarding request failed.');
+  return seconds;
 }
 
 function parseBody(req) {
@@ -290,6 +296,7 @@ function createCommercialOnboardingHandler(dependencies = {}) {
   const fingerprintSecret = dependencies.fingerprintSecret || process.env.COMMERCIAL_ONBOARDING_FINGERPRINT_SECRET;
   const trustedProxyHeader = dependencies.trustedProxyHeader || process.env.COMMERCIAL_ONBOARDING_TRUSTED_IP_HEADER;
   const appOrigin = dependencies.appOrigin || process.env.COMMERCIAL_ONBOARDING_APP_ORIGIN;
+  const configuredAuthLinkTtl = dependencies.authLinkTtlSeconds ?? process.env.COMMERCIAL_ONBOARDING_AUTH_LINK_TTL_SECONDS;
   return async function commercialOnboardingHandler(req, res) {
     const requestCorrelationId = correlationId(req);
     req.correlationId = requestCorrelationId;
@@ -326,14 +333,15 @@ function createCommercialOnboardingHandler(dependencies = {}) {
       if (action === 'issue' || action === 'resend') {
         requirePermission(context, INVITATION_ISSUE);
         const redirectOrigin = invitationOrigin(appOrigin);
+        const ttlSeconds = authLinkTtlSeconds(configuredAuthLinkTtl);
+        const issuedAt = now();
         const token = randomToken();
-        const requestedExpiry = body.expiresAt ? new Date(body.expiresAt) : new Date(now().getTime() + 7 * 24 * 60 * 60 * 1000);
-        if (!Number.isFinite(requestedExpiry.getTime()) || requestedExpiry.getTime() <= now().getTime() || requestedExpiry.getTime() > now().getTime() + 31 * 24 * 60 * 60 * 1000) throw apiError(400, 'ACTION_INVALID', 'Invitation expiry is invalid.');
-        const prepared = checkDomainResult(await repository.issueInvitation(requiredText(body, 'applicationId', 1, 100), context.platformUser.id, requiredVersion(body.expectedVersion), token, requiredText(body, 'notes', 3, 4000), requestedExpiry.toISOString()));
+        const expiresAt = new Date(issuedAt.getTime() + ttlSeconds * 1000).toISOString();
+        const prepared = checkDomainResult(await repository.issueInvitation(requiredText(body, 'applicationId', 1, 100), context.platformUser.id, requiredVersion(body.expectedVersion), token, requiredText(body, 'notes', 3, 4000), expiresAt));
         if (!prepared?.issued || prepared.status !== 'PENDING' || !prepared.intended_administrator_email) throw apiError(500, 'INVITATION_PREPARATION_FAILED', 'Commercial onboarding request failed.');
         try {
           const redirectUrl = `${redirectOrigin}/onboarding/accept?token=${encodeURIComponent(token)}`;
-          const provider = await invitationDelivery.sendInvitation(prepared.intended_administrator_email, redirectUrl, { resend: action === 'resend' });
+          const provider = await invitationDelivery.sendInvitation(prepared.intended_administrator_email, redirectUrl);
           const delivered = checkDomainResult(await repository.markInvitationDelivery(prepared.invitation_id, context.platformUser.id, prepared.row_version, 'SENT', provider?.providerReference || null, 'Supabase Auth invitation delivered.'));
           if (!delivered?.delivered || delivered.status !== 'SENT') throw apiError(502, 'INVITATION_DELIVERY_FAILED', 'Invitation could not be delivered.');
           return res.status(201).json({ data: delivered, meta: { correlationId: requestCorrelationId } });

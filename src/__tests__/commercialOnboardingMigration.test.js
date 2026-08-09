@@ -35,6 +35,8 @@ jest.setTimeout(120000);
 
 const platformAuthUserId = '90000000-0000-4000-8000-000000000001';
 const platformUserId = '90000000-0000-4000-8000-000000000002';
+const legacyPendingInvitationId = '90000000-0000-4000-8000-000000000011';
+const legacySentInvitationId = '90000000-0000-4000-8000-000000000012';
 let db;
 
 const validApplication = (email, suffix) => ({
@@ -151,6 +153,7 @@ test('defines forward-only durable intake and provider delivery transitions', ()
   expect(forwardSql).toContain('ftf_submit_commercial_application_guarded');
   expect(forwardSql).toContain('ftf_mark_commercial_invitation_delivery');
   expect(forwardSql).toContain('INVITATION_DELIVERY_FAILED');
+  expect(forwardSql).toContain('LEGACY_UNVERIFIED_DELIVERY');
   expect(forwardSql).toContain('location_confirmed_at');
   expect(forwardSql).not.toMatch(/ip_address|raw_ip/i);
 });
@@ -183,17 +186,43 @@ beforeAll(async () => {
     forwardMigrationName,
   ];
   for (const migrationName of migrationNames) {
+    if (migrationName === forwardMigrationName) {
+      await db.exec(`
+        insert into auth.users(id,email)
+        values('${platformAuthUserId}','platform-reviewer@example.com');
+        insert into public.platform_users(id,auth_user_id,email,display_name)
+        values('${platformUserId}','${platformAuthUserId}','platform-reviewer@example.com','Platform Reviewer');
+        insert into public.platform_user_roles(platform_user_id,role_id)
+        select '${platformUserId}',id from public.platform_roles where code='PLATFORM_SUPER_ADMIN';
+
+        insert into public.commercial_onboarding_applications(
+          id,application_reference,business_name,intended_administrator_name,
+          intended_administrator_email,intended_administrator_phone,submitted_payload,
+          consent_version,status,approved_organisation_snapshot,approved_base_snapshot,
+          reviewed_by_platform_user_id,reviewed_at
+        ) values
+        ('90000000-0000-4000-8000-000000000021','SC-APP-LEGACY01','Legacy Pending Air','Legacy Admin',
+          'legacy-pending@example.com','0700000000','{}','legacy','APPROVED','{"name":"Legacy Pending Air"}',
+          '{"name":"Legacy Base"}','${platformUserId}',now()),
+        ('90000000-0000-4000-8000-000000000022','SC-APP-LEGACY02','Legacy Sent Air','Legacy Admin',
+          'legacy-sent@example.com','0700000001','{}','legacy','APPROVED','{"name":"Legacy Sent Air"}',
+          '{"name":"Legacy Base"}','${platformUserId}',now());
+
+        insert into public.commercial_onboarding_invitations(
+          id,application_id,token_hash,intended_administrator_email,
+          approved_organisation_snapshot,approved_base_snapshot,status,
+          issued_by_platform_user_id,expires_at,sent_at
+        ) values
+        ('${legacyPendingInvitationId}','90000000-0000-4000-8000-000000000021',repeat('a',64),
+          'legacy-pending@example.com','{"name":"Legacy Pending Air"}','{"name":"Legacy Base"}',
+          'PENDING','${platformUserId}','2099-01-01',null),
+        ('${legacySentInvitationId}','90000000-0000-4000-8000-000000000022',repeat('b',64),
+          'legacy-sent@example.com','{"name":"Legacy Sent Air"}','{"name":"Legacy Base"}',
+          'SENT','${platformUserId}','2099-01-01',now());
+      `);
+    }
     await db.exec(fs.readFileSync(path.join(migrationDirectory, migrationName), 'utf8'));
   }
-
-  await db.exec(`
-    insert into auth.users(id,email)
-    values('${platformAuthUserId}','platform-reviewer@example.com');
-    insert into public.platform_users(id,auth_user_id,email,display_name)
-    values('${platformUserId}','${platformAuthUserId}','platform-reviewer@example.com','Platform Reviewer');
-    insert into public.platform_user_roles(platform_user_id,role_id)
-    select '${platformUserId}',id from public.platform_roles where code='PLATFORM_SUPER_ADMIN';
-  `);
 });
 
 afterAll(async () => {
@@ -243,6 +272,29 @@ test('adds only the four repository-controlled onboarding permissions', async ()
     'platform.onboarding.invitation.issue',
     'platform.onboarding.invitation.revoke',
   ]);
+});
+
+test('quarantines every legacy active invitation before provider delivery is authoritative', async () => {
+  const result = await db.query(`
+    select i.id,i.status,i.delivery_protocol_version,i.delivery_status,i.delivery_provider,i.revocation_reason,
+      (select count(*)::integer from public.commercial_onboarding_invitation_events e
+        where e.invitation_id=i.id and e.event_type='LEGACY_UNVERIFIED_DELIVERY') as events,
+      (select count(*)::integer from public.platform_audit_events a
+        where a.entity_id=i.id and a.event_type='commercial_onboarding.legacy_unverified_delivery') as audits,
+      (select count(*)::integer from public.platform_transactional_outbox o
+        where o.aggregate_id=i.id and o.topic='commercial_onboarding.invitation.legacy_unverified_delivery') as outbox
+    from public.commercial_onboarding_invitations i
+    where i.id in ($1,$2)
+    order by i.id
+  `, [legacyPendingInvitationId, legacySentInvitationId]);
+  expect(result.rows).toHaveLength(2);
+  for (const row of result.rows) {
+    expect(row).toMatchObject({
+      status: 'REVOKED', delivery_protocol_version: 1,
+      delivery_status: 'FAILED', delivery_provider: 'LEGACY_UNVERIFIED',
+      revocation_reason: 'LEGACY_UNVERIFIED_DELIVERY', events: 1, audits: 1, outbox: 1,
+    });
+  }
 });
 
 test('keeps submission, approval, invitation preparation, and provider delivery as separate transitions', async () => {
@@ -301,13 +353,14 @@ test('keeps submission, approval, invitation preparation, and provider delivery 
   expect(delivered).toMatchObject({ delivered: true, status: 'SENT', row_version: 2 });
 
   const stored = await db.query(`
-    select token_hash, intended_administrator_email,delivery_status,delivery_provider,
+    select token_hash, intended_administrator_email,delivery_protocol_version,delivery_status,delivery_provider,
       approved_organisation_snapshot, approved_base_snapshot
     from public.commercial_onboarding_invitations where id=$1
   `, [invitation.invitation_id]);
   expect(stored.rows[0]).toMatchObject({
     token_hash: crypto.createHash('sha256').update(rawToken).digest('hex'),
     intended_administrator_email: 'first-admin@example.com',
+    delivery_protocol_version: 2,
     delivery_status: 'SENT',
     delivery_provider: 'SUPABASE_AUTH',
   });
