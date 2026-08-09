@@ -24,8 +24,14 @@ async function rpc(name, body) {
 }
 
 class CommercialOnboardingRepository {
-  submitApplication(application) {
-    return rpc('ftf_submit_commercial_application', { p_application: application });
+  constructor(options = {}) {
+    this.pageSize = Math.max(1, Math.min(Number(options.pageSize) || 25, 100));
+  }
+
+  submitApplication(application, requestFingerprint) {
+    return rpc('ftf_submit_commercial_application_guarded', {
+      p_application: application, p_request_fingerprint: requestFingerprint,
+    });
   }
 
   reviewApplication(applicationId, platformUserId, expectedVersion, decision, notes) {
@@ -43,6 +49,14 @@ class CommercialOnboardingRepository {
     });
   }
 
+  markInvitationDelivery(invitationId, platformUserId, expectedVersion, outcome, providerReference, notes) {
+    return rpc('ftf_mark_commercial_invitation_delivery', {
+      p_invitation_id: invitationId, p_platform_user_id: platformUserId,
+      p_expected_version: expectedVersion, p_outcome: outcome,
+      p_provider_reference: providerReference, p_notes: notes,
+    });
+  }
+
   revokeInvitation(invitationId, platformUserId, expectedVersion, reason) {
     return rpc('ftf_revoke_commercial_invitation', {
       p_invitation_id: invitationId, p_platform_user_id: platformUserId,
@@ -50,17 +64,28 @@ class CommercialOnboardingRepository {
     });
   }
 
-  async listApplications() {
+  async listApplications(cursor) {
     const applicationSelect = 'id,application_reference,business_name,intended_administrator_name,intended_administrator_email,intended_administrator_phone,submitted_payload,consent_version,application_notes,status,row_version,submitted_at,updated_at,reviewed_by_platform_user_id,reviewed_at,decision_notes';
     const eventSelect = 'id,application_id,event_type,from_status,to_status,actor_platform_user_id,event_payload,created_at';
-    const invitationSelect = 'id,application_id,status,issued_by_platform_user_id,issuance_notes,expires_at,sent_at,revoked_at,revoked_by_platform_user_id,revocation_reason,accepted_at,resulting_organisation_id,resulting_organisation_reference,row_version,created_at,updated_at';
+    const locationSelect = 'application_id,location_confirmed_at,address_source,latitude,longitude';
+    const invitationSelect = 'id,application_id,status,delivery_status,delivery_provider,issued_by_platform_user_id,issuance_notes,expires_at,sent_at,revoked_at,revoked_by_platform_user_id,revocation_reason,accepted_at,resulting_organisation_id,resulting_organisation_reference,row_version,created_at,updated_at';
     const invitationEventSelect = 'id,invitation_id,application_id,event_type,from_status,to_status,actor_platform_user_id,event_payload,created_at';
-    const applications = await supabaseRequest(`rest/v1/commercial_onboarding_applications?select=${encodeURIComponent(applicationSelect)}&order=submitted_at.desc&limit=100`, { publicMessage: 'Applications could not be loaded.' });
-    if (!applications?.length) return [];
+    const query = new URLSearchParams({ select: applicationSelect, order: 'submitted_at.desc,id.desc', limit: String(this.pageSize + 1) });
+    if (cursor) {
+      let decoded;
+      try { decoded = JSON.parse(Buffer.from(String(cursor), 'base64url').toString('utf8')); } catch { throw apiError(400, 'CURSOR_INVALID', 'The applications cursor is invalid.'); }
+      if (!decoded || !Number.isFinite(Date.parse(decoded.submittedAt)) || !/^[A-Za-z0-9-]{1,100}$/.test(decoded.id || '')) throw apiError(400, 'CURSOR_INVALID', 'The applications cursor is invalid.');
+      query.set('or', `(submitted_at.lt.${decoded.submittedAt},and(submitted_at.eq.${decoded.submittedAt},id.lt.${decoded.id}))`);
+    }
+    const applicationRows = await supabaseRequest(`rest/v1/commercial_onboarding_applications?${query.toString()}`, { publicMessage: 'Applications could not be loaded.' });
+    const hasMore = (applicationRows || []).length > this.pageSize;
+    const applications = (applicationRows || []).slice(0, this.pageSize);
+    if (!applications.length) return { items: [], nextCursor: null };
     const applicationFilter = applications.map((application) => encodeURIComponent(application.id)).join(',');
-    const [events, invitations] = await Promise.all([
+    const [events, invitations, locations] = await Promise.all([
       supabaseRequest(`rest/v1/commercial_onboarding_application_events?application_id=in.(${applicationFilter})&select=${encodeURIComponent(eventSelect)}&order=created_at.asc`, { publicMessage: 'Application history could not be loaded.' }),
       supabaseRequest(`rest/v1/commercial_onboarding_invitations?application_id=in.(${applicationFilter})&select=${encodeURIComponent(invitationSelect)}&order=created_at.desc`, { publicMessage: 'Invitation evidence could not be loaded.' }),
+      supabaseRequest(`rest/v1/commercial_onboarding_application_location_evidence?application_id=in.(${applicationFilter})&select=${encodeURIComponent(locationSelect)}`, { publicMessage: 'Base confirmation evidence could not be loaded.' }),
     ]);
     const invitationFilter = (invitations || []).map((invitation) => encodeURIComponent(invitation.id)).join(',');
     const invitationEvents = invitationFilter ? await supabaseRequest(`rest/v1/commercial_onboarding_invitation_events?invitation_id=in.(${invitationFilter})&select=${encodeURIComponent(invitationEventSelect)}&order=created_at.asc`, { publicMessage: 'Invitation history could not be loaded.' }) : [];
@@ -74,8 +99,9 @@ class CommercialOnboardingRepository {
     const actorFilter = [...actorIds].map((id) => encodeURIComponent(id)).join(',');
     const actors = actorFilter ? await supabaseRequest(`rest/v1/platform_users?id=in.(${actorFilter})&select=id,display_name`, { publicMessage: 'Platform actor evidence could not be loaded.' }) : [];
     const actorNames = new Map((actors || []).map((actor) => [actor.id, actor.display_name]));
-    return (applications || []).map((application) => ({
+    const items = applications.map((application) => ({
       ...application,
+      location_evidence: (locations || []).find((location) => location.application_id === application.id) || null,
       reviewer: application.reviewed_by_platform_user_id ? { id: application.reviewed_by_platform_user_id, display_name: actorNames.get(application.reviewed_by_platform_user_id) || 'Platform user' } : null,
       application_events: (events || []).filter((event) => event.application_id === application.id).map((event) => ({ ...event, actor: event.actor_platform_user_id ? { id: event.actor_platform_user_id, display_name: actorNames.get(event.actor_platform_user_id) || 'Platform user' } : null })),
       invitations: (invitations || []).filter((invitation) => invitation.application_id === application.id).map((invitation) => ({
@@ -85,6 +111,23 @@ class CommercialOnboardingRepository {
         invitation_events: (invitationEvents || []).filter((event) => event.invitation_id === invitation.id).map((event) => ({ ...event, actor: event.actor_platform_user_id ? { id: event.actor_platform_user_id, display_name: actorNames.get(event.actor_platform_user_id) || 'Platform user' } : null })),
       })),
     }));
+    const last = applications[applications.length - 1];
+    return {
+      items,
+      nextCursor: hasMore ? Buffer.from(JSON.stringify({ submittedAt: last.submitted_at, id: last.id })).toString('base64url') : null,
+    };
+  }
+}
+
+class SupabaseInvitationDelivery {
+  async sendInvitation(email, redirectUrl, options = {}) {
+    const resend = options.resend === true;
+    const endpoint = resend ? 'auth/v1/otp' : 'auth/v1/invite';
+    const body = resend ? { email, create_user: true } : { email };
+    const result = await supabaseRequest(`${endpoint}?redirect_to=${encodeURIComponent(redirectUrl)}`, {
+      method: 'POST', body: JSON.stringify(body), publicMessage: 'Invitation delivery failed.',
+    });
+    return { providerReference: result?.id || null };
   }
 }
 
@@ -103,6 +146,28 @@ function enforceSameOrigin(req) {
   let trustedOrigin;
   try { trustedOrigin = new URL(`${protocol}://${host}`).origin; } catch { throw apiError(403, 'CROSS_ORIGIN_REQUEST', 'Request origin is not allowed.'); }
   if (origin !== trustedOrigin) throw apiError(403, 'CROSS_ORIGIN_REQUEST', 'Request origin is not allowed.');
+  return trustedOrigin;
+}
+
+function requestFingerprint(req, secret, trustedProxyHeader) {
+  if (typeof secret !== 'string' || secret.length < 32) throw apiError(500, 'CONFIGURATION_ERROR', 'Commercial onboarding request failed.');
+  const allowedProxyHeaders = new Set(['x-forwarded-for', 'x-real-ip', 'x-vercel-forwarded-for']);
+  const proxyHeader = String(trustedProxyHeader || '').toLowerCase();
+  if (proxyHeader && !allowedProxyHeaders.has(proxyHeader)) throw apiError(500, 'CONFIGURATION_ERROR', 'Commercial onboarding request failed.');
+  const forwarded = proxyHeader ? String(req.headers?.[proxyHeader] || '').split(',')[0].trim().slice(0, 128) : '';
+  const remote = String(req.socket?.remoteAddress || '').trim().slice(0, 128);
+  const address = forwarded || remote || 'unavailable';
+  return crypto.createHmac('sha256', secret).update(address).digest('hex');
+}
+
+function invitationOrigin(configuredOrigin) {
+  try {
+    const origin = new URL(String(configuredOrigin || '')).origin;
+    if (!/^https:\/\//.test(origin) && !/^http:\/\/(localhost|127\.0\.0\.1)(:|$)/.test(origin)) throw new Error('secure origin required');
+    return origin;
+  } catch {
+    throw apiError(500, 'CONFIGURATION_ERROR', 'Commercial onboarding request failed.');
+  }
 }
 
 function parseBody(req) {
@@ -190,6 +255,7 @@ function safeEvent(event) { return { id: event.id, type: event.event_type, fromS
 function safeInvitation(invitation) {
   return {
     id: invitation.id, status: invitation.status, rowVersion: invitation.row_version,
+    deliveryStatus: invitation.delivery_status || null, deliveryProvider: invitation.delivery_provider || null,
     issuedBy: safeActor(invitation.issuer), issuanceNotes: invitation.issuance_notes || null,
     createdAt: invitation.created_at, sentAt: invitation.sent_at, expiresAt: invitation.expires_at,
     revokedAt: invitation.revoked_at, revokedBy: safeActor(invitation.revoker), revocationReason: invitation.revocation_reason || null,
@@ -200,13 +266,14 @@ function safeInvitation(invitation) {
 }
 function safeApplication(application) {
   const payload = application.submitted_payload || {};
+  const location = application.location_evidence || {};
   return {
     id: application.id, applicationReference: application.application_reference,
     businessName: application.business_name, administrator: {
       name: application.intended_administrator_name, email: application.intended_administrator_email,
       phone: application.intended_administrator_phone,
     },
-    base: payload.base ? { name: payload.base.name, address: payload.base.address, latitude: payload.base.latitude, longitude: payload.base.longitude, timezone: payload.base.timezone, addressSource: payload.base.addressSource } : null,
+    base: payload.base ? { name: payload.base.name, address: payload.base.address, latitude: payload.base.latitude, longitude: payload.base.longitude, timezone: payload.base.timezone, addressSource: location.address_source || payload.base.addressSource, locationConfirmedAt: location.location_confirmed_at || null } : null,
     consentVersion: application.consent_version, applicationNotes: application.application_notes || null,
     status: application.status, rowVersion: application.row_version, submittedAt: application.submitted_at, updatedAt: application.updated_at,
     reviewedAt: application.reviewed_at, reviewedBy: safeActor(application.reviewer), decisionNotes: application.decision_notes || null,
@@ -216,9 +283,13 @@ function safeApplication(application) {
 
 function createCommercialOnboardingHandler(dependencies = {}) {
   const repository = dependencies.repository || new CommercialOnboardingRepository();
+  const invitationDelivery = dependencies.invitationDelivery || new SupabaseInvitationDelivery();
   const getPlatformContext = dependencies.resolvePlatformContext || resolvePlatformRequestContext;
   const randomToken = dependencies.randomToken || (() => crypto.randomBytes(32).toString('base64url'));
   const now = dependencies.now || (() => new Date());
+  const fingerprintSecret = dependencies.fingerprintSecret || process.env.COMMERCIAL_ONBOARDING_FINGERPRINT_SECRET;
+  const trustedProxyHeader = dependencies.trustedProxyHeader || process.env.COMMERCIAL_ONBOARDING_TRUSTED_IP_HEADER;
+  const appOrigin = dependencies.appOrigin || process.env.COMMERCIAL_ONBOARDING_APP_ORIGIN;
   return async function commercialOnboardingHandler(req, res) {
     const requestCorrelationId = correlationId(req);
     req.correlationId = requestCorrelationId;
@@ -231,13 +302,16 @@ function createCommercialOnboardingHandler(dependencies = {}) {
         if (action !== 'list') throw apiError(400, 'UNSUPPORTED_ACTION', 'Unsupported commercial onboarding action.');
         const context = await getPlatformContext(req, res);
         requirePermission(context, APPLICATION_READ);
-        return res.status(200).json({ data: (await repository.listApplications()).map(safeApplication), meta: { correlationId: requestCorrelationId } });
+        const page = await repository.listApplications(req.query?.cursor);
+        return res.status(200).json({ data: page.items.map(safeApplication), meta: { correlationId: requestCorrelationId, nextCursor: page.nextCursor } });
       }
       if (req.method !== 'POST') throw apiError(405, 'METHOD_NOT_ALLOWED', 'Method not allowed.');
       enforceSameOrigin(req);
       const body = parseBody(req);
       if (action === 'apply') {
-        const result = checkDomainResult(await repository.submitApplication(normalizeApplication(body)));
+        const result = await repository.submitApplication(normalizeApplication(body), requestFingerprint(req, fingerprintSecret, trustedProxyHeader));
+        if (String(result?.code || '').toUpperCase() === 'APPLICATION_RATE_LIMITED') throw apiError(429, 'APPLICATION_UNAVAILABLE', 'Application could not be accepted at this time.');
+        checkDomainResult(result);
         if (!result?.submitted) throw apiError(400, 'APPLICATION_INVALID', 'Check the application details and try again.');
         return res.status(201).json({ data: { submitted: true, applicationReference: result.application_reference }, meta: { correlationId: requestCorrelationId } });
       }
@@ -251,11 +325,27 @@ function createCommercialOnboardingHandler(dependencies = {}) {
       }
       if (action === 'issue' || action === 'resend') {
         requirePermission(context, INVITATION_ISSUE);
+        const redirectOrigin = invitationOrigin(appOrigin);
         const token = randomToken();
         const requestedExpiry = body.expiresAt ? new Date(body.expiresAt) : new Date(now().getTime() + 7 * 24 * 60 * 60 * 1000);
         if (!Number.isFinite(requestedExpiry.getTime()) || requestedExpiry.getTime() <= now().getTime() || requestedExpiry.getTime() > now().getTime() + 31 * 24 * 60 * 60 * 1000) throw apiError(400, 'ACTION_INVALID', 'Invitation expiry is invalid.');
-        const result = checkDomainResult(await repository.issueInvitation(requiredText(body, 'applicationId', 1, 100), context.platformUser.id, requiredVersion(body.expectedVersion), token, requiredText(body, 'notes', 3, 4000), requestedExpiry.toISOString()));
-        return res.status(201).json({ data: { ...result, invitationPath: `/onboarding/accept?token=${encodeURIComponent(token)}` }, meta: { correlationId: requestCorrelationId } });
+        const prepared = checkDomainResult(await repository.issueInvitation(requiredText(body, 'applicationId', 1, 100), context.platformUser.id, requiredVersion(body.expectedVersion), token, requiredText(body, 'notes', 3, 4000), requestedExpiry.toISOString()));
+        if (!prepared?.issued || prepared.status !== 'PENDING' || !prepared.intended_administrator_email) throw apiError(500, 'INVITATION_PREPARATION_FAILED', 'Commercial onboarding request failed.');
+        try {
+          const redirectUrl = `${redirectOrigin}/onboarding/accept?token=${encodeURIComponent(token)}`;
+          const provider = await invitationDelivery.sendInvitation(prepared.intended_administrator_email, redirectUrl, { resend: action === 'resend' });
+          const delivered = checkDomainResult(await repository.markInvitationDelivery(prepared.invitation_id, context.platformUser.id, prepared.row_version, 'SENT', provider?.providerReference || null, 'Supabase Auth invitation delivered.'));
+          if (!delivered?.delivered || delivered.status !== 'SENT') throw apiError(502, 'INVITATION_DELIVERY_FAILED', 'Invitation could not be delivered.');
+          return res.status(201).json({ data: delivered, meta: { correlationId: requestCorrelationId } });
+        } catch (deliveryError) {
+          try {
+            const failed = checkDomainResult(await repository.markInvitationDelivery(prepared.invitation_id, context.platformUser.id, prepared.row_version, 'FAILED', null, 'Supabase Auth invitation delivery failed.'));
+            if (!failed?.failed || failed.status !== 'REVOKED') throw apiError(500, 'INVITATION_DELIVERY_STATE_FAILED', 'Commercial onboarding request failed.');
+          } catch (_) {
+            throw apiError(500, 'INVITATION_DELIVERY_STATE_FAILED', 'Commercial onboarding request failed.');
+          }
+          throw apiError(502, 'INVITATION_DELIVERY_FAILED', 'Invitation could not be delivered.');
+        }
       }
       if (action === 'revoke') {
         requirePermission(context, INVITATION_REVOKE);
@@ -272,4 +362,4 @@ function createCommercialOnboardingHandler(dependencies = {}) {
   };
 }
 
-module.exports = { CommercialOnboardingRepository, createCommercialOnboardingHandler };
+module.exports = { CommercialOnboardingRepository, SupabaseInvitationDelivery, createCommercialOnboardingHandler };

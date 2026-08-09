@@ -14,6 +14,9 @@ const migrationPath = path.resolve(
   '../../supabase/migrations/20260809100000_commercial_onboarding_lifecycle.sql',
 );
 const sql = fs.readFileSync(migrationPath, 'utf8');
+const forwardMigrationName = '20260809110000_commercial_onboarding_delivery_and_abuse.sql';
+const forwardMigrationPath = path.resolve(__dirname, `../../supabase/migrations/${forwardMigrationName}`);
+const forwardSql = fs.existsSync(forwardMigrationPath) ? fs.readFileSync(forwardMigrationPath, 'utf8') : '';
 
 const runPgliteInThisProcess = process.env.COMMERCIAL_ONBOARDING_PGLITE_CHILD === '1';
 const pureNodeTests = [];
@@ -46,6 +49,7 @@ const validApplication = (email, suffix) => ({
     longitude: 148.162,
     timezone: 'Australia/Brisbane',
     addressSource: 'ADDRESS_SEARCH',
+    locationConfirmedAt: '2026-08-09T00:00:00.000Z',
   },
   consentVersion: '2026-08-09',
   notes: 'Commercial aerial application business.',
@@ -55,6 +59,15 @@ async function submitApplication(email, suffix) {
   const result = await db.query(
     'select public.ftf_submit_commercial_application($1::jsonb) as result',
     [JSON.stringify(validApplication(email, suffix))],
+  );
+  return result.rows[0].result;
+}
+
+async function submitGuardedApplication(email, suffix, fingerprintSeed = suffix) {
+  const fingerprint = crypto.createHash('sha256').update(fingerprintSeed).digest('hex');
+  const result = await db.query(
+    'select public.ftf_submit_commercial_application_guarded($1::jsonb,$2::text) as result',
+    [JSON.stringify(validApplication(email, suffix)), fingerprint],
   );
   return result.rows[0].result;
 }
@@ -83,6 +96,16 @@ async function issueInvitation(applicationId, rowVersion, rawToken, expiresAt = 
   return result.rows[0].result;
 }
 
+async function markInvitationDelivery(invitationId, rowVersion, outcome = 'SENT', notes = 'Provider response recorded.') {
+  const result = await db.query(
+    `select public.ftf_mark_commercial_invitation_delivery(
+      $1::uuid, $2::uuid, $3::integer, $4::text, $5::text, $6::text
+    ) as result`,
+    [invitationId, platformUserId, rowVersion, outcome, `provider-${invitationId}`, notes],
+  );
+  return result.rows[0].result;
+}
+
 async function createIssuedInvitation(email, suffix, rawToken) {
   const application = await submitApplication(email, suffix);
   const review = await reviewApplication(
@@ -91,7 +114,8 @@ async function createIssuedInvitation(email, suffix, rawToken) {
     'UNDER_REVIEW',
   );
   const approval = await approveApplication(application.application_id, review.row_version);
-  const invitation = await issueInvitation(application.application_id, approval.row_version, rawToken);
+  const prepared = await issueInvitation(application.application_id, approval.row_version, rawToken);
+  const invitation = await markInvitationDelivery(prepared.invitation_id, prepared.row_version);
   invitation.raw_token = rawToken;
   invitation.token_hash = crypto.createHash('sha256').update(rawToken).digest('hex');
   return { application, review, approval, invitation };
@@ -122,6 +146,15 @@ test('acceptance provisions the existing organisation identity chain without Per
   expect(sql).not.toMatch(/insert\s+into\s+public\.personnel/i);
 });
 
+test('defines forward-only durable intake and provider delivery transitions', () => {
+  expect(forwardSql).toContain('commercial_onboarding_application_requests');
+  expect(forwardSql).toContain('ftf_submit_commercial_application_guarded');
+  expect(forwardSql).toContain('ftf_mark_commercial_invitation_delivery');
+  expect(forwardSql).toContain('INVITATION_DELIVERY_FAILED');
+  expect(forwardSql).toContain('location_confirmed_at');
+  expect(forwardSql).not.toMatch(/ip_address|raw_ip/i);
+});
+
 if (runPgliteInThisProcess) {
 
 beforeAll(async () => {
@@ -147,6 +180,7 @@ beforeAll(async () => {
     '20260804060000_organisation_reference_sequences.sql',
     '20260804160000_platform_identity_assisted_support.sql',
     '20260809100000_commercial_onboarding_lifecycle.sql',
+    forwardMigrationName,
   ];
   for (const migrationName of migrationNames) {
     await db.exec(fs.readFileSync(path.join(migrationDirectory, migrationName), 'utf8'));
@@ -178,12 +212,14 @@ test('creates forced-RLS lifecycle tables with service-role-only read access', a
         'commercial_onboarding_applications',
         'commercial_onboarding_application_events',
         'commercial_onboarding_invitations',
-        'commercial_onboarding_invitation_events'
+        'commercial_onboarding_invitation_events',
+        'commercial_onboarding_application_location_evidence',
+        'commercial_onboarding_application_requests'
       )
     order by c.relname
   `);
 
-  expect(result.rows).toHaveLength(4);
+  expect(result.rows).toHaveLength(6);
   for (const row of result.rows) {
     expect(row).toMatchObject({
       relrowsecurity: true,
@@ -209,7 +245,7 @@ test('adds only the four repository-controlled onboarding permissions', async ()
   ]);
 });
 
-test('keeps submission, approval, and invitation issuance as separate transitions', async () => {
+test('keeps submission, approval, invitation preparation, and provider delivery as separate transitions', async () => {
   const before = await db.query('select count(*)::integer as count from public.organisations');
   const application = await submitApplication('first-admin@example.com', 'First');
   expect(application).toMatchObject({ status: 'SUBMITTED', row_version: 1 });
@@ -253,20 +289,84 @@ test('keeps submission, approval, and invitation issuance as separate transition
     approval.row_version,
     rawToken,
   );
-  expect(invitation).toMatchObject({ status: 'SENT', row_version: 1 });
+  expect(invitation).toMatchObject({ status: 'PENDING', row_version: 1 });
+
+  const pendingAcceptance = await db.query(
+    'select public.ftf_accept_commercial_invitation($1,$2::uuid) as result',
+    [rawToken, platformAuthUserId],
+  );
+  expect(pendingAcceptance.rows[0].result).toMatchObject({ accepted: false, code: 'INVITATION_DELIVERY_PENDING' });
+
+  const delivered = await markInvitationDelivery(invitation.invitation_id, invitation.row_version);
+  expect(delivered).toMatchObject({ delivered: true, status: 'SENT', row_version: 2 });
 
   const stored = await db.query(`
-    select token_hash, intended_administrator_email,
+    select token_hash, intended_administrator_email,delivery_status,delivery_provider,
       approved_organisation_snapshot, approved_base_snapshot
     from public.commercial_onboarding_invitations where id=$1
   `, [invitation.invitation_id]);
   expect(stored.rows[0]).toMatchObject({
     token_hash: crypto.createHash('sha256').update(rawToken).digest('hex'),
     intended_administrator_email: 'first-admin@example.com',
+    delivery_status: 'SENT',
+    delivery_provider: 'SUPABASE_AUTH',
   });
   expect(stored.rows[0].token_hash).not.toContain(rawToken);
   expect(stored.rows[0].approved_organisation_snapshot.name).toBe('Onboarding Air First');
   expect(stored.rows[0].approved_base_snapshot.name).toBe('Primary Base First');
+});
+
+test('persists confirmed Base evidence and durable, non-identifying request boundaries', async () => {
+  const first = await submitGuardedApplication('guarded@example.com', 'Guarded', 'same-client');
+  const retry = await submitGuardedApplication('guarded@example.com', 'Guarded', 'same-client');
+  expect(retry).toMatchObject({ submitted: true, deduplicated: true, application_id: first.application_id });
+
+  const evidence = await db.query(`
+    select l.location_confirmed_at,l.address_source,l.latitude,l.longitude,
+      r.request_fingerprint_hash,r.normalized_email_hash,r.payload_hash
+    from public.commercial_onboarding_application_location_evidence l
+    join public.commercial_onboarding_application_requests r on r.application_id=l.application_id
+    where l.application_id=$1
+  `, [first.application_id]);
+  expect(evidence.rows).toHaveLength(1);
+  expect(evidence.rows[0]).toMatchObject({
+    address_source: 'ADDRESS_SEARCH', latitude: '-23.526', longitude: '148.162',
+    request_fingerprint_hash: expect.stringMatching(/^[0-9a-f]{64}$/),
+    normalized_email_hash: expect.stringMatching(/^[0-9a-f]{64}$/),
+    payload_hash: expect.stringMatching(/^[0-9a-f]{64}$/),
+  });
+  expect(evidence.rows[0].location_confirmed_at).toBeTruthy();
+
+  for (let index = 0; index < 5; index += 1) {
+    const accepted = await submitGuardedApplication(`fingerprint-${index}@example.com`, `Fp${index}`, 'bounded-client');
+    expect(accepted.submitted).toBe(true);
+  }
+  const fingerprintLimited = await submitGuardedApplication('fingerprint-six@example.com', 'FpSix', 'bounded-client');
+  expect(fingerprintLimited).toMatchObject({ submitted: false, code: 'APPLICATION_RATE_LIMITED' });
+
+  for (let index = 0; index < 3; index += 1) {
+    const accepted = await submitGuardedApplication('email-limit@example.com', `Email${index}`, `email-client-${index}`);
+    expect(accepted.submitted).toBe(true);
+  }
+  const emailLimited = await submitGuardedApplication('EMAIL-LIMIT@example.com', 'EmailThree', 'email-client-3');
+  expect(emailLimited).toMatchObject({ submitted: false, code: 'APPLICATION_RATE_LIMITED' });
+});
+
+test('revokes prepared invitations when provider delivery fails and records authoritative evidence', async () => {
+  const application = await submitApplication('delivery-failed@example.com', 'DeliveryFailed');
+  const review = await reviewApplication(application.application_id, application.row_version, 'UNDER_REVIEW');
+  const approval = await approveApplication(application.application_id, review.row_version);
+  const prepared = await issueInvitation(application.application_id, approval.row_version, 'delivery-failed-token-with-enough-entropy-0001');
+  const failed = await markInvitationDelivery(prepared.invitation_id, prepared.row_version, 'FAILED', 'Supabase Auth rejected delivery.');
+  expect(failed).toMatchObject({ failed: true, status: 'REVOKED', row_version: 2 });
+
+  const evidence = await db.query(`
+    select i.status,i.delivery_status,i.revocation_reason,e.event_type
+    from public.commercial_onboarding_invitations i
+    join public.commercial_onboarding_invitation_events e on e.invitation_id=i.id
+    where i.id=$1 and e.event_type='INVITATION_DELIVERY_FAILED'
+  `, [prepared.invitation_id]);
+  expect(evidence.rows[0]).toMatchObject({ status: 'REVOKED', delivery_status: 'FAILED', event_type: 'INVITATION_DELIVERY_FAILED' });
 });
 
 test('enforces optimistic review and revocation transitions', async () => {
@@ -317,11 +417,13 @@ test('rejects expired, revoked, wrong-email, Platform, and conflicting identitie
   `);
   const revokeResult = await db.query(
     `select public.ftf_revoke_commercial_invitation(
-      $1::uuid,$2::uuid,1,'Application withdrawn'
+      $1::uuid,$2::uuid,$3::integer,'Application withdrawn'
     ) as result`,
-    [revoked.invitation.invitation_id, platformUserId],
+    [revoked.invitation.invitation_id, platformUserId, revoked.invitation.row_version],
   );
-  expect(revokeResult.rows[0].result).toMatchObject({ status: 'REVOKED', row_version: 2 });
+  expect(revokeResult.rows[0].result).toMatchObject({
+    status: 'REVOKED', row_version: revoked.invitation.row_version + 1,
+  });
   const revokedAcceptance = await db.query(
     'select public.ftf_accept_commercial_invitation($1,$2::uuid) as result',
     [revoked.invitation.raw_token, '91000000-0000-4000-8000-000000000002'],
@@ -396,7 +498,7 @@ test('normalizes expired pending and sent invitations before issuing replacement
       issued.approval.row_version,
       `${suffix.toLowerCase()}-replacement-token-with-enough-entropy-0002`,
     );
-    expect(replacement).toMatchObject({ issued: true, status: 'SENT' });
+    expect(replacement).toMatchObject({ issued: true, status: 'PENDING' });
 
     const evidence = await db.query(`
       select
@@ -429,11 +531,6 @@ test('provisions one complete organisation identity atomically and is idempotent
     accepted: false,
     code: 'INVITATION_INVALID',
   });
-
-  await db.query(`
-    update public.commercial_onboarding_invitations
-    set status='PENDING' where id=$1
-  `, [issued.invitation.invitation_id]);
 
   const accepted = await db.query(
     'select public.ftf_accept_commercial_invitation($1,$2::uuid) as result',
@@ -496,7 +593,7 @@ test('provisions one complete organisation identity atomically and is idempotent
     from public.commercial_onboarding_invitation_events
     where invitation_id=$1 and event_type='INVITATION_ACCEPTED'
   `, [issued.invitation.invitation_id]);
-  expect(acceptedEvent.rows[0]).toEqual({ from_status: 'PENDING', to_status: 'ACCEPTED' });
+  expect(acceptedEvent.rows[0]).toEqual({ from_status: 'SENT', to_status: 'ACCEPTED' });
 
   const forbiddenReissue = await issueInvitation(
     issued.application.application_id,

@@ -31,6 +31,7 @@ export interface CommercialOnboardingEvent {
 }
 export interface CommercialInvitationEvidence {
   id: string; status: CommercialInvitationStatus; rowVersion: number;
+  deliveryStatus: 'PREPARED' | 'SENT' | 'FAILED' | null; deliveryProvider: string | null;
   issuedBy: PlatformActorEvidence | null; issuanceNotes: string | null;
   createdAt: string; sentAt: string | null; expiresAt: string;
   revokedAt: string | null; revokedBy: PlatformActorEvidence | null; revocationReason: string | null;
@@ -40,11 +41,15 @@ export interface CommercialInvitationEvidence {
 export interface CommercialOnboardingApplication {
   id: string; applicationReference: string; businessName: string;
   administrator: { name: string; email: string; phone: string };
-  base: { name: string; address: string; latitude: number; longitude: number; timezone: string; addressSource: string } | null;
+  base: { name: string; address: string; latitude: number; longitude: number; timezone: string; addressSource: string; locationConfirmedAt: string | null } | null;
   consentVersion: string; applicationNotes: string | null;
   status: CommercialApplicationStatus; rowVersion: number; submittedAt: string; updatedAt: string;
   reviewedAt: string | null; reviewedBy: PlatformActorEvidence | null; decisionNotes: string | null;
   events: CommercialOnboardingEvent[]; invitations: CommercialInvitationEvidence[];
+}
+export interface CommercialOnboardingPage {
+  items: CommercialOnboardingApplication[];
+  nextCursor: string | null;
 }
 
 async function request<T>(action: string, method: 'GET' | 'POST', body?: unknown): Promise<T> {
@@ -63,8 +68,14 @@ export function submitCommercialApplication(input: CommercialApplicationInput) {
   return request<CommercialApplicationReceipt>('apply', 'POST', input);
 }
 
-export function listCommercialApplications() {
-  return request<CommercialOnboardingApplication[]>('list', 'GET');
+export async function listCommercialApplications(cursor?: string): Promise<CommercialOnboardingPage> {
+  const suffix = cursor ? `&cursor=${encodeURIComponent(cursor)}` : '';
+  const response = await fetch(`/api/v1/commercial-onboarding?action=list${suffix}`, {
+    method: 'GET', credentials: 'same-origin',
+  });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(result.error?.message || 'Commercial onboarding request failed.');
+  return { items: result.data || [], nextCursor: result.meta?.nextCursor || null };
 }
 
 export function decideCommercialApplication(input: { applicationId: string; expectedVersion: number; decision: 'UNDER_REVIEW' | 'APPROVE' | 'DECLINE'; notes: string }) {
@@ -73,7 +84,7 @@ export function decideCommercialApplication(input: { applicationId: string; expe
 }
 
 export function issueCommercialInvitation(input: { applicationId: string; expectedVersion: number; notes: string; expiresAt?: string; resend?: boolean }) {
-  return request<{ issued: true; invitation_id: string; status: string; row_version: number; expires_at: string; invitationPath: string }>(input.resend ? 'resend' : 'issue', 'POST', input);
+  return request<{ delivered: true; invitation_id: string; status: 'SENT'; row_version: number; sent_at: string }>(input.resend ? 'resend' : 'issue', 'POST', input);
 }
 
 export function revokeCommercialInvitation(input: { invitationId: string; expectedVersion: number; reason: string }) {
