@@ -16,6 +16,10 @@ export interface OperationalOperatingLocation {
   name: string;
   address: string;
   timezone: string;
+  latitude?: number;
+  longitude?: number;
+  addressSource?: 'ADDRESS_SEARCH' | 'MANUALLY_ADJUSTED';
+  locationConfirmedAt?: string;
   rowVersion: number;
   createdAt: string;
   updatedAt: string;
@@ -270,9 +274,16 @@ export function mapApiField(record: ApiRecord): Field {
 }
 
 export function mapApiOperatingLocation(record: ApiRecord): OperationalOperatingLocation {
+  const rawLatitude = value(record, 'latitude', 'latitude');
+  const rawLongitude = value(record, 'longitude', 'longitude');
+  const rawAddressSource = value(record, 'addressSource', 'address_source');
   return {
     id: requiredText(record, 'id'), name: requiredText(record, 'name'),
     address: optionalText(record, 'address'), timezone: optionalText(record, 'timezone'),
+    ...(rawLatitude === null || rawLatitude === undefined ? {} : { latitude: Number(rawLatitude) }),
+    ...(rawLongitude === null || rawLongitude === undefined ? {} : { longitude: Number(rawLongitude) }),
+    ...(rawAddressSource === 'ADDRESS_SEARCH' || rawAddressSource === 'MANUALLY_ADJUSTED' ? { addressSource: rawAddressSource } : {}),
+    ...(optionalText(record, 'locationConfirmedAt', 'location_confirmed_at') ? { locationConfirmedAt: optionalText(record, 'locationConfirmedAt', 'location_confirmed_at') } : {}),
     rowVersion: versionValue(record), createdAt: timestamp(record, 'createdAt', 'created_at'),
     updatedAt: timestamp(record, 'updatedAt', 'updated_at'),
   };
@@ -373,7 +384,12 @@ interface ResourceAdapter<T, TCreate, TUpdate, TArchive = T> {
 
 export interface OperationalApi {
   session(): Promise<OperationalSession>;
-  operatingLocations: ResourceAdapter<OperationalOperatingLocation, Pick<OperationalOperatingLocation, 'name' | 'address' | 'timezone'>, Partial<Pick<OperationalOperatingLocation, 'name' | 'address' | 'timezone'>>>;
+  operatingLocations: ResourceAdapter<OperationalOperatingLocation,
+    Pick<OperationalOperatingLocation, 'name' | 'address' | 'timezone'>,
+    Partial<Pick<OperationalOperatingLocation, 'name' | 'address' | 'timezone'>> & {
+      latitude?: number; longitude?: number; addressSource?: 'ADDRESS_SEARCH' | 'MANUALLY_ADJUSTED';
+      locationConfirmed?: boolean; locationConfirmedAt?: string;
+    }>;
   clients: ResourceAdapter<Client, ClientCreateInput, ClientUpdateInput>;
   properties: ResourceAdapter<Property, PropertyCreateInput, PropertyUpdateInput>;
   fields: ResourceAdapter<Field, FieldCreateInput, FieldUpdateInput>;
@@ -572,6 +588,11 @@ export function createOperationalApi(options: ApiOptions = {}): OperationalApi {
       ...(input.name !== undefined ? { name: input.name } : {}),
       ...(input.address !== undefined ? { address: input.address } : {}),
       ...(input.timezone !== undefined ? { timezone: input.timezone } : {}),
+      ...(input.latitude !== undefined ? { latitude: input.latitude } : {}),
+      ...(input.longitude !== undefined ? { longitude: input.longitude } : {}),
+      ...(input.addressSource !== undefined ? { addressSource: input.addressSource } : {}),
+      ...(input.locationConfirmed !== undefined ? { locationConfirmed: input.locationConfirmed } : {}),
+      ...(input.locationConfirmedAt !== undefined ? { locationConfirmedAt: input.locationConfirmedAt } : {}),
     })),
     clients: resource('clients', mapApiClient, clientWritable),
     properties: resource('properties', mapApiProperty, propertyWritable),

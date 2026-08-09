@@ -412,6 +412,23 @@ describe('authoritative client/property/field workflow screens', () => {
     })));
   });
 
+  test('opens the existing Client workflow from Getting Started and offers an explicit return after save', async () => {
+    mockOperational.createClient.mockResolvedValue({ ...client, id: 'client-onboarding', name: 'Onboarding Farm' });
+    mockSearchParams = new URLSearchParams('onboarding=client&returnTo=%2Fgetting-started');
+    route('/jobs?onboarding=client&returnTo=%2Fgetting-started', <ClientList />);
+
+    expect(await screen.findByRole('dialog', { name: 'Add New Client' })).toBeVisible();
+    fireEvent.change(screen.getByRole('textbox', { name: 'Client / Farmer Name' }), { target: { value: 'Onboarding Farm' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm adjusted location' }));
+    const saveButtons = screen.getAllByRole('button', { name: 'Add Client' });
+    fireEvent.click(saveButtons[saveButtons.length - 1]);
+
+    expect(await screen.findByRole('button', { name: 'Return to Getting Started' })).toBeVisible();
+    expect(mockNavigate).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Return to Getting Started' }));
+    expect(mockNavigate).toHaveBeenCalledWith('/getting-started');
+  });
+
   test('reveals and requires a meaningful Custom client location label', async () => {
     route('/jobs', <ClientList />);
     fireEvent.click(screen.getByRole('button', { name: 'Add Client' }));

@@ -26,6 +26,7 @@ jest.mock('../../services/gettingStartedApi', () => ({
 const action = (code: string, label: string, route: string) => ({ code, label, route });
 const projection = {
   organisation: { id: 'organisation-1', name: 'Western Downs Aerial Application', displayName: 'Western Downs Aerial Application' },
+  base: null,
   operationalReadiness: { completedSteps: 1, requiredSteps: 9 },
   nextAction: { ...action('CONFIRM_BASE', 'Confirm your Base', '/getting-started#base'), stepCode: 'BASE' },
   steps: [

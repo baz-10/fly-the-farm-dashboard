@@ -48,6 +48,7 @@ import AircraftForm from '../components/AircraftForm';
 import EquipmentKitForm from '../components/EquipmentKitForm';
 import ErrorBoundary from '../components/ErrorBoundary';
 import { getAircraftMaintenanceAlerts } from '../utils/aircraftMaintenance';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 
 interface TabPanelProps {
   children?: React.ReactNode;
@@ -330,6 +331,10 @@ const EquipmentKitCard = React.memo(({
 ));
 
 export default function AircraftManagement() {
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const returnTo = searchParams.get('returnTo') === '/getting-started' ? '/getting-started' : null;
+  const onboardingAction = searchParams.get('onboarding');
   const {
     aircraft,
     equipmentKits,
@@ -369,6 +374,19 @@ export default function AircraftManagement() {
   const [selectedKitId, setSelectedKitId] = useState<string | null>(null);
   const [deleteType, setDeleteType] = useState<'aircraft' | 'kit'>('aircraft');
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
+  const [onboardingSaved, setOnboardingSaved] = useState(false);
+
+  useEffect(() => {
+    if (onboardingAction === 'aircraft') {
+      setTabValue(0);
+      setSelectedAircraftId(null);
+      setAircraftDialogOpen(true);
+    } else if (onboardingAction === 'equipment') {
+      setTabValue(1);
+      setSelectedKitId(null);
+      setKitDialogOpen(true);
+    }
+  }, [onboardingAction]);
 
   // Debounce search terms for performance optimization
   useEffect(() => {
@@ -517,6 +535,12 @@ export default function AircraftManagement() {
           onClose={handleErrorDismiss}
         >
           {localError}
+        </Alert>
+      )}
+
+      {returnTo && onboardingSaved && (
+        <Alert severity="success" sx={{ mb: 3 }} action={<Button color="inherit" onClick={() => navigate(returnTo)}>Return to Getting Started</Button>}>
+          Saved authoritatively. Continue setup when you are ready.
         </Alert>
       )}
 
@@ -725,6 +749,7 @@ export default function AircraftManagement() {
               onSave={async () => {
                 setAircraftDialogOpen(false);
                 setSelectedAircraftId(null);
+                if (returnTo) setOnboardingSaved(true);
               }}
               onCancel={() => {
                 setAircraftDialogOpen(false);
@@ -758,6 +783,7 @@ export default function AircraftManagement() {
               onSave={async () => {
                 setKitDialogOpen(false);
                 setSelectedKitId(null);
+                if (returnTo) setOnboardingSaved(true);
               }}
               onCancel={() => {
                 setKitDialogOpen(false);

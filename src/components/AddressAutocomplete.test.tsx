@@ -120,6 +120,32 @@ describe('AddressAutocomplete', () => {
     }));
   });
 
+  test('marks confirmed coordinates stale when the address text changes', async () => {
+    const onSelect = jest.fn();
+    render(<AddressAutocomplete
+      onSelect={onSelect}
+      initialValue="1 Queen Street"
+      lat={-27.4698}
+      lng={153.0251}
+      coordinateSource="GEOCODED"
+      locationConfirmedAt="2026-08-06T01:00:00.000Z"
+    />);
+
+    expect(await screen.findByRole('button', { name: 'Location confirmed' })).toBeVisible();
+    fireEvent.change(screen.getByRole('textbox', { name: 'Search Address' }), {
+      target: { value: '2 Queen Street' },
+    });
+
+    expect(screen.getByText('Location not confirmed')).toBeVisible();
+    expect(onSelect).toHaveBeenCalledWith(expect.objectContaining({
+      address: '2 Queen Street',
+      displayName: '2 Queen Street',
+      lat: -27.4698,
+      lng: 153.0251,
+      locationConfirmedAt: undefined,
+    }));
+  });
+
   test('keeps manual text and explains when no matching address is found', async () => {
     global.fetch = jest.fn(async () => ({ ok: true, json: async () => ({ results: [] }) })) as any;
     render(<AddressAutocomplete onSelect={jest.fn()} showMap={false} />);

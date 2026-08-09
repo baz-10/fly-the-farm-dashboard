@@ -19,6 +19,13 @@ export interface GettingStartedStepModel {
 
 export interface GettingStartedProjection {
   organisation: { id: string; name: string; displayName: string };
+  base: {
+    id: string; name: string; address: string; timezone: string;
+    latitude: number | null; longitude: number | null;
+    addressSource: 'ADDRESS_SEARCH' | 'MANUALLY_ADJUSTED' | null;
+    locationConfirmedAt: string | null; rowVersion: number;
+    createdAt: string | null; updatedAt: string | null;
+  } | null;
   steps: GettingStartedStepModel[];
   operationalReadiness: {
     completedSteps: number;

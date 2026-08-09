@@ -118,6 +118,67 @@ describe('live-chain access prerequisites', () => {
     });
   });
 
+  test('updates only an assigned Base with confirmed location evidence and optimistic concurrency', async () => {
+    const repository = {
+      get: jest.fn().mockResolvedValue({
+        id: '33333333-3333-4333-8333-333333333333', organisation_id: '11111111-1111-4111-8111-111111111111',
+        name: 'Base', address: '', timezone: 'Australia/Brisbane', row_version: 2,
+      }),
+      update: jest.fn().mockResolvedValue({ record: {
+        id: '33333333-3333-4333-8333-333333333333', name: 'Base', address: '1 Airstrip Road',
+        timezone: 'Australia/Brisbane', latitude: -27.1817, longitude: 151.2621,
+        address_source: 'ADDRESS_SEARCH', location_confirmed_at: '2026-08-09T00:00:00.000Z', row_version: 3,
+      } }),
+    };
+    const handler = createOperationalHandler('operating_locations', {
+      resolveContext: jest.fn().mockResolvedValue(context({
+        permissions: ['operating_locations.update'],
+      })),
+      repository,
+    });
+    const res = createResponse();
+
+    await handler(request('PATCH', {
+      expectedVersion: 2,
+      name: 'Base', address: '1 Airstrip Road', timezone: 'Australia/Brisbane',
+      latitude: -27.1817, longitude: 151.2621, addressSource: 'ADDRESS_SEARCH',
+      locationConfirmed: true, locationConfirmedAt: '2026-08-09T00:00:00.000Z',
+    }, { id: '33333333-3333-4333-8333-333333333333' }), res);
+
+    expect(res.statusCode).toBe(200);
+    expect(repository.update).toHaveBeenCalledWith('operating_locations', expect.any(Object),
+      '33333333-3333-4333-8333-333333333333', 2, expect.objectContaining({
+        address: '1 Airstrip Road', latitude: -27.1817, longitude: 151.2621,
+        address_source: 'ADDRESS_SEARCH', location_confirmed_at: '2026-08-09T00:00:00.000Z',
+      }));
+    expect(res.body.data).toEqual(expect.objectContaining({
+      latitude: -27.1817, longitude: 151.2621, addressSource: 'ADDRESS_SEARCH', rowVersion: 3,
+    }));
+  });
+
+  test('fails closed before updating an unassigned Base', async () => {
+    const repository = {
+      get: jest.fn().mockResolvedValue({
+        id: '99999999-9999-4999-8999-999999999999', organisation_id: '11111111-1111-4111-8111-111111111111',
+        name: 'Other Base', address: '', timezone: 'Australia/Brisbane', row_version: 1,
+      }),
+      update: jest.fn(),
+    };
+    const handler = createOperationalHandler('operating_locations', {
+      resolveContext: jest.fn().mockResolvedValue(context({ permissions: ['operating_locations.update'] })), repository,
+    });
+    const res = createResponse();
+
+    await handler(request('PATCH', {
+      expectedVersion: 1, name: 'Other Base', address: '2 Airstrip Road', timezone: 'Australia/Brisbane',
+      latitude: -27, longitude: 151, addressSource: 'ADDRESS_SEARCH', locationConfirmed: true,
+      locationConfirmedAt: '2026-08-09T00:00:00.000Z',
+    }, { id: '99999999-9999-4999-8999-999999999999' }), res);
+
+    expect(res.statusCode).toBe(404);
+    expect(repository.update).not.toHaveBeenCalled();
+  });
+
   test('rejects a mission outside the actor assigned location before repository access', async () => {
     const repository = { relationshipExists: jest.fn(), create: jest.fn() };
     const handler = createOperationalHandler('missions', {

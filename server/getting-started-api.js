@@ -18,14 +18,14 @@ const REQUIRED_READ_PERMISSIONS = Object.freeze([
 const STEP_DEFINITIONS = Object.freeze([
   { code: 'ORGANISATION', label: 'Organisation', actionCode: 'REVIEW_ORGANISATION', actionLabel: 'Review organisation details', route: '/admin' },
   { code: 'BASE', label: 'Base', actionCode: 'CONFIRM_BASE', actionLabel: 'Confirm your Base', route: '/getting-started#base' },
-  { code: 'AIRCRAFT', label: 'Aircraft', actionCode: 'ADD_AIRCRAFT', actionLabel: 'Add your first aircraft', route: '/aircraft' },
-  { code: 'EQUIPMENT', label: 'Equipment', actionCode: 'ADD_EQUIPMENT', actionLabel: 'Add your first equipment kit', route: '/aircraft' },
-  { code: 'PERSONNEL', label: 'Personnel', actionCode: 'ADD_PERSONNEL', actionLabel: 'Add Personnel', route: '/personnel' },
-  { code: 'CLIENT', label: 'First Client', actionCode: 'ADD_CLIENT', actionLabel: 'Add your first Client', route: '/jobs' },
-  { code: 'PROPERTY', label: 'First Property', actionCode: 'ADD_PROPERTY', actionLabel: 'Add your first Property', route: '/jobs?view=properties' },
-  { code: 'FIELD', label: 'First Field', actionCode: 'ADD_FIELD', actionLabel: 'Add your first Field', route: '/jobs?view=fields' },
-  { code: 'JOB', label: 'First Job', actionCode: 'ADD_JOB', actionLabel: 'Add your first Job', route: '/jobs?view=jobs' },
-  { code: 'MISSION', label: 'First Mission', actionCode: 'ADD_MISSION', actionLabel: 'Plan your first Mission', route: '/missions/new' },
+  { code: 'AIRCRAFT', label: 'Aircraft', actionCode: 'ADD_AIRCRAFT', actionLabel: 'Add your first aircraft', route: '/aircraft?onboarding=aircraft&returnTo=%2Fgetting-started' },
+  { code: 'EQUIPMENT', label: 'Equipment', actionCode: 'ADD_EQUIPMENT', actionLabel: 'Add your first equipment kit', route: '/aircraft?onboarding=equipment&returnTo=%2Fgetting-started' },
+  { code: 'PERSONNEL', label: 'Personnel', actionCode: 'ADD_PERSONNEL', actionLabel: 'Add Personnel', route: '/personnel?onboarding=personnel&returnTo=%2Fgetting-started' },
+  { code: 'CLIENT', label: 'First Client', actionCode: 'ADD_CLIENT', actionLabel: 'Add your first Client', route: '/jobs?onboarding=client&returnTo=%2Fgetting-started' },
+  { code: 'PROPERTY', label: 'First Property', actionCode: 'ADD_PROPERTY', actionLabel: 'Add your first Property', route: '/jobs?view=properties&onboarding=property&returnTo=%2Fgetting-started' },
+  { code: 'FIELD', label: 'First Field', actionCode: 'ADD_FIELD', actionLabel: 'Add your first Field', route: '/jobs?view=fields&onboarding=field&returnTo=%2Fgetting-started' },
+  { code: 'JOB', label: 'First Job', actionCode: 'ADD_JOB', actionLabel: 'Add your first Job', route: '/jobs?view=jobs&onboarding=job&returnTo=%2Fgetting-started' },
+  { code: 'MISSION', label: 'First Mission', actionCode: 'ADD_MISSION', actionLabel: 'Plan your first Mission', route: '/missions/new?returnTo=%2Fgetting-started' },
 ]);
 
 function hasPermission(context, code) {
@@ -144,6 +144,19 @@ function projectGettingStarted(context, records) {
 
   return {
     organisation: { id: organisationId, name: context.organisation.name, displayName },
+    base: bases[0] ? {
+      id: bases[0].id,
+      name: bases[0].name,
+      address: bases[0].address || '',
+      timezone: bases[0].timezone || '',
+      latitude: bases[0].latitude == null ? null : Number(bases[0].latitude),
+      longitude: bases[0].longitude == null ? null : Number(bases[0].longitude),
+      addressSource: bases[0].address_source || null,
+      locationConfirmedAt: bases[0].location_confirmed_at || null,
+      rowVersion: Number(bases[0].row_version || 0),
+      createdAt: bases[0].created_at || null,
+      updatedAt: bases[0].updated_at || null,
+    } : null,
     steps,
     operationalReadiness: {
       completedSteps,

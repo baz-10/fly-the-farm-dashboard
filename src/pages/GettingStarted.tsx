@@ -16,6 +16,7 @@ import {
 import ArrowForwardRoundedIcon from '@mui/icons-material/ArrowForwardRounded';
 import FlightTakeoffRoundedIcon from '@mui/icons-material/FlightTakeoffRounded';
 import GettingStartedStep from '../components/onboarding/GettingStartedStep';
+import BaseConfirmation from '../components/onboarding/BaseConfirmation';
 import { gettingStartedApi, GettingStartedProjection } from '../services/gettingStartedApi';
 
 export default function GettingStarted() {
@@ -154,12 +155,31 @@ export default function GettingStarted() {
         <Typography color="text.secondary" sx={{ mb: 2.5 }}>Open any section at any time, including steps you have already completed.</Typography>
         <Stack spacing={1.25}>
           {projection.steps.map((step) => (
-            <GettingStartedStep
-              key={step.code}
-              step={step}
-              recommended={projection.nextAction?.stepCode === step.code}
-              onAction={openAction}
-            />
+            <React.Fragment key={step.code}>
+              <GettingStartedStep
+                step={step}
+                recommended={projection.nextAction?.stepCode === step.code}
+                onAction={openAction}
+              />
+              {step.code === 'BASE' && step.state !== 'COMPLETE' && projection.base && projection.base.rowVersion > 0 && (
+                <Card id="base-confirmation" variant="outlined" sx={{ borderRadius: 3, borderColor: '#bdd29f' }}>
+                  <CardContent sx={{ p: { xs: 2.5, sm: 3 }, '&:last-child': { pb: { xs: 2.5, sm: 3 } } }}>
+                    <BaseConfirmation
+                      base={{
+                        ...projection.base,
+                        latitude: projection.base.latitude ?? undefined,
+                        longitude: projection.base.longitude ?? undefined,
+                        addressSource: projection.base.addressSource ?? undefined,
+                        locationConfirmedAt: projection.base.locationConfirmedAt ?? undefined,
+                        createdAt: projection.base.createdAt || new Date(0).toISOString(),
+                        updatedAt: projection.base.updatedAt || new Date(0).toISOString(),
+                      }}
+                      onReturn={() => void load()}
+                    />
+                  </CardContent>
+                </Card>
+              )}
+            </React.Fragment>
           ))}
         </Stack>
       </Box>

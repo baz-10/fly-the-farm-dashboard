@@ -21,7 +21,7 @@ function source(overrides = {}) {
     operatingLocations: [{
       id: 'base-1', organisation_id: 'organisation-1', name: 'Dalby Base',
       address: '1 Farm Road, Dalby QLD 4405', timezone: 'Australia/Brisbane',
-      latitude: null, longitude: null, location_confirmed_at: null,
+      latitude: null, longitude: null, location_confirmed_at: null, row_version: 1,
     }],
     aircraft: [], equipmentKits: [], personnel: [], clients: [], properties: [],
     fields: [], jobs: [], missions: [],
@@ -64,8 +64,12 @@ test('projects the initial organisation from authoritative records without compl
     ['MISSION', 'NOT_STARTED'],
   ]);
   expect(result.nextAction).toMatchObject({ code: 'CONFIRM_BASE', route: '/getting-started#base' });
+  expect(result.base).toEqual(expect.objectContaining({
+    id: 'base-1', name: 'Dalby Base', address: '1 Farm Road, Dalby QLD 4405',
+    timezone: 'Australia/Brisbane',
+  }));
   expect(result.steps.find((step) => step.code === 'EQUIPMENT').action).toMatchObject({
-    code: 'ADD_EQUIPMENT', route: '/aircraft',
+    code: 'ADD_EQUIPMENT', route: '/aircraft?onboarding=equipment&returnTo=%2Fgetting-started',
   });
   expect(result).not.toHaveProperty('completionFlags');
 });
