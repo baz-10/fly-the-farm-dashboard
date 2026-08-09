@@ -9,7 +9,7 @@ global.TextEncoder = TextEncoder;
 const { PGlite } = require('@electric-sql/pglite');
 
 const root = path.resolve(__dirname, '../..');
-const migrationPath = path.join(root, 'supabase/migrations/20260809130000_operating_location_confirmation.sql');
+const migrationPath = path.join(root, 'supabase/migrations/20260809135000_operating_location_confirmation.sql');
 const migration = fs.readFileSync(migrationPath, 'utf8');
 const runPgliteInThisProcess = process.env.BASE_CONFIRMATION_PGLITE_CHILD === '1';
 const pureNodeTests = [];

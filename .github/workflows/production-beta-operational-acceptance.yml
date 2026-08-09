@@ -37,8 +37,8 @@ jobs:
           fi
           echo "commit-sha=$deployed" >> "$GITHUB_OUTPUT"
 
-  operational-acceptance:
-    name: Client to Mission operational acceptance
+  authentication-acceptance:
+    name: Organisation authentication-only acceptance
     needs: deployment-identity
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -64,9 +64,6 @@ jobs:
       - name: Install locked dependencies
         run: npm ci
 
-      - name: Verify Product Maturity Registry completeness
-        run: node scripts/verifyProductMaturityRegistry.mjs
-
       - name: Install isolated Chromium runtime
         run: npx playwright install --with-deps chromium
 
@@ -86,26 +83,13 @@ jobs:
       - name: Prove Organisation authentication
         run: npx playwright test --project=auth
 
-      - name: Prove deterministic acceptance cleanup
-        run: npx playwright test --project=cleanup --no-deps
-
-      - name: Run established Client-to-Mission gate
-        run: npx playwright test --project=chromium --no-deps
-
-      - name: Retain non-secret failure diagnostics
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: production-beta-operational-acceptance-failure
-          path: |
-            test-results/playwright-report
-            test-results/playwright-artifacts
-          if-no-files-found: ignore
-          retention-days: 7
+      - name: Remove authentication state
+        if: always()
+        run: rm -rf test-results/.auth
 
   commercial-onboarding-acceptance:
     name: Commercial onboarding acceptance
-    needs: [deployment-identity, operational-acceptance]
+    needs: [deployment-identity, authentication-acceptance]
     runs-on: ubuntu-latest
     timeout-minutes: 60
     environment: production-beta-acceptance
@@ -178,3 +162,70 @@ jobs:
         run: |
           rm -rf test-results/.auth
           rm -f test-results/commercial-onboarding-evidence.json
+
+  operational-acceptance:
+    name: Client to Mission operational acceptance
+    needs: [deployment-identity, commercial-onboarding-acceptance]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: production-beta-acceptance
+    env:
+      CI: 'true'
+      E2E_BASE_URL: https://spray-command-production-beta.vercel.app
+      E2E_ORGANISATION_EMAIL: ${{ secrets.E2E_ORGANISATION_EMAIL }}
+      E2E_ORGANISATION_PASSWORD: ${{ secrets.E2E_ORGANISATION_PASSWORD }}
+
+    steps:
+      - name: Check out accepted source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.deployment-identity.outputs.commit-sha }}
+
+      - name: Use Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Install isolated Chromium runtime
+        run: npx playwright install --with-deps chromium
+
+      - name: Protect acceptance credentials in runner output
+        shell: bash
+        run: |
+          set +x
+          if [[ -n "$E2E_ORGANISATION_EMAIL" ]]; then echo "::add-mask::$E2E_ORGANISATION_EMAIL"; fi
+          if [[ -n "$E2E_ORGANISATION_PASSWORD" ]]; then echo "::add-mask::$E2E_ORGANISATION_PASSWORD"; fi
+          printf 'Acceptance secrets present: email=%s password=%s\n' \
+            "$([[ -n "$E2E_ORGANISATION_EMAIL" ]] && echo true || echo false)" \
+            "$([[ -n "$E2E_ORGANISATION_PASSWORD" ]] && echo true || echo false)"
+
+      - name: Validate acceptance environment
+        run: npx playwright test --project=environment
+
+      - name: Recreate authenticated browser state
+        run: npx playwright test --project=auth
+
+      - name: Prove deterministic acceptance cleanup
+        run: npx playwright test --project=cleanup --no-deps
+
+      - name: Run established Client-to-Mission gate
+        run: npx playwright test --project=chromium --no-deps
+
+      - name: Retain non-secret failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-beta-operational-acceptance-failure
+          path: |
+            test-results/playwright-report
+            test-results/playwright-artifacts
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Remove authentication state
+        if: always()
+        run: rm -rf test-results/.auth

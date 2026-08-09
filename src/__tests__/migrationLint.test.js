@@ -36,6 +36,21 @@ if (runPgliteInThisProcess) {
 
 jest.setTimeout(120000);
 
+test('assigns every repository migration a unique version', () => {
+  const versions = fs.readdirSync(migrationDirectory)
+    .filter((name) => /^\d{14}_.+\.sql$/.test(name))
+    .reduce((grouped, name) => {
+      const version = name.slice(0, 14);
+      grouped.set(version, [...(grouped.get(version) || []), name]);
+      return grouped;
+    }, new Map());
+  const duplicates = [...versions.entries()]
+    .filter(([, names]) => names.length > 1)
+    .map(([version, names]) => ({ version, names: names.sort() }));
+
+  expect(duplicates).toEqual([]);
+});
+
 test('uses only deterministic repository-controlled migration definitions', () => {
   expect(sql).not.toContain('pg_get_functiondef');
   expect(sql).not.toContain('execute replace(v_definition');

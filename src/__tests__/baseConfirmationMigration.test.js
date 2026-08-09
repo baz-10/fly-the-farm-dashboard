@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 
-const migrationPath = path.join(__dirname, '../../supabase/migrations/20260809130000_operating_location_confirmation.sql');
+const migrationPath = path.join(__dirname, '../../supabase/migrations/20260809135000_operating_location_confirmation.sql');
 
 test('adds authoritative Base location evidence without weakening trusted writes', () => {
   const sql = fs.readFileSync(migrationPath, 'utf8');

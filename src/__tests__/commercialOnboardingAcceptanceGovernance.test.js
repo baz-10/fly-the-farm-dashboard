@@ -1,8 +1,12 @@
 const fs = require('fs');
 const path = require('path');
+const yaml = require('js-yaml');
 
 const root = path.resolve(__dirname, '../..');
 const read = (name) => fs.readFileSync(path.join(root, name), 'utf8');
+const workflow = () => yaml.load(read('.github/workflows/production-beta-operational-acceptance.yml'));
+
+const step = (job, name) => job.steps.find((candidate) => candidate.name === name);
 
 describe('commercial onboarding acceptance governance', () => {
   test('defines the complete unattended lifecycle and hostile boundaries', () => {
@@ -36,25 +40,40 @@ describe('commercial onboarding acceptance governance', () => {
   });
 
   test('orders exact-deployment gates and verifies controlled production evidence before transactional cleanup', () => {
-    const workflow = read('.github/workflows/production-beta-operational-acceptance.yml');
-    const ordered = [
-      'Resolve exact deployed commit',
-      'Prove Organisation authentication',
-      'Prove deterministic acceptance cleanup',
-      'Run established Client-to-Mission gate',
-      'Run unattended commercial onboarding',
-      'Verify exact controlled onboarding evidence',
-      'Archive only the controlled onboarding organisation transactionally',
-    ];
-    let cursor = -1;
-    for (const marker of ordered) {
-      const next = workflow.indexOf(marker);
-      expect(next).toBeGreaterThan(cursor);
-      cursor = next;
+    const definition = workflow();
+    const authentication = definition.jobs['authentication-acceptance'];
+    const onboarding = definition.jobs['commercial-onboarding-acceptance'];
+    const operational = definition.jobs['operational-acceptance'];
+
+    expect(authentication).toBeDefined();
+    expect(onboarding).toBeDefined();
+    expect(operational).toBeDefined();
+    expect(authentication.needs).toBe('deployment-identity');
+    expect(onboarding.needs).toEqual(['deployment-identity', 'authentication-acceptance']);
+    expect(operational.needs).toEqual(['deployment-identity', 'commercial-onboarding-acceptance']);
+
+    for (const job of [authentication, onboarding, operational]) {
+      expect(step(job, 'Check out accepted source').with.ref)
+        .toBe('${{ needs.deployment-identity.outputs.commit-sha }}');
     }
-    expect(workflow).toContain('--verify-controlled test-results/commercial-onboarding-evidence.json');
-    expect(workflow).toContain('test:ci:sharded');
-    expect(workflow).toContain('github.event.client_payload.commitSha');
+
+    const onboardingSteps = onboarding.steps.map(({ name }) => name);
+    expect(onboardingSteps.indexOf('Run unattended commercial onboarding'))
+      .toBeLessThan(onboardingSteps.indexOf('Verify exact controlled onboarding evidence'));
+    expect(onboardingSteps.indexOf('Verify exact controlled onboarding evidence'))
+      .toBeLessThan(onboardingSteps.indexOf('Archive only the controlled onboarding organisation transactionally'));
+
+    const operationalSteps = operational.steps.map(({ name }) => name);
+    expect(operationalSteps.indexOf('Recreate authenticated browser state'))
+      .toBeLessThan(operationalSteps.indexOf('Prove deterministic acceptance cleanup'));
+    expect(operationalSteps.indexOf('Prove deterministic acceptance cleanup'))
+      .toBeLessThan(operationalSteps.indexOf('Run established Client-to-Mission gate'));
+
+    expect(step(onboarding, 'Verify exact controlled onboarding evidence').run)
+      .toContain('--verify-controlled test-results/commercial-onboarding-evidence.json');
+    expect(step(onboarding, 'Run deterministic sharded regression').run).toContain('test:ci:sharded');
+    expect(read('.github/workflows/production-beta-operational-acceptance.yml'))
+      .toContain('github.event.client_payload.commitSha');
   });
 
   test('ships a repository-controlled PostgreSQL verifier and operator runbook', () => {
