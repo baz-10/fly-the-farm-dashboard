@@ -17,6 +17,7 @@ import ArrowForwardRoundedIcon from '@mui/icons-material/ArrowForwardRounded';
 import FlightTakeoffRoundedIcon from '@mui/icons-material/FlightTakeoffRounded';
 import GettingStartedStep from '../components/onboarding/GettingStartedStep';
 import BaseConfirmation from '../components/onboarding/BaseConfirmation';
+import OperationalReadiness from '../components/onboarding/OperationalReadiness';
 import { gettingStartedApi, GettingStartedProjection } from '../services/gettingStartedApi';
 
 export default function GettingStarted() {
@@ -183,6 +184,8 @@ export default function GettingStarted() {
           ))}
         </Stack>
       </Box>
+
+      <OperationalReadiness readiness={projection.operationalReadiness} onAction={openAction} />
     </Box>
   );
 }

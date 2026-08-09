@@ -1,6 +1,7 @@
 const { createHttpError } = require('./supabase');
 const { resolveRequestContext } = require('./request-context');
 const { OperationalRepository } = require('./operational-repository');
+const { ComplianceRepository } = require('./compliance-repository');
 
 const REQUIRED_READ_PERMISSIONS = Object.freeze([
   'organisation.branding.read',
@@ -13,6 +14,7 @@ const REQUIRED_READ_PERMISSIONS = Object.freeze([
   'fields.read',
   'jobs.read',
   'missions.read',
+  'compliance.read',
 ]);
 
 const STEP_DEFINITIONS = Object.freeze([
@@ -93,6 +95,83 @@ function step(definition, state, summary, count, optional = false) {
   };
 }
 
+const PERSONNEL_ROUTE = '/personnel?onboarding=personnel&returnTo=%2Fgetting-started';
+
+function complianceRoute(code, fallback) {
+  if (['REOC_MISSING', 'REOC_EVIDENCE_MISSING', 'REOC_EXPIRED'].includes(code)) return '/compliance/reoc';
+  return typeof fallback === 'string' && fallback.startsWith('/compliance') ? fallback : '/compliance';
+}
+
+function complianceLabel(code, affectedArea) {
+  if (code === 'REOC_MISSING') return 'ReOC certificate missing';
+  if (code === 'REOC_EVIDENCE_MISSING') return 'ReOC certificate evidence missing';
+  if (code === 'REOC_EXPIRED') return 'ReOC certificate expired';
+  if (affectedArea) return `${affectedArea} needs attention`;
+  return 'Compliance evidence needs attention';
+}
+
+function projectComplianceAdvisories(complianceOverview) {
+  if (complianceOverview?.unavailable === true || !complianceOverview?.healthScore) {
+    return [{
+      code: 'COMPLIANCE_EVIDENCE_UNAVAILABLE',
+      label: 'Compliance evidence could not be assessed',
+      reason: 'Review CASA Compliance before relying on the organisation’s operational evidence.',
+      route: '/compliance',
+      requiresAttention: true,
+    }];
+  }
+
+  const score = complianceOverview.healthScore;
+  const advisories = [];
+  const seen = new Set();
+  for (const blocker of Array.isArray(score.criticalBlockers) ? score.criticalBlockers : []) {
+    const code = String(blocker?.criticalRuleCode || 'COMPLIANCE_CRITICAL');
+    if (seen.has(code)) continue;
+    seen.add(code);
+    if (code.startsWith('REOC_')) seen.add('REOC_EVIDENCE_ATTENTION');
+    advisories.push({
+      code,
+      label: complianceLabel(code, blocker?.affectedArea),
+      reason: String(blocker?.reason || 'Authoritative compliance evidence needs attention.'),
+      route: complianceRoute(code, blocker?.route),
+      requiresAttention: true,
+      modelVersion: score.modelVersion || null,
+    });
+  }
+
+  for (const category of Array.isArray(score.categories) ? score.categories : []) {
+    const counts = category?.counts || {};
+    const missing = Number(counts.missing || 0);
+    const expired = Number(counts.expired || 0);
+    const blocking = Number(counts.blocking || 0);
+    if (missing + expired + blocking < 1) continue;
+    const code = `${String(category?.code || 'COMPLIANCE').toUpperCase()}_EVIDENCE_ATTENTION`;
+    if (seen.has(code)) continue;
+    seen.add(code);
+    const firstSource = Array.isArray(category?.sources) ? category.sources[0] : null;
+    advisories.push({
+      code,
+      label: `${category?.label || 'Compliance evidence'} needs attention`,
+      reason: String(firstSource?.reason || 'Required authoritative compliance evidence is missing, expired or blocking.'),
+      route: complianceRoute(code, firstSource?.route),
+      requiresAttention: true,
+      modelVersion: score.modelVersion || null,
+    });
+  }
+
+  if (advisories.length === 0 && score.status && score.status !== 'STRONG') {
+    advisories.push({
+      code: 'COMPLIANCE_REVIEW_RECOMMENDED',
+      label: 'Review your compliance position',
+      reason: 'CASA Compliance contains items worth reviewing before operations.',
+      route: '/compliance',
+      requiresAttention: false,
+      modelVersion: score.modelVersion || null,
+    });
+  }
+  return advisories;
+}
+
 function projectGettingStarted(context, records) {
   const organisationId = context.organisation.id;
   const assignedLocationIds = new Set(context.operatingLocationIds || []);
@@ -116,6 +195,7 @@ function projectGettingStarted(context, records) {
   const fields = tenantRecords(records.fields);
   const jobs = tenantRecords(records.jobs);
   const missions = locationRecords(records.missions);
+  const draftMissions = missions.filter((record) => ['PLANNING', 'DRAFT'].includes(String(record.status || '').toUpperCase()));
 
   const brandingProfile = records.branding?.organisation?.profile || records.branding?.organisation || {};
   const displayName = brandingProfile.report_display_name
@@ -133,14 +213,30 @@ function projectGettingStarted(context, records) {
     PROPERTY: [properties.length > 0 ? 'COMPLETE' : 'NOT_STARTED', properties.length > 0 ? `${properties.length} Property record${properties.length === 1 ? '' : 's'} available.` : 'Add the first Property for a Client.', properties.length, false],
     FIELD: [fields.length > 0 ? 'COMPLETE' : 'NOT_STARTED', fields.length > 0 ? `${fields.length} Field record${fields.length === 1 ? '' : 's'} available.` : 'Add the first Field on a Property.', fields.length, false],
     JOB: [jobs.length > 0 ? 'COMPLETE' : 'NOT_STARTED', jobs.length > 0 ? `${jobs.length} Job record${jobs.length === 1 ? '' : 's'} available.` : 'Create the first Job for one or more Fields.', jobs.length, false],
-    MISSION: [missions.length > 0 ? 'COMPLETE' : 'NOT_STARTED', missions.length > 0 ? `${missions.length} Mission record${missions.length === 1 ? '' : 's'} available.` : 'Plan the first Mission from an authoritative Job.', missions.length, false],
+    MISSION: [draftMissions.length > 0 ? 'COMPLETE' : 'NOT_STARTED', draftMissions.length > 0 ? `${draftMissions.length} Draft Mission${draftMissions.length === 1 ? '' : 's'} available.` : 'Plan the first Mission from an authoritative Job.', draftMissions.length, false],
   };
   const steps = STEP_DEFINITIONS.map((definition) => step(definition, ...states[definition.code]));
   const requiredSteps = steps.filter((item) => item.code !== 'PERSONNEL');
   const completedSteps = requiredSteps.filter((item) => item.state === 'COMPLETE').length;
+  const requiredActions = requiredSteps
+    .filter((item) => item.state !== 'COMPLETE')
+    .map((item) => ({ ...item.action, stepCode: item.code, reason: item.summary }));
+  const complianceAdvisories = projectComplianceAdvisories(records.complianceOverview);
+  const onboardingComplete = requiredActions.length === 0;
+  const needsOperationalAttention = complianceAdvisories.some((item) => item.requiresAttention);
+  const readinessState = !onboardingComplete
+    ? 'GETTING_STARTED'
+    : needsOperationalAttention ? 'NEEDS_OPERATIONAL_ATTENTION' : 'READY_TO_PLAN';
+  const firstDraftMission = draftMissions[0] || null;
+  const primaryAction = onboardingComplete && firstDraftMission
+    ? { code: 'OPEN_MISSION', label: 'Open your first Mission', route: `/missions/${firstDraftMission.id}` }
+    : requiredActions[0] || null;
   const nextStep = requiredSteps.find((item) => item.state !== 'COMPLETE')
     || steps.find((item) => item.state === 'NEEDS_ATTENTION')
     || steps.find((item) => item.code === 'MISSION');
+  const nextAction = onboardingComplete && primaryAction
+    ? { ...primaryAction, stepCode: 'MISSION' }
+    : nextStep ? { ...nextStep.action, stepCode: nextStep.code } : null;
 
   return {
     organisation: { id: organisationId, name: context.organisation.name, displayName },
@@ -159,10 +255,31 @@ function projectGettingStarted(context, records) {
     } : null,
     steps,
     operationalReadiness: {
+      state: readinessState,
+      headline: readinessState === 'READY_TO_PLAN'
+        ? 'Your Spray Command workspace is ready'
+        : readinessState === 'NEEDS_OPERATIONAL_ATTENTION'
+          ? 'Your workspace needs operational attention'
+          : 'Your workspace is taking shape',
+      summary: readinessState === 'GETTING_STARTED'
+        ? 'Complete the remaining essentials to begin normal Mission planning.'
+        : 'Your first operational records are in place and your Mission workspace is available.',
+      missionAuthorisationClaim: false,
       completedSteps,
       requiredSteps: requiredSteps.length,
+      requiredActions,
+      advisories: complianceAdvisories,
+      personnel: {
+        state: personnel.length > 0 ? 'RECORDED' : 'NOT_RECORDED',
+        headline: personnel.length > 0 ? 'Personnel is recorded' : 'Personnel is not recorded yet',
+        reason: personnel.length > 0
+          ? 'Each Mission will still evaluate eligible Personnel through the existing readiness and authorisation gates.'
+          : 'Add eligible Personnel before a Mission can be authorised or operated.',
+        route: PERSONNEL_ROUTE,
+      },
+      primaryAction,
     },
-    nextAction: nextStep ? { ...nextStep.action, stepCode: nextStep.code } : null,
+    nextAction,
   };
 }
 
@@ -170,7 +287,7 @@ function uniqueById(records) {
   return Array.from(new Map(records.filter(Boolean).map((record) => [record.id, record])).values());
 }
 
-async function readSources(repository, context) {
+async function readSources(repository, complianceRepository, context) {
   const list = async (resource) => {
     const pageSize = 100;
     const records = [];
@@ -183,7 +300,7 @@ async function readSources(repository, context) {
   };
   const personnelReads = (context.operatingLocationIds || []).map((operatingLocationId) =>
     repository.listPersonnel(context, { operatingLocationId, includePrivate: false }));
-  const [branding, operatingLocations, aircraft, equipmentKits, clients, properties, fields, jobs, missions, personnelGroups] = await Promise.all([
+  const [branding, operatingLocations, aircraft, equipmentKits, clients, properties, fields, jobs, missions, personnelGroups, complianceOverview] = await Promise.all([
     repository.readOrganisationBranding(context),
     list('operating_locations'),
     list('aircraft'),
@@ -194,10 +311,12 @@ async function readSources(repository, context) {
     list('jobs'),
     list('missions'),
     Promise.all(personnelReads),
+    complianceRepository.readOverview(context).catch(() => ({ unavailable: true })),
   ]);
   return {
     branding, operatingLocations, aircraft, equipmentKits, clients, properties, fields, jobs, missions,
     personnel: uniqueById(personnelGroups.flat()),
+    complianceOverview,
   };
 }
 
@@ -216,6 +335,7 @@ function errorEnvelope(error) {
 
 function createGettingStartedHandler(dependencies = {}) {
   const repository = dependencies.repository || new OperationalRepository();
+  const complianceRepository = dependencies.complianceRepository || new ComplianceRepository();
   const getContext = dependencies.resolveContext || resolveRequestContext;
   return async function gettingStartedHandler(req, res) {
     res.setHeader('Cache-Control', 'no-store');
@@ -227,7 +347,7 @@ function createGettingStartedHandler(dependencies = {}) {
     try {
       const context = await getContext(req, res);
       assertGettingStartedAccess(context);
-      const sources = await readSources(repository, context);
+      const sources = await readSources(repository, complianceRepository, context);
       return res.status(200).json({ data: projectGettingStarted(context, sources) });
     } catch (error) {
       const { status, response } = errorEnvelope(error);

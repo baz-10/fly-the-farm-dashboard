@@ -17,6 +17,37 @@ export interface GettingStartedStepModel {
   action: GettingStartedAction;
 }
 
+export interface OperationalReadinessAction extends GettingStartedAction {
+  reason?: string;
+}
+
+export interface OperationalReadinessAdvisory {
+  code: string;
+  label: string;
+  reason: string;
+  route: string;
+  requiresAttention: boolean;
+  modelVersion?: string | null;
+}
+
+export interface OperationalReadinessModel {
+  state: 'GETTING_STARTED' | 'READY_TO_PLAN' | 'NEEDS_OPERATIONAL_ATTENTION';
+  headline: string;
+  summary: string;
+  missionAuthorisationClaim: false;
+  completedSteps: number;
+  requiredSteps: number;
+  requiredActions: OperationalReadinessAction[];
+  advisories: OperationalReadinessAdvisory[];
+  personnel: {
+    state: 'RECORDED' | 'NOT_RECORDED';
+    headline: string;
+    reason: string;
+    route: string;
+  };
+  primaryAction: OperationalReadinessAction | null;
+}
+
 export interface GettingStartedProjection {
   organisation: { id: string; name: string; displayName: string };
   base: {
@@ -27,10 +58,7 @@ export interface GettingStartedProjection {
     createdAt: string | null; updatedAt: string | null;
   } | null;
   steps: GettingStartedStepModel[];
-  operationalReadiness: {
-    completedSteps: number;
-    requiredSteps: number;
-  };
+  operationalReadiness: OperationalReadinessModel;
   nextAction: GettingStartedAction | null;
 }
 

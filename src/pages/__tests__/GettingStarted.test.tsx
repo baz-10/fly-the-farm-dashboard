@@ -27,7 +27,31 @@ const action = (code: string, label: string, route: string) => ({ code, label, r
 const projection = {
   organisation: { id: 'organisation-1', name: 'Western Downs Aerial Application', displayName: 'Western Downs Aerial Application' },
   base: null,
-  operationalReadiness: { completedSteps: 1, requiredSteps: 9 },
+  operationalReadiness: {
+    state: 'GETTING_STARTED',
+    headline: 'Your workspace is taking shape',
+    summary: 'Complete the remaining essentials to begin normal Mission planning.',
+    missionAuthorisationClaim: false,
+    completedSteps: 1,
+    requiredSteps: 9,
+    requiredActions: [{
+      ...action('CONFIRM_BASE', 'Confirm your Base', '/getting-started#base'),
+      stepCode: 'BASE',
+      reason: 'Confirm the address and map location for your Base.',
+    }],
+    advisories: [],
+    personnel: {
+      state: 'NOT_RECORDED',
+      headline: 'Personnel is not recorded yet',
+      reason: 'Add eligible Personnel before a Mission can be authorised or operated.',
+      route: '/personnel?onboarding=personnel&returnTo=%2Fgetting-started',
+    },
+    primaryAction: {
+      ...action('CONFIRM_BASE', 'Confirm your Base', '/getting-started#base'),
+      stepCode: 'BASE',
+      reason: 'Confirm the address and map location for your Base.',
+    },
+  },
   nextAction: { ...action('CONFIRM_BASE', 'Confirm your Base', '/getting-started#base'), stepCode: 'BASE' },
   steps: [
     { code: 'ORGANISATION', label: 'Organisation', state: 'COMPLETE', summary: 'Your organisation identity is active.', count: 1, optional: false, action: action('REVIEW_ORGANISATION', 'Review organisation details', '/admin') },

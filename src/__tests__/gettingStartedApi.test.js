@@ -3,7 +3,7 @@ const { createGettingStartedHandler, projectGettingStarted } = require('../../se
 const permissions = [
   'organisation.branding.read', 'operating_locations.read', 'aircraft.read',
   'equipment_kits.read', 'personnel.read', 'clients.read', 'properties.read',
-  'fields.read', 'jobs.read', 'missions.read',
+  'fields.read', 'jobs.read', 'missions.read', 'compliance.read',
 ];
 
 const context = {
@@ -25,6 +25,12 @@ function source(overrides = {}) {
     }],
     aircraft: [], equipmentKits: [], personnel: [], clients: [], properties: [],
     fields: [], jobs: [], missions: [],
+    complianceOverview: {
+      healthScore: {
+        modelVersion: 'AU-CASA-HEALTH-1', status: 'STRONG', percentage: 100,
+        criticalBlockers: [], categories: [],
+      },
+    },
     ...overrides,
   };
 }
@@ -53,6 +59,81 @@ function repository(overrides = {}) {
     ...overrides,
   };
 }
+
+function completeSource(overrides = {}) {
+  const organisationRecord = (id, extra = {}) => ({ id, organisation_id: 'organisation-1', ...extra });
+  return source({
+    operatingLocations: [organisationRecord('base-1', {
+      name: 'Dalby Base', address: '1 Farm Road, Dalby QLD 4405', timezone: 'Australia/Brisbane',
+      latitude: -27.1817, longitude: 151.2621, location_confirmed_at: '2026-08-09T00:00:00.000Z',
+    })],
+    aircraft: [organisationRecord('aircraft-1', { operating_location_id: 'base-1' })],
+    equipmentKits: [organisationRecord('equipment-1', { operating_location_id: 'base-1' })],
+    clients: [organisationRecord('client-1')],
+    properties: [organisationRecord('property-1')],
+    fields: [organisationRecord('field-1')],
+    jobs: [organisationRecord('job-1')],
+    missions: [organisationRecord('mission-1', { operating_location_id: 'base-1', status: 'planning' })],
+    ...overrides,
+  });
+}
+
+test('concludes that authoritative onboarding evidence is ready to plan without claiming readiness to fly', () => {
+  const result = projectGettingStarted(context, completeSource());
+
+  expect(result.operationalReadiness).toMatchObject({
+    state: 'READY_TO_PLAN',
+    headline: 'Your Spray Command workspace is ready',
+    missionAuthorisationClaim: false,
+    primaryAction: { label: 'Open your first Mission', route: '/missions/mission-1' },
+    personnel: { state: 'NOT_RECORDED', route: '/personnel?onboarding=personnel&returnTo=%2Fgetting-started' },
+  });
+  expect(result.operationalReadiness.requiredActions).toEqual([]);
+  expect(result.operationalReadiness.advisories).toEqual([]);
+  expect(result.nextAction).toMatchObject({
+    code: 'OPEN_MISSION', label: 'Open your first Mission', route: '/missions/mission-1', stepCode: 'MISSION',
+  });
+  expect(JSON.stringify(result.operationalReadiness)).not.toMatch(/ready to fly/i);
+});
+
+test('uses the existing compliance projection to show missing ReOC evidence as operational attention', () => {
+  const result = projectGettingStarted(context, completeSource({
+    complianceOverview: {
+      healthScore: {
+        modelVersion: 'AU-CASA-HEALTH-1', status: 'CRITICAL', percentage: 24,
+        criticalBlockers: [{
+          criticalRuleCode: 'REOC_MISSING',
+          reason: 'Required ReOC record is missing.',
+          route: '/compliance',
+        }],
+        categories: [],
+      },
+    },
+  }));
+
+  expect(result.operationalReadiness.state).toBe('NEEDS_OPERATIONAL_ATTENTION');
+  expect(result.operationalReadiness.missionAuthorisationClaim).toBe(false);
+  expect(result.operationalReadiness.advisories).toContainEqual(expect.objectContaining({
+    code: 'REOC_MISSING',
+    reason: 'Required ReOC record is missing.',
+    route: '/compliance/reoc',
+  }));
+});
+
+test('stays in Getting Started until every authoritative planning prerequisite exists', () => {
+  const result = projectGettingStarted(context, completeSource({
+    equipmentKits: [],
+    missions: [
+      { id: 'mission-complete', organisation_id: 'organisation-1', operating_location_id: 'base-1', status: 'completed' },
+    ],
+  }));
+
+  expect(result.operationalReadiness.state).toBe('GETTING_STARTED');
+  expect(result.operationalReadiness.requiredActions).toEqual(expect.arrayContaining([
+    expect.objectContaining({ code: 'ADD_EQUIPMENT', route: expect.stringContaining('/aircraft') }),
+    expect.objectContaining({ code: 'ADD_MISSION', route: expect.stringContaining('/missions/new') }),
+  ]));
+});
 
 test('projects the initial organisation from authoritative records without completion flags', () => {
   const result = projectGettingStarted(context, source());
@@ -98,7 +179,10 @@ test('keeps Personnel optional when a Draft Mission exists because no operate de
   expect(withoutPersonnel.steps.find((step) => step.code === 'PERSONNEL')).toMatchObject({
     state: 'OPTIONAL', optional: true,
   });
-  expect(withoutPersonnel.operationalReadiness).toEqual({ completedSteps: 2, requiredSteps: 9 });
+  expect(withoutPersonnel.operationalReadiness).toMatchObject({
+    state: 'GETTING_STARTED', completedSteps: 2, requiredSteps: 9,
+    personnel: { state: 'NOT_RECORDED' },
+  });
 
   const withPersonnel = projectGettingStarted(context, source({
     personnel: [{ id: 'personnel-1', organisation_id: 'organisation-1', operating_location_ids: ['base-1'] }],
@@ -148,8 +232,9 @@ test('rejects blank coordinates and malformed confirmation times while accepting
 
 test('reads the authenticated tenant and assigned Base scope without creating audit noise', async () => {
   const repo = repository();
+  const complianceRepository = { readOverview: jest.fn().mockResolvedValue(source().complianceOverview) };
   const resolveContext = jest.fn().mockResolvedValue(context);
-  const handler = createGettingStartedHandler({ repository: repo, resolveContext });
+  const handler = createGettingStartedHandler({ repository: repo, complianceRepository, resolveContext });
   const res = response();
 
   await handler(request('GET', { organisationId: 'attacker-organisation' }), res);
@@ -160,7 +245,35 @@ test('reads the authenticated tenant and assigned Base scope without creating au
   expect(repo.readOrganisationBranding).toHaveBeenCalledWith(context);
   expect(repo.list).toHaveBeenCalledWith('operating_locations', context, { page: 1, pageSize: 100 });
   expect(repo.listPersonnel).toHaveBeenCalledWith(context, { operatingLocationId: 'base-1', includePrivate: false });
+  expect(complianceRepository.readOverview).toHaveBeenCalledWith(context);
   expect(Object.keys(repo)).toEqual(expect.not.arrayContaining(['create', 'update', 'write', 'audit']));
+});
+
+test('fails the compliance conclusion closed when the authoritative projection is unavailable', async () => {
+  const repo = repository({
+    list: jest.fn(async (resource) => ({
+      operating_locations: completeSource().operatingLocations,
+      aircraft: completeSource().aircraft,
+      'equipment-kits': completeSource().equipmentKits,
+      clients: completeSource().clients,
+      properties: completeSource().properties,
+      fields: completeSource().fields,
+      jobs: completeSource().jobs,
+      missions: completeSource().missions,
+    }[resource] || [])),
+  });
+  const complianceRepository = { readOverview: jest.fn().mockRejectedValue(new Error('projection unavailable')) };
+  const handler = createGettingStartedHandler({ repository: repo, complianceRepository, resolveContext: async () => context });
+  const res = response();
+
+  await handler(request(), res);
+
+  expect(res.statusCode).toBe(200);
+  expect(res.body.data.operationalReadiness).toMatchObject({
+    state: 'NEEDS_OPERATIONAL_ATTENTION',
+    missionAuthorisationClaim: false,
+    advisories: [expect.objectContaining({ code: 'COMPLIANCE_EVIDENCE_UNAVAILABLE', route: '/compliance' })],
+  });
 });
 
 test('reads every page so an assigned confirmed Base after row 100 is not truncated', async () => {
