@@ -340,7 +340,7 @@ function createCommercialOnboardingHandler(dependencies = {}) {
         const prepared = checkDomainResult(await repository.issueInvitation(requiredText(body, 'applicationId', 1, 100), context.platformUser.id, requiredVersion(body.expectedVersion), token, requiredText(body, 'notes', 3, 4000), expiresAt, action === 'resend'));
         if (!prepared?.issued || prepared.status !== 'PENDING' || !prepared.intended_administrator_email) throw apiError(500, 'INVITATION_PREPARATION_FAILED', 'Commercial onboarding request failed.');
         try {
-          const redirectUrl = `${redirectOrigin}/onboarding/accept?token=${encodeURIComponent(token)}`;
+          const redirectUrl = `${redirectOrigin}/onboarding/accept?invitation=${encodeURIComponent(prepared.invitation_id)}`;
           const provider = await invitationDelivery.sendInvitation(prepared.intended_administrator_email, redirectUrl);
           const delivered = checkDomainResult(await repository.markInvitationDelivery(prepared.invitation_id, context.platformUser.id, prepared.row_version, 'SENT', provider?.providerReference || null, 'Supabase Auth invitation delivered.'));
           if (!delivered?.delivered || delivered.status !== 'SENT') throw apiError(502, 'INVITATION_DELIVERY_FAILED', 'Invitation could not be delivered.');

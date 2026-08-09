@@ -17,7 +17,9 @@ jest.mock('react-router-dom', () => ({
   useNavigate: () => mockNavigate,
 }), { virtual: true });
 
-function renderPage(url = '/onboarding/accept?token=raw-invitation-token#access_token=invite-access&refresh_token=invite-refresh&expires_in=3600&type=invite') {
+const invitationId = '91000000-0000-4000-8000-000000000001';
+
+function renderPage(url = `/onboarding/accept?invitation=${invitationId}#access_token=invite-access&refresh_token=invite-refresh&expires_in=3600&type=magiclink`) {
   window.history.replaceState({}, '', url);
   return render(<ThemeProvider theme={theme}><AcceptOrganisationInvitation /></ThemeProvider>);
 }
@@ -37,7 +39,7 @@ describe('organisation invitation acceptance', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Activate organisation' }));
 
     expect(mockAcceptOrganisationInvitation).toHaveBeenCalledWith(
-      'new-password', 'raw-invitation-token', 'invite-access', 'invite-refresh', 3600,
+      'new-password', invitationId, 'invite-access', 3600,
     );
     await waitFor(() => expect(mockNavigate).toHaveBeenCalledWith('/getting-started', { replace: true }));
   });
@@ -94,11 +96,40 @@ describe('organisation invitation acceptance', () => {
   });
 
   test('classifies a missing Supabase session as an authentication-link problem', () => {
-    renderPage('/onboarding/accept?token=raw-invitation-token');
+    renderPage(`/onboarding/accept?invitation=${invitationId}`);
 
     expect(screen.getByText('Authentication link problem')).toBeInTheDocument();
     expect(screen.getByText('This authentication link is incomplete or expired.')).toBeInTheDocument();
     expect(screen.queryByText('Invitation problem')).not.toBeInTheDocument();
     expect(mockAcceptOrganisationInvitation).not.toHaveBeenCalled();
+  });
+
+  test('scrubs the public invitation identifier and provider fragment after capture', async () => {
+    mockAcceptOrganisationInvitation.mockResolvedValue({ success: true });
+    renderPage();
+
+    await waitFor(() => expect(window.location.href).toBe('http://localhost/onboarding/accept'));
+    expect(window.location.search).toBe('');
+    expect(window.location.hash).toBe('');
+
+    await userEvent.type(screen.getByLabelText(/^Create password/), 'new-password');
+    await userEvent.type(screen.getByLabelText(/^Confirm password/), 'new-password');
+    await userEvent.click(screen.getByRole('button', { name: 'Activate organisation' }));
+    expect(mockAcceptOrganisationInvitation).toHaveBeenCalledWith('new-password', invitationId, 'invite-access', 3600);
+  });
+
+  test('shows password-recovery guidance after an unexpected post-password activation failure', async () => {
+    mockAcceptOrganisationInvitation.mockResolvedValue({
+      success: false,
+      errorKind: 'onboarding',
+      error: 'Your password was updated, but organisation activation could not be completed. Use password recovery or contact support.',
+    });
+    renderPage();
+
+    await userEvent.type(screen.getByLabelText(/^Create password/), 'new-password');
+    await userEvent.type(screen.getByLabelText(/^Confirm password/), 'new-password');
+    await userEvent.click(screen.getByRole('button', { name: 'Activate organisation' }));
+
+    expect(await screen.findByText(/Use password recovery or contact support/)).toBeInTheDocument();
   });
 });

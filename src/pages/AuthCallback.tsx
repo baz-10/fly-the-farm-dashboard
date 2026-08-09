@@ -56,7 +56,9 @@ function ConfirmationCallback() {
 
 export default function AuthCallback() {
   const parameters = new URLSearchParams(window.location.hash.replace(/^#/, ''));
-  if (parameters.get('type') === 'invite') return <AcceptOrganisationInvitation />;
+  const callbackType = parameters.get('type');
+  const hasOnboardingInvitation = new URLSearchParams(window.location.search).has('invitation');
+  if (hasOnboardingInvitation && ['invite', 'magiclink'].includes(callbackType || '')) return <AcceptOrganisationInvitation />;
   if (parameters.get('type') === 'recovery') return <ResetPassword />;
   return <ConfirmationCallback />;
 }

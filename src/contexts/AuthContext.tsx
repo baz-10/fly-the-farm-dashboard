@@ -60,7 +60,7 @@ interface AuthContextType {
   completeSession: (accessToken: string, refreshToken: string, expiresIn: number) => Promise<AuthActionResult>;
   requestPasswordReset: (email: string) => Promise<AuthActionResult>;
   resetPassword: (password: string, accessToken: string, refreshToken: string, expiresIn: number) => Promise<AuthActionResult>;
-  acceptOrganisationInvitation: (password: string, invitationToken: string, accessToken: string, refreshToken: string, expiresIn: number) => Promise<AuthActionResult>;
+  acceptOrganisationInvitation: (password: string, invitationId: string, accessToken: string, expiresIn: number) => Promise<AuthActionResult>;
   logout: () => void;
   updateUser: (updates: Partial<User>) => void;
 }
@@ -394,16 +394,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const acceptOrganisationInvitation = useCallback(async (
     password: string,
-    invitationToken: string,
+    invitationId: string,
     accessToken: string,
-    refreshToken: string,
     expiresIn: number,
   ): Promise<AuthActionResult> => {
     if (!remoteMode) return { success: false, errorKind: 'authentication', error: 'Organisation invitations require remote persistence.' };
     try {
       const result = await requestRemoteAuth({
-        action: 'accept-organisation-invitation', password, token: invitationToken,
-        accessToken, refreshToken, expiresIn,
+        action: 'accept-organisation-invitation', password, invitationId,
+        accessToken, expiresIn,
       });
       setUser(result.user);
       cacheUser(result.user, false);

@@ -13,11 +13,14 @@ const migrationDirectory = path.join(root, 'supabase/migrations');
 const migrationName = '20260809100000_commercial_onboarding_lifecycle.sql';
 const forwardMigrationName = '20260809110000_commercial_onboarding_delivery_and_abuse.sql';
 const resendMigrationName = '20260809120000_commercial_onboarding_immediate_resend.sql';
+const identityAcceptanceMigrationName = '20260809130000_commercial_onboarding_identity_acceptance.sql';
 const sql = fs.readFileSync(path.join(migrationDirectory, migrationName), 'utf8');
 const forwardSql = fs.existsSync(path.join(migrationDirectory, forwardMigrationName))
   ? fs.readFileSync(path.join(migrationDirectory, forwardMigrationName), 'utf8') : '';
 const resendSql = fs.existsSync(path.join(migrationDirectory, resendMigrationName))
   ? fs.readFileSync(path.join(migrationDirectory, resendMigrationName), 'utf8') : '';
+const identityAcceptanceSql = fs.existsSync(path.join(migrationDirectory, identityAcceptanceMigrationName))
+  ? fs.readFileSync(path.join(migrationDirectory, identityAcceptanceMigrationName), 'utf8') : '';
 const runPgliteInThisProcess = process.env.MIGRATION_LINT_PGLITE_CHILD === '1';
 const pureNodeTests = [];
 const pureNodeBeforeAll = [];
@@ -50,6 +53,9 @@ test('uses only deterministic repository-controlled migration definitions', () =
   expect(forwardSql).not.toContain('p_replace_active');
   expect(resendSql).toContain('p_replace_active');
   expect(resendSql).toContain('REPLACED_BY_RESEND');
+  expect(identityAcceptanceSql).toContain('ftf_preflight_commercial_invitation');
+  expect(identityAcceptanceSql).toContain('ftf_accept_commercial_invitation_by_id');
+  expect(identityAcceptanceSql).not.toContain('pg_get_functiondef');
 });
 
 if (runPgliteInThisProcess) {
@@ -79,6 +85,7 @@ if (runPgliteInThisProcess) {
       migrationName,
       forwardMigrationName,
       resendMigrationName,
+      identityAcceptanceMigrationName,
     ]) {
       await db.exec(fs.readFileSync(path.join(migrationDirectory, dependency), 'utf8'));
     }
@@ -103,6 +110,8 @@ if (runPgliteInThisProcess) {
         ,to_regclass('public.commercial_onboarding_application_requests') is not null as request_limits
         ,to_regprocedure('public.ftf_submit_commercial_application_guarded(jsonb,text)') is not null as guarded_submit_rpc
         ,to_regprocedure('public.ftf_mark_commercial_invitation_delivery(uuid,uuid,integer,text,text,text)') is not null as delivery_rpc
+        ,to_regprocedure('public.ftf_preflight_commercial_invitation(uuid,uuid)') is not null as invitation_preflight_rpc
+        ,to_regprocedure('public.ftf_accept_commercial_invitation_by_id(uuid,uuid)') is not null as invitation_id_accept_rpc
     `);
     expect(result.rows[0]).toEqual({
       applications: true,
@@ -117,6 +126,8 @@ if (runPgliteInThisProcess) {
       request_limits: true,
       guarded_submit_rpc: true,
       delivery_rpc: true,
+      invitation_preflight_rpc: true,
+      invitation_id_accept_rpc: true,
     });
   });
 } else {

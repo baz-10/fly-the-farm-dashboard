@@ -16,8 +16,11 @@ const migrationPath = path.resolve(
 const sql = fs.readFileSync(migrationPath, 'utf8');
 const forwardMigrationName = '20260809110000_commercial_onboarding_delivery_and_abuse.sql';
 const resendMigrationName = '20260809120000_commercial_onboarding_immediate_resend.sql';
+const identityAcceptanceMigrationName = '20260809130000_commercial_onboarding_identity_acceptance.sql';
 const forwardMigrationPath = path.resolve(__dirname, `../../supabase/migrations/${forwardMigrationName}`);
 const forwardSql = fs.existsSync(forwardMigrationPath) ? fs.readFileSync(forwardMigrationPath, 'utf8') : '';
+const identityAcceptanceMigrationPath = path.resolve(__dirname, `../../supabase/migrations/${identityAcceptanceMigrationName}`);
+const identityAcceptanceSql = fs.existsSync(identityAcceptanceMigrationPath) ? fs.readFileSync(identityAcceptanceMigrationPath, 'utf8') : '';
 
 const runPgliteInThisProcess = process.env.COMMERCIAL_ONBOARDING_PGLITE_CHILD === '1';
 const pureNodeTests = [];
@@ -133,6 +136,12 @@ test('separates application approval from invitation creation', () => {
   expect(sql).toContain('approved_application_required');
 });
 
+test('defines email-bound invitation identifier preflight and acceptance boundaries', () => {
+  expect(identityAcceptanceSql).toContain('ftf_preflight_commercial_invitation');
+  expect(identityAcceptanceSql).toContain('ftf_accept_commercial_invitation_by_id');
+  expect(identityAcceptanceSql).not.toContain('p_token text');
+});
+
 if (runPgliteInThisProcess) test('atomically replaces an unexpired delivered invitation when resend is requested', async () => {
   const application = await submitApplication('resend-now@example.com', 'ResendNow');
   const review = await reviewApplication(application.application_id, application.row_version, 'UNDER_REVIEW');
@@ -208,6 +217,7 @@ beforeAll(async () => {
     '20260809100000_commercial_onboarding_lifecycle.sql',
     forwardMigrationName,
     resendMigrationName,
+    identityAcceptanceMigrationName,
   ];
   for (const migrationName of migrationNames) {
     if (migrationName === forwardMigrationName) {
@@ -689,6 +699,155 @@ test('provisions one complete organisation identity atomically and is idempotent
     [issued.invitation.raw_token, differentUser],
   );
   expect(replayByDifferentUser.rows[0].result).toMatchObject({ accepted: false, code: 'INVITATION_ALREADY_ACCEPTED' });
+});
+
+test('preflights invitation state and identity without mutating expected denials', async () => {
+  const eligibleAuthUserId = '93000000-0000-4000-8000-000000000001';
+  const wrongAuthUserId = '93000000-0000-4000-8000-000000000002';
+  const eligible = await createIssuedInvitation(
+    'preflight-eligible@example.com', 'PreflightEligible', 'preflight-eligible-token-with-enough-entropy-0001',
+  );
+  await db.exec(`
+    insert into auth.users(id,email) values
+      ('${eligibleAuthUserId}','preflight-eligible@example.com'),
+      ('${wrongAuthUserId}','different@example.com');
+  `);
+
+  const allowed = await db.query(
+    'select public.ftf_preflight_commercial_invitation($1::uuid,$2::uuid) as result',
+    [eligible.invitation.invitation_id, eligibleAuthUserId],
+  );
+  expect(allowed.rows[0].result).toMatchObject({ eligible: true, invitation_id: eligible.invitation.invitation_id });
+
+  const wrongEmail = await db.query(
+    'select public.ftf_preflight_commercial_invitation($1::uuid,$2::uuid) as result',
+    [eligible.invitation.invitation_id, wrongAuthUserId],
+  );
+  expect(wrongEmail.rows[0].result).toMatchObject({ eligible: false, code: 'INVITATION_EMAIL_MISMATCH' });
+
+  const platformInvitation = await createIssuedInvitation(
+    'platform-reviewer@example.com', 'PreflightPlatform', 'preflight-platform-token-with-enough-entropy-0001',
+  );
+  const platform = await db.query(
+    'select public.ftf_preflight_commercial_invitation($1::uuid,$2::uuid) as result',
+    [platformInvitation.invitation.invitation_id, platformAuthUserId],
+  );
+  expect(platform.rows[0].result).toMatchObject({ eligible: false, code: 'PLATFORM_IDENTITY_FORBIDDEN' });
+
+  const conflictAuthUserId = '93000000-0000-4000-8000-000000000003';
+  const conflict = await createIssuedInvitation(
+    'preflight-conflict@example.com', 'PreflightConflict', 'preflight-conflict-token-with-enough-entropy-0001',
+  );
+  await db.exec(`insert into auth.users(id,email) values('${conflictAuthUserId}','preflight-conflict@example.com')`);
+  await db.query(
+    `select public.ftf_bootstrap_production_beta_organisation(
+      $1::uuid,'Existing Organisation','Existing User','Existing Base',null,'Australia/Brisbane'
+    )`,
+    [conflictAuthUserId],
+  );
+  const conflictingMembership = await db.query(
+    'select public.ftf_preflight_commercial_invitation($1::uuid,$2::uuid) as result',
+    [conflict.invitation.invitation_id, conflictAuthUserId],
+  );
+  expect(conflictingMembership.rows[0].result).toMatchObject({ eligible: false, code: 'ORGANISATION_IDENTITY_CONFLICT' });
+
+  const revoked = await createIssuedInvitation(
+    'preflight-revoked@example.com', 'PreflightRevoked', 'preflight-revoked-token-with-enough-entropy-0001',
+  );
+  const revokedResult = await db.query(
+    `select public.ftf_revoke_commercial_invitation(
+      $1::uuid,$2::uuid,$3::integer,'Reviewer revoked invitation.'
+    ) as result`,
+    [revoked.invitation.invitation_id, platformUserId, revoked.invitation.row_version],
+  );
+  expect(revokedResult.rows[0].result).toMatchObject({ revoked: true });
+  const revokedAuthUserId = '93000000-0000-4000-8000-000000000004';
+  await db.exec(`insert into auth.users(id,email) values('${revokedAuthUserId}','preflight-revoked@example.com')`);
+  const revokedPreflight = await db.query(
+    'select public.ftf_preflight_commercial_invitation($1::uuid,$2::uuid) as result',
+    [revoked.invitation.invitation_id, revokedAuthUserId],
+  );
+  expect(revokedPreflight.rows[0].result).toMatchObject({ eligible: false, code: 'INVITATION_REVOKED' });
+
+  const expired = await createIssuedInvitation(
+    'preflight-expired@example.com', 'PreflightExpired', 'preflight-expired-token-with-enough-entropy-0001',
+  );
+  const expiredAuthUserId = '93000000-0000-4000-8000-000000000005';
+  await db.exec(`insert into auth.users(id,email) values('${expiredAuthUserId}','preflight-expired@example.com')`);
+  await db.query('update public.commercial_onboarding_invitations set expires_at=now()-interval \'1 minute\' where id=$1', [expired.invitation.invitation_id]);
+  const before = await db.query(
+    `select status,row_version,(select count(*)::integer from public.commercial_onboarding_invitation_events where invitation_id=$1) as events
+     from public.commercial_onboarding_invitations where id=$1`,
+    [expired.invitation.invitation_id],
+  );
+  const expiredPreflight = await db.query(
+    'select public.ftf_preflight_commercial_invitation($1::uuid,$2::uuid) as result',
+    [expired.invitation.invitation_id, expiredAuthUserId],
+  );
+  const after = await db.query(
+    `select status,row_version,(select count(*)::integer from public.commercial_onboarding_invitation_events where invitation_id=$1) as events
+     from public.commercial_onboarding_invitations where id=$1`,
+    [expired.invitation.invitation_id],
+  );
+  expect(expiredPreflight.rows[0].result).toMatchObject({ eligible: false, code: 'INVITATION_EXPIRED' });
+  expect(after.rows[0]).toEqual(before.rows[0]);
+});
+
+test('requires one unambiguous active invitation for the authenticated email', async () => {
+  const authUserId = '94000000-0000-4000-8000-000000000001';
+  const first = await createIssuedInvitation(
+    'ambiguous@example.com', 'AmbiguousOne', 'ambiguous-one-token-with-enough-entropy-0001',
+  );
+  await createIssuedInvitation(
+    'ambiguous@example.com', 'AmbiguousTwo', 'ambiguous-two-token-with-enough-entropy-0001',
+  );
+  await db.exec(`insert into auth.users(id,email) values('${authUserId}','ambiguous@example.com')`);
+
+  const result = await db.query(
+    'select public.ftf_preflight_commercial_invitation($1::uuid,$2::uuid) as result',
+    [first.invitation.invitation_id, authUserId],
+  );
+  expect(result.rows[0].result).toMatchObject({ eligible: false, code: 'INVITATION_AMBIGUOUS' });
+});
+
+test('accepts by public invitation identifier, rejects another email, and emits no raw bearer evidence', async () => {
+  const authUserId = '95000000-0000-4000-8000-000000000001';
+  const otherAuthUserId = '95000000-0000-4000-8000-000000000002';
+  const rawBearer = 'identifier-acceptance-raw-token-with-enough-entropy-0001';
+  const issued = await createIssuedInvitation('identifier@example.com', 'Identifier', rawBearer);
+  await db.exec(`
+    insert into auth.users(id,email) values
+      ('${authUserId}','identifier@example.com'),
+      ('${otherAuthUserId}','identifier-other@example.com');
+  `);
+
+  const otherEmail = await db.query(
+    'select public.ftf_accept_commercial_invitation_by_id($1::uuid,$2::uuid) as result',
+    [issued.invitation.invitation_id, otherAuthUserId],
+  );
+  expect(otherEmail.rows[0].result).toMatchObject({ accepted: false, code: 'INVITATION_EMAIL_MISMATCH' });
+
+  const accepted = await db.query(
+    'select public.ftf_accept_commercial_invitation_by_id($1::uuid,$2::uuid) as result',
+    [issued.invitation.invitation_id, authUserId],
+  );
+  expect(accepted.rows[0].result).toMatchObject({ accepted: true, already_provisioned: false, invitation_id: issued.invitation.invitation_id });
+
+  const replay = await db.query(
+    'select public.ftf_accept_commercial_invitation_by_id($1::uuid,$2::uuid) as result',
+    [issued.invitation.invitation_id, authUserId],
+  );
+  expect(replay.rows[0].result).toMatchObject({ accepted: true, already_provisioned: true });
+
+  const evidence = await db.query(`
+    select concat_ws(' ',
+      coalesce((select jsonb_agg(event_payload)::text from public.commercial_onboarding_invitation_events where invitation_id=$1),''),
+      coalesce((select jsonb_agg(event_payload)::text from public.platform_audit_events where entity_id=$1),''),
+      coalesce((select jsonb_agg(payload)::text from public.platform_transactional_outbox where aggregate_id=$1),''),
+      coalesce((select jsonb_agg(event_payload)::text from public.audit_events where entity_id=$1),''),
+      coalesce((select jsonb_agg(payload)::text from public.transactional_outbox where aggregate_id=$1),'')) as recorded
+  `, [issued.invitation.invitation_id]);
+  expect(evidence.rows[0].recorded).not.toContain(rawBearer);
 });
 
 test('keeps application events, invitation events, and consumed invitations immutable', async () => {

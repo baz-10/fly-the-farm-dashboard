@@ -6,9 +6,8 @@ import { useAuth } from '../contexts/AuthContext';
 import PlatformBrand from '../brand/PlatformBrand';
 
 type LinkDetails = {
-  invitationToken: string;
+  invitationId: string;
   accessToken: string;
-  refreshToken: string;
   expiresIn: number;
   callbackError: string;
 };
@@ -17,9 +16,8 @@ function readLinkDetails(): LinkDetails {
   const query = new URLSearchParams(window.location.search);
   const hash = new URLSearchParams(window.location.hash.replace(/^#/, ''));
   return {
-    invitationToken: query.get('token') || '',
+    invitationId: query.get('invitation') || '',
     accessToken: hash.get('access_token') || '',
-    refreshToken: hash.get('refresh_token') || '',
     expiresIn: Number(hash.get('expires_in') || 3600),
     callbackError: hash.get('error_description') || '',
   };
@@ -37,15 +35,15 @@ export default function AcceptOrganisationInvitation() {
     kind: 'authentication' | 'onboarding' | 'validation'; message: string;
   } | null>(() => {
     if (link.callbackError) return { kind: 'authentication', message: link.callbackError };
-    if (!link.invitationToken) {
+    if (!link.invitationId) {
       return { kind: 'onboarding', message: 'This invitation link is incomplete or expired.' };
     }
-    if (!link.accessToken || !link.refreshToken) {
+    if (!link.accessToken) {
       return { kind: 'authentication', message: 'This authentication link is incomplete or expired.' };
     }
     return null;
   });
-  const linkIsUsable = Boolean(link.invitationToken && link.accessToken && link.refreshToken && !link.callbackError);
+  const linkIsUsable = Boolean(link.invitationId && link.accessToken && !link.callbackError);
 
   useEffect(() => {
     window.history.replaceState({}, document.title, window.location.pathname);
@@ -66,7 +64,7 @@ export default function AcceptOrganisationInvitation() {
 
     setLoading(true);
     const result = await acceptOrganisationInvitation(
-      password, link.invitationToken, link.accessToken, link.refreshToken, link.expiresIn,
+      password, link.invitationId, link.accessToken, link.expiresIn,
     );
     setLoading(false);
     if (result.success) {

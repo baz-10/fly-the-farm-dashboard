@@ -234,25 +234,35 @@ test('repository uses stable cursor pagination and scopes evidence to the curren
 test('delivers invitations through Supabase Auth and never returns the raw token', async () => {
   const repo = repository();
   const provider = delivery();
+  const logged = [];
+  const logSpies = ['log', 'info', 'warn', 'error'].map((method) => (
+    jest.spyOn(console, method).mockImplementation((...args) => logged.push(args))
+  ));
   const handler = createCommercialOnboardingHandler({
     repository: repo, invitationDelivery: provider,
     resolvePlatformContext: async () => platformContext(['platform.onboarding.invitation.issue']),
     randomToken: () => 'raw-token-with-enough-entropy-for-provider-only-0001',
     now: () => new Date('2026-08-09T00:00:00.000Z'),
   });
-  const res = response();
-  await handler(req('POST', 'issue', { applicationId: 'application-1', expectedVersion: 3, notes: 'Approved invitation.', expiresAt: '2099-01-01T00:00:00.000Z' }), res);
+  try {
+    const res = response();
+    await handler(req('POST', 'issue', { applicationId: 'application-1', expectedVersion: 3, notes: 'Approved invitation.', expiresAt: '2099-01-01T00:00:00.000Z' }), res);
 
-  expect(repo.issueInvitation).toHaveBeenCalledWith(
-    'application-1', 'platform-1', 3,
-    'raw-token-with-enough-entropy-for-provider-only-0001', 'Approved invitation.',
-    '2026-08-09T01:00:00.000Z', false,
-  );
-  expect(provider.sendInvitation).toHaveBeenCalledWith('alex@example.com', 'https://spray-command.test/onboarding/accept?token=raw-token-with-enough-entropy-for-provider-only-0001');
-  expect(repo.markInvitationDelivery).toHaveBeenCalledWith('invitation-1', 'platform-1', 1, 'SENT', 'supabase-user-1', 'Supabase Auth invitation delivered.');
-  expect(res.statusCode).toBe(201);
-  expect(res.body.data).toMatchObject({ delivered: true, status: 'SENT' });
-  expect(JSON.stringify(res.body)).not.toMatch(/raw-token|invitationPath|token=/);
+    expect(repo.issueInvitation).toHaveBeenCalledWith(
+      'application-1', 'platform-1', 3,
+      'raw-token-with-enough-entropy-for-provider-only-0001', 'Approved invitation.',
+      '2026-08-09T01:00:00.000Z', false,
+    );
+    expect(provider.sendInvitation).toHaveBeenCalledWith('alex@example.com', 'https://spray-command.test/onboarding/accept?invitation=invitation-1');
+    expect(repo.markInvitationDelivery).toHaveBeenCalledWith('invitation-1', 'platform-1', 1, 'SENT', 'supabase-user-1', 'Supabase Auth invitation delivered.');
+    expect(res.statusCode).toBe(201);
+    expect(res.body.data).toMatchObject({ delivered: true, status: 'SENT' });
+    expect(JSON.stringify(res.body)).not.toMatch(/raw-token|invitationPath|token=/);
+    expect(JSON.stringify(provider.sendInvitation.mock.calls)).not.toMatch(/raw-token|token=/);
+    expect(JSON.stringify(logged)).not.toMatch(/raw-token|token=/);
+  } finally {
+    logSpies.forEach((spy) => spy.mockRestore());
+  }
 });
 
 test('fails closed and revokes prepared evidence when Supabase Auth delivery fails', async () => {
@@ -296,12 +306,12 @@ test('Supabase invitation delivery uses one create-user OTP path for initial and
     supabaseRequest.mockClear();
     const result = await new SupabaseInvitationDelivery().sendInvitation(
       'alex@example.com',
-      'https://spray-command.test/onboarding/accept?token=server-only-token',
+      'https://spray-command.test/onboarding/accept?invitation=invitation-1',
       { resend },
     );
     expect(result).toEqual({ providerReference: 'supabase-user-1' });
     expect(supabaseRequest).toHaveBeenCalledWith(
-      expect.stringContaining('auth/v1/otp?redirect_to=https%3A%2F%2Fspray-command.test%2Fonboarding%2Faccept%3Ftoken%3Dserver-only-token'),
+      expect.stringContaining('auth/v1/otp?redirect_to=https%3A%2F%2Fspray-command.test%2Fonboarding%2Faccept%3Finvitation%3Dinvitation-1'),
       expect.objectContaining({ method: 'POST', body: JSON.stringify({ email: 'alex@example.com', create_user: true }) }),
     );
   }
