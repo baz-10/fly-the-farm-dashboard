@@ -24,6 +24,8 @@ const { createSupportHandler } = require('./support-api');
 const { createComplianceHandler, createPersonnelCasaCredentialsHandler } = require('./compliance-api');
 const { createChecklistsHandler } = require('./checklists-api');
 const { createOperationsBriefHandler } = require('./operations-brief-api');
+const { createCommercialOnboardingHandler } = require('./commercial-onboarding-api');
+const { createGettingStartedHandler } = require('./getting-started-api');
 
 function createDefaultHandlers() {
   return Object.freeze({
@@ -58,6 +60,8 @@ function createDefaultHandlers() {
     'personnel-casa-credentials': createPersonnelCasaCredentialsHandler(),
     checklists: createChecklistsHandler(),
     'operations-brief': createOperationsBriefHandler(),
+    'commercial-onboarding': createCommercialOnboardingHandler(),
+    'getting-started': createGettingStartedHandler(),
   });
 }
 

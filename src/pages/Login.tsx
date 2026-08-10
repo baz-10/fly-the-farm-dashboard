@@ -157,7 +157,7 @@ export default function Login() {
             </Typography>
             <Link
               component={RouterLink}
-              to="/register"
+              to="/apply"
               sx={{ fontWeight: 700, color: 'primary.main', textDecoration: 'none', '&:hover': { textDecoration: 'underline' } }}
             >
               Create account

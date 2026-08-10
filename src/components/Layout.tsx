@@ -30,9 +30,10 @@ import MenuIcon from '@mui/icons-material/Menu';
 import SearchIcon from '@mui/icons-material/Search';
 import SettingsIcon from '@mui/icons-material/Settings';
 import { useAuth } from '../contexts/AuthContext';
-import { findActiveNavigationGroup, HOME_NAV_ITEM, isNavigationItemActive, ORGANISATION_NAV_GROUPS } from '../navigation/organisationNavigation';
+import { findActiveNavigationGroup, getOrganisationNavigationGroups, HOME_NAV_ITEM, isNavigationItemActive } from '../navigation/organisationNavigation';
 import { getMaturityEntry } from '../productMaturity/registry';
 import { MaturityBadge, maturityAvailabilityExplanation } from './productMaturity/MaturityBadge';
+import { gettingStartedApi } from '../services/gettingStartedApi';
 
 const ROLE_LABELS: Record<string, string> = {
   admin: 'Organisation Admin',
@@ -61,6 +62,12 @@ export default function Layout() {
   const [drawerOpen, setDrawerOpen] = React.useState(false);
   const [accountAnchor, setAccountAnchor] = React.useState<null | HTMLElement>(null);
   const [search, setSearch] = React.useState('');
+  const isGettingStartedAdmin = user?.role === 'admin' && user.identityPlane !== 'platform';
+  const isGettingStartedPage = location.pathname === '/getting-started';
+  const gettingStartedUserKey = isGettingStartedAdmin ? `${user.id}:${user.tenantId || ''}` : '';
+  const [gettingStartedState, setGettingStartedState] = React.useState({ userKey: '', incomplete: true });
+  const gettingStartedIncomplete = isGettingStartedAdmin
+    && (isGettingStartedPage || gettingStartedState.userKey !== gettingStartedUserKey || gettingStartedState.incomplete);
   const activeGroup = findActiveNavigationGroup(location.pathname);
   const [expandedGroups, setExpandedGroups] = React.useState<Set<string>>(() => new Set(activeGroup ? [activeGroup] : []));
 
@@ -69,7 +76,26 @@ export default function Layout() {
     setExpandedGroups((current) => current.has(activeGroup) ? current : new Set([...Array.from(current), activeGroup]));
   }, [activeGroup]);
 
-  const navGroups = ORGANISATION_NAV_GROUPS.map((group) => ({
+  React.useEffect(() => {
+    let active = true;
+    if (!gettingStartedUserKey) {
+      setGettingStartedState({ userKey: '', incomplete: false });
+      return () => { active = false; };
+    }
+    if (isGettingStartedPage) return () => { active = false; };
+    void gettingStartedApi.read().then((projection) => {
+      if (!active) return;
+      setGettingStartedState({
+        userKey: gettingStartedUserKey,
+        incomplete: projection.steps.some((step) => !step.optional && step.state !== 'COMPLETE'),
+      });
+    }).catch(() => {
+      if (active) setGettingStartedState({ userKey: gettingStartedUserKey, incomplete: true });
+    });
+    return () => { active = false; };
+  }, [gettingStartedUserKey, isGettingStartedPage]);
+
+  const navGroups = getOrganisationNavigationGroups({ gettingStartedIncomplete }).map((group) => ({
     ...group,
     items: group.items.filter((item) =>
       (!user?.role || item.roles.includes(user.role))

@@ -1,5 +1,5 @@
-import React, { useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import React, { useEffect, useMemo, useState } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Alert, Box, Button, Card, CardActions, CardContent, Chip, Collapse, Dialog, DialogActions,
   DialogContent, DialogTitle, Grid, MenuItem, Stack, TextField, Typography, alpha, useTheme,
@@ -26,6 +26,9 @@ const statusLabel = (status: string) => status.replace(/_/g, ' ').replace(/\b\w/
 
 export default function JobWorkspace() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const returnTo = searchParams.get('returnTo') === '/getting-started' ? '/getting-started' : null;
+  const onboardingAction = searchParams.get('onboarding');
   const theme = useTheme();
   const operational = useOperationalData();
   const [search, setSearch] = useState('');
@@ -60,9 +63,17 @@ export default function JobWorkspace() {
     setDialogOpen(true);
   };
 
+  useEffect(() => {
+    if (onboardingAction === 'job') {
+      setStart(emptyStart());
+      setDialogOpen(true);
+    }
+  }, [onboardingAction]);
+
   const continueToJob = () => {
     if (!start.clientId || !start.propertyId || !start.fieldId) return;
-    navigate(`/jobs/client/${start.clientId}/property/${start.propertyId}/field/${start.fieldId}/new-job`);
+    const suffix = returnTo ? '?returnTo=%2Fgetting-started' : '';
+    navigate(`/jobs/client/${start.clientId}/property/${start.propertyId}/field/${start.fieldId}/new-job${suffix}`);
   };
 
   return <Box>

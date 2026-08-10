@@ -2,8 +2,11 @@ import React from 'react';
 import { Alert, Box, Card, CardContent, Chip, Stack, Typography } from '@mui/material';
 import AdminPanelSettingsOutlinedIcon from '@mui/icons-material/AdminPanelSettingsOutlined';
 import AssistedSupport from './platform/AssistedSupport';
+import CommercialOnboardingReview from '../components/platform/CommercialOnboardingReview';
+import { useAuth } from '../contexts/AuthContext';
 
 export default function PlatformAdmin() {
+  const { user } = useAuth();
   return (
     <Box>
       <Stack direction={{ xs: 'column', sm: 'row' }} alignItems={{ sm: 'center' }} justifyContent="space-between" gap={2} sx={{ mb: 3 }}>
@@ -21,6 +24,7 @@ export default function PlatformAdmin() {
         <Typography variant="h6" fontWeight={750}>Delegated access only</Typography>
         <Typography color="text.secondary">Support requests, organisation approvals and time-limited sessions will appear here.</Typography>
       </CardContent></Card>
+      <CommercialOnboardingReview permissions={user?.permissions || []} />
       <AssistedSupport />
     </Box>
   );

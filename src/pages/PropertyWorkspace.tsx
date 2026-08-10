@@ -1,5 +1,5 @@
-import React, { useMemo, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Alert,
   Box,
@@ -67,6 +67,9 @@ const sourceLabel = (source?: ClientAddress['coordinateSource']) =>
 
 export default function PropertyWorkspace() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const returnTo = searchParams.get('returnTo') === '/getting-started' ? '/getting-started' : null;
+  const onboardingAction = searchParams.get('onboarding');
   const theme = useTheme();
   const operational = useOperationalData();
   const [search, setSearch] = useState('');
@@ -78,6 +81,7 @@ export default function PropertyWorkspace() {
   const [actionError, setActionError] = useState('');
   const [actionReference, setActionReference] = useState('');
   const [mapKey, setMapKey] = useState(0);
+  const [onboardingSaved, setOnboardingSaved] = useState(false);
   const locationSectionRef = useRef<HTMLDivElement>(null);
 
   const clientById = useMemo(() => new Map(operational.clients.map((client) => [client.id, client])), [operational.clients]);
@@ -109,6 +113,18 @@ export default function PropertyWorkspace() {
     setMapKey((current) => current + 1);
     setDialogOpen(true);
   };
+
+  useEffect(() => {
+    if (onboardingAction === 'property') {
+      setDraft(emptyDraft());
+      setLocationError('');
+      setActionError('');
+      setActionReference('');
+      setMoreDetailsOpen(false);
+      setMapKey((current) => current + 1);
+      setDialogOpen(true);
+    }
+  }, [onboardingAction]);
 
   const selectClient = (clientId: string) => {
     setDraft((current) => ({ ...emptyDraft(), name: current.name, clientId }));
@@ -185,7 +201,8 @@ export default function PropertyWorkspace() {
       });
       setDialogOpen(false);
       setDraft(emptyDraft());
-      navigate(`/jobs/client/${property.clientId}/property/${property.id}`);
+      if (returnTo) setOnboardingSaved(true);
+      else navigate(`/jobs/client/${property.clientId}/property/${property.id}`);
     } catch (error) {
       setActionError(describeOperationalError(error));
       const reference = (error as { details?: { correlationId?: unknown } })?.details?.correlationId;
@@ -194,6 +211,7 @@ export default function PropertyWorkspace() {
   };
 
   return <Box>
+    {returnTo && onboardingSaved && <Alert severity="success" sx={{ mb: 2 }} action={<Button color="inherit" onClick={() => navigate(returnTo)}>Return to Getting Started</Button>}>Property saved. Continue setup when you are ready.</Alert>}
     <Box className="ftf-animate-in" sx={{ mb: 3.5 }}>
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: { xs: 'flex-start', sm: 'flex-end' }, mb: 2.5, flexWrap: 'wrap', gap: 2 }}>
         <Box>

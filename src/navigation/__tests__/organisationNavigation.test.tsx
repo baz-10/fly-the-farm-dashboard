@@ -1,4 +1,4 @@
-import { CLIENT_RESOURCE_LINKS, HOME_NAV_ITEM, ORGANISATION_NAV_GROUPS, findActiveNavigationGroup } from '../organisationNavigation';
+import { CLIENT_RESOURCE_LINKS, GETTING_STARTED_NAV_ITEM, HOME_NAV_ITEM, ORGANISATION_NAV_GROUPS, findActiveNavigationGroup, getOrganisationNavigationGroups } from '../organisationNavigation';
 import { getMaturityEntry } from '../../productMaturity/registry';
 
 describe('organisation navigation', () => {
@@ -30,6 +30,20 @@ describe('organisation navigation', () => {
     expect(paths).toEqual(expect.arrayContaining(['/missions', '/aircraft', '/personnel', '/compliance', '/quotes', '/financials']));
   });
 
+  test('adds Getting Started only as incomplete-onboarding context without hiding stable modules', () => {
+    expect(GETTING_STARTED_NAV_ITEM).toMatchObject({ label: 'Getting Started', path: '/getting-started', roles: ['admin'] });
+    const incomplete = getOrganisationNavigationGroups({ gettingStartedIncomplete: true });
+    const complete = getOrganisationNavigationGroups({ gettingStartedIncomplete: false });
+    const incompletePaths = incomplete.flatMap((group) => group.items.map((item) => item.path));
+    const completePaths = complete.flatMap((group) => group.items.map((item) => item.path));
+
+    expect(incompletePaths).toContain('/getting-started');
+    expect(completePaths).not.toContain('/getting-started');
+    expect(completePaths).toEqual(incompletePaths.filter((path) => path !== '/getting-started'));
+    expect(incompletePaths).toEqual(expect.arrayContaining(['/jobs', '/missions', '/aircraft', '/personnel', '/admin']));
+    expect(findActiveNavigationGroup('/getting-started')).toBe('organisation');
+  });
+
   test('assigns every visible navigation destination stable registry metadata without changing its access contract', () => {
     const navigationItems = [HOME_NAV_ITEM, ...ORGANISATION_NAV_GROUPS.flatMap((group) => group.items)];
 
@@ -55,6 +69,7 @@ describe('organisation navigation', () => {
       { path: '/ask-ftf', roles: ['admin', 'contractor'], entitlement: 'legacyAskFtf', activePrefixes: undefined },
       { path: '/quotes', roles: ['admin', 'contractor'], entitlement: undefined, activePrefixes: undefined },
       { path: '/financials', roles: ['admin', 'contractor'], entitlement: undefined, activePrefixes: undefined },
+      { path: '/getting-started', roles: ['admin'], entitlement: undefined, activePrefixes: undefined },
       { path: '/license-settings', roles: ['admin', 'contractor'], entitlement: undefined, activePrefixes: undefined },
       { path: '/admin', roles: ['admin'], entitlement: undefined, activePrefixes: undefined },
     ]);
@@ -72,7 +87,7 @@ describe('organisation navigation', () => {
       { label: 'COMPLIANCE', paths: ['/compliance', '/compliance/checklists', '/jsa'] },
       { label: 'INTELLIGENCE', paths: ['/database', '/ask-ftf'] },
       { label: 'REPORTS', paths: ['/quotes', '/financials'] },
-      { label: 'ORGANISATION', paths: ['/license-settings', '/admin'] },
+      { label: 'ORGANISATION', paths: ['/getting-started', '/license-settings', '/admin'] },
     ]);
     expect(ORGANISATION_NAV_GROUPS.flatMap((group) => group.items).find((item) => item.path === '/ask-ftf')).toMatchObject({
       label: 'Operational Intelligence',

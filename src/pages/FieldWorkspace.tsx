@@ -1,5 +1,5 @@
-import React, { useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import React, { useEffect, useMemo, useState } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Alert, Box, Button, Card, CardActions, CardContent, Chip, Collapse, Dialog, DialogActions,
   DialogContent, DialogTitle, Grid, MenuItem, Stack, TextField, Typography, alpha, useTheme,
@@ -22,6 +22,9 @@ const emptyDraft = (): FieldDraft => ({ clientId: '', propertyId: '', name: '', 
 
 export default function FieldWorkspace() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const returnTo = searchParams.get('returnTo') === '/getting-started' ? '/getting-started' : null;
+  const onboardingAction = searchParams.get('onboarding');
   const theme = useTheme();
   const operational = useOperationalData();
   const [search, setSearch] = useState('');
@@ -29,6 +32,7 @@ export default function FieldWorkspace() {
   const [moreActionsOpen, setMoreActionsOpen] = useState(false);
   const [draft, setDraft] = useState<FieldDraft>(emptyDraft());
   const [actionError, setActionError] = useState('');
+  const [onboardingSaved, setOnboardingSaved] = useState(false);
 
   const clients = useMemo(() => new Map(operational.clients.map((client) => [client.id, client])), [operational.clients]);
   const properties = useMemo(() => new Map(operational.properties.map((property) => [property.id, property])), [operational.properties]);
@@ -54,6 +58,14 @@ export default function FieldWorkspace() {
     setDialogOpen(true);
   };
 
+  useEffect(() => {
+    if (onboardingAction === 'field') {
+      setDraft(emptyDraft());
+      setActionError('');
+      setDialogOpen(true);
+    }
+  }, [onboardingAction]);
+
   const saveField = async () => {
     if (!draft.propertyId || !draft.name.trim()) return;
     try {
@@ -69,13 +81,15 @@ export default function FieldWorkspace() {
       const parent = properties.get(created.propertyId);
       setDialogOpen(false);
       setDraft(emptyDraft());
-      navigate(`/jobs/client/${parent?.clientId || draft.clientId}/property/${created.propertyId}/field/${created.id}`);
+      if (returnTo) setOnboardingSaved(true);
+      else navigate(`/jobs/client/${parent?.clientId || draft.clientId}/property/${created.propertyId}/field/${created.id}`);
     } catch (error) {
       setActionError(describeOperationalError(error));
     }
   };
 
   return <Box>
+    {returnTo && onboardingSaved && <Alert severity="success" sx={{ mb: 2 }} action={<Button color="inherit" onClick={() => navigate(returnTo)}>Return to Getting Started</Button>}>Field saved. Continue setup when you are ready.</Alert>}
     <Box className="ftf-animate-in" sx={{ mb: 3.5 }}>
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: { xs: 'flex-start', sm: 'flex-end' }, mb: 2.5, flexWrap: 'wrap', gap: 2 }}>
         <Box>

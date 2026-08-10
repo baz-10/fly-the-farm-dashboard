@@ -332,6 +332,71 @@ describe('authoritative client/property/field workflow screens', () => {
     expect(mockNavigate).toHaveBeenCalledWith('/jobs/client/client-1/property/property-new');
   });
 
+  test('opens Property onboarding and returns only after the authoritative Property save', async () => {
+    const created = { ...property, id: 'property-onboarding', name: 'Onboarding Block' };
+    mockOperational.createProperty.mockResolvedValue(created);
+    mockSearchParams = new URLSearchParams('view=properties&onboarding=property&returnTo=%2Fgetting-started');
+    route('/jobs?view=properties&onboarding=property&returnTo=%2Fgetting-started', <ClientList />);
+
+    expect(await screen.findByRole('dialog', { name: 'Add Property' })).toBeVisible();
+    fireEvent.mouseDown(screen.getByRole('combobox', { name: 'Select Client' }));
+    fireEvent.click(await screen.findByRole('option', { name: 'North Farm' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Property name' }), { target: { value: 'Onboarding Block' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm adjusted location' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save Property' }));
+
+    await waitFor(() => expect(mockOperational.createProperty).toHaveBeenCalled());
+    expect(mockNavigate).not.toHaveBeenCalled();
+    fireEvent.click(await screen.findByRole('button', { name: 'Return to Getting Started' }));
+    expect(mockNavigate).toHaveBeenCalledWith('/getting-started');
+  });
+
+  test('opens Field onboarding and returns only after the authoritative Field save', async () => {
+    mockOperational.createField.mockResolvedValue({ ...field, id: 'field-onboarding', name: 'Onboarding Field' });
+    mockSearchParams = new URLSearchParams('view=fields&onboarding=field&returnTo=%2Fgetting-started');
+    route('/jobs?view=fields&onboarding=field&returnTo=%2Fgetting-started', <ClientList />);
+
+    expect(await screen.findByRole('dialog', { name: 'Add Field' })).toBeVisible();
+    fireEvent.mouseDown(screen.getByRole('combobox', { name: 'Select Client' }));
+    fireEvent.click(await screen.findByRole('option', { name: 'North Farm' }));
+    fireEvent.mouseDown(screen.getByRole('combobox', { name: 'Select Property' }));
+    fireEvent.click(await screen.findByRole('option', { name: 'Home Block' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Field name' }), { target: { value: 'Onboarding Field' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save Field' }));
+
+    await waitFor(() => expect(mockOperational.createField).toHaveBeenCalled());
+    expect(mockNavigate).not.toHaveBeenCalled();
+    fireEvent.click(await screen.findByRole('button', { name: 'Return to Getting Started' }));
+    expect(mockNavigate).toHaveBeenCalledWith('/getting-started');
+  });
+
+  test('preserves Getting Started context through Job selection and returns only after authoritative Job save', async () => {
+    mockSearchParams = new URLSearchParams('view=jobs&onboarding=job&returnTo=%2Fgetting-started');
+    const workspace = route('/jobs?view=jobs&onboarding=job&returnTo=%2Fgetting-started', <ClientList />);
+    expect(await screen.findByRole('dialog', { name: 'Add Job' })).toBeVisible();
+    fireEvent.mouseDown(screen.getByRole('combobox', { name: 'Select Client' }));
+    fireEvent.click(await screen.findByRole('option', { name: 'North Farm' }));
+    fireEvent.mouseDown(screen.getByRole('combobox', { name: 'Select Property' }));
+    fireEvent.click(await screen.findByRole('option', { name: 'Home Block' }));
+    fireEvent.mouseDown(screen.getByRole('combobox', { name: 'Select Field' }));
+    fireEvent.click(await screen.findByRole('option', { name: 'North Paddock' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Continue to Job details' }));
+    expect(mockNavigate).toHaveBeenCalledWith('/jobs/client/client-1/property/property-1/field/field-1/new-job?returnTo=%2Fgetting-started');
+
+    workspace.unmount();
+    mockNavigate.mockReset();
+    mockSearchParams = new URLSearchParams('returnTo=%2Fgetting-started');
+    route('/jobs/client/client-1/property/property-1/field/field-1/new-job?returnTo=%2Fgetting-started', <JobCreate />);
+    fireEvent.change(screen.getByRole('textbox', { name: 'Job Reference' }), { target: { value: 'JOB-ONBOARDING' } });
+    fireEvent.change(screen.getByRole('combobox', { name: 'Weed Target' }), { target: { value: 'Spray lantana' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save Job' }));
+
+    await waitFor(() => expect(mockOperational.createJob).toHaveBeenCalled());
+    expect(mockNavigate).not.toHaveBeenCalled();
+    fireEvent.click(await screen.findByRole('button', { name: 'Return to Getting Started' }));
+    expect(mockNavigate).toHaveBeenCalledWith('/getting-started');
+  });
+
   test('keeps Property form state and focuses location guidance when confirmation is missing', async () => {
     const scrollIntoView = jest.fn();
     Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', { configurable: true, value: scrollIntoView });
@@ -410,6 +475,23 @@ describe('authoritative client/property/field workflow screens', () => {
       name: 'New Farm',
       addresses: [expect.objectContaining({ address: '1 Farm Road', lat: -26.5701, lng: 148.7901, coordinateSource: 'MANUALLY_ADJUSTED', locationConfirmedAt: '2026-08-06T01:00:00.000Z' })],
     })));
+  });
+
+  test('opens the existing Client workflow from Getting Started and offers an explicit return after save', async () => {
+    mockOperational.createClient.mockResolvedValue({ ...client, id: 'client-onboarding', name: 'Onboarding Farm' });
+    mockSearchParams = new URLSearchParams('onboarding=client&returnTo=%2Fgetting-started');
+    route('/jobs?onboarding=client&returnTo=%2Fgetting-started', <ClientList />);
+
+    expect(await screen.findByRole('dialog', { name: 'Add New Client' })).toBeVisible();
+    fireEvent.change(screen.getByRole('textbox', { name: 'Client / Farmer Name' }), { target: { value: 'Onboarding Farm' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm adjusted location' }));
+    const saveButtons = screen.getAllByRole('button', { name: 'Add Client' });
+    fireEvent.click(saveButtons[saveButtons.length - 1]);
+
+    expect(await screen.findByRole('button', { name: 'Return to Getting Started' })).toBeVisible();
+    expect(mockNavigate).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Return to Getting Started' }));
+    expect(mockNavigate).toHaveBeenCalledWith('/getting-started');
   });
 
   test('reveals and requires a meaningful Custom client location label', async () => {

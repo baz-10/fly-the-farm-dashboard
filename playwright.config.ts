@@ -30,14 +30,32 @@ export default defineConfig({
     {
       name: 'cleanup',
       testMatch: /cleanup\.setup\.ts/,
-      use: { ...devices['Desktop Chrome'], storageState: 'test-results/.auth/organisation.json' },
+      use: {
+        ...devices['Desktop Chrome'],
+        storageState: 'test-results/.auth/organisation.json',
+        trace: 'off',
+        screenshot: 'off',
+        video: 'off',
+      },
       dependencies: ['auth'],
     },
     {
       name: 'chromium',
-      use: { ...devices['Desktop Chrome'], storageState: 'test-results/.auth/organisation.json' },
+      use: {
+        ...devices['Desktop Chrome'],
+        storageState: 'test-results/.auth/organisation.json',
+        trace: 'off',
+        screenshot: 'off',
+        video: 'off',
+      },
       dependencies: ['auth'],
-      testIgnore: [/environment\.spec\.ts/, /auth\.setup\.ts/, /cleanup\.setup\.ts/],
+      testIgnore: [/environment\.spec\.ts/, /auth\.setup\.ts/, /cleanup\.setup\.ts/, /commercial-onboarding\.spec\.ts/],
+    },
+    {
+      name: 'commercial-onboarding',
+      retries: 0,
+      testMatch: /commercial-onboarding\.spec\.ts/,
+      use: { ...devices['Desktop Chrome'], trace: 'off', screenshot: 'off', video: 'off' },
     },
   ],
 });

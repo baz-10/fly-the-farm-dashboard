@@ -2,6 +2,8 @@ import React from 'react';
 import { render, screen } from '@testing-library/react';
 import PlatformAdmin from '../pages/PlatformAdmin';
 
+jest.mock('../contexts/AuthContext', () => ({ useAuth: () => ({ user: { permissions: [] } }) }));
+
 describe('Platform Administration', () => {
   it('is a Spray Command surface without organisation branding', () => {
     render(<PlatformAdmin />);

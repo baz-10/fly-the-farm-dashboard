@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { Navigate, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Typography,
@@ -71,6 +71,7 @@ export default function ClientList() {
   const [locationError, setLocationError] = useState('');
   const [codeCopied, setCodeCopied] = useState(false);
   const [moreActionsOpen, setMoreActionsOpen] = useState(false);
+  const [onboardingSaved, setOnboardingSaved] = useState(false);
   const [snackbar, setSnackbar] = useState<{ open: boolean; message: string; severity: 'success' | 'error' }>({ open: false, message: '', severity: 'success' });
   const fileInputRef = useRef<HTMLInputElement>(null);
   const locationSectionRef = useRef<HTMLDivElement>(null);
@@ -80,6 +81,12 @@ export default function ClientList() {
   const isPropertiesView = searchParams.get('view') === 'properties';
   const isFieldsView = searchParams.get('view') === 'fields';
   const isJobsView = searchParams.get('view') === 'jobs';
+  const returnTo = searchParams.get('returnTo') === '/getting-started' ? '/getting-started' : null;
+  const onboardingAction = searchParams.get('onboarding');
+
+  useEffect(() => {
+    if (onboardingAction === 'client' && !isClient) setDialogOpen(true);
+  }, [isClient, onboardingAction]);
 
   const filtered = clients.filter((c) =>
     c.name.toLowerCase().includes(search.toLowerCase())
@@ -114,7 +121,8 @@ export default function ClientList() {
       setFormAddresses([emptyAddress()]);
       setLocationError('');
       setSnackbar({ open: true, message: 'Client saved.', severity: 'success' });
-      navigate(`/jobs/client/${client.id}`);
+      if (returnTo) setOnboardingSaved(true);
+      else navigate(`/jobs/client/${client.id}`);
     } catch (error) {
       setSnackbar({ open: true, message: describeOperationalError(error), severity: 'error' });
     }
@@ -307,6 +315,11 @@ export default function ClientList() {
 
   return (
     <Box>
+      {returnTo && onboardingSaved && (
+        <Alert severity="success" sx={{ mb: 2 }} action={<Button color="inherit" onClick={() => navigate(returnTo)}>Return to Getting Started</Button>}>
+          Client saved. Continue setup when you are ready.
+        </Alert>
+      )}
       <Box className="ftf-animate-in" sx={{ mb: 3.5 }}>
         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: { xs: 'flex-start', sm: 'flex-end' }, mb: 2.5, flexWrap: 'wrap', gap: 2 }}>
           <Box>

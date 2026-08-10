@@ -4,7 +4,6 @@ import { BrowserRouter, Navigate, Routes, Route } from 'react-router-dom';
 import Layout from './components/Layout';
 import ProtectedRoute from './components/ProtectedRoute';
 import Login from './pages/Login';
-import Register from './pages/Register';
 import AuthCallback from './pages/AuthCallback';
 import ForgotPassword from './pages/ForgotPassword';
 import ResetPassword from './pages/ResetPassword';
@@ -55,6 +54,7 @@ import OperationalFeatureGate from './components/OperationalFeatureGate';
 import Personnel from './pages/Personnel';
 import CustomerAcceptancePublic from './pages/CustomerAcceptancePublic';
 import PlatformProtectedRoute from './components/PlatformProtectedRoute';
+import OrganisationAdminRoute from './components/OrganisationAdminRoute';
 import PlatformShell from './components/PlatformShell';
 import PlatformAdmin from './pages/PlatformAdmin';
 import CasaComplianceOverview from './pages/CasaComplianceOverview';
@@ -63,6 +63,9 @@ import OperationsManualWorkspace from './pages/OperationsManualWorkspace';
 import ControlledChecklists from './pages/ControlledChecklists';
 import WeatherCentre from './pages/WeatherCentre';
 import { AuthorisedProductRoute, ProductRouteSurface } from './components/productMaturity/AuthorisedProductRoute';
+import CommercialApplication from './pages/CommercialApplication';
+import AcceptOrganisationInvitation from './pages/AcceptOrganisationInvitation';
+import GettingStarted from './pages/GettingStarted';
 
 export { REACHABLE_PRODUCT_ROUTES } from './productMaturity/surfaces';
 
@@ -107,10 +110,12 @@ function App() {
     <BrowserRouter>
       <Routes>
         <Route path="/login" element={<Login />} />
-        <Route path="/register" element={<ProductRouteSurface><Register /></ProductRouteSurface>} />
+        <Route path="/register" element={<Navigate to="/apply" replace />} />
         <Route path="/auth/callback" element={<AuthCallback />} />
         <Route path="/forgot-password" element={<ForgotPassword />} />
         <Route path="/reset-password" element={<ResetPassword />} />
+        <Route path="/apply" element={<ProductRouteSurface><CommercialApplication /></ProductRouteSurface>} />
+        <Route path="/onboarding/accept" element={<ProductRouteSurface><AcceptOrganisationInvitation /></ProductRouteSurface>} />
         <Route path="/customer-acceptance/:token" element={<ProductRouteSurface><CustomerAcceptancePublic /></ProductRouteSurface>} />
         <Route element={<PlatformProtectedRoute><ProductRouteSurface><PlatformShell /></ProductRouteSurface></PlatformProtectedRoute>}>
           <Route path="/platform" element={<PlatformAdmin />} />
@@ -125,6 +130,7 @@ function App() {
           }
         >
           <Route path="/" element={productRoute(<HomeRoute />)} />
+          <Route path="/getting-started" element={productRoute(<OrganisationAdminRoute><GettingStarted /></OrganisationAdminRoute>, { allowedRoles: ['admin'] })} />
           <Route path="/database" element={productRoute(<Dashboard />)} />
           <Route path="/search" element={productRoute(<SearchResults />)} />
           <Route path="/treatment/:id" element={productRoute(<TreatmentDetail />)} />

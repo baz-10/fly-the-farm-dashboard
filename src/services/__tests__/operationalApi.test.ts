@@ -79,8 +79,14 @@ describe('operational API adapter', () => {
   test('maps the complete supported job, location and boundary contracts', () => {
     expect(mapApiOperatingLocation({
       id: 'location-1', name: 'Brisbane Base', address: '1 Airfield Rd', timezone: 'Australia/Brisbane',
+      latitude: '-27.4698', longitude: '153.0251', address_source: 'MANUALLY_ADJUSTED',
+      location_confirmed_at: '2026-08-09T01:00:00.000Z',
       row_version: 2, created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-02T00:00:00Z',
-    })).toEqual(expect.objectContaining({ id: 'location-1', name: 'Brisbane Base', timezone: 'Australia/Brisbane', rowVersion: 2 }));
+    })).toEqual(expect.objectContaining({
+      id: 'location-1', name: 'Brisbane Base', timezone: 'Australia/Brisbane',
+      latitude: -27.4698, longitude: 153.0251, addressSource: 'MANUALLY_ADJUSTED',
+      locationConfirmedAt: '2026-08-09T01:00:00.000Z', rowVersion: 2,
+    }));
     expect(mapApiJob({
       id: 'job-1', client_id: 'client-1', property_id: 'property-1', field_ids: ['field-1', 'field-2'],
       reference: 'JOB-42', scope: 'Spray lantana', status: 'scheduled', notes: 'Morning access',
@@ -95,6 +101,29 @@ describe('operational API adapter', () => {
       boundary_geojson: { type: 'Polygon', coordinates: [[[153, -27], [154, -27], [154, -28], [153, -27]]] },
       field_version: 5, row_version: 1, created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z',
     })).toEqual(expect.objectContaining({ id: 'boundary-1', fieldId: 'field-1', versionNumber: 2, fieldVersion: 5 }));
+  });
+
+  test('sends explicit Base confirmation evidence with optimistic concurrency', async () => {
+    const fetchMock = jest.spyOn(global, 'fetch').mockImplementation(() => jsonResponse(200, { data: {
+      id: 'location-1', name: 'Brisbane Base', address: '1 Airfield Rd', timezone: 'Australia/Brisbane',
+      latitude: -27.4698, longitude: 153.0251, addressSource: 'ADDRESS_SEARCH',
+      locationConfirmedAt: '2026-08-09T01:00:00.000Z', rowVersion: 3,
+      createdAt: '2026-08-01T00:00:00Z', updatedAt: '2026-08-09T01:00:00Z',
+    } }));
+
+    await createOperationalApi().operatingLocations.update('location-1', {
+      address: '1 Airfield Rd', latitude: -27.4698, longitude: 153.0251,
+      addressSource: 'ADDRESS_SEARCH', locationConfirmed: true,
+      locationConfirmedAt: '2026-08-09T01:00:00.000Z',
+    }, 2);
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/v1/operating-locations?id=location-1', expect.objectContaining({
+      method: 'PATCH', credentials: 'same-origin', body: JSON.stringify({
+        address: '1 Airfield Rd', latitude: -27.4698, longitude: 153.0251,
+        addressSource: 'ADDRESS_SEARCH', locationConfirmed: true,
+        locationConfirmedAt: '2026-08-09T01:00:00.000Z', expectedVersion: 2,
+      }),
+    }));
   });
 
   test('sends every supported job value and boundary geometry to the trusted commands', async () => {

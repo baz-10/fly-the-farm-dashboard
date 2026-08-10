@@ -131,9 +131,9 @@ describe('product maturity CI boundary', () => {
     expect(result.error).toBeUndefined();
     expect(result.status).toBe(0);
     expect(result.stderr).toBe('');
-    expect(result.stdout).toContain('46 modules and 12 workflows classified');
-    expect(result.stdout).toContain('148 customer UI source files checked');
-    expect(result.stdout).toContain('64 evidence references checked');
+    expect(result.stdout).toContain('46 modules and 15 workflows classified');
+    expect(result.stdout).toContain('156 customer UI source files checked');
+    expect(result.stdout).toContain('75 evidence references checked');
     expect(result.stdout).toContain('0 customer-facing Legacy violations');
   });
 
@@ -317,7 +317,7 @@ describe('product maturity CI boundary', () => {
       expect(result.error).toBeUndefined();
       expect(result.status).toBe(0);
       expect(result.stderr).toBe('');
-      expect(result.stdout).toContain('53 App routes checked');
+      expect(result.stdout).toContain('56 App routes checked');
     });
   });
 
@@ -356,10 +356,10 @@ describe('product maturity CI boundary', () => {
 
   test.each([
     [
-      'register maturity surface',
-      '<Route path="/register" element={<ProductRouteSurface><Register /></ProductRouteSurface>} />',
-      '<Route path="/register" element={<Register />} />',
-      'public ProductRouteSurface composition',
+      'retired registration redirect composition',
+      '<Route path="/register" element={<Navigate to="/apply" replace />} />',
+      '<Route path="/register" element={<ProductRouteSurface><CommercialApplication /></ProductRouteSurface>} />',
+      'retired registration redirect composition',
     ],
     [
       'login auth lifecycle',
@@ -380,6 +380,15 @@ describe('product maturity CI boundary', () => {
       find,
       replace,
     ), (fixtureRoot) => expectVerifierFailure(expectedMessage, fixtureRoot));
+  });
+
+  test('fails closed when the retired registration redirect destination changes', () => {
+    withTemporaryFixture((fixtureRoot) => replaceFixtureSource(
+      fixtureRoot,
+      'src/App.tsx',
+      '<Route path="/register" element={<Navigate to="/apply" replace />} />',
+      '<Route path="/register" element={<Navigate to="/login" replace />} />',
+    ), (fixtureRoot) => expectVerifierFailure('canonical route destination contract', fixtureRoot));
   });
 
   test('rejects an organisation structural layout without its approved guard/provider composition', () => {

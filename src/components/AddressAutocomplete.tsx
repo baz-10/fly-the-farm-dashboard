@@ -131,6 +131,16 @@ export default function AddressAutocomplete({
     const val = e.target.value;
     setQuery(val);
     onInputChange?.(val);
+    if (selected) {
+      const staleSelection = {
+        ...selected,
+        address: val,
+        displayName: val,
+        locationConfirmedAt: undefined,
+      };
+      setSelected(staleSelection);
+      onSelect(staleSelection);
+    }
     setFeedback('');
     if (timerRef.current) clearTimeout(timerRef.current);
     timerRef.current = setTimeout(() => searchAddress(val), 350);

@@ -25,7 +25,7 @@ The workflow can be started without credential input by:
 
 The workflow serialises runs, targets `https://spray-command-production-beta.vercel.app`, installs an isolated Chromium runtime and runs `npm run test:e2e`.
 
-Authentication traces, screenshots and videos are disabled. Non-authentication failure artefacts are retained for seven days and must not include the generated authenticated storage-state file.
+Every Playwright project that enters credentials or consumes authenticated storage (`auth`, `cleanup`, `chromium` and `commercial-onboarding`) disables traces, screenshots and video. The generated authenticated storage-state directory is removed before any upload and is never an artefact input. On operational failure, the workflow retains only an explicitly generated text file containing the workflow run ID, accepted commit SHA, stage outcomes and capture-policy marker for seven days; it does not upload Playwright reports, browser artefacts, authentication state, cookies or tokens.
 
 ## Rotation
 

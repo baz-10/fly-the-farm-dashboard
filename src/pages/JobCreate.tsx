@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Typography,
   Box,
@@ -84,6 +84,8 @@ const emptyChemical = (): ChemicalEntry => ({
 export default function JobCreate() {
   const { clientId, propertyId, fieldId } = useParams<{ clientId: string; propertyId: string; fieldId: string }>();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const returnTo = searchParams.get('returnTo') === '/getting-started' ? '/getting-started' : null;
   const theme = useTheme();
   const operational = useOperationalData();
 
@@ -190,6 +192,7 @@ export default function JobCreate() {
   const [jobStatus, setJobStatus] = useState('draft');
   const [requestedDate, setRequestedDate] = useState('');
   const [saveError, setSaveError] = useState('');
+  const [onboardingSaved, setOnboardingSaved] = useState(false);
 
   // Clear the export after importing
   useEffect(() => {
@@ -450,7 +453,8 @@ export default function JobCreate() {
           scheduledDate: dateSprayed || undefined,
         });
         setSaveError('');
-        navigate(`/jobs/client/${clientId}/property/${propertyId}/field/${fieldId}/job/${created.id}`);
+        if (returnTo) setOnboardingSaved(true);
+        else navigate(`/jobs/client/${clientId}/property/${propertyId}/field/${fieldId}/job/${created.id}`);
       } catch (error) {
         setSaveError(describeOperationalError(error));
       }
@@ -574,6 +578,7 @@ export default function JobCreate() {
       )}
 
       {saveError && <Alert severity="error" sx={{ mb: 2, borderRadius: '12px' }}>{saveError}</Alert>}
+      {returnTo && onboardingSaved && <Alert severity="success" sx={{ mb: 2, borderRadius: '12px' }} action={<Button color="inherit" onClick={() => navigate(returnTo)}>Return to Getting Started</Button>}>Job saved. Continue setup when you are ready.</Alert>}
 
       <Stack spacing={3} className="ftf-animate-in-delay-1">
         {operational.mode === 'remote' && (

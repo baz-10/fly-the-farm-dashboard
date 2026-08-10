@@ -15,7 +15,10 @@ const AUSTRALIAN_STATES = new Set(['NSW', 'VIC', 'QLD', 'SA', 'WA', 'TAS', 'NT',
 const ACCEPTANCE_PREFIX = 'SC ACCEPTANCE —';
 
 const SCHEMAS = {
-  operating_locations: { required: ['name'], fields: { name: 'name', address: 'address', timezone: 'timezone' } },
+  operating_locations: { required: ['name'], fields: {
+    name: 'name', address: 'address', timezone: 'timezone', latitude: 'latitude', longitude: 'longitude',
+    addressSource: 'address_source', locationConfirmedAt: 'location_confirmed_at',
+  } },
   clients: { required: ['name'], fields: { name: 'name', contactName: 'contact_name', contactEmail: 'contact_email', contactPhone: 'contact_phone', notes: 'notes', addresses: 'addresses' } },
   properties: { required: ['clientId', 'name', 'address', 'state'], fields: { clientId: 'client_id', name: 'name', address: 'address', state: 'state', locality: 'locality', postcode: 'postcode', lotPlan: 'lot_plan', primaryContactName: 'primary_contact_name', accessNotes: 'access_notes', notes: 'notes', latitude: 'latitude', longitude: 'longitude', addressSource: 'address_source', locationConfirmedAt: 'location_confirmed_at' } },
   fields: { required: ['propertyId', 'name'], readOnly: ['fieldBoundaryVersionId'], fields: { propertyId: 'property_id', fieldBoundaryVersionId: 'field_boundary_version_id', name: 'name', areaHectares: 'area_hectares' } },
@@ -162,6 +165,7 @@ function mapInput(resource, body, existing) {
   const schema = SCHEMAS[resource];
   const readOnly = new Set(schema.readOnly || []);
   const allowed = new Set([...Object.keys(schema.fields).filter((field) => !readOnly.has(field)), 'expectedVersion']);
+  if (resource === 'operating_locations') allowed.add('locationConfirmed');
   if (!existing && ['jobs', 'missions'].includes(resource)) allowed.add('autoGenerateReference');
   Object.keys(body).forEach((key) => {
     if (allowed.has(key)) return;
@@ -172,6 +176,31 @@ function mapInput(resource, body, existing) {
   });
   const baseline = existing ? mapDatabaseRecord(resource, existing) : {};
   const merged = { ...baseline, ...body };
+  const baseLocationFields = ['latitude', 'longitude', 'addressSource', 'locationConfirmedAt', 'locationConfirmed'];
+  const hasNewBaseLocationEvidence = resource === 'operating_locations'
+    && baseLocationFields.some((field) => body[field] !== undefined);
+  const baseAddressChanged = resource === 'operating_locations' && Boolean(existing) && body.address !== undefined
+    && String(body.address).trim() !== String(baseline.address || '').trim();
+  if (baseAddressChanged && !hasNewBaseLocationEvidence) {
+    merged.latitude = null;
+    merged.longitude = null;
+    merged.addressSource = null;
+    merged.locationConfirmedAt = null;
+  }
+  if (hasNewBaseLocationEvidence) {
+    const latitude = Number(merged.latitude);
+    const longitude = Number(merged.longitude);
+    if (!String(merged.address || '').trim()) throw apiError(400, 'BASE_ADDRESS_REQUIRED', 'Confirm a Base address before saving.');
+    if (!Number.isFinite(latitude) || latitude < -90 || latitude > 90 || !Number.isFinite(longitude) || longitude < -180 || longitude > 180) {
+      throw apiError(400, 'BASE_LOCATION_REQUIRED', 'Confirm valid Base coordinates before saving.');
+    }
+    if (!['ADDRESS_SEARCH', 'MANUALLY_ADJUSTED'].includes(merged.addressSource)) {
+      throw apiError(400, 'BASE_LOCATION_SOURCE_REQUIRED', 'Base location provenance is required.');
+    }
+    if (body.locationConfirmed !== true || !merged.locationConfirmedAt || Number.isNaN(Date.parse(merged.locationConfirmedAt))) {
+      throw apiError(400, 'BASE_LOCATION_CONFIRMATION_REQUIRED', 'Confirm the final Base map location before saving.');
+    }
+  }
   if (resource === 'clients' && body.addresses !== undefined) {
     if (!Array.isArray(merged.addresses) || merged.addresses.length < 1 || merged.addresses.length > 20) {
       throw apiError(400, 'VALIDATION_ERROR', 'addresses must contain between 1 and 20 confirmed locations.');
@@ -711,7 +740,9 @@ function createOperationalHandler(resource, dependencies = {}) {
       if (req.method === 'PATCH') {
         assertPermission(context, resource, 'update');
         const existing = await repository.get(resource, context, id);
-        if (!existing || existing.archived_at) throw apiError(404, 'NOT_FOUND', 'Operational record not found.');
+        if (!existing || existing.archived_at || (resource === 'operating_locations' && !hasAssignedLocationReadAccess(resource, context, existing))) {
+          throw apiError(404, 'NOT_FOUND', 'Operational record not found.');
+        }
         const { data, merged } = mapInput(resource, body, existing);
         if (['missions', 'aircraft', 'equipment-kits'].includes(resource)) assertLocationAccess(context, merged.operatingLocationId, resource === 'missions' ? 'mission' : resource === 'aircraft' ? 'aircraft' : 'equipment kit');
         if (resource === 'aircraft' && (merged.status !== existing.status || merged.serviceabilityState !== existing.serviceability_state || merged.missionReady !== existing.mission_ready)) {

@@ -10,12 +10,14 @@ import AuthCallback from './AuthCallback';
 const mockRequestPasswordReset = jest.fn();
 const mockResetPassword = jest.fn();
 const mockCompleteSession = jest.fn();
+const mockAcceptOrganisationInvitation = jest.fn();
 
 jest.mock('../contexts/AuthContext', () => ({
   useAuth: () => ({
     requestPasswordReset: mockRequestPasswordReset,
     resetPassword: mockResetPassword,
     completeSession: mockCompleteSession,
+    acceptOrganisationInvitation: mockAcceptOrganisationInvitation,
   }),
 }));
 
@@ -70,13 +72,23 @@ describe('deployed authentication lifecycle pages', () => {
     expect(mockCompleteSession).not.toHaveBeenCalled();
   });
 
-  test('invitation callbacks open password choice without resolving an identity plane', async () => {
-    window.history.replaceState({}, '', '/auth/callback#access_token=invite&refresh_token=refresh&expires_in=3600&type=invite');
+  test.each(['invite', 'magiclink'])('onboarding %s callbacks use organisation acceptance instead of password reset', async (type) => {
+    window.history.replaceState({}, '', `/auth/callback?invitation=91000000-0000-4000-8000-000000000001#access_token=invite&refresh_token=refresh&expires_in=3600&type=${type}`);
     renderPage(<AuthCallback />);
 
-    expect(await screen.findByText('Choose a new password')).toBeInTheDocument();
+    expect(await screen.findByText('Activate your organisation')).toBeInTheDocument();
     expect(mockCompleteSession).not.toHaveBeenCalled();
+    expect(mockResetPassword).not.toHaveBeenCalled();
     expect(screen.queryByText(/Platform identity could not be loaded/i)).not.toBeInTheDocument();
+  });
+
+  test('provider callback errors stay authentication errors on the onboarding screen', async () => {
+    window.history.replaceState({}, '', '/auth/callback?invitation=91000000-0000-4000-8000-000000000001#error=access_denied&error_description=Magic%20link%20expired&type=magiclink');
+    renderPage(<AuthCallback />);
+
+    expect(await screen.findByText('Authentication link problem')).toBeInTheDocument();
+    expect(screen.getByText('Magic link expired')).toBeInTheDocument();
+    expect(mockResetPassword).not.toHaveBeenCalled();
   });
 
   test('password reset requires matching passwords and submits the recovery session', async () => {

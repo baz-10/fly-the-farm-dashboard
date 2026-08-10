@@ -55,6 +55,29 @@ function assertSameOrigin(req) {
   }
 }
 
+function assertInvitationMutationBoundary(req) {
+  const contentType = String(req.headers?.['content-type'] || '').split(';')[0].trim().toLowerCase();
+  if (contentType !== 'application/json') {
+    throw invitationActionError(415, 'Organisation invitation activation requires a JSON request.', 'CONTENT_TYPE_REQUIRED', 'authentication');
+  }
+
+  const origin = String(req.headers?.origin || '').trim();
+  let trustedOrigin;
+  try {
+    trustedOrigin = new URL(productionBetaUrl()).origin;
+  } catch {
+    throw invitationActionError(503, 'Authentication is temporarily unavailable.', 'TRUSTED_ORIGIN_INVALID', 'authentication');
+  }
+  if (!origin || origin !== trustedOrigin) {
+    throw invitationActionError(403, 'Request origin is not allowed.', 'CROSS_ORIGIN_REQUEST', 'authentication');
+  }
+
+  const fetchSite = String(req.headers?.['sec-fetch-site'] || '').trim().toLowerCase();
+  if (fetchSite && fetchSite !== 'same-origin') {
+    throw invitationActionError(403, 'Request origin is not allowed.', 'CROSS_ORIGIN_REQUEST', 'authentication');
+  }
+}
+
 async function signIn(email, password) {
   return supabaseRequest('auth/v1/token?grant_type=password', {
     method: 'POST',
@@ -235,6 +258,201 @@ async function resetPassword(body) {
   };
 }
 
+function invitationActionError(statusCode, publicMessage, code, errorKind = 'onboarding') {
+  const error = createHttpError(statusCode, publicMessage, code);
+  error.code = code;
+  error.errorKind = errorKind;
+  return error;
+}
+
+function invitationOutcomeError(code) {
+  const outcomes = {
+    INVITATION_EXPIRED: [410, 'This invitation has expired. Ask your reviewer to send a new invitation.'],
+    INVITATION_REVOKED: [410, 'This invitation has been revoked. Ask your reviewer to send a new invitation.'],
+    INVITATION_ALREADY_ACCEPTED: [409, 'This invitation has already been accepted.'],
+    INVITATION_EMAIL_MISMATCH: [403, 'Sign in with the email address that received this invitation.'],
+    PLATFORM_IDENTITY_FORBIDDEN: [403, 'Platform accounts cannot accept organisation invitations.'],
+    ORGANISATION_IDENTITY_CONFLICT: [409, 'This account already belongs to another organisation.'],
+    INVITATION_AMBIGUOUS: [409, 'More than one active invitation exists for this email. Ask your reviewer to revoke the extra invitation.'],
+    INVITATION_DELIVERY_PENDING: [409, 'This invitation is not ready yet. Ask your reviewer to resend it.'],
+  };
+  const [status, message] = outcomes[code] || [403, 'This invitation cannot be accepted. Ask your reviewer to send a new invitation.'];
+  return invitationActionError(status, message, code);
+}
+
+async function acceptOrganisationInvitation(body) {
+  const password = String(body.password || '');
+  const invitationId = String(body.invitationId || '');
+  const accessToken = String(body.accessToken || '');
+
+  if (password.length < 8) {
+    throw invitationActionError(400, 'Password must be at least 8 characters.', 'PASSWORD_INVALID', 'authentication');
+  }
+  if (!accessToken) {
+    throw invitationActionError(400, 'This authentication link is incomplete or expired.', 'AUTH_LINK_INCOMPLETE', 'authentication');
+  }
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(invitationId)) {
+    throw invitationActionError(400, 'This invitation link is incomplete or expired.', 'INVITATION_INVALID');
+  }
+
+  let authUser;
+  try {
+    authUser = await supabaseRequest('auth/v1/user', {
+      keyType: 'anon', accessToken, publicMessage: 'This authentication link is invalid or expired.',
+    });
+  } catch (error) {
+    throw invitationActionError(
+      [401, 403].includes(error.statusCode) ? 401 : error.statusCode || 503,
+      'This authentication link is invalid or expired.',
+      'AUTH_LINK_INVALID',
+      'authentication',
+    );
+  }
+  if (!authUser?.id) {
+    throw invitationActionError(401, 'This authentication link is invalid or expired.', 'AUTH_LINK_INVALID', 'authentication');
+  }
+  const authenticatedUserId = authUser.id;
+  const authenticatedEmail = normalizeEmail(authUser.email);
+  if (!authenticatedEmail || !authenticatedEmail.includes('@')) {
+    throw invitationActionError(401, 'This authentication link is invalid or expired.', 'AUTH_LINK_INVALID', 'authentication');
+  }
+
+  let preflight;
+  try {
+    preflight = await supabaseRequest('rest/v1/rpc/ftf_preflight_commercial_invitation', {
+      method: 'POST',
+      body: JSON.stringify({ p_invitation_id: invitationId, p_auth_user_id: authenticatedUserId }),
+      publicMessage: 'This invitation could not be checked.',
+    });
+  } catch (error) {
+    throw invitationActionError(error.statusCode || 503, 'This invitation could not be checked.', 'INVITATION_PREFLIGHT_FAILED');
+  }
+  if (!preflight?.eligible) throw invitationOutcomeError(String(preflight?.code || 'INVITATION_INVALID'));
+
+  let freshSession;
+  let passwordChanged = false;
+  try {
+    freshSession = await signIn(authenticatedEmail, password);
+  } catch (error) {
+    if (![400, 401].includes(error.statusCode)) {
+      throw invitationActionError(error.statusCode || 503, 'Password sign-in is temporarily unavailable.', 'PASSWORD_SIGN_IN_FAILED', 'authentication');
+    }
+
+    try {
+      authUser = await supabaseRequest('auth/v1/user', {
+        method: 'PUT', keyType: 'anon', accessToken,
+        body: JSON.stringify({ password }), publicMessage: 'Password could not be updated.',
+      });
+      passwordChanged = true;
+    } catch (updateError) {
+      throw invitationActionError(
+        updateError.statusCode || 503,
+        updateError.publicMessage || 'Password could not be updated.',
+        'PASSWORD_UPDATE_FAILED',
+        'authentication',
+      );
+    }
+    if (!authUser?.id || authUser.id !== authenticatedUserId) {
+      throw invitationActionError(
+        503,
+        'Your password was updated, but a fresh session could not be verified. Use password recovery or contact support.',
+        'AUTH_IDENTITY_MISMATCH',
+        'authentication',
+      );
+    }
+    try {
+      freshSession = await signIn(authenticatedEmail, password);
+    } catch {
+      throw invitationActionError(
+        503,
+        'Your password was updated, but a fresh session could not be created. Use password recovery or contact support.',
+        'FRESH_SESSION_FAILED',
+        'authentication',
+      );
+    }
+  }
+  if (!freshSession?.user?.id || freshSession.user.id !== authenticatedUserId) {
+    if (passwordChanged) {
+      throw invitationActionError(
+        503,
+        'Your password was updated, but a fresh session could not be verified. Use password recovery or contact support.',
+        'AUTH_IDENTITY_MISMATCH',
+        'authentication',
+      );
+    }
+    throw invitationActionError(401, 'The fresh password session did not match this invitation.', 'AUTH_IDENTITY_MISMATCH', 'authentication');
+  }
+  authUser = freshSession.user;
+
+  let acceptance;
+  try {
+    acceptance = await supabaseRequest('rest/v1/rpc/ftf_accept_commercial_invitation_by_id', {
+      method: 'POST',
+      body: JSON.stringify({ p_invitation_id: invitationId, p_auth_user_id: authenticatedUserId }),
+      publicMessage: 'This invitation could not be accepted.',
+    });
+  } catch (error) {
+    if (passwordChanged) {
+      throw invitationActionError(
+        503,
+        'Your password was updated, but organisation activation could not be completed. Use password recovery or contact support.',
+        'INVITATION_PROVISIONING_FAILED',
+      );
+    }
+    throw invitationActionError(
+      error.statusCode || 503,
+      error.publicMessage || 'This invitation could not be accepted.',
+      'INVITATION_PROVISIONING_FAILED',
+    );
+  }
+  if (!acceptance?.accepted) {
+    if (passwordChanged) {
+      throw invitationActionError(
+        503,
+        'Your password was updated, but organisation activation could not be completed. Use password recovery or contact support.',
+        'INVITATION_PROVISIONING_FAILED',
+      );
+    }
+    throw invitationOutcomeError(String(acceptance?.code || 'INVITATION_INVALID'));
+  }
+
+  const profile = await loadProfile(authenticatedUserId).catch((error) => {
+    if (passwordChanged) {
+      throw invitationActionError(
+        503,
+        'Your password was updated, but organisation activation could not be completed. Use password recovery or contact support.',
+        'ORGANISATION_IDENTITY_UNRESOLVED',
+      );
+    }
+    throw invitationActionError(
+      error.statusCode || 503,
+      'Organisation access could not be verified.',
+      'ORGANISATION_IDENTITY_UNRESOLVED',
+    );
+  });
+  if (!profile?.tenant_id || profile.tenant_id !== acceptance.organisation_id) {
+    if (passwordChanged) {
+      throw invitationActionError(
+        503,
+        'Your password was updated, but organisation activation could not be completed. Use password recovery or contact support.',
+        'ORGANISATION_IDENTITY_UNRESOLVED',
+      );
+    }
+    throw invitationActionError(403, 'Organisation access could not be verified.', 'ORGANISATION_IDENTITY_UNRESOLVED');
+  }
+
+  return {
+    authUser,
+    profile,
+    session: freshSession,
+    provisioning: {
+      invitationId: acceptance.invitation_id,
+      organisationId: acceptance.organisation_id,
+      operatingLocationId: acceptance.operating_location_id,
+    },
+  };
+}
+
 module.exports = async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store');
   const correlationId = crypto.randomUUID();
@@ -262,6 +480,7 @@ module.exports = async function handler(req, res) {
 
     assertSameOrigin(req);
     const body = getJsonBody(req);
+    if (body.action === 'accept-organisation-invitation') assertInvitationMutationBoundary(req);
     if (body.action === 'logout') {
       clearSessionCookies(req, res);
       return res.status(200).json({ ok: true });
@@ -297,16 +516,17 @@ module.exports = async function handler(req, res) {
       return res.status(200).json({ user: completed.profile ? toPublicUser(completed.authUser, completed.profile) : toPublicPlatformUser(completed.authUser, completed.platformProfile) });
     }
 
-    if (body.action === 'register') {
-      const registration = await registerUser(body);
-      if (registration.duplicate) {
-        return res.status(202).json({ user: null, requiresEmailConfirmation: true });
-      }
-      if (registration.session) setSessionCookies(req, res, registration.session);
-      return res.status(201).json({
-        user: registration.session ? toPublicUser(registration.authUser, registration.profile) : null,
-        requiresEmailConfirmation: registration.requiresEmailConfirmation,
+    if (body.action === 'accept-organisation-invitation') {
+      const completed = await acceptOrganisationInvitation(body);
+      setSessionCookies(req, res, completed.session);
+      return res.status(200).json({
+        user: toPublicUser(completed.authUser, completed.profile),
+        provisioning: completed.provisioning,
       });
+    }
+
+    if (body.action === 'register') {
+      throw createHttpError(403, 'Self-service account registration is not available. Apply for access.');
     }
 
     throw createHttpError(400, 'Unsupported authentication action.');
@@ -315,6 +535,7 @@ module.exports = async function handler(req, res) {
     console.error(`Authentication API error [${correlationId}]:`, error);
     return res.status(status).json({
       error: error.publicMessage || 'Authentication request failed.',
+      ...(error.errorKind ? { errorKind: error.errorKind } : {}),
       correlationId,
     });
   }

@@ -1,5 +1,5 @@
 import React from 'react';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import GuidedMissionCreation from '../GuidedMissionCreation';
 
@@ -11,6 +11,11 @@ const mockCreateFieldBoundaryVersion = jest.fn();
 const mockCreateJob = jest.fn();
 const mockCreateMission = jest.fn();
 const mockNavigate = jest.fn();
+const mockDraftCreate = jest.fn();
+const mockDraftUpdate = jest.fn();
+const mockDraftGet = jest.fn();
+const mockDraftArchive = jest.fn();
+let mockSearchParams = new URLSearchParams();
 
 jest.mock('../../../contexts/OperationalDataContext', () => ({ useOperationalData: () => ({
   clients: [], properties: [{ id: 'property-1', clientId: 'client-1', name: 'New Property', address: '1 Queen Street', lat: -27.4698, lng: 153.0251 }], fields: [], jobs: [], missions: [],
@@ -18,7 +23,10 @@ jest.mock('../../../contexts/OperationalDataContext', () => ({ useOperationalDat
   saving: false, createClient: mockCreateClient, createProperty: mockCreateProperty, updateProperty: mockUpdateProperty, createField: mockCreateField, createFieldBoundaryVersion: mockCreateFieldBoundaryVersion, createJob: mockCreateJob, createMission: mockCreateMission,
 }) }));
 jest.mock('../../../contexts/AuthContext', () => ({ useAuth: () => ({ user: { id: 'user-1' } }) }));
-jest.mock('react-router-dom', () => ({ useNavigate: () => mockNavigate, useSearchParams: () => [new URLSearchParams()] }), { virtual: true });
+jest.mock('react-router-dom', () => ({ useNavigate: () => mockNavigate, useSearchParams: () => [mockSearchParams] }), { virtual: true });
+jest.mock('../../../services/missionSetupDraftsApi', () => ({
+  createMissionSetupDraftsApi: () => ({ create: mockDraftCreate, update: mockDraftUpdate, get: mockDraftGet, archive: mockDraftArchive }),
+}));
 jest.mock('../../FieldBoundaryEditor', () => (props: any) => <button onClick={() => { props.onCoordsChange([[-27, 151], [-27, 151.01], [-27.01, 151.01]]); props.onAreaChange(10.5); }}>Draw test boundary</button>);
 jest.mock('../../AddressAutocomplete', () => (props: any) => <div>
   <label htmlFor="guided-address">{props.label}</label>
@@ -32,12 +40,27 @@ jest.mock('../../AddressAutocomplete', () => (props: any) => <div>
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockSearchParams = new URLSearchParams();
   mockCreateClient.mockResolvedValue({ id: 'client-1', name: 'New Client' });
   mockCreateProperty.mockResolvedValue({ id: 'property-1', clientId: 'client-1', name: 'New Property' });
   mockCreateField.mockResolvedValue({ id: 'field-1', propertyId: 'property-1', name: 'North Field', rowVersion: 1 });
   mockCreateFieldBoundaryVersion.mockResolvedValue({ id: 'boundary-1' });
   mockCreateJob.mockResolvedValue({ id: 'job-1', reference: 'JOB-001' });
   mockCreateMission.mockResolvedValue({ id: 'mission-1' });
+  mockDraftCreate.mockResolvedValue({ id: 'draft-1', rowVersion: 1, currentStep: 0, furthestStep: 0, formState: {} });
+  mockDraftUpdate.mockResolvedValue({ id: 'draft-1', rowVersion: 2, currentStep: 0, furthestStep: 0, formState: {} });
+});
+
+test('preserves the allow-listed Getting Started return when draft autosave adds its authoritative draft ID', async () => {
+  mockSearchParams = new URLSearchParams('returnTo=%2Fgetting-started');
+  const replaceState = jest.spyOn(window.history, 'replaceState');
+  const user = userEvent.setup();
+  render(<GuidedMissionCreation />);
+
+  await user.click(screen.getByRole('button', { name: 'Save and exit' }));
+
+  await waitFor(() => expect(mockDraftCreate).toHaveBeenCalled());
+  expect(replaceState).toHaveBeenCalledWith(null, '', '/missions/new?draftId=draft-1&returnTo=%2Fgetting-started');
 });
 
 test('shows the complete follow-the-bouncing-ball Mission journey', () => {
@@ -171,4 +194,32 @@ test('creates the authoritative parent chain and Draft without leaving the workf
   expect(mockCreateJob).toHaveBeenCalledWith(expect.objectContaining({ clientId: 'client-1', propertyId: 'property-1', fieldIds: ['field-1'] }));
   expect(mockCreateMission).toHaveBeenCalledWith(expect.objectContaining({ jobId: 'job-1', status: 'Planning' }));
   expect(mockNavigate).toHaveBeenCalledWith('/missions/mission-1?guided=1');
+});
+
+test('returns to Getting Started only after the authoritative Draft Mission is created', async () => {
+  mockSearchParams = new URLSearchParams('returnTo=%2Fgetting-started');
+  const user = userEvent.setup();
+  render(<GuidedMissionCreation />);
+
+  await user.click(screen.getByRole('button', { name: 'Add new Client' }));
+  await user.type(screen.getByRole('textbox', { name: /Client or business name/ }), 'Onboarding Client');
+  await user.click(screen.getByRole('button', { name: 'Save Client and continue' }));
+  await user.click(screen.getByRole('button', { name: 'Add new Property' }));
+  await user.type(screen.getByRole('textbox', { name: /Property name/ }), 'Onboarding Property');
+  await user.click(screen.getByRole('button', { name: 'Select address suggestion' }));
+  await user.click(screen.getByRole('button', { name: 'Save Property and continue' }));
+  await user.click(screen.getByRole('button', { name: 'Create new Field' }));
+  await user.type(screen.getByRole('textbox', { name: /Field name/ }), 'Onboarding Field');
+  await user.click(screen.getByRole('button', { name: 'Draw test boundary' }));
+  await user.click(screen.getByRole('button', { name: 'Save Field and boundary' }));
+  await user.click(screen.getByRole('button', { name: 'Create new Job' }));
+  await user.type(screen.getByRole('textbox', { name: /Job scope/ }), 'Onboarding treatment');
+  await user.click(screen.getByRole('button', { name: 'Save Job and continue' }));
+  await user.type(screen.getByRole('textbox', { name: /Mission title/ }), 'Onboarding Mission');
+  await user.click(screen.getByRole('button', { name: 'Create Draft Mission' }));
+
+  await waitFor(() => expect(mockCreateMission).toHaveBeenCalled());
+  expect(mockNavigate).not.toHaveBeenCalledWith('/missions/mission-1?guided=1');
+  await user.click(await screen.findByRole('button', { name: 'Return to Getting Started' }));
+  expect(mockNavigate).toHaveBeenCalledWith('/getting-started');
 });

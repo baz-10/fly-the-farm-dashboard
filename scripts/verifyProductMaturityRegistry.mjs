@@ -23,7 +23,7 @@ const visibleStringDepthBudget = 32;
 const visibleStringNodeBudget = 4096;
 const visibleStringSymbolBudget = 1024;
 // Verifier-only integrity metadata. Runtime maturity authority remains in surfaces.ts.
-const canonicalProductMaturityResolverSourceSha256 = 'd883fb00b4f9cf0e3f151e6818da3f035381b38bfa0dbc9e1ad8df5106eea10d';
+const canonicalProductMaturityResolverSourceSha256 = 'd83fd393fd34f59c644b107f27353f423c11320be4c098f8964a0b92826fa4d2';
 const requiredArrayFields = [
   'evidence',
   'requiredAutomatedTests',
@@ -529,7 +529,8 @@ const authLifecycleRouteComponents = new Map([
   ['/reset-password', 'ResetPassword'],
 ]);
 const publicProductSurfaceRouteComponents = new Map([
-  ['/register', 'Register'],
+  ['/apply', 'CommercialApplication'],
+  ['/onboarding/accept', 'AcceptOrganisationInvitation'],
   ['/customer-acceptance/:token', 'CustomerAcceptancePublic'],
 ]);
 
@@ -541,6 +542,8 @@ const publicAccessRoutePaths = [
   '/auth/callback',
   '/forgot-password',
   '/reset-password',
+  '/apply',
+  '/onboarding/accept',
   '/customer-acceptance/:token',
 ];
 const defaultOrganisationAccessRoutePaths = [
@@ -621,14 +624,24 @@ const routeAccessContracts = new Map([
     allowedRoles: ['admin'],
     requiredEntitlement: null,
   }],
+  ['/getting-started', {
+    kind: 'organisation',
+    allowedRoles: ['admin'],
+    requiredEntitlement: null,
+  }],
 ]);
 
 const routeDestinationContracts = new Map([
   ['/login', { modulePath: './pages/Login', localName: 'Login' }],
-  ['/register', { modulePath: './pages/Register', localName: 'Register' }],
+  ['/register', { redirectTo: '/apply' }],
   ['/auth/callback', { modulePath: './pages/AuthCallback', localName: 'AuthCallback' }],
   ['/forgot-password', { modulePath: './pages/ForgotPassword', localName: 'ForgotPassword' }],
   ['/reset-password', { modulePath: './pages/ResetPassword', localName: 'ResetPassword' }],
+  ['/apply', { modulePath: './pages/CommercialApplication', localName: 'CommercialApplication' }],
+  ['/onboarding/accept', {
+    modulePath: './pages/AcceptOrganisationInvitation',
+    localName: 'AcceptOrganisationInvitation',
+  }],
   ['/customer-acceptance/:token', {
     modulePath: './pages/CustomerAcceptancePublic',
     localName: 'CustomerAcceptancePublic',
@@ -740,6 +753,12 @@ const routeDestinationContracts = new Map([
     localName: 'UserLicenseSettings',
   }],
   ['/admin', { modulePath: './pages/Admin', localName: 'Admin' }],
+  ['/getting-started', {
+    modulePath: './components/OrganisationAdminRoute',
+    localName: 'OrganisationAdminRoute',
+    wrapper: true,
+    child: { modulePath: './pages/GettingStarted', localName: 'GettingStarted' },
+  }],
 ]);
 
 const structuralDestinationContracts = {
@@ -777,6 +796,7 @@ function assertCanonicalRouteDestinationSymbolConventions(program, appSourceFile
   const homeRoute = requiredFunctionSymbol(appSourceFile, checker, 'HomeRoute');
   const workflowProviders = requiredFunctionSymbol(appSourceFile, checker, 'WorkflowProviders');
   const routes = new Map([...routeDestinationContracts].map(([routePath, contract]) => {
+    if (contract.redirectTo) return [routePath, { ...contract }];
     const symbol = contract.local ? homeRoute.symbol : exactDestinationImport(contract);
     const child = contract.child
       ? { ...contract.child, symbol: exactDestinationImport(contract.child) }
@@ -828,6 +848,15 @@ function isExactJsxComponent(element, componentName, checker, expectedSymbol) {
 function isExactRouteDestination(element, contract, checker) {
   if (!contract?.child) {
     return isExactJsxComponent(element, contract?.localName, checker, contract?.symbol);
+  }
+  if (contract.wrapper) {
+    return isExactJsxWrapper(
+      element,
+      contract.localName,
+      (child) => isExactJsxComponent(child, contract.child.localName, checker, contract.child.symbol),
+      checker,
+      contract.symbol,
+    );
   }
   if (!ts.isJsxElement(element)
     || !jsxTagIdentifier(element, contract.localName, checker, contract.symbol)
@@ -1403,6 +1432,7 @@ function discoverReactRouterPaths(program, sourceFile, checker, approvedRoutePat
   const directRouteImportSymbols = new Set();
   const directRoutesImportSymbols = new Set();
   const directBrowserRouterImportSymbols = new Set();
+  const directNavigateImportSymbols = new Set();
   const routeUsageError = 'React Router Route requires its canonical direct JSX-only import/symbol convention.';
   const controlledRouterExports = new Set(['BrowserRouter', 'Route', 'Routes']);
   const allowedRouterImports = new Set([
@@ -1447,6 +1477,7 @@ function discoverReactRouterPaths(program, sourceFile, checker, approvedRoutePat
             if (symbol && importedName === 'BrowserRouter') {
               directBrowserRouterImportSymbols.add(symbol);
             }
+            if (symbol && importedName === 'Navigate') directNavigateImportSymbols.add(symbol);
             return;
           }
           if (controlledRouterExports.has(importedName)) throw new Error(routeUsageError);
@@ -1471,6 +1502,7 @@ function discoverReactRouterPaths(program, sourceFile, checker, approvedRoutePat
   if (directRouteImportSymbols.size !== 1
     || directRoutesImportSymbols.size !== 1
     || directBrowserRouterImportSymbols.size !== 1
+    || directNavigateImportSymbols.size !== 1
     || appRouterImports.length !== requiredAppRouterImports.size
     || appRouterImports.some((importedName) => !requiredAppRouterImports.has(importedName))) {
     throw new Error(routeUsageError);
@@ -1498,6 +1530,14 @@ function discoverReactRouterPaths(program, sourceFile, checker, approvedRoutePat
     const symbol = checker.getSymbolAtLocation(node);
     return directBrowserRouterImportSymbols.has(symbol)
       || resolvedBrowserRouterImportSymbols.has(resolveAliasedSymbol(checker, symbol));
+  };
+  const resolvedNavigateImportSymbols = new Set(
+    [...directNavigateImportSymbols].map((symbol) => resolveAliasedSymbol(checker, symbol)),
+  );
+  const isCanonicalNavigateReference = (node) => {
+    const symbol = checker.getSymbolAtLocation(node);
+    return directNavigateImportSymbols.has(symbol)
+      || resolvedNavigateImportSymbols.has(resolveAliasedSymbol(checker, symbol));
   };
 
   const isReactRouterRouteTag = (tagName) => {
@@ -1781,6 +1821,34 @@ function discoverReactRouterPaths(program, sourceFile, checker, approvedRoutePat
     const layout = nearestLayout(opening);
     const kind = layout ? layoutKind.get(layout) : null;
     const destination = routeSymbols.destinations.routes.get(routePath);
+    if (destination?.redirectTo) {
+      const redirect = unwrapTransparentExpression(expression);
+      const opening = ts.isJsxSelfClosingElement(redirect) ? redirect : null;
+      const attributes = opening?.attributes.properties ?? [];
+      const toAttribute = attributes[0];
+      const replaceAttribute = attributes[1];
+      const validRedirectComposition = accessContract?.kind === 'public'
+        && kind === null
+        && opening
+        && ts.isIdentifier(opening.tagName)
+        && opening.tagName.text === 'Navigate'
+        && isCanonicalNavigateReference(opening.tagName)
+        && attributes.length === 2
+        && ts.isJsxAttribute(toAttribute)
+        && toAttribute.name.text === 'to'
+        && toAttribute.initializer
+        && ts.isStringLiteral(toAttribute.initializer)
+        && ts.isJsxAttribute(replaceAttribute)
+        && replaceAttribute.name.text === 'replace'
+        && replaceAttribute.initializer === undefined;
+      if (!validRedirectComposition) {
+        throw new Error(`App route ${routePath} requires its approved retired registration redirect composition.`);
+      }
+      if (toAttribute.initializer.text !== destination.redirectTo) {
+        throw new Error(canonicalRouteDestinationError);
+      }
+      return;
+    }
     const authComponent = authLifecycleRouteComponents.get(routePath);
     if (authComponent) {
       if (accessContract?.kind !== 'public'
