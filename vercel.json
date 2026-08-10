@@ -3,6 +3,11 @@
   "buildCommand": "CI=false npm run build",
   "outputDirectory": "build",
   "framework": "create-react-app",
+  "git": {
+    "deploymentEnabled": {
+      "codex/production-beta": false
+    }
+  },
   "functions": {
     "api/auth.js": {
       "maxDuration": 15

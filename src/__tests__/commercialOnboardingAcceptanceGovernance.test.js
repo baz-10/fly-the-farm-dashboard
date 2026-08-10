@@ -9,6 +9,19 @@ const workflow = () => yaml.load(read('.github/workflows/production-beta-operati
 const step = (job, name) => job.steps.find((candidate) => candidate.name === name);
 
 describe('commercial onboarding acceptance governance', () => {
+  test('supports exact-SHA reusable release acceptance without deployment credentials', () => {
+    const definition = workflow();
+    const source = read('.github/workflows/production-beta-operational-acceptance.yml');
+
+    expect(definition.on.workflow_call.inputs.expected_release_sha.required).toBe(true);
+    expect(definition.on.workflow_call.inputs.expected_release_sha.type).toBe('string');
+    expect(definition.jobs['deployment-identity'].steps[0].env.EXPECTED_RELEASE_SHA)
+      .toContain('inputs.expected_release_sha');
+    for (const forbidden of ['SUPABASE_ACCESS_TOKEN', 'SUPABASE_DB_PASSWORD', 'VERCEL_TOKEN']) {
+      expect(source).not.toContain(`secrets.${forbidden}`);
+    }
+  });
+
   test('defines the complete unattended lifecycle and hostile boundaries', () => {
     const source = read('e2e/acceptance/commercial-onboarding.spec.ts');
     for (const marker of [

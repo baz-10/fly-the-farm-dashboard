@@ -29,6 +29,8 @@ The runner accepts only either the exact canonical Spray Command invitation rout
 
 ## Acceptance sequence
 
+For a GitHub-managed release, `.github/workflows/production-beta-release.yml` calls this acceptance workflow only after the exact release SHA has passed migration, Vercel `READY`, and deployed-SHA verification. Deployment credentials remain confined to `production-beta-deployment`; this acceptance workflow continues to use only `production-beta-acceptance`.
+
 1. Resolve `/api/v1/deployment` and check out the exact commit deployed at the canonical Production Beta URL. A `repository_dispatch` run must also match its supplied 40-character deployment commit exactly.
 2. Run the authentication-only job with the least-privilege Production Beta acceptance identity. The job validates the environment, proves the trusted organisation session and removes its local storage state when complete.
 3. After authentication succeeds, run the commercial-onboarding-only job. It executes `npm run verify:product-maturity`, `npm run test:ci:sharded` and `npm run verify:commercial-onboarding`, then runs `npx playwright test --project=commercial-onboarding`. This state-creating project has retries disabled.
