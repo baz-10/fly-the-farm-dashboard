@@ -9,6 +9,26 @@ const workflow = () => yaml.load(read('.github/workflows/production-beta-operati
 const step = (job, name) => job.steps.find((candidate) => candidate.name === name);
 
 describe('commercial onboarding acceptance governance', () => {
+  test('pins every protected acceptance action to its reviewed immutable commit', () => {
+    const definition = workflow();
+    const reviewedPins = {
+      'actions/checkout': '11bd71901bbe5b1630ceea73d27597364c9af683',
+      'actions/setup-node': '49933ea5288caeca8642d1e84afbd3f7d6820020',
+      'actions/upload-artifact': 'ea165f8d65b6e75b540449e92b4886f43607fa02',
+    };
+    const actions = Object.values(definition.jobs)
+      .flatMap((job) => job.steps || [])
+      .filter((candidate) => candidate.uses)
+      .map(({ uses }) => uses);
+
+    expect(actions).toHaveLength(7);
+    for (const action of actions) {
+      const [name, revision] = action.split('@');
+      expect(revision).toBe(reviewedPins[name]);
+      expect(revision).toMatch(/^[0-9a-f]{40}$/);
+    }
+  });
+
   test('supports exact-SHA reusable release acceptance without deployment credentials', () => {
     const definition = workflow();
     const source = read('.github/workflows/production-beta-operational-acceptance.yml');

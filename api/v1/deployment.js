@@ -1,5 +1,5 @@
 module.exports = function deploymentIdentity(_request, response) {
-  const commitSha = String(process.env.VERCEL_GIT_COMMIT_SHA || '').trim().toLowerCase();
+  const commitSha = String(process.env.SPRAY_COMMAND_RELEASE_SHA || '').trim().toLowerCase();
   if (!/^[0-9a-f]{40}$/.test(commitSha)) {
     return response.status(503).json({ error: { code: 'DEPLOYMENT_IDENTITY_UNAVAILABLE' } });
   }

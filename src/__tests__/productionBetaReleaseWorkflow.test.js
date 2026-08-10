@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const { spawnSync } = require('child_process');
 const yaml = require('js-yaml');
 
 const root = path.resolve(__dirname, '../..');
@@ -7,6 +8,15 @@ const read = (name) => fs.readFileSync(path.join(root, name), 'utf8');
 const releaseWorkflow = () => yaml.load(read('.github/workflows/production-beta-release.yml'));
 const vercelConfiguration = () => JSON.parse(read('vercel.json'));
 const step = (job, name) => job.steps.find((candidate) => candidate.name === name);
+const inlineIdentityValidator = (run, payloadVariable) => {
+  const match = run.match(new RegExp(`node -e '([^']+)' "\\$${payloadVariable}" "\\$RELEASE_SHA"`));
+  return match && match[1];
+};
+const validateIdentity = (script, payload, expectedReleaseSha) => spawnSync(
+  process.execPath,
+  ['-e', script, JSON.stringify(payload), expectedReleaseSha],
+  { encoding: 'utf8' },
+);
 
 describe('GitHub-managed Production Beta release governance', () => {
   test('uses a manual immutable release SHA and one protected deployment authority', () => {
@@ -80,8 +90,48 @@ describe('GitHub-managed Production Beta release governance', () => {
 
     expect(step(release, 'Deploy exact release to Vercel').run)
       .toContain('--meta githubCommitSha="$RELEASE_SHA"');
+    expect(step(release, 'Deploy exact release to Vercel').run)
+      .toContain('--env SPRAY_COMMAND_RELEASE_SHA="$RELEASE_SHA"');
     expect(step(release, 'Verify deployed release SHA').run)
       .toContain('/api/v1/deployment');
+  });
+
+  test('fails closed on missing or mismatched Vercel metadata before querying runtime identity', () => {
+    const release = releaseWorkflow().jobs.release;
+    const names = release.steps.map(({ name }) => name);
+    const metadata = step(release, 'Verify Vercel deployment metadata');
+
+    expect(metadata).toBeDefined();
+    if (!metadata) return;
+    expect(names.indexOf(metadata.name)).toBeLessThan(names.indexOf('Verify deployed release SHA'));
+    expect(metadata.run).toContain('https://api.vercel.com/v13/deployments/$DEPLOYMENT_ID');
+    const validator = inlineIdentityValidator(metadata.run, 'metadata_json');
+    expect(typeof validator).toBe('string');
+    if (!validator) return;
+
+    const expected = 'a'.repeat(40);
+    expect(validateIdentity(validator, { meta: {} }, expected).status).not.toBe(0);
+    expect(validateIdentity(validator, { meta: { githubCommitSha: 'b'.repeat(40) } }, expected).status).not.toBe(0);
+    expect(validateIdentity(validator, { meta: { githubCommitSha: expected } }, expected)).toMatchObject({
+      status: 0,
+      stdout: expected,
+    });
+  });
+
+  test('fails closed on missing or mismatched runtime identity and accepts the matching release', () => {
+    const release = releaseWorkflow().jobs.release;
+    const runtime = step(release, 'Verify deployed release SHA');
+    const validator = inlineIdentityValidator(runtime.run, 'payload');
+
+    expect(typeof validator).toBe('string');
+    if (!validator) return;
+    const expected = 'a'.repeat(40);
+    expect(validateIdentity(validator, { data: {} }, expected).status).not.toBe(0);
+    expect(validateIdentity(validator, { data: { commitSha: 'b'.repeat(40) } }, expected).status).not.toBe(0);
+    expect(validateIdentity(validator, { data: { commitSha: expected } }, expected)).toMatchObject({
+      status: 0,
+      stdout: expected,
+    });
   });
 
   test('runs operational acceptance only after the protected release succeeds', () => {

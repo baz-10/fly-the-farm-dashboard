@@ -9,10 +9,13 @@ function response() {
   };
 }
 
-afterEach(() => delete process.env.VERCEL_GIT_COMMIT_SHA);
+afterEach(() => {
+  delete process.env.SPRAY_COMMAND_RELEASE_SHA;
+  delete process.env.VERCEL_GIT_COMMIT_SHA;
+});
 
 test('returns only the exact deployed commit without caching', () => {
-  process.env.VERCEL_GIT_COMMIT_SHA = 'A'.repeat(40);
+  process.env.SPRAY_COMMAND_RELEASE_SHA = 'A'.repeat(40);
   const res = response();
   deploymentIdentity({}, res);
   expect(res).toMatchObject({
@@ -22,8 +25,18 @@ test('returns only the exact deployed commit without caching', () => {
   });
 });
 test.each(['', 'not-a-sha', 'a'.repeat(39)])('fails closed when deployment identity is invalid', (value) => {
-  process.env.VERCEL_GIT_COMMIT_SHA = value;
+  process.env.SPRAY_COMMAND_RELEASE_SHA = value;
   const res = response();
   deploymentIdentity({}, res);
   expect(res).toMatchObject({ statusCode: 503, body: { error: { code: 'DEPLOYMENT_IDENTITY_UNAVAILABLE' } } });
+});
+
+test('does not fall back to Vercel implicit Git metadata when explicit runtime identity is missing', () => {
+  process.env.VERCEL_GIT_COMMIT_SHA = 'b'.repeat(40);
+  const res = response();
+  deploymentIdentity({}, res);
+  expect(res).toMatchObject({
+    statusCode: 503,
+    body: { error: { code: 'DEPLOYMENT_IDENTITY_UNAVAILABLE' } },
+  });
 });
