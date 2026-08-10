@@ -67,8 +67,13 @@ jobs:
       release-sha: ${{ steps.release_identity.outputs.release-sha }}
       deployment-url: ${{ steps.vercel_deploy.outputs.deployment-url }}
       migration-ids: ${{ steps.migration_plan.outputs.migration-ids }}
+      remote-migration-ids: ${{ steps.migration_ledger.outputs.remote-migration-ids }}
+      pending-migration-ids: ${{ steps.migration_ledger.outputs.pending-migration-ids }}
+      migration-ledger-verified: ${{ steps.migration_ledger.outputs.migration-ledger-verified }}
+      migration-boundary-crossed: ${{ steps.migration_boundary.outputs.crossed }}
       deployment-id: ${{ steps.vercel_ready.outputs.deployment-id }}
       deployment-timestamp: ${{ steps.vercel_ready.outputs.deployment-timestamp }}
+      deployed-sha-verified: ${{ steps.deployed_sha.outputs.verified }}
     env:
       RELEASE_SHA: ${{ inputs.release_sha }}
       EXPECTED_SUPABASE_PROJECT_REF: fzkrvglzompkuiodqllr
@@ -149,8 +154,13 @@ jobs:
           set -euo pipefail
           output="$(npx --yes "supabase@$SUPABASE_CLI_VERSION" db push --linked --dry-run 2>&1)"
           printf '%s\n' "$output"
-          migration_ids="$(printf '%s\n' "$output" | node -e 'let input=""; process.stdin.on("data", chunk => input += chunk).on("end", () => { const ids=[...new Set([...input.matchAll(/(?:^|[\\s/])(\\d{14}(?:_[A-Za-z0-9_-]+)?)(?:\\.sql)?(?=$|\\s)/gm)].map(match => match[1]))]; process.stdout.write(JSON.stringify(ids)); });')"
+          migration_ids="$(printf '%s\n' "$output" | node scripts/productionBetaReleaseEvidence.mjs plan)"
           echo "migration-ids=$migration_ids" >> "$GITHUB_OUTPUT"
+
+      - name: Mark migration boundary
+        id: migration_boundary
+        shell: bash
+        run: echo "crossed=true" >> "$GITHUB_OUTPUT"
 
       - name: Apply repository migrations
         id: apply_migrations
@@ -160,14 +170,25 @@ jobs:
         run: npx --yes "supabase@$SUPABASE_CLI_VERSION" db push --linked
 
       - name: Verify remote migration ledger
+        id: migration_ledger
         shell: bash
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+          PLANNED_MIGRATION_IDS: ${{ steps.migration_plan.outputs.migration-ids }}
         run: |
           set -euo pipefail
-          npx --yes "supabase@$SUPABASE_CLI_VERSION" migration list --linked
-          npx --yes "supabase@$SUPABASE_CLI_VERSION" db push --linked --dry-run
+          ledger_output="$(npx --yes "supabase@$SUPABASE_CLI_VERSION" migration list --linked 2>&1)"
+          printf '%s\n' "$ledger_output"
+          remote_migration_ids="$(printf '%s\n' "$ledger_output" | node scripts/productionBetaReleaseEvidence.mjs ledger)"
+          pending_output="$(npx --yes "supabase@$SUPABASE_CLI_VERSION" db push --linked --dry-run 2>&1)"
+          printf '%s\n' "$pending_output"
+          pending_migration_ids="$(printf '%s\n' "$pending_output" | node scripts/productionBetaReleaseEvidence.mjs plan)"
+          echo "remote-migration-ids=$remote_migration_ids" >> "$GITHUB_OUTPUT"
+          echo "pending-migration-ids=$pending_migration_ids" >> "$GITHUB_OUTPUT"
+          reconciliation="$(REMOTE_MIGRATION_IDS="$remote_migration_ids" PENDING_MIGRATION_IDS="$pending_migration_ids" node scripts/productionBetaReleaseEvidence.mjs reconcile)"
+          migration_ledger_verified="$(node -e 'const value=JSON.parse(process.argv[1]); if(value.verified !== true) process.exit(1); process.stdout.write(String(value.verified));' "$reconciliation")"
+          echo "migration-ledger-verified=$migration_ledger_verified" >> "$GITHUB_OUTPUT"
 
       - name: Deploy exact release to Vercel
         id: vercel_deploy
@@ -196,12 +217,14 @@ jobs:
           echo "deployment-timestamp=$deployment_timestamp" >> "$GITHUB_OUTPUT"
 
       - name: Verify deployed release SHA
+        id: deployed_sha
         shell: bash
         run: |
           set -euo pipefail
           payload="$(curl --fail --silent --show-error --retry 6 --retry-delay 5 https://spray-command-production-beta.vercel.app/api/v1/deployment)"
           deployed="$(node -e 'const value=JSON.parse(process.argv[1])?.data?.commitSha||""; if(!/^[0-9a-f]{40}$/.test(value)) process.exit(1); process.stdout.write(value)' "$payload")"
           [[ "$deployed" == "${RELEASE_SHA,,}" ]]
+          echo "verified=true" >> "$GITHUB_OUTPUT"
 
       - name: Report partial release
         if: failure() && steps.apply_migrations.outcome == 'success'
@@ -219,31 +242,30 @@ jobs:
   release-record:
     name: Record Production Beta release
     needs: [release, acceptance]
-    if: always() && needs.release.result == 'success'
+    if: always() && needs.release.outputs.migration-boundary-crossed == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
     steps:
+      - name: Check out immutable release
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ inputs.release_sha }}
+          persist-credentials: false
+
       - name: Write canonical release record
         shell: bash
         env:
-          RELEASE_SHA: ${{ needs.release.outputs.release-sha }}
+          RELEASE_SHA: ${{ inputs.release_sha }}
+          MIGRATION_BOUNDARY_CROSSED: ${{ needs.release.outputs.migration-boundary-crossed }}
           MIGRATION_IDS: ${{ needs.release.outputs.migration-ids }}
-          MIGRATION_LEDGER_VERIFIED: 'true'
+          REMOTE_MIGRATION_IDS: ${{ needs.release.outputs.remote-migration-ids }}
+          PENDING_MIGRATION_IDS: ${{ needs.release.outputs.pending-migration-ids }}
+          MIGRATION_LEDGER_VERIFIED: ${{ needs.release.outputs.migration-ledger-verified }}
+          RELEASE_RESULT: ${{ needs.release.result }}
           DEPLOYMENT_ID: ${{ needs.release.outputs.deployment-id }}
           DEPLOYMENT_TIMESTAMP: ${{ needs.release.outputs.deployment-timestamp }}
+          DEPLOYED_SHA_VERIFIED: ${{ needs.release.outputs.deployed-sha-verified }}
           ACCEPTANCE_RUN_ID: ${{ github.run_id }}
           ACCEPTANCE_RESULT: ${{ needs.acceptance.result }}
-        run: |
-          set -euo pipefail
-          {
-            printf '## Production Beta Release Record\n\n'
-            printf '| Evidence | Value |\n|---|---|\n'
-            printf '| Release SHA | `%s` |\n' "$RELEASE_SHA"
-            printf '| Migration IDs | `%s` |\n' "$MIGRATION_IDS"
-            printf '| Migration ledger verified | `%s` |\n' "$MIGRATION_LEDGER_VERIFIED"
-            printf '| Deployment ID | `%s` |\n' "$DEPLOYMENT_ID"
-            printf '| Deployment timestamp | `%s` |\n' "$DEPLOYMENT_TIMESTAMP"
-            printf '| Acceptance workflow run ID | `%s` |\n' "$ACCEPTANCE_RUN_ID"
-            printf '| Acceptance result | `%s` |\n' "$ACCEPTANCE_RESULT"
-          } >> "$GITHUB_STEP_SUMMARY"
+        run: node scripts/productionBetaReleaseEvidence.mjs record >> "$GITHUB_STEP_SUMMARY"

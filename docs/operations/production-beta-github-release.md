@@ -10,21 +10,22 @@ The separate `production-beta-acceptance` environment retains only the approved 
 
 Dispatch **Production Beta Release** with the reviewed 40-character commit SHA. That value becomes `RELEASE_SHA`. The workflow checks out and validates the exact SHA, runs registry verification, regression and the production build, then enters the protected deployment environment.
 
-The release job verifies the fixed Production Beta Supabase, Vercel organisation and Vercel project identifiers before performing any mutation. It inspects the remote migration ledger, performs a dry-run, applies only repository migrations, and verifies the ledger again. It then deploys the same checkout with `githubCommitSha=RELEASE_SHA`, waits for Vercel `READY`, and requires `/api/v1/deployment` to return the same SHA before operational acceptance runs.
+The release job verifies the fixed Production Beta Supabase, Vercel organisation and Vercel project identifiers before performing any mutation. It inspects the remote migration ledger and strictly parses the repository-controlled dry-run into exact, ordered Migration IDs. After applying only that plan, machine reconciliation requires every planned ID to exist in the remote ledger and requires that zero repository migrations remain pending. It then deploys the same checkout with `githubCommitSha=RELEASE_SHA`, waits for Vercel `READY`, and requires `/api/v1/deployment` to return the same SHA before operational acceptance runs.
 
 ## Canonical release history
 
-Every release workflow run writes a **Production Beta Release Record** to its GitHub Actions run summary after acceptance finishes. The workflow run is the canonical Production Beta release-history entry and records:
+Every release attempt that crosses the migration boundary writes a **Production Beta Release Record** to its GitHub Actions run summary. The workflow run is the canonical Production Beta release-history entry and records:
 
 - Release SHA
-- Migration IDs identified by the repository-controlled dry-run
-- Migration ledger verification
+- Exact, ordered Migration IDs identified by the repository-controlled dry-run
+- Remote Migration IDs and repository migrations pending after apply
+- Machine-derived migration ledger verification
 - Deployment ID
 - Deployment timestamp
 - Acceptance workflow run ID
 - Acceptance result
 
-The record is written even when acceptance fails after a successful deployment, so an unaccepted release remains visible and cannot be mistaken for an accepted release.
+The record is written even when migration application, ledger reconciliation, deployment, deployed-SHA verification or acceptance fails. Deployment or SHA failures record acceptance as `NOT_RUN`, so a partial or unaccepted release remains visible and cannot be mistaken for an accepted release. A missing ledger result is recorded as unverified rather than replaced by a hard-coded success value.
 
 ## Vercel Git deployment separation
 
@@ -32,7 +33,7 @@ The record is written even when acceptance fails after a successful deployment, 
 
 ## Failure handling
 
-- Migration failure stops deployment and acceptance.
+- Migration failure stops deployment and acceptance, but an attempt that crossed the migration boundary still produces its canonical partial-release record.
 - Deployment failure after migration is a **PARTIAL RELEASE**. Preserve applied migration history and keep the previous application serving where Vercel supports it.
 - A deployed-SHA mismatch stops acceptance and fails the release.
 - Acceptance failure means the release is not accepted. Preserve safe diagnostics and fix forward through reviewed code.

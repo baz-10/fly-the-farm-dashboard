@@ -100,20 +100,50 @@ describe('GitHub-managed Production Beta release governance', () => {
     const record = definition.jobs['release-record'];
 
     expect(release.outputs['migration-ids']).toBe('${{ steps.migration_plan.outputs.migration-ids }}');
+    expect(release.outputs['remote-migration-ids']).toBe('${{ steps.migration_ledger.outputs.remote-migration-ids }}');
+    expect(release.outputs['pending-migration-ids']).toBe('${{ steps.migration_ledger.outputs.pending-migration-ids }}');
+    expect(release.outputs['migration-ledger-verified']).toBe('${{ steps.migration_ledger.outputs.migration-ledger-verified }}');
+    expect(release.outputs['migration-boundary-crossed']).toBe('${{ steps.migration_boundary.outputs.crossed }}');
     expect(release.outputs['deployment-id']).toBe('${{ steps.vercel_ready.outputs.deployment-id }}');
     expect(release.outputs['deployment-timestamp']).toBe('${{ steps.vercel_ready.outputs.deployment-timestamp }}');
     expect(record.needs).toEqual(['release', 'acceptance']);
-    expect(record.if).toBe("always() && needs.release.result == 'success'");
+    expect(record.if).toBe("always() && needs.release.outputs.migration-boundary-crossed == 'true'");
 
     const writeRecord = step(record, 'Write canonical release record');
-    expect(writeRecord.env.RELEASE_SHA).toBe('${{ needs.release.outputs.release-sha }}');
+    expect(writeRecord.env.RELEASE_SHA).toBe('${{ inputs.release_sha }}');
     expect(writeRecord.env.MIGRATION_IDS).toBe('${{ needs.release.outputs.migration-ids }}');
+    expect(writeRecord.env.REMOTE_MIGRATION_IDS).toBe('${{ needs.release.outputs.remote-migration-ids }}');
+    expect(writeRecord.env.PENDING_MIGRATION_IDS).toBe('${{ needs.release.outputs.pending-migration-ids }}');
+    expect(writeRecord.env.MIGRATION_LEDGER_VERIFIED).toBe('${{ needs.release.outputs.migration-ledger-verified }}');
     expect(writeRecord.env.DEPLOYMENT_ID).toBe('${{ needs.release.outputs.deployment-id }}');
     expect(writeRecord.env.DEPLOYMENT_TIMESTAMP).toBe('${{ needs.release.outputs.deployment-timestamp }}');
     expect(writeRecord.env.ACCEPTANCE_RUN_ID).toBe('${{ github.run_id }}');
     expect(writeRecord.env.ACCEPTANCE_RESULT).toBe('${{ needs.acceptance.result }}');
-    expect(writeRecord.run).toContain('Production Beta Release Record');
-    expect(writeRecord.run).toContain('Acceptance workflow run ID');
+    expect(writeRecord.run).toBe('node scripts/productionBetaReleaseEvidence.mjs record >> "$GITHUB_STEP_SUMMARY"');
+  });
+
+  test('machine-parses and reconciles the exact Supabase migration plan and ledger', () => {
+    const definition = releaseWorkflow();
+    const release = definition.jobs.release;
+    const names = release.steps.map(({ name }) => name);
+    const plan = step(release, 'Dry-run repository migrations');
+    const ledger = step(release, 'Verify remote migration ledger');
+
+    expect(plan.run).toContain('node scripts/productionBetaReleaseEvidence.mjs plan');
+    expect(plan.run).not.toContain('matchAll');
+    expect(names.indexOf('Mark migration boundary'))
+      .toBeLessThan(names.indexOf('Apply repository migrations'));
+    expect(step(release, 'Mark migration boundary').id).toBe('migration_boundary');
+    expect(ledger.id).toBe('migration_ledger');
+    expect(ledger.run).toContain('migration list --linked');
+    expect(ledger.run).toContain('db push --linked --dry-run');
+    expect(ledger.run).toContain('productionBetaReleaseEvidence.mjs ledger');
+    expect(ledger.run).toContain('productionBetaReleaseEvidence.mjs plan');
+    expect(ledger.run).toContain('productionBetaReleaseEvidence.mjs reconcile');
+    expect(ledger.run.indexOf('echo "remote-migration-ids=$remote_migration_ids"'))
+      .toBeLessThan(ledger.run.indexOf('productionBetaReleaseEvidence.mjs reconcile'));
+    expect(ledger.run.indexOf('echo "pending-migration-ids=$pending_migration_ids"'))
+      .toBeLessThan(ledger.run.indexOf('productionBetaReleaseEvidence.mjs reconcile'));
   });
 
   test('disables only the automatic Production branch deployment and preserves previews elsewhere', () => {
@@ -136,6 +166,8 @@ describe('GitHub-managed Production Beta release governance', () => {
     expect(step(release, 'Report partial release').if)
       .toContain("steps.apply_migrations.outcome == 'success'");
     expect(step(release, 'Report partial release').run).toContain('PARTIAL RELEASE');
+    expect(definition.jobs['release-record'].if)
+      .toContain("needs.release.outputs.migration-boundary-crossed == 'true'");
     expect(source).not.toMatch(/migration repair|db reset|migration.*delete|\.env(?:\.|\s|$)|upload-artifact/i);
   });
 
@@ -149,6 +181,8 @@ describe('GitHub-managed Production Beta release governance', () => {
     expect(runbook).toContain('automatic Vercel Git production deployment');
     expect(runbook).toContain('Release SHA');
     expect(runbook).toContain('Migration IDs');
+    expect(runbook).toContain('zero repository migrations remain pending');
+    expect(runbook).toContain('NOT_RUN');
     expect(runbook).toContain('Deployment ID');
     expect(runbook).toContain('Acceptance workflow run ID');
     expect(runbook).toContain('all other unassigned branches remain eligible for Preview deployments');
