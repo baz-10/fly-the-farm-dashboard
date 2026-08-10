@@ -104,6 +104,22 @@ describe.each([
     expect(getComputedStyle(progressCard)).toMatchObject({ minWidth: '0', maxWidth: '100%' });
     expect(getComputedStyle(recommendation)).toMatchObject({ minWidth: '0', maxWidth: '100%' });
   });
+
+  test('activates the Needs Attention Base action from the keyboard and transfers focus', async () => {
+    const user = userEvent.setup();
+    mockViewportWidth = width as number;
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: width });
+    window.dispatchEvent(new Event('resize'));
+    render(<GettingStarted />);
+
+    const recommendation = await screen.findByRole('region', { name: 'Recommended next action' });
+    const baseAction = within(recommendation).getByRole('button', { name: 'Confirm your Base' });
+    act(() => baseAction.focus());
+    await user.keyboard('{Enter}');
+
+    expect(mockNavigate).toHaveBeenCalledWith('/getting-started#base');
+    expect(document.getElementById('confirm-base-heading')).toHaveFocus();
+  });
 });
 
 test('welcomes the administrator with Base language and one prominent recommended action', async () => {
@@ -131,17 +147,6 @@ test('keeps completed steps keyboard-openable and navigates to established domai
   await user.click(aircraft);
   await user.click(screen.getByRole('button', { name: 'Add your first aircraft' }));
   expect(mockNavigate).toHaveBeenCalledWith('/aircraft');
-});
-
-test('moves keyboard focus to the Base confirmation landmark when the recommended action stays in this workspace', async () => {
-  const user = userEvent.setup();
-  render(<GettingStarted />);
-  await screen.findByRole('heading', { name: 'Getting Started' });
-
-  await user.click(within(screen.getByRole('region', { name: 'Recommended next action' })).getByRole('button', { name: 'Confirm your Base' }));
-
-  expect(mockNavigate).toHaveBeenCalledWith('/getting-started#base');
-  expect(document.getElementById('confirm-base-heading')).toHaveFocus();
 });
 
 test('uses instant Base focus scrolling when reduced motion is preferred', async () => {

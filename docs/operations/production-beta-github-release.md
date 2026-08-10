@@ -10,7 +10,9 @@ The separate `production-beta-acceptance` environment retains only the approved 
 
 Dispatch **Production Beta Release** with the reviewed 40-character commit SHA. That value becomes `RELEASE_SHA`. The workflow checks out and validates the exact SHA, runs registry verification, regression and the production build, then enters the protected deployment environment.
 
-The release job verifies the fixed Production Beta Supabase, Vercel organisation and Vercel project identifiers before performing any mutation. It inspects the remote migration ledger and strictly parses the repository-controlled dry-run into exact, ordered Migration IDs. After applying only that plan, machine reconciliation requires every planned ID to exist in the remote ledger and requires that zero repository migrations remain pending. It then deploys the same checkout with `githubCommitSha=RELEASE_SHA` as Vercel metadata and server-only `SPRAY_COMMAND_RELEASE_SHA=RELEASE_SHA` runtime configuration. After Vercel reports `READY`, the workflow retrieves the exact deployment through the authenticated Vercel API and fails on missing, invalid or mismatched `meta.githubCommitSha`. Only after that independent metadata check does it query `/api/v1/deployment`, which reads only `SPRAY_COMMAND_RELEASE_SHA` and must return the same SHA before operational acceptance runs.
+The release job verifies the fixed Production Beta Supabase, Vercel organisation and Vercel project identifiers before performing any mutation. It parses the pre-apply migration ledger into exact repository and remote Migration IDs, then strictly parses the repository-controlled dry-run. The plan must exactly equal the repository IDs absent from the pre-apply remote ledger, so an unexpectedly empty plan fails closed. After applying only that plan, the planned IDs must exactly equal the post-apply remote ledger minus the pre-apply remote ledger, and the workflow proves that zero repository migrations remain pending.
+
+The workflow then deploys the same checkout with `githubCommitSha=RELEASE_SHA` as Vercel metadata and server-only `SPRAY_COMMAND_RELEASE_SHA=RELEASE_SHA` runtime configuration. It captures deployment ID, creation timestamp and deployment state immediately from the newly created deployment URL, before waiting for `READY`, so those facts survive a wait failure. After `READY`, the workflow retrieves the exact deployment through the authenticated Vercel API and fails on missing, invalid or mismatched `meta.githubCommitSha`. Only after that independent metadata check does it query `/api/v1/deployment` on the newly created deployment URL. That endpoint reads only `SPRAY_COMMAND_RELEASE_SHA` and must return the same SHA before operational acceptance runs.
 
 ## Reviewed action pins
 
@@ -27,15 +29,16 @@ To update an action, review the upstream release notes and source diff, confirm 
 Every release attempt that crosses the migration boundary writes a **Production Beta Release Record** to its GitHub Actions run summary. The workflow run is the canonical Production Beta release-history entry and records:
 
 - Release SHA
+- Workflow run ID and release-attempt timestamp
+- Exact failure stage (`NONE` for a fully successful release)
+- Exact repository and pre-apply remote Migration IDs
 - Exact, ordered Migration IDs identified by the repository-controlled dry-run
-- Remote Migration IDs and repository migrations pending after apply
+- Post-apply remote Migration IDs and repository migrations pending after apply
 - Machine-derived migration ledger verification
-- Deployment ID
-- Deployment timestamp
-- Acceptance workflow run ID
+- Deployment ID, timestamp and deployment state, captured before the `READY` wait when deployment creation succeeds
 - Acceptance result
 
-The record is written even when migration application, ledger reconciliation, deployment, deployed-SHA verification or acceptance fails. Deployment or SHA failures record acceptance as `NOT_RUN`, so a partial or unaccepted release remains visible and cannot be mistaken for an accepted release. A missing ledger result is recorded as unverified rather than replaced by a hard-coded success value.
+The record is written even when migration application, ledger reconciliation, deployment, the `READY` wait, deployed-SHA verification or acceptance fails. Pre-acceptance failures record acceptance as `NOT_RUN`, and absent deployment evidence is distinguished as `NOT_CREATED` or `NOT_CAPTURED`, so a partial or unaccepted release remains visible and cannot be mistaken for an accepted release. A missing ledger result is recorded as unverified rather than replaced by a hard-coded success value.
 
 ## Vercel Git deployment separation
 
@@ -44,7 +47,7 @@ The record is written even when migration application, ledger reconciliation, de
 ## Failure handling
 
 - Migration failure stops deployment and acceptance, but an attempt that crossed the migration boundary still produces its canonical partial-release record.
-- Deployment failure after migration is a **PARTIAL RELEASE**. Preserve applied migration history and keep the previous application serving where Vercel supports it.
+- Any failure after the migration boundary is a **PARTIAL RELEASE**. The canonical record names whether migration apply, ledger reconciliation, deployment creation, deployment identity capture, `READY` wait, metadata verification or runtime verification failed. Preserve applied migration history and keep the previous application serving where Vercel supports it.
 - Missing or mismatched Vercel deployment metadata stops before the runtime identity query; missing or mismatched runtime identity stops acceptance and fails the release.
 - Acceptance failure means the release is not accepted. Preserve safe diagnostics and fix forward through reviewed code.
 

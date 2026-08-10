@@ -75,11 +75,12 @@ describe('GitHub-managed Production Beta release governance', () => {
     expect(release.needs).toBe('validate');
 
     const ordered = [
-      'Inspect remote migration ledger',
+      'Capture pre-apply migration state',
       'Dry-run repository migrations',
       'Apply repository migrations',
       'Verify remote migration ledger',
       'Deploy exact release to Vercel',
+      'Capture Vercel deployment identity',
       'Wait for Vercel READY',
       'Verify Vercel deployment metadata',
       'Verify deployed release SHA',
@@ -93,8 +94,17 @@ describe('GitHub-managed Production Beta release governance', () => {
       .toContain('--meta githubCommitSha="$RELEASE_SHA"');
     expect(step(release, 'Deploy exact release to Vercel').run)
       .toContain('--env SPRAY_COMMAND_RELEASE_SHA="$RELEASE_SHA"');
+    const deploymentIdentity = step(release, 'Capture Vercel deployment identity');
+    expect(deploymentIdentity.id).toBe('vercel_identity');
+    expect(deploymentIdentity.env.DEPLOYMENT_URL).toBe('${{ steps.vercel_deploy.outputs.deployment-url }}');
+    expect(deploymentIdentity.run).toContain('vercel@$VERCEL_CLI_VERSION" inspect "$DEPLOYMENT_URL" --json');
+    expect(deploymentIdentity.run).toContain('productionBetaReleaseEvidence.mjs deployment');
+    expect(step(release, 'Wait for Vercel READY').run)
+      .toContain('productionBetaReleaseEvidence.mjs deployment');
     expect(step(release, 'Verify deployed release SHA').run)
-      .toContain('/api/v1/deployment');
+      .toContain('$DEPLOYMENT_URL/api/v1/deployment');
+    expect(step(release, 'Verify deployed release SHA').env.DEPLOYMENT_URL)
+      .toBe('${{ steps.vercel_deploy.outputs.deployment-url }}');
   });
 
   test('fails closed on missing or mismatched Vercel metadata before querying runtime identity', () => {
@@ -145,37 +155,59 @@ describe('GitHub-managed Production Beta release governance', () => {
     expect(acceptance.secrets).toBeUndefined();
   });
 
-  test('records the complete canonical Production Beta release history after acceptance', () => {
+  test('records complete staged evidence for every attempt that crosses the migration boundary', () => {
     const definition = releaseWorkflow();
     const release = definition.jobs.release;
     const record = definition.jobs['release-record'];
 
     expect(release.outputs['migration-ids']).toBe('${{ steps.migration_plan.outputs.migration-ids }}');
-    expect(release.outputs['remote-migration-ids']).toBe('${{ steps.migration_ledger.outputs.remote-migration-ids }}');
+    expect(release.outputs['repository-migration-ids']).toBe('${{ steps.pre_migration_state.outputs.repository-migration-ids }}');
+    expect(release.outputs['pre-remote-migration-ids']).toBe('${{ steps.pre_migration_state.outputs.pre-remote-migration-ids }}');
+    expect(release.outputs['post-remote-migration-ids']).toBe('${{ steps.migration_ledger.outputs.post-remote-migration-ids }}');
     expect(release.outputs['pending-migration-ids']).toBe('${{ steps.migration_ledger.outputs.pending-migration-ids }}');
     expect(release.outputs['migration-ledger-verified']).toBe('${{ steps.migration_ledger.outputs.migration-ledger-verified }}');
     expect(release.outputs['migration-boundary-crossed']).toBe('${{ steps.migration_boundary.outputs.crossed }}');
+    expect(release.outputs['release-attempt-timestamp']).toBe('${{ steps.migration_boundary.outputs.release-attempt-timestamp }}');
     expect(release.outputs['release-evidence-script']).toBe('${{ steps.migration_boundary.outputs.release-evidence-script }}');
-    expect(release.outputs['deployment-id']).toBe('${{ steps.vercel_ready.outputs.deployment-id }}');
-    expect(release.outputs['deployment-timestamp']).toBe('${{ steps.vercel_ready.outputs.deployment-timestamp }}');
+    expect(release.outputs['deployment-id']).toContain('steps.vercel_identity.outputs.deployment-id');
+    expect(release.outputs['deployment-timestamp']).toContain('steps.vercel_identity.outputs.deployment-timestamp');
+    expect(release.outputs['deployment-state']).toContain('steps.vercel_identity.outputs.deployment-state');
+    expect(release.outputs['deployment-id']).toContain('steps.vercel_ready.outputs.deployment-id');
+    expect(release.outputs['deployment-state']).toContain('steps.vercel_ready.outputs.deployment-state');
     expect(release.outputs['deployed-sha-verified']).toBe('${{ steps.deployed_sha.outputs.verified }}');
+    for (const output of [
+      'migration-apply-outcome', 'migration-ledger-outcome', 'deployment-creation-outcome',
+      'deployment-identity-outcome', 'deployment-ready-outcome',
+      'deployment-metadata-outcome', 'runtime-verification-outcome',
+    ]) expect(release.outputs[output]).toContain('.outcome');
     expect(record.needs).toEqual(['release', 'acceptance']);
     expect(record.if).toBe("always() && needs.release.outputs.migration-boundary-crossed == 'true'");
     expect(step(record, 'Check out immutable release')).toBeUndefined();
 
     const writeRecord = step(record, 'Write canonical release record');
     expect(writeRecord.env.RELEASE_SHA).toBe('${{ inputs.release_sha }}');
+    expect(writeRecord.env.WORKFLOW_RUN_ID).toBe('${{ github.run_id }}');
+    expect(writeRecord.env.RELEASE_ATTEMPT_TIMESTAMP).toBe('${{ needs.release.outputs.release-attempt-timestamp }}');
     expect(writeRecord.env.MIGRATION_BOUNDARY_CROSSED).toBe('${{ needs.release.outputs.migration-boundary-crossed }}');
+    expect(writeRecord.env.REPOSITORY_MIGRATION_IDS).toBe('${{ needs.release.outputs.repository-migration-ids }}');
+    expect(writeRecord.env.PRE_REMOTE_MIGRATION_IDS).toBe('${{ needs.release.outputs.pre-remote-migration-ids }}');
     expect(writeRecord.env.MIGRATION_IDS).toBe('${{ needs.release.outputs.migration-ids }}');
-    expect(writeRecord.env.REMOTE_MIGRATION_IDS).toBe('${{ needs.release.outputs.remote-migration-ids }}');
+    expect(writeRecord.env.POST_REMOTE_MIGRATION_IDS).toBe('${{ needs.release.outputs.post-remote-migration-ids }}');
     expect(writeRecord.env.PENDING_MIGRATION_IDS).toBe('${{ needs.release.outputs.pending-migration-ids }}');
     expect(writeRecord.env.MIGRATION_LEDGER_VERIFIED).toBe('${{ needs.release.outputs.migration-ledger-verified }}');
     expect(writeRecord.env.RELEASE_RESULT).toBe('${{ needs.release.result }}');
     expect(writeRecord.env.DEPLOYMENT_ID).toBe('${{ needs.release.outputs.deployment-id }}');
     expect(writeRecord.env.DEPLOYMENT_TIMESTAMP).toBe('${{ needs.release.outputs.deployment-timestamp }}');
+    expect(writeRecord.env.DEPLOYMENT_STATE).toBe('${{ needs.release.outputs.deployment-state }}');
     expect(writeRecord.env.DEPLOYED_SHA_VERIFIED).toBe('${{ needs.release.outputs.deployed-sha-verified }}');
-    expect(writeRecord.env.ACCEPTANCE_RUN_ID).toBe('${{ github.run_id }}');
     expect(writeRecord.env.ACCEPTANCE_RESULT).toBe('${{ needs.acceptance.result }}');
+    expect(writeRecord.env.MIGRATION_APPLY_OUTCOME).toBe('${{ needs.release.outputs.migration-apply-outcome }}');
+    expect(writeRecord.env.MIGRATION_LEDGER_OUTCOME).toBe('${{ needs.release.outputs.migration-ledger-outcome }}');
+    expect(writeRecord.env.DEPLOYMENT_CREATION_OUTCOME).toBe('${{ needs.release.outputs.deployment-creation-outcome }}');
+    expect(writeRecord.env.DEPLOYMENT_IDENTITY_OUTCOME).toBe('${{ needs.release.outputs.deployment-identity-outcome }}');
+    expect(writeRecord.env.DEPLOYMENT_READY_OUTCOME).toBe('${{ needs.release.outputs.deployment-ready-outcome }}');
+    expect(writeRecord.env.DEPLOYMENT_METADATA_OUTCOME).toBe('${{ needs.release.outputs.deployment-metadata-outcome }}');
+    expect(writeRecord.env.RUNTIME_VERIFICATION_OUTCOME).toBe('${{ needs.release.outputs.runtime-verification-outcome }}');
     expect(writeRecord.env.RELEASE_EVIDENCE_SCRIPT).toBe('${{ needs.release.outputs.release-evidence-script }}');
     expect(step(release, 'Mark migration boundary').run).toContain('readFileSync("scripts/productionBetaReleaseEvidence.mjs")');
     expect(writeRecord.run).toContain('Buffer.from(process.argv[2], "base64")');
@@ -183,14 +215,23 @@ describe('GitHub-managed Production Beta release governance', () => {
     expect(writeRecord.run).toContain('node "$evidence_script" record >> "$GITHUB_STEP_SUMMARY"');
   });
 
-  test('machine-parses and reconciles the exact Supabase migration plan and ledger', () => {
+  test('machine-proves the exact repository/pre-remote plan and post-minus-pre applied delta', () => {
     const definition = releaseWorkflow();
     const release = definition.jobs.release;
     const names = release.steps.map(({ name }) => name);
+    const preState = step(release, 'Capture pre-apply migration state');
     const plan = step(release, 'Dry-run repository migrations');
     const ledger = step(release, 'Verify remote migration ledger');
 
+    expect(preState.id).toBe('pre_migration_state');
+    expect(preState.run).toContain('migration list --linked');
+    expect(preState.run).toContain('productionBetaReleaseEvidence.mjs ledger-state');
+    expect(preState.run).toContain('repository-migration-ids=');
+    expect(preState.run).toContain('pre-remote-migration-ids=');
     expect(plan.run).toContain('node scripts/productionBetaReleaseEvidence.mjs plan');
+    expect(plan.run).toContain('productionBetaReleaseEvidence.mjs verify-plan');
+    expect(plan.env.REPOSITORY_MIGRATION_IDS).toBe('${{ steps.pre_migration_state.outputs.repository-migration-ids }}');
+    expect(plan.env.PRE_REMOTE_MIGRATION_IDS).toBe('${{ steps.pre_migration_state.outputs.pre-remote-migration-ids }}');
     expect(plan.run).not.toContain('matchAll');
     expect(names.indexOf('Mark migration boundary'))
       .toBeLessThan(names.indexOf('Apply repository migrations'));
@@ -198,10 +239,11 @@ describe('GitHub-managed Production Beta release governance', () => {
     expect(ledger.id).toBe('migration_ledger');
     expect(ledger.run).toContain('migration list --linked');
     expect(ledger.run).toContain('db push --linked --dry-run');
-    expect(ledger.run).toContain('productionBetaReleaseEvidence.mjs ledger');
+    expect(ledger.env.PRE_REMOTE_MIGRATION_IDS).toBe('${{ steps.pre_migration_state.outputs.pre-remote-migration-ids }}');
+    expect(ledger.run).toContain('productionBetaReleaseEvidence.mjs ledger-state');
     expect(ledger.run).toContain('productionBetaReleaseEvidence.mjs plan');
     expect(ledger.run).toContain('productionBetaReleaseEvidence.mjs reconcile');
-    expect(ledger.run.indexOf('echo "remote-migration-ids=$remote_migration_ids"'))
+    expect(ledger.run.indexOf('echo "post-remote-migration-ids=$post_remote_migration_ids"'))
       .toBeLessThan(ledger.run.indexOf('productionBetaReleaseEvidence.mjs reconcile'));
     expect(ledger.run.indexOf('echo "pending-migration-ids=$pending_migration_ids"'))
       .toBeLessThan(ledger.run.indexOf('productionBetaReleaseEvidence.mjs reconcile'));
@@ -250,6 +292,10 @@ describe('GitHub-managed Production Beta release governance', () => {
     expect(step(release, 'Report partial release').if)
       .toContain("steps.apply_migrations.outcome == 'success'");
     expect(step(release, 'Report partial release').run).toContain('PARTIAL RELEASE');
+    expect(step(release, 'Report partial release').run)
+      .toContain('See the canonical release record for the exact failure stage');
+    expect(step(release, 'Report partial release').run)
+      .not.toContain('but deployment or deployed-SHA verification failed');
     expect(definition.jobs['release-record'].if)
       .toContain("needs.release.outputs.migration-boundary-crossed == 'true'");
     expect(source).not.toMatch(/migration repair|db reset|migration.*delete|\.env(?:\.|\s|$)|upload-artifact/i);
@@ -265,10 +311,15 @@ describe('GitHub-managed Production Beta release governance', () => {
     expect(runbook).toContain('automatic Vercel Git production deployment');
     expect(runbook).toContain('Release SHA');
     expect(runbook).toContain('Migration IDs');
+    expect(runbook).toContain('post-apply remote ledger minus the pre-apply remote ledger');
     expect(runbook).toContain('zero repository migrations remain pending');
     expect(runbook).toContain('NOT_RUN');
     expect(runbook).toContain('Deployment ID');
-    expect(runbook).toContain('Acceptance workflow run ID');
+    expect(runbook).toContain('Workflow run ID');
+    expect(runbook).toContain('release-attempt timestamp');
+    expect(runbook).toContain('failure stage');
+    expect(runbook).toContain('deployment state');
+    expect(runbook).toContain('newly created deployment URL');
     expect(runbook).toContain('all other unassigned branches remain eligible for Preview deployments');
   });
 });

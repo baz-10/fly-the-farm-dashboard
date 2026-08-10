@@ -210,28 +210,52 @@ jobs:
             "$([[ -n "$E2E_ORGANISATION_PASSWORD" ]] && echo true || echo false)"
 
       - name: Validate acceptance environment
+        id: environment
         run: npx playwright test --project=environment
 
       - name: Recreate authenticated browser state
+        id: authentication
         run: npx playwright test --project=auth
 
       - name: Prove deterministic acceptance cleanup
+        id: cleanup
         run: npx playwright test --project=cleanup --no-deps
 
       - name: Run established Client-to-Mission gate
+        id: operational
         run: npx playwright test --project=chromium --no-deps
 
-      - name: Retain non-secret failure diagnostics
+      - name: Write safe text failure diagnostics
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: production-beta-operational-acceptance-failure
-          path: |
-            test-results/playwright-report
-            test-results/playwright-artifacts
-          if-no-files-found: ignore
-          retention-days: 7
+        shell: bash
+        env:
+          ACCEPTED_COMMIT_SHA: ${{ needs.deployment-identity.outputs.commit-sha }}
+          ENVIRONMENT_RESULT: ${{ steps.environment.outcome }}
+          AUTHENTICATION_RESULT: ${{ steps.authentication.outcome }}
+          CLEANUP_RESULT: ${{ steps.cleanup.outcome }}
+          OPERATIONAL_RESULT: ${{ steps.operational.outcome }}
+        run: |
+          set -euo pipefail
+          mkdir -p test-results/safe-diagnostics
+          {
+            printf 'workflow_run_id=%s\n' "$GITHUB_RUN_ID"
+            printf 'accepted_commit_sha=%s\n' "$ACCEPTED_COMMIT_SHA"
+            printf 'environment=%s\n' "$ENVIRONMENT_RESULT"
+            printf 'authentication=%s\n' "$AUTHENTICATION_RESULT"
+            printf 'cleanup=%s\n' "$CLEANUP_RESULT"
+            printf 'operational=%s\n' "$OPERATIONAL_RESULT"
+            printf 'capture_policy=no_auth_media_no_auth_storage\n'
+          } > test-results/safe-diagnostics/operational-acceptance.txt
 
       - name: Remove authentication state
         if: always()
         run: rm -rf test-results/.auth
+
+      - name: Retain safe text failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: production-beta-operational-acceptance-failure
+          path: test-results/safe-diagnostics/operational-acceptance.txt
+          if-no-files-found: ignore
+          retention-days: 7

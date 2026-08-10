@@ -80,8 +80,9 @@ describe('Production Beta release evidence', () => {
   });
 
   describe('parseMigrationLedger', () => {
-    test('returns only the exact Remote column IDs from the pinned Supabase ledger table', () => {
+    test('returns the exact repository and remote columns from the pinned Supabase ledger table', () => {
       const parseMigrationLedger = productionFunction('parseMigrationLedger');
+      const parseMigrationLedgerState = productionFunction('parseMigrationLedgerState');
       const output = [
         'Connecting to remote database...',
         '        LOCAL          │     REMOTE         │     TIME (UTC)',
@@ -95,6 +96,10 @@ describe('Production Beta release evidence', () => {
         '20260809090000',
         '20260810020000',
       ]);
+      expect(parseMigrationLedgerState(output)).toEqual({
+        repositoryIds: ['20260809090000', '20260810010000'],
+        remoteIds: ['20260809090000', '20260810020000'],
+      });
     });
 
     test('rejects an unrelated table with loose Local and Remote labels', () => {
@@ -161,37 +166,91 @@ describe('Production Beta release evidence', () => {
     });
   });
 
+  describe('verifyMigrationPlan', () => {
+    test('accepts only the exact repository IDs absent from the pre-apply remote ledger', () => {
+      const verifyMigrationPlan = productionFunction('verifyMigrationPlan');
+      expect(verifyMigrationPlan({
+        repositoryIds: ['20260809090000', '20260810010000', '20260810020000'],
+        preRemoteIds: ['20260809090000'],
+        plannedIds: ['20260810010000', '20260810020000'],
+      })).toEqual({
+        repositoryIds: ['20260809090000', '20260810010000', '20260810020000'],
+        preRemoteIds: ['20260809090000'],
+        plannedIds: ['20260810010000', '20260810020000'],
+        verified: true,
+      });
+    });
+
+    test('rejects an unexpectedly empty dry-run plan when repository state has a pending migration', () => {
+      const verifyMigrationPlan = productionFunction('verifyMigrationPlan');
+      expect(() => verifyMigrationPlan({
+        repositoryIds: ['20260809090000', '20260810010000'],
+        preRemoteIds: ['20260809090000'],
+        plannedIds: [],
+      })).toThrow('Planned migrations do not equal repository migrations absent from the pre-apply remote ledger: expected 20260810010000; received NONE');
+    });
+
+    test('rejects an extra or reordered migration outside the exact repository/pre-remote difference', () => {
+      const verifyMigrationPlan = productionFunction('verifyMigrationPlan');
+      expect(() => verifyMigrationPlan({
+        repositoryIds: ['20260809090000', '20260810010000', '20260810020000'],
+        preRemoteIds: ['20260809090000'],
+        plannedIds: ['20260810020000', '20260810010000'],
+      })).toThrow('Planned migrations do not equal repository migrations absent from the pre-apply remote ledger');
+    });
+  });
+
   describe('reconcileMigrationLedger', () => {
-    test('returns the verified exact plan and ledger when all planned IDs are remote and none remain pending', () => {
+    test('proves the exact post-minus-pre remote delta equals the plan and none remain pending', () => {
       const reconcileMigrationLedger = productionFunction('reconcileMigrationLedger');
       expect(reconcileMigrationLedger({
         plannedIds: ['20260810010000', '20260810020000'],
-        remoteIds: ['20260809090000', '20260810010000', '20260810020000'],
+        preRemoteIds: ['20260809090000'],
+        postRemoteIds: ['20260809090000', '20260810010000', '20260810020000'],
         pendingAfter: [],
       })).toEqual({
         plannedIds: ['20260810010000', '20260810020000'],
-        remoteIds: ['20260809090000', '20260810010000', '20260810020000'],
+        preRemoteIds: ['20260809090000'],
+        postRemoteIds: ['20260809090000', '20260810010000', '20260810020000'],
+        appliedIds: ['20260810010000', '20260810020000'],
         pendingAfter: [],
         verified: true,
       });
     });
 
-    test('rejects a planned migration absent from the remote ledger', () => {
+    test('rejects a post-apply remote delta that omits or adds any migration outside the plan', () => {
       const reconcileMigrationLedger = productionFunction('reconcileMigrationLedger');
       expect(() => reconcileMigrationLedger({
         plannedIds: ['20260810010000', '20260810020000'],
-        remoteIds: ['20260810010000'],
+        preRemoteIds: ['20260809090000'],
+        postRemoteIds: ['20260809090000', '20260810010000', '20260810030000'],
         pendingAfter: [],
-      })).toThrow('Planned migrations absent from remote ledger: 20260810020000');
+      })).toThrow('Applied remote migration delta does not exactly equal the plan: expected 20260810010000,20260810020000; received 20260810010000,20260810030000');
     });
 
     test('rejects any repository migration still pending after apply', () => {
       const reconcileMigrationLedger = productionFunction('reconcileMigrationLedger');
       expect(() => reconcileMigrationLedger({
         plannedIds: ['20260810010000'],
-        remoteIds: ['20260810010000'],
+        preRemoteIds: ['20260809090000'],
+        postRemoteIds: ['20260809090000', '20260810010000'],
         pendingAfter: ['20260810020000'],
       })).toThrow('Repository migrations still pending after apply: 20260810020000');
+    });
+  });
+
+  describe('parseVercelDeploymentIdentity', () => {
+    test('captures deployment identity, creation time and state before the READY wait', () => {
+      const parseVercelDeploymentIdentity = productionFunction('parseVercelDeploymentIdentity');
+      expect(parseVercelDeploymentIdentity({
+        id: 'dpl_created',
+        createdAt: '2026-08-10T04:05:06.000Z',
+        readyState: 'BUILDING',
+      })).toEqual({
+        deploymentId: 'dpl_created',
+        deploymentTimestamp: '2026-08-10T04:05:06.000Z',
+        deploymentState: 'BUILDING',
+      });
     });
   });
 
@@ -201,55 +260,102 @@ describe('Production Beta release evidence', () => {
       const record = buildReleaseRecord({
         releaseSha: 'a'.repeat(40),
         migrationBoundaryCrossed: true,
+        workflowRunId: '123456789',
+        releaseAttemptTimestamp: '2026-08-10T04:00:00.000Z',
+        repositoryIds: ['20260809090000', '20260810010000'],
+        preRemoteIds: ['20260809090000'],
         plannedIds: ['20260810010000'],
-        remoteIds: ['20260809090000', '20260810010000'],
+        postRemoteIds: ['20260809090000', '20260810010000'],
         pendingAfter: [],
         migrationLedgerVerified: true,
         releaseResult: 'success',
+        migrationApplyOutcome: 'success',
+        migrationLedgerOutcome: 'success',
+        deploymentCreationOutcome: 'success',
+        deploymentIdentityOutcome: 'success',
+        deploymentReadyOutcome: 'success',
+        deploymentMetadataOutcome: 'success',
+        runtimeVerificationOutcome: 'success',
         deploymentId: 'dpl_accepted',
         deploymentTimestamp: '2026-08-10T04:05:06.000Z',
+        deploymentState: 'READY',
         deployedShaVerified: true,
-        acceptanceRunId: '123456789',
         acceptanceResult: 'success',
       });
 
       expect(record).toContain('## Production Beta Release Record');
       expect(record).toContain('| Release classification | `ACCEPTED` |');
+      expect(record).toContain('| Workflow run ID | `123456789` |');
+      expect(record).toContain('| Release attempt timestamp | `2026-08-10T04:00:00.000Z` |');
+      expect(record).toContain('| Failure stage | `NONE` |');
       expect(record).toContain('| Planned migration IDs | `["20260810010000"]` |');
-      expect(record).toContain('| Remote migration IDs | `["20260809090000","20260810010000"]` |');
+      expect(record).toContain('| Pre-apply remote migration IDs | `["20260809090000"]` |');
+      expect(record).toContain('| Post-apply remote migration IDs | `["20260809090000","20260810010000"]` |');
       expect(record).toContain('| Repository migrations pending after apply | `[]` |');
       expect(record).toContain('| Migration ledger verified | `true` |');
+      expect(record).toContain('| Deployment state | `READY` |');
       expect(record).toContain('| Acceptance result | `success` |');
     });
 
-    test.each([
-      ['deployment failure', '', '', false],
-      ['deployed-SHA failure', 'dpl_partial', '2026-08-10T04:05:06.000Z', false],
-    ])('records a canonical partial release with NOT_RUN acceptance after %s', (
-      _failure,
-      deploymentId,
-      deploymentTimestamp,
-      deployedShaVerified,
-    ) => {
+    test('retains deployment identity and BUILDING state when the READY wait fails', () => {
       const buildReleaseRecord = productionFunction('buildReleaseRecord');
       const record = buildReleaseRecord({
         releaseSha: 'b'.repeat(40),
         migrationBoundaryCrossed: true,
+        workflowRunId: '987654321',
+        releaseAttemptTimestamp: '2026-08-10T04:00:00.000Z',
+        repositoryIds: ['20260810010000'],
+        preRemoteIds: [],
         plannedIds: ['20260810010000'],
-        remoteIds: ['20260810010000'],
+        postRemoteIds: ['20260810010000'],
         pendingAfter: [],
         migrationLedgerVerified: true,
         releaseResult: 'failure',
-        deploymentId,
-        deploymentTimestamp,
-        deployedShaVerified,
-        acceptanceRunId: '987654321',
+        migrationApplyOutcome: 'success',
+        migrationLedgerOutcome: 'success',
+        deploymentCreationOutcome: 'success',
+        deploymentIdentityOutcome: 'success',
+        deploymentReadyOutcome: 'failure',
+        deploymentMetadataOutcome: 'skipped',
+        runtimeVerificationOutcome: 'skipped',
+        deploymentId: 'dpl_partial',
+        deploymentTimestamp: '2026-08-10T04:05:06.000Z',
+        deploymentState: 'BUILDING',
+        deployedShaVerified: false,
         acceptanceResult: 'skipped',
       });
 
       expect(record).toContain('| Release classification | `PARTIAL_RELEASE` |');
-      expect(record).toContain('| Acceptance workflow run ID | `NOT_RUN` |');
+      expect(record).toContain('| Workflow run ID | `987654321` |');
+      expect(record).toContain('| Failure stage | `DEPLOYMENT_READY_WAIT` |');
+      expect(record).toContain('| Deployment ID | `dpl_partial` |');
+      expect(record).toContain('| Deployment timestamp | `2026-08-10T04:05:06.000Z` |');
+      expect(record).toContain('| Deployment state | `BUILDING` |');
       expect(record).toContain('| Acceptance result | `NOT_RUN` |');
+    });
+
+    test('labels a pre-deployment ledger failure accurately with explicit not-created deployment evidence', () => {
+      const buildReleaseRecord = productionFunction('buildReleaseRecord');
+      const record = buildReleaseRecord({
+        releaseSha: 'd'.repeat(40),
+        migrationBoundaryCrossed: true,
+        workflowRunId: '222333444',
+        releaseAttemptTimestamp: '2026-08-10T04:00:00.000Z',
+        repositoryIds: ['20260810010000'],
+        preRemoteIds: [],
+        plannedIds: ['20260810010000'],
+        migrationLedgerVerified: false,
+        releaseResult: 'failure',
+        migrationApplyOutcome: 'success',
+        migrationLedgerOutcome: 'failure',
+        deploymentCreationOutcome: 'skipped',
+        acceptanceResult: 'skipped',
+      });
+
+      expect(record).toContain('| Failure stage | `MIGRATION_LEDGER_VERIFICATION` |');
+      expect(record).toContain('| Deployment ID | `NOT_CREATED` |');
+      expect(record).toContain('| Deployment timestamp | `NOT_CREATED` |');
+      expect(record).toContain('| Deployment state | `NOT_CREATED` |');
     });
 
     test('refuses to label an attempt canonical before it crosses the migration boundary', () => {

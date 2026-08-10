@@ -1,11 +1,34 @@
 const fs = require('fs');
 const path = require('path');
+const ts = require('typescript');
+const yaml = require('js-yaml');
 
 const workflowPath = path.resolve(
   process.cwd(),
   '.github/workflows/production-beta-operational-acceptance.yml',
 );
 const playwrightConfigPath = path.resolve(process.cwd(), 'playwright.config.ts');
+const workflowDefinition = () => yaml.load(fs.readFileSync(workflowPath, 'utf8'));
+const workflowStep = (job, name) => job.steps.find((candidate) => candidate.name === name);
+const playwrightConfiguration = () => {
+  const compiled = ts.transpileModule(fs.readFileSync(playwrightConfigPath, 'utf8'), {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020, esModuleInterop: true },
+  }).outputText;
+  const configModule = { exports: {} };
+  const controlledRequire = (name) => {
+    if (name === '@playwright/test') {
+      return { defineConfig: (config) => config, devices: { 'Desktop Chrome': { browserName: 'chromium' } } };
+    }
+    throw new Error(`Unexpected Playwright config import: ${name}`);
+  };
+  new Function('require', 'module', 'exports', 'process', compiled)(
+    controlledRequire,
+    configModule,
+    configModule.exports,
+    process,
+  );
+  return configModule.exports.default;
+};
 
 describe('Production Beta operational acceptance execution profile', () => {
   test('uses protected environment secrets without persisting credentials', () => {
@@ -29,13 +52,39 @@ describe('Production Beta operational acceptance execution profile', () => {
     expect(workflow).not.toContain('workflow_dispatch:\n      inputs:');
   });
 
-  test('does not retain authentication screenshots, video, or traces', () => {
-    const config = fs.readFileSync(playwrightConfigPath, 'utf8');
+  test('disables reusable authentication captures for every project that consumes credentials or storage state', () => {
+    const config = playwrightConfiguration();
 
-    expect(config).toContain("name: 'auth'");
-    expect(config).toMatch(/name: 'auth'[\s\S]*trace: 'off'/);
-    expect(config).toMatch(/name: 'auth'[\s\S]*screenshot: 'off'/);
-    expect(config).toMatch(/name: 'auth'[\s\S]*video: 'off'/);
+    for (const name of ['auth', 'cleanup', 'chromium', 'commercial-onboarding']) {
+      const project = config.projects.find((candidate) => candidate.name === name);
+      expect(project).toBeDefined();
+      const effectiveUse = { ...config.use, ...project.use };
+      expect(effectiveUse).toMatchObject({ trace: 'off', screenshot: 'off', video: 'off' });
+    }
+  });
+
+  test('uploads only explicit safe text outcomes after removing authenticated storage', () => {
+    const operational = workflowDefinition().jobs['operational-acceptance'];
+    const names = operational.steps.map(({ name }) => name);
+    const diagnostics = workflowStep(operational, 'Write safe text failure diagnostics');
+    const removeAuth = workflowStep(operational, 'Remove authentication state');
+    const upload = workflowStep(operational, 'Retain safe text failure diagnostics');
+
+    expect(diagnostics).toBeDefined();
+    expect(removeAuth).toBeDefined();
+    expect(upload).toBeDefined();
+    if (!diagnostics || !removeAuth || !upload) return;
+    expect(diagnostics.if).toBe('failure()');
+    expect(diagnostics.run).toContain('test-results/safe-diagnostics/operational-acceptance.txt');
+    expect(diagnostics.env).toEqual(expect.objectContaining({
+      ENVIRONMENT_RESULT: '${{ steps.environment.outcome }}',
+      AUTHENTICATION_RESULT: '${{ steps.authentication.outcome }}',
+      CLEANUP_RESULT: '${{ steps.cleanup.outcome }}',
+      OPERATIONAL_RESULT: '${{ steps.operational.outcome }}',
+    }));
+    expect(names.indexOf(removeAuth.name)).toBeLessThan(names.indexOf(upload.name));
+    expect(upload.with.path).toBe('test-results/safe-diagnostics/operational-acceptance.txt');
+    expect(upload.with.path).not.toMatch(/\.auth|playwright-report|playwright-artifacts|storage/i);
   });
 
   test('proves authentication before starting the operational workflow', () => {
