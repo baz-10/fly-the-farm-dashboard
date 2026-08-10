@@ -81,6 +81,7 @@ describe('GitHub-managed Production Beta release governance', () => {
       'Verify remote migration ledger',
       'Deploy exact release to Vercel',
       'Wait for Vercel READY',
+      'Verify Vercel deployment metadata',
       'Verify deployed release SHA',
     ];
     ordered.forEach((name) => expect(names).toContain(name));
