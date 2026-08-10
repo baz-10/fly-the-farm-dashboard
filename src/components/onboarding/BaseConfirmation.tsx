@@ -75,7 +75,7 @@ export default function BaseConfirmation({ base, updateOperatingLocation, onSave
     <Box component="section" aria-labelledby="confirm-base-heading">
       <Stack spacing={2}>
         <Box>
-          <Typography id="confirm-base-heading" component="h2" variant="h5" fontWeight={900}>Confirm your Base</Typography>
+          <Typography id="confirm-base-heading" component="h2" variant="h5" fontWeight={900} tabIndex={-1}>Confirm your Base</Typography>
           <Typography color="text.secondary">Place the pin where your team normally prepares for work. You can move it without losing your address.</Typography>
         </Box>
         {error && <Alert severity="error">{error}</Alert>}

@@ -22,11 +22,16 @@ jest.mock('react-router-dom', () => ({ useNavigate: () => mockNavigate }), { vir
 jest.mock('../../services/gettingStartedApi', () => ({
   gettingStartedApi: { read: () => mockRead() },
 }));
+jest.mock('../../components/AddressAutocomplete', () => () => <div>Address search</div>);
 
 const action = (code: string, label: string, route: string) => ({ code, label, route });
 const projection = {
   organisation: { id: 'organisation-1', name: 'Western Downs Aerial Application', displayName: 'Western Downs Aerial Application' },
-  base: null,
+  base: {
+    id: 'base-1', name: 'Dalby Base', address: '1 Airstrip Road, Dalby QLD 4405', timezone: 'Australia/Brisbane',
+    latitude: -27.1817, longitude: 151.2621, addressSource: 'ADDRESS_SEARCH', locationConfirmedAt: null,
+    rowVersion: 4, createdAt: '2026-08-09T00:00:00.000Z', updatedAt: '2026-08-09T00:00:00.000Z',
+  },
   operationalReadiness: {
     state: 'GETTING_STARTED',
     headline: 'Your workspace is taking shape',
@@ -128,7 +133,7 @@ test('keeps completed steps keyboard-openable and navigates to established domai
   expect(mockNavigate).toHaveBeenCalledWith('/aircraft');
 });
 
-test('moves keyboard focus to the Base section when the recommended Base action stays in this workspace', async () => {
+test('moves keyboard focus to the Base confirmation landmark when the recommended action stays in this workspace', async () => {
   const user = userEvent.setup();
   render(<GettingStarted />);
   await screen.findByRole('heading', { name: 'Getting Started' });
@@ -136,8 +141,7 @@ test('moves keyboard focus to the Base section when the recommended Base action 
   await user.click(within(screen.getByRole('region', { name: 'Recommended next action' })).getByRole('button', { name: 'Confirm your Base' }));
 
   expect(mockNavigate).toHaveBeenCalledWith('/getting-started#base');
-  expect(screen.getByRole('button', { name: /Base.*Needs attention/i })).toHaveFocus();
-  expect(document.getElementById('base')).toBeInTheDocument();
+  expect(document.getElementById('confirm-base-heading')).toHaveFocus();
 });
 
 test('uses instant Base focus scrolling when reduced motion is preferred', async () => {

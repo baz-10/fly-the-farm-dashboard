@@ -27,7 +27,7 @@ jest.mock('react-router-dom', () => {
     BrowserRouter: ({ children }: { children: React.ReactNode }) => <>{children}</>,
     Routes: ({ children }: { children: React.ReactNode }) => findRoute(children, globalThis.window.location.pathname),
     Route,
-    Navigate: () => null,
+    Navigate: ({ to }: { to: string }) => <output data-testid="route-redirect" data-to={to} />,
     useNavigate: () => jest.fn(),
     useParams: () => ({}),
     useLocation: () => ({ pathname: globalThis.window.location.pathname, search: globalThis.window.location.search }),
@@ -109,7 +109,6 @@ describe('App', () => {
   });
 
   test.each([
-    ['/register', 'Create account form'],
     ['/customer-acceptance/customer-token', 'Customer outcome portal'],
   ])('presents the public Beta state on %s without replacing its lifecycle', (path, expected) => {
     window.history.pushState({}, '', path);
@@ -117,6 +116,14 @@ describe('App', () => {
 
     expect(screen.getByLabelText('Beta')).toBeVisible();
     expect(screen.getByText(expected)).toBeInTheDocument();
+  });
+
+  test('redirects the legacy registration URL before it can render self-provisioning', () => {
+    window.history.pushState({}, '', '/register');
+    render(<App />);
+
+    expect(screen.getByTestId('route-redirect')).toHaveAttribute('data-to', '/apply');
+    expect(screen.queryByText('Create account form')).not.toBeInTheDocument();
   });
 
   test.each([

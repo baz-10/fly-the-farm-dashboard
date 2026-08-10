@@ -526,15 +526,7 @@ module.exports = async function handler(req, res) {
     }
 
     if (body.action === 'register') {
-      const registration = await registerUser(body);
-      if (registration.duplicate) {
-        return res.status(202).json({ user: null, requiresEmailConfirmation: true });
-      }
-      if (registration.session) setSessionCookies(req, res, registration.session);
-      return res.status(201).json({
-        user: registration.session ? toPublicUser(registration.authUser, registration.profile) : null,
-        requiresEmailConfirmation: registration.requiresEmailConfirmation,
-      });
+      throw createHttpError(403, 'Self-service account registration is not available. Apply for access.');
     }
 
     throw createHttpError(400, 'Unsupported authentication action.');

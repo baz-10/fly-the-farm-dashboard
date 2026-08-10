@@ -46,7 +46,7 @@ export default function GettingStarted() {
   const openAction = React.useCallback((route: string) => {
     navigate(route);
     if (route !== '/getting-started#base') return;
-    const heading = document.getElementById('getting-started-base-heading');
+    const heading = document.getElementById('confirm-base-heading');
     const reducedMotion = typeof window.matchMedia === 'function'
       && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     heading?.scrollIntoView?.({ block: 'center', behavior: reducedMotion ? 'auto' : 'smooth' });
