@@ -27,6 +27,7 @@ jobs:
     timeout-minutes: 45
     env:
       CI: 'true'
+      TZ: Australia/Brisbane
       RELEASE_SHA: ${{ inputs.release_sha }}
     steps:
       - name: Check out immutable release

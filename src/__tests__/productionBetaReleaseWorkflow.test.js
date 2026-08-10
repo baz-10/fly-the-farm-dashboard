@@ -33,6 +33,7 @@ describe('GitHub-managed Production Beta release governance', () => {
 
     const release = definition.jobs.release;
     expect(definition.jobs.validate.environment).toBeUndefined();
+    expect(definition.jobs.validate.env.TZ).toBe('Australia/Brisbane');
     expect(release.environment).toBe('production-beta-deployment');
     expect(release.env.RELEASE_SHA).toBe('${{ inputs.release_sha }}');
     expect(release.env.SUPABASE_ACCESS_TOKEN).toBeUndefined();
