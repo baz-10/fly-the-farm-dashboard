@@ -107,6 +107,11 @@ describe('GitHub-managed Production Beta release governance', () => {
       .toContain('[[ "$after_deployment_id" == "$BEFORE_PRODUCTION_DEPLOYMENT_ID" ]]');
   });
 
+  test('gives interaction-heavy suites a deterministic hosted-runner timeout', () => {
+    const runner = read('scripts/runJestShards.mjs');
+    expect(runner).toContain("'--testTimeout=15000'");
+  });
+
   test('pins checkout, build, migration, deployment and verification to one release SHA', () => {
     const definition = releaseWorkflow();
     const validation = definition.jobs.validate;
