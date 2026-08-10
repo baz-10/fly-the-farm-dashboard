@@ -50,6 +50,14 @@ describe('Production Beta release evidence', () => {
         'migration-like output outside the plan',
       ],
       [
+        'Remote database is up to date.\nmigration 20260810010000 was mentioned by another command',
+        'bare migration ID outside an explicit plan',
+      ],
+      [
+        'Would push these migrations:\n • 20260810010000_first.sql\nmigration 20260810020000 was not a plan bullet',
+        'bare migration ID after an explicit plan',
+      ],
+      [
         'Would push these migrations:\n • 20260810010000_first.sql\n • 20260810010000_duplicate.sql',
         'duplicate migration ID',
       ],
@@ -60,6 +68,88 @@ describe('Production Beta release evidence', () => {
     ])('rejects %s (%s)', (output) => {
       const parseMigrationPlan = productionFunction('parseMigrationPlan');
       expect(() => parseMigrationPlan(output)).toThrow();
+    });
+  });
+
+  describe('parseMigrationLedger', () => {
+    test('returns only the exact Remote column IDs from the pinned Supabase ledger table', () => {
+      const parseMigrationLedger = productionFunction('parseMigrationLedger');
+      const output = [
+        'Connecting to remote database...',
+        '        LOCAL          │     REMOTE         │     TIME (UTC)',
+        '  ─────────────────┼────────────────┼──────────────────────',
+        '   20260809090000 │ 20260809090000 │ 2026-08-09 09:00:00',
+        '   20260810010000 │                │ 2026-08-10 01:00:00',
+        '                  │ 20260810020000 │ 2026-08-10 02:00:00',
+      ].join('\n');
+
+      expect(parseMigrationLedger(output)).toEqual([
+        '20260809090000',
+        '20260810020000',
+      ]);
+    });
+
+    test('rejects an unrelated table with loose Local and Remote labels', () => {
+      const parseMigrationLedger = productionFunction('parseMigrationLedger');
+      expect(() => parseMigrationLedger([
+        'Local audit | Remote audit | Notes',
+        '------------|--------------|------',
+        '20260810010000 | 20260810010000 | unrelated evidence',
+      ].join('\n'))).toThrow('Supabase migration ledger header is missing');
+    });
+
+    test('rejects a false table-shaped row before it can satisfy reconciliation', () => {
+      const parseMigrationLedger = productionFunction('parseMigrationLedger');
+      const reconcileMigrationLedger = productionFunction('reconcileMigrationLedger');
+      expect(() => {
+        const remoteIds = parseMigrationLedger([
+          'Connecting to remote database...',
+          'Local │ Remote │ Time (UTC)',
+          '──────┼────────┼───────────',
+          '20260810010000 │ 20260810010000 │ unrelated',
+        ].join('\n'));
+        reconcileMigrationLedger({
+          plannedIds: ['20260810010000'],
+          remoteIds,
+          pendingAfter: [],
+        });
+      }).toThrow('Supabase migration ledger row is malformed');
+    });
+
+    test('rejects a raw valid timestamp that the pinned Supabase formatter would render as UTC time', () => {
+      const parseMigrationLedger = productionFunction('parseMigrationLedger');
+      expect(() => parseMigrationLedger([
+        'Connecting to remote database...',
+        'Local │ Remote │ Time (UTC)',
+        '──────┼────────┼───────────',
+        '20260810010000 │ 20260810010000 │ 20260810010000',
+      ].join('\n'))).toThrow('Supabase migration ledger row is malformed');
+    });
+
+    test('rejects mixed table delimiters that the pinned Supabase renderer cannot emit', () => {
+      const parseMigrationLedger = productionFunction('parseMigrationLedger');
+      expect(() => parseMigrationLedger([
+        'Local | Remote │ Time (UTC)',
+        '------|--------|-----------',
+        '20260810010000 | 20260810010000 | 2026-08-10 01:00:00',
+      ].join('\n'))).toThrow('Supabase migration ledger header is missing');
+    });
+
+    test('rejects a compact lookalike table even when its timestamp is valid', () => {
+      const parseMigrationLedger = productionFunction('parseMigrationLedger');
+      const reconcileMigrationLedger = productionFunction('reconcileMigrationLedger');
+      expect(() => {
+        const remoteIds = parseMigrationLedger([
+          'Local | Remote | Time (UTC)',
+          '------|--------|-----------',
+          '20260810010000 | 20260810010000 | 2026-08-10 01:00:00',
+        ].join('\n'));
+        reconcileMigrationLedger({
+          plannedIds: ['20260810010000'],
+          remoteIds,
+          pendingAfter: [],
+        });
+      }).toThrow();
     });
   });
 

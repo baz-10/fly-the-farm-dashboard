@@ -1,6 +1,10 @@
 const migrationIdPattern = /^\d{14}$/;
-const migrationFilePattern = /\b\d{14}_[A-Za-z0-9_-]+\.sql\b/;
+const migrationLikePattern = /(?:^|\D)\d{14}(?!\d)/;
 const ansiPattern = /\u001B\[[0-?]*[ -/]*[@-~]/g;
+const ledgerConnectionPattern = /^\s*Connecting to remote database\.\.\.\s*$/;
+const ledgerHeaderPattern = /^\s*Local\s*│\s*Remote\s*│\s*Time \(UTC\)\s*$/i;
+const ledgerSeparatorPattern = /^\s*[-─]+\s*┼\s*[-─]+\s*┼\s*[-─]+\s*$/;
+const ledgerRowPattern = /^\s*(\d{14})?\s*│\s*(\d{14})?\s*│\s*(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}|\d{14})\s*$/;
 
 const cleanOutput = (output) => {
   if (typeof output !== 'string') throw new TypeError('Supabase output must be a string');
@@ -14,6 +18,14 @@ const assertMigrationIds = (name, value) => {
   if (invalidIds.length > 0) throw new Error(`${name} contains invalid migration IDs: ${invalidIds.join(', ')}`);
   if (duplicateIds.length > 0) throw new Error(`${name} contains duplicate migration IDs: ${[...new Set(duplicateIds)].join(', ')}`);
   return [...value];
+};
+
+const renderedMigrationTime = (id) => {
+  const isoTime = `${id.slice(0, 4)}-${id.slice(4, 6)}-${id.slice(6, 8)}T${id.slice(8, 10)}:${id.slice(10, 12)}:${id.slice(12, 14)}`;
+  const date = new Date(`${isoTime}Z`);
+  return !Number.isNaN(date.valueOf()) && date.toISOString().slice(0, 19) === isoTime
+    ? isoTime.replace('T', ' ')
+    : id;
 };
 
 export function parseMigrationPlan(output) {
@@ -30,7 +42,7 @@ export function parseMigrationPlan(output) {
   }
 
   if (upToDateLines.length === 1) {
-    if (lines.some((line) => migrationFilePattern.test(line))) {
+    if (lines.some((line) => migrationLikePattern.test(line))) {
       throw new Error('Migration-like output appeared outside an explicit migration plan');
     }
     return [];
@@ -54,7 +66,7 @@ export function parseMigrationPlan(output) {
 
   if (ids.length === 0) throw new Error('Supabase migration plan did not contain repository migration bullets');
   lines.forEach((line, index) => {
-    if (migrationFilePattern.test(line) && !migrationLineIndexes.has(index)) {
+    if (migrationLikePattern.test(line) && !migrationLineIndexes.has(index)) {
       throw new Error('Migration-like output appeared outside an explicit migration plan');
     }
   });
@@ -62,23 +74,47 @@ export function parseMigrationPlan(output) {
 }
 
 export function parseMigrationLedger(output) {
-  const lines = cleanOutput(output).split('\n');
-  if (!lines.some((line) => /\bLocal\b.*\bRemote\b/i.test(line))) {
+  const lines = cleanOutput(output).split('\n').map((line) => line.replace(/`/g, ''));
+  const headerMatches = lines
+    .map((line, index) => ({ index, match: line.match(ledgerHeaderPattern) }))
+    .filter(({ match }) => match);
+  if (headerMatches.length !== 1) {
     throw new Error('Supabase migration ledger header is missing');
+  }
+
+  const [{ index: headerIndex }] = headerMatches;
+  const connectionIndexes = lines
+    .map((line, index) => (ledgerConnectionPattern.test(line) ? index : -1))
+    .filter((index) => index >= 0);
+  if (connectionIndexes.length !== 1 || connectionIndexes[0] > headerIndex) {
+    throw new Error('Supabase migration ledger connection marker is missing');
+  }
+  const separatorIndex = lines.findIndex((line, index) => index > headerIndex && line.trim() !== '');
+  if (separatorIndex < 0 || !ledgerSeparatorPattern.test(lines[separatorIndex])) {
+    throw new Error('Supabase migration ledger separator is malformed');
   }
 
   const remoteIds = [];
   const migrationLineIndexes = new Set();
-  lines.forEach((line, index) => {
-    const normalised = line.replace(/`/g, '');
-    const match = normalised.match(/^\s*(\d{14})?\s*[|│]\s*(\d{14})?\s*[|│]/);
-    if (!match) return;
+  for (let index = separatorIndex + 1; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (line.trim() === '') continue;
+    const match = line.match(ledgerRowPattern);
+    if (!match) throw new Error('Supabase migration ledger row is malformed');
+    const [, localId, remoteId, renderedTime] = match;
+    if ((!localId && !remoteId) || (localId && remoteId && localId !== remoteId)) {
+      throw new Error('Supabase migration ledger row is malformed');
+    }
+    const timeId = remoteId || localId;
+    if (renderedTime !== renderedMigrationTime(timeId)) {
+      throw new Error('Supabase migration ledger row is malformed');
+    }
     migrationLineIndexes.add(index);
-    if (match[2]) remoteIds.push(match[2]);
-  });
+    if (remoteId) remoteIds.push(remoteId);
+  }
 
   lines.forEach((line, index) => {
-    if (/\b\d{14}\b/.test(line) && !migrationLineIndexes.has(index)) {
+    if (migrationLikePattern.test(line) && !migrationLineIndexes.has(index)) {
       throw new Error('Migration-like output appeared outside the Supabase migration ledger');
     }
   });

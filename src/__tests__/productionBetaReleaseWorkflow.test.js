@@ -104,22 +104,32 @@ describe('GitHub-managed Production Beta release governance', () => {
     expect(release.outputs['pending-migration-ids']).toBe('${{ steps.migration_ledger.outputs.pending-migration-ids }}');
     expect(release.outputs['migration-ledger-verified']).toBe('${{ steps.migration_ledger.outputs.migration-ledger-verified }}');
     expect(release.outputs['migration-boundary-crossed']).toBe('${{ steps.migration_boundary.outputs.crossed }}');
+    expect(release.outputs['release-evidence-script']).toBe('${{ steps.migration_boundary.outputs.release-evidence-script }}');
     expect(release.outputs['deployment-id']).toBe('${{ steps.vercel_ready.outputs.deployment-id }}');
     expect(release.outputs['deployment-timestamp']).toBe('${{ steps.vercel_ready.outputs.deployment-timestamp }}');
+    expect(release.outputs['deployed-sha-verified']).toBe('${{ steps.deployed_sha.outputs.verified }}');
     expect(record.needs).toEqual(['release', 'acceptance']);
     expect(record.if).toBe("always() && needs.release.outputs.migration-boundary-crossed == 'true'");
+    expect(step(record, 'Check out immutable release')).toBeUndefined();
 
     const writeRecord = step(record, 'Write canonical release record');
     expect(writeRecord.env.RELEASE_SHA).toBe('${{ inputs.release_sha }}');
+    expect(writeRecord.env.MIGRATION_BOUNDARY_CROSSED).toBe('${{ needs.release.outputs.migration-boundary-crossed }}');
     expect(writeRecord.env.MIGRATION_IDS).toBe('${{ needs.release.outputs.migration-ids }}');
     expect(writeRecord.env.REMOTE_MIGRATION_IDS).toBe('${{ needs.release.outputs.remote-migration-ids }}');
     expect(writeRecord.env.PENDING_MIGRATION_IDS).toBe('${{ needs.release.outputs.pending-migration-ids }}');
     expect(writeRecord.env.MIGRATION_LEDGER_VERIFIED).toBe('${{ needs.release.outputs.migration-ledger-verified }}');
+    expect(writeRecord.env.RELEASE_RESULT).toBe('${{ needs.release.result }}');
     expect(writeRecord.env.DEPLOYMENT_ID).toBe('${{ needs.release.outputs.deployment-id }}');
     expect(writeRecord.env.DEPLOYMENT_TIMESTAMP).toBe('${{ needs.release.outputs.deployment-timestamp }}');
+    expect(writeRecord.env.DEPLOYED_SHA_VERIFIED).toBe('${{ needs.release.outputs.deployed-sha-verified }}');
     expect(writeRecord.env.ACCEPTANCE_RUN_ID).toBe('${{ github.run_id }}');
     expect(writeRecord.env.ACCEPTANCE_RESULT).toBe('${{ needs.acceptance.result }}');
-    expect(writeRecord.run).toBe('node scripts/productionBetaReleaseEvidence.mjs record >> "$GITHUB_STEP_SUMMARY"');
+    expect(writeRecord.env.RELEASE_EVIDENCE_SCRIPT).toBe('${{ needs.release.outputs.release-evidence-script }}');
+    expect(step(release, 'Mark migration boundary').run).toContain('readFileSync("scripts/productionBetaReleaseEvidence.mjs")');
+    expect(writeRecord.run).toContain('Buffer.from(process.argv[2], "base64")');
+    expect(writeRecord.run).not.toContain('base64 --decode');
+    expect(writeRecord.run).toContain('node "$evidence_script" record >> "$GITHUB_STEP_SUMMARY"');
   });
 
   test('machine-parses and reconciles the exact Supabase migration plan and ledger', () => {
