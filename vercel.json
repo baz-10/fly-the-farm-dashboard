@@ -18,6 +18,9 @@
     "api/pmav.js": {
       "maxDuration": 30
     },
+    "api/v1/onboarding-mailbox.js": {
+      "maxDuration": 15
+    },
     "api/store.js": {
       "maxDuration": 15
     },
