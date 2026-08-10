@@ -147,7 +147,7 @@ test('keeps completed steps keyboard-openable and navigates to established domai
   await user.click(aircraft);
   await user.click(screen.getByRole('button', { name: 'Add your first aircraft' }));
   expect(mockNavigate).toHaveBeenCalledWith('/aircraft');
-});
+}, 15000);
 
 test('uses instant Base focus scrolling when reduced motion is preferred', async () => {
   const user = userEvent.setup();

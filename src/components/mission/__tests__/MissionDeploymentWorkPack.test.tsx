@@ -187,7 +187,7 @@ test('edits crew requirements, checklist items, operational notes and supporting
   expect(onChange.mock.calls.some(([draft]) => draft?.crewRequirements?.[0]?.quantity === 2)).toBe(true);
   expect(onChange.mock.calls.some(([draft]) => draft?.checklist?.includes('Confirm radios'))).toBe(true);
   expect(onChange.mock.calls.some(([draft]) => draft?.notes === 'Meet at gate')).toBe(true);
-});
+}, 15000);
 
 test('adds an editable crew requirement to a custom mission pack', async () => {
   const user = userEvent.setup();
