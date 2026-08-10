@@ -207,6 +207,29 @@ describe('GitHub-managed Production Beta release governance', () => {
       .toBeLessThan(ledger.run.indexOf('productionBetaReleaseEvidence.mjs reconcile'));
   });
 
+  test('fails both workflow dry-run parsing boundaries on skipped malformed migration warnings', () => {
+    const release = releaseWorkflow().jobs.release;
+    const plan = step(release, 'Dry-run repository migrations');
+    const ledger = step(release, 'Verify remote migration ledger');
+    const parserCommand = 'node scripts/productionBetaReleaseEvidence.mjs plan';
+    const malformedOutput = [
+      'Skipping migration malformed_name.sql... (file name must match pattern "<timestamp>_name.sql")',
+      'Remote database is up to date.',
+    ].join('\n');
+
+    expect(plan.run).toContain(parserCommand);
+    expect(ledger.run).toContain(parserCommand);
+    expect(spawnSync(
+      process.execPath,
+      ['scripts/productionBetaReleaseEvidence.mjs', 'plan'],
+      { cwd: root, encoding: 'utf8', input: malformedOutput },
+    )).toMatchObject({
+      status: 1,
+      stdout: '',
+      stderr: expect.stringContaining('Supabase migration plan contains an unrecognised warning'),
+    });
+  });
+
   test('disables only the automatic Production branch deployment and preserves previews elsewhere', () => {
     const configuration = vercelConfiguration();
 

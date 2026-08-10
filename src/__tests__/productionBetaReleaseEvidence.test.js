@@ -42,6 +42,14 @@ describe('Production Beta release evidence', () => {
       ].join('\n'))).toEqual([]);
     });
 
+    test('rejects a skipped malformed migration warning before accepting an empty plan', () => {
+      const parseMigrationPlan = productionFunction('parseMigrationPlan');
+      expect(() => parseMigrationPlan([
+        'Skipping migration malformed_name.sql... (file name must match pattern "<timestamp>_name.sql")',
+        'Remote database is up to date.',
+      ].join('\n'))).toThrow('Supabase migration plan contains an unrecognised warning');
+    });
+
     test.each([
       ['', 'empty output'],
       ['Connecting to remote database...', 'missing terminal plan state'],

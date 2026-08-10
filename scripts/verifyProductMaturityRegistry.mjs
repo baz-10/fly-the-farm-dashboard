@@ -529,7 +529,6 @@ const authLifecycleRouteComponents = new Map([
   ['/reset-password', 'ResetPassword'],
 ]);
 const publicProductSurfaceRouteComponents = new Map([
-  ['/register', 'Register'],
   ['/apply', 'CommercialApplication'],
   ['/onboarding/accept', 'AcceptOrganisationInvitation'],
   ['/customer-acceptance/:token', 'CustomerAcceptancePublic'],
@@ -634,7 +633,7 @@ const routeAccessContracts = new Map([
 
 const routeDestinationContracts = new Map([
   ['/login', { modulePath: './pages/Login', localName: 'Login' }],
-  ['/register', { modulePath: './pages/Register', localName: 'Register' }],
+  ['/register', { redirectTo: '/apply' }],
   ['/auth/callback', { modulePath: './pages/AuthCallback', localName: 'AuthCallback' }],
   ['/forgot-password', { modulePath: './pages/ForgotPassword', localName: 'ForgotPassword' }],
   ['/reset-password', { modulePath: './pages/ResetPassword', localName: 'ResetPassword' }],
@@ -797,6 +796,7 @@ function assertCanonicalRouteDestinationSymbolConventions(program, appSourceFile
   const homeRoute = requiredFunctionSymbol(appSourceFile, checker, 'HomeRoute');
   const workflowProviders = requiredFunctionSymbol(appSourceFile, checker, 'WorkflowProviders');
   const routes = new Map([...routeDestinationContracts].map(([routePath, contract]) => {
+    if (contract.redirectTo) return [routePath, { ...contract }];
     const symbol = contract.local ? homeRoute.symbol : exactDestinationImport(contract);
     const child = contract.child
       ? { ...contract.child, symbol: exactDestinationImport(contract.child) }
@@ -1432,6 +1432,7 @@ function discoverReactRouterPaths(program, sourceFile, checker, approvedRoutePat
   const directRouteImportSymbols = new Set();
   const directRoutesImportSymbols = new Set();
   const directBrowserRouterImportSymbols = new Set();
+  const directNavigateImportSymbols = new Set();
   const routeUsageError = 'React Router Route requires its canonical direct JSX-only import/symbol convention.';
   const controlledRouterExports = new Set(['BrowserRouter', 'Route', 'Routes']);
   const allowedRouterImports = new Set([
@@ -1476,6 +1477,7 @@ function discoverReactRouterPaths(program, sourceFile, checker, approvedRoutePat
             if (symbol && importedName === 'BrowserRouter') {
               directBrowserRouterImportSymbols.add(symbol);
             }
+            if (symbol && importedName === 'Navigate') directNavigateImportSymbols.add(symbol);
             return;
           }
           if (controlledRouterExports.has(importedName)) throw new Error(routeUsageError);
@@ -1500,6 +1502,7 @@ function discoverReactRouterPaths(program, sourceFile, checker, approvedRoutePat
   if (directRouteImportSymbols.size !== 1
     || directRoutesImportSymbols.size !== 1
     || directBrowserRouterImportSymbols.size !== 1
+    || directNavigateImportSymbols.size !== 1
     || appRouterImports.length !== requiredAppRouterImports.size
     || appRouterImports.some((importedName) => !requiredAppRouterImports.has(importedName))) {
     throw new Error(routeUsageError);
@@ -1527,6 +1530,14 @@ function discoverReactRouterPaths(program, sourceFile, checker, approvedRoutePat
     const symbol = checker.getSymbolAtLocation(node);
     return directBrowserRouterImportSymbols.has(symbol)
       || resolvedBrowserRouterImportSymbols.has(resolveAliasedSymbol(checker, symbol));
+  };
+  const resolvedNavigateImportSymbols = new Set(
+    [...directNavigateImportSymbols].map((symbol) => resolveAliasedSymbol(checker, symbol)),
+  );
+  const isCanonicalNavigateReference = (node) => {
+    const symbol = checker.getSymbolAtLocation(node);
+    return directNavigateImportSymbols.has(symbol)
+      || resolvedNavigateImportSymbols.has(resolveAliasedSymbol(checker, symbol));
   };
 
   const isReactRouterRouteTag = (tagName) => {
@@ -1810,6 +1821,34 @@ function discoverReactRouterPaths(program, sourceFile, checker, approvedRoutePat
     const layout = nearestLayout(opening);
     const kind = layout ? layoutKind.get(layout) : null;
     const destination = routeSymbols.destinations.routes.get(routePath);
+    if (destination?.redirectTo) {
+      const redirect = unwrapTransparentExpression(expression);
+      const opening = ts.isJsxSelfClosingElement(redirect) ? redirect : null;
+      const attributes = opening?.attributes.properties ?? [];
+      const toAttribute = attributes[0];
+      const replaceAttribute = attributes[1];
+      const validRedirectComposition = accessContract?.kind === 'public'
+        && kind === null
+        && opening
+        && ts.isIdentifier(opening.tagName)
+        && opening.tagName.text === 'Navigate'
+        && isCanonicalNavigateReference(opening.tagName)
+        && attributes.length === 2
+        && ts.isJsxAttribute(toAttribute)
+        && toAttribute.name.text === 'to'
+        && toAttribute.initializer
+        && ts.isStringLiteral(toAttribute.initializer)
+        && ts.isJsxAttribute(replaceAttribute)
+        && replaceAttribute.name.text === 'replace'
+        && replaceAttribute.initializer === undefined;
+      if (!validRedirectComposition) {
+        throw new Error(`App route ${routePath} requires its approved retired registration redirect composition.`);
+      }
+      if (toAttribute.initializer.text !== destination.redirectTo) {
+        throw new Error(canonicalRouteDestinationError);
+      }
+      return;
+    }
     const authComponent = authLifecycleRouteComponents.get(routePath);
     if (authComponent) {
       if (accessContract?.kind !== 'public'

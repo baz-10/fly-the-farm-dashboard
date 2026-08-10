@@ -1,6 +1,7 @@
 const migrationIdPattern = /^\d{14}$/;
 const migrationLikePattern = /(?:^|\D)\d{14}(?!\d)/;
 const ansiPattern = /\u001B\[[0-?]*[ -/]*[@-~]/g;
+const migrationPlanWarningPattern = /^\s*(?:WARN(?:ING)?\b|Skipping migration\b)/i;
 const ledgerConnectionPattern = /^\s*Connecting to remote database\.\.\.\s*$/;
 const ledgerHeaderPattern = /^\s*Local\s*│\s*Remote\s*│\s*Time \(UTC\)\s*$/i;
 const ledgerSeparatorPattern = /^\s*[-─]+\s*┼\s*[-─]+\s*┼\s*[-─]+\s*$/;
@@ -32,6 +33,9 @@ export function parseMigrationPlan(output) {
   const lines = cleanOutput(output).split('\n');
   const nonEmptyLines = lines.filter((line) => line.trim() !== '');
   if (nonEmptyLines.length === 0) throw new Error('Supabase migration plan output is empty');
+  if (lines.some((line) => migrationPlanWarningPattern.test(line))) {
+    throw new Error('Supabase migration plan contains an unrecognised warning');
+  }
 
   const planHeaders = lines
     .map((line, index) => (line.trim() === 'Would push these migrations:' ? index : -1))
