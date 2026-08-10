@@ -2,6 +2,12 @@ name: Production Beta Operational Acceptance
 
 on:
   workflow_dispatch:
+    inputs:
+      mailbox_preflight_only:
+        description: Run only the protected Preview mailbox runtime check
+        required: false
+        type: boolean
+        default: false
   workflow_call:
     inputs:
       expected_release_sha:
@@ -21,8 +27,57 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  mailbox-preview-preflight:
+    name: Mailbox Preview runtime preflight
+    if: ${{ inputs.mailbox_preflight_only == true }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: production-beta-acceptance
+    env:
+      MAILBOX_PREVIEW_URL: https://spray-command-production-beta-ra6pdkcu5-bjt-ftfs-projects.vercel.app
+      E2E_ONBOARDING_MAILBOX_TOKEN: ${{ secrets.E2E_ONBOARDING_MAILBOX_TOKEN }}
+      VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+    steps:
+      - name: Verify mailbox Preview runtime sequence
+        shell: bash
+        run: |
+          set +x
+          [[ -n "$E2E_ONBOARDING_MAILBOX_TOKEN" ]]
+          [[ -n "$VERCEL_AUTOMATION_BYPASS_SECRET" ]]
+          echo "::add-mask::$E2E_ONBOARDING_MAILBOX_TOKEN"
+          echo "::add-mask::$VERCEL_AUTOMATION_BYPASS_SECRET"
+          node <<'NODE'
+          const preview = new URL(process.env.MAILBOX_PREVIEW_URL || '');
+          if (preview.protocol !== 'https:' || preview.pathname !== '/' || !preview.hostname.endsWith('.vercel.app')) {
+            throw new Error('MAILBOX_PREVIEW_URL_INVALID');
+          }
+          const endpoint = new URL('/api/v1/onboarding-mailbox', preview);
+          endpoint.searchParams.set('recipient', `info+sc-onboarding-preflight-${process.env.GITHUB_RUN_ID}@flythefarm.com.au`);
+          endpoint.searchParams.set('after', new Date(Date.now() - 300_000).toISOString());
+          const response = await fetch(endpoint, {
+            redirect: 'manual',
+            headers: {
+              Accept: 'application/json',
+              Authorization: `Bearer ${process.env.E2E_ONBOARDING_MAILBOX_TOKEN}`,
+              'x-vercel-protection-bypass': process.env.VERCEL_AUTOMATION_BYPASS_SECRET,
+            },
+          });
+          let body = {};
+          try { body = await response.json(); } catch {}
+          if (response.status !== 200) {
+            const code = String(body?.error?.code || body?.error || `HTTP_${response.status}`).replace(/[^A-Z0-9_-]/gi, '_').slice(0, 100);
+            throw new Error(`MAILBOX_PREFLIGHT_FAILED:${code}`);
+          }
+          if (!Array.isArray(body?.messages)) throw new Error('MAILBOX_PREFLIGHT_RESPONSE_INVALID');
+          console.log('mailbox_endpoint_reachable=true');
+          console.log('mailbox_bearer_authentication=true');
+          console.log('gmail_oauth_refresh=true');
+          console.log('controlled_plus_alias_query=true');
+          NODE
+
   deployment-identity:
     name: Resolve exact deployed commit
+    if: ${{ inputs.mailbox_preflight_only != true }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:

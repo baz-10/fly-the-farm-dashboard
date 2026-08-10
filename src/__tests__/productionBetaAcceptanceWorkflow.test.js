@@ -49,7 +49,8 @@ describe('Production Beta operational acceptance execution profile', () => {
 
     expect(workflow).not.toMatch(/password\s*:\s*['"][^$]/i);
     expect(workflow).not.toMatch(/email\s*:\s*['"][^$]/i);
-    expect(workflow).not.toContain('workflow_dispatch:\n      inputs:');
+    const dispatchInputs = workflowDefinition().on.workflow_dispatch.inputs;
+    expect(Object.keys(dispatchInputs).some((name) => name.startsWith('E2E_'))).toBe(false);
   });
 
   test('disables reusable authentication captures for every project that consumes credentials or storage state', () => {
@@ -98,5 +99,27 @@ describe('Production Beta operational acceptance execution profile', () => {
     expect(authenticationIndex).toBeGreaterThan(environmentIndex);
     expect(cleanupIndex).toBeGreaterThan(authenticationIndex);
     expect(operationalIndex).toBeGreaterThan(cleanupIndex);
+  });
+
+  test('supports a mailbox-only Preview preflight without entering operational acceptance', () => {
+    const definition = workflowDefinition();
+    const dispatch = definition.on.workflow_dispatch;
+    const preflight = definition.jobs['mailbox-preview-preflight'];
+
+    expect(dispatch.inputs.mailbox_preflight_only).toMatchObject({
+      required: false,
+      type: 'boolean',
+      default: false,
+    });
+    expect(dispatch.inputs.mailbox_preview_url).toBeUndefined();
+    expect(preflight.environment).toBe('production-beta-acceptance');
+    expect(preflight.if).toContain('inputs.mailbox_preflight_only == true');
+    expect(preflight.env).toEqual(expect.objectContaining({
+      MAILBOX_PREVIEW_URL: 'https://spray-command-production-beta-ra6pdkcu5-bjt-ftfs-projects.vercel.app',
+      E2E_ONBOARDING_MAILBOX_TOKEN: '${{ secrets.E2E_ONBOARDING_MAILBOX_TOKEN }}',
+      VERCEL_AUTOMATION_BYPASS_SECRET: '${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}',
+    }));
+    expect(preflight.steps.map(({ name }) => name)).toContain('Verify mailbox Preview runtime sequence');
+    expect(definition.jobs['deployment-identity'].if).toContain('inputs.mailbox_preflight_only != true');
   });
 });
