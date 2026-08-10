@@ -84,6 +84,7 @@ describe('GitHub-managed Production Beta release governance', () => {
       'Wait for Vercel READY',
       'Verify Vercel deployment metadata',
       'Verify deployed release SHA',
+      'Verify canonical Production Beta alias',
     ];
     ordered.forEach((name) => expect(names).toContain(name));
     ordered.slice(1).forEach((name, index) => {
@@ -101,10 +102,44 @@ describe('GitHub-managed Production Beta release governance', () => {
     expect(deploymentIdentity.run).toContain('productionBetaReleaseEvidence.mjs deployment');
     expect(step(release, 'Wait for Vercel READY').run)
       .toContain('productionBetaReleaseEvidence.mjs deployment');
-    expect(step(release, 'Verify deployed release SHA').run)
-      .toContain('$DEPLOYMENT_URL/api/v1/deployment');
-    expect(step(release, 'Verify deployed release SHA').env.DEPLOYMENT_URL)
-      .toBe('${{ steps.vercel_deploy.outputs.deployment-url }}');
+  });
+
+  test('returns the generated deployment URL before the build can fail and captures its identity immediately', () => {
+    const release = releaseWorkflow().jobs.release;
+    const names = release.steps.map(({ name }) => name);
+    const deploy = step(release, 'Deploy exact release to Vercel');
+
+    expect(deploy.run).toContain('--no-wait');
+    expect(deploy.run).toContain('echo "deployment-url=$DEPLOYMENT_URL" >> "$GITHUB_OUTPUT"');
+    expect(names.indexOf(deploy.name)).toBeLessThan(names.indexOf('Capture Vercel deployment identity'));
+    expect(names.indexOf('Capture Vercel deployment identity')).toBeLessThan(names.indexOf('Wait for Vercel READY'));
+  });
+
+  test('uses the pinned protection-aware Vercel client against the exact generated deployment', () => {
+    const release = releaseWorkflow().jobs.release;
+    const runtime = step(release, 'Verify deployed release SHA');
+
+    expect(runtime.run)
+      .toContain('vercel@$VERCEL_CLI_VERSION" curl /api/v1/deployment --deployment "$DEPLOYMENT_URL"');
+    expect(runtime.run).toContain('--fail --silent --show-error --retry 6 --retry-delay 5');
+    expect(runtime.run).not.toContain('curl --fail');
+    expect(runtime.env.DEPLOYMENT_URL).toBe('${{ steps.vercel_deploy.outputs.deployment-url }}');
+    expect(runtime.env.VERCEL_TOKEN).toBe('${{ secrets.VERCEL_TOKEN }}');
+  });
+
+  test('machine-joins the canonical Production Beta alias to the newly created deployment ID', () => {
+    const release = releaseWorkflow().jobs.release;
+    const canonicalAlias = step(release, 'Verify canonical Production Beta alias');
+
+    expect(release.env.PRODUCTION_BETA_ALIAS).toBe('spray-command-production-beta.vercel.app');
+    expect(canonicalAlias).toBeDefined();
+    if (!canonicalAlias) return;
+    expect(canonicalAlias.id).toBe('canonical_alias');
+    expect(canonicalAlias.env.DEPLOYMENT_ID).toBe('${{ steps.vercel_ready.outputs.deployment-id }}');
+    expect(canonicalAlias.env.VERCEL_TOKEN).toBe('${{ secrets.VERCEL_TOKEN }}');
+    expect(canonicalAlias.run).toContain('inspect "https://$PRODUCTION_BETA_ALIAS" --json');
+    expect(canonicalAlias.run).toContain('productionBetaReleaseEvidence.mjs deployment');
+    expect(canonicalAlias.run).toContain('[[ "$alias_deployment_id" == "$DEPLOYMENT_ID" ]]');
   });
 
   test('fails closed on missing or mismatched Vercel metadata before querying runtime identity', () => {
@@ -147,8 +182,12 @@ describe('GitHub-managed Production Beta release governance', () => {
 
   test('runs operational acceptance only after the protected release succeeds', () => {
     const definition = releaseWorkflow();
+    const release = definition.jobs.release;
     const acceptance = definition.jobs.acceptance;
 
+    const names = release.steps.map(({ name }) => name);
+    expect(names.indexOf('Verify deployed release SHA'))
+      .toBeLessThan(names.indexOf('Verify canonical Production Beta alias'));
     expect(acceptance.needs).toBe('release');
     expect(acceptance.uses).toBe('./.github/workflows/production-beta-operational-acceptance.yml');
     expect(acceptance.with.expected_release_sha).toBe('${{ needs.release.outputs.release-sha }}');
@@ -178,7 +217,7 @@ describe('GitHub-managed Production Beta release governance', () => {
     for (const output of [
       'migration-apply-outcome', 'migration-ledger-outcome', 'deployment-creation-outcome',
       'deployment-identity-outcome', 'deployment-ready-outcome',
-      'deployment-metadata-outcome', 'runtime-verification-outcome',
+      'deployment-metadata-outcome', 'runtime-verification-outcome', 'canonical-alias-outcome',
     ]) expect(release.outputs[output]).toContain('.outcome');
     expect(record.needs).toEqual(['release', 'acceptance']);
     expect(record.if).toBe("always() && needs.release.outputs.migration-boundary-crossed == 'true'");
@@ -208,6 +247,7 @@ describe('GitHub-managed Production Beta release governance', () => {
     expect(writeRecord.env.DEPLOYMENT_READY_OUTCOME).toBe('${{ needs.release.outputs.deployment-ready-outcome }}');
     expect(writeRecord.env.DEPLOYMENT_METADATA_OUTCOME).toBe('${{ needs.release.outputs.deployment-metadata-outcome }}');
     expect(writeRecord.env.RUNTIME_VERIFICATION_OUTCOME).toBe('${{ needs.release.outputs.runtime-verification-outcome }}');
+    expect(writeRecord.env.CANONICAL_ALIAS_OUTCOME).toBe('${{ needs.release.outputs.canonical-alias-outcome }}');
     expect(writeRecord.env.RELEASE_EVIDENCE_SCRIPT).toBe('${{ needs.release.outputs.release-evidence-script }}');
     expect(step(release, 'Mark migration boundary').run).toContain('readFileSync("scripts/productionBetaReleaseEvidence.mjs")');
     expect(writeRecord.run).toContain('Buffer.from(process.argv[2], "base64")');

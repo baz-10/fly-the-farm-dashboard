@@ -226,6 +226,7 @@ const releaseFailureStage = (evidence, releaseResult, acceptanceResult) => {
     ['DEPLOYMENT_READY_WAIT', evidence.deploymentReadyOutcome],
     ['DEPLOYMENT_METADATA_VERIFICATION', evidence.deploymentMetadataOutcome],
     ['RUNTIME_RELEASE_SHA_VERIFICATION', evidence.runtimeVerificationOutcome],
+    ['CANONICAL_ALIAS_VERIFICATION', evidence.canonicalAliasOutcome],
   ];
   const failedStage = stages.find(([, outcome]) => (
     ['failure', 'cancelled'].includes(String(outcome || '').toLowerCase())
@@ -379,6 +380,7 @@ async function main() {
       deploymentReadyOutcome: process.env.DEPLOYMENT_READY_OUTCOME,
       deploymentMetadataOutcome: process.env.DEPLOYMENT_METADATA_OUTCOME,
       runtimeVerificationOutcome: process.env.RUNTIME_VERIFICATION_OUTCOME,
+      canonicalAliasOutcome: process.env.CANONICAL_ALIAS_OUTCOME,
       deploymentId: process.env.DEPLOYMENT_ID,
       deploymentTimestamp: process.env.DEPLOYMENT_TIMESTAMP,
       deploymentState: process.env.DEPLOYMENT_STATE,

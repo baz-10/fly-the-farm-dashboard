@@ -276,6 +276,7 @@ describe('Production Beta release evidence', () => {
         deploymentReadyOutcome: 'success',
         deploymentMetadataOutcome: 'success',
         runtimeVerificationOutcome: 'success',
+        canonicalAliasOutcome: 'success',
         deploymentId: 'dpl_accepted',
         deploymentTimestamp: '2026-08-10T04:05:06.000Z',
         deploymentState: 'READY',
@@ -356,6 +357,39 @@ describe('Production Beta release evidence', () => {
       expect(record).toContain('| Deployment ID | `NOT_CREATED` |');
       expect(record).toContain('| Deployment timestamp | `NOT_CREATED` |');
       expect(record).toContain('| Deployment state | `NOT_CREATED` |');
+    });
+
+    test('labels a canonical alias deployment-ID mismatch as the exact failure stage', () => {
+      const buildReleaseRecord = productionFunction('buildReleaseRecord');
+      const record = buildReleaseRecord({
+        releaseSha: 'e'.repeat(40),
+        migrationBoundaryCrossed: true,
+        workflowRunId: '555666777',
+        releaseAttemptTimestamp: '2026-08-10T04:00:00.000Z',
+        repositoryIds: [],
+        preRemoteIds: [],
+        plannedIds: [],
+        postRemoteIds: [],
+        pendingAfter: [],
+        migrationLedgerVerified: true,
+        releaseResult: 'failure',
+        migrationApplyOutcome: 'success',
+        migrationLedgerOutcome: 'success',
+        deploymentCreationOutcome: 'success',
+        deploymentIdentityOutcome: 'success',
+        deploymentReadyOutcome: 'success',
+        deploymentMetadataOutcome: 'success',
+        runtimeVerificationOutcome: 'success',
+        canonicalAliasOutcome: 'failure',
+        deploymentId: 'dpl_alias_mismatch',
+        deploymentTimestamp: '2026-08-10T04:05:06.000Z',
+        deploymentState: 'READY',
+        deployedShaVerified: true,
+        acceptanceResult: 'skipped',
+      });
+
+      expect(record).toContain('| Failure stage | `CANONICAL_ALIAS_VERIFICATION` |');
+      expect(record).toContain('| Acceptance result | `NOT_RUN` |');
     });
 
     test('refuses to label an attempt canonical before it crosses the migration boundary', () => {
