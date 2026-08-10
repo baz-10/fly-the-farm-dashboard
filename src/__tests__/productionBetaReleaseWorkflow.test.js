@@ -57,6 +57,55 @@ describe('GitHub-managed Production Beta release governance', () => {
     });
   });
 
+  test('supports a complete non-mutating rehearsal through a preview deployment', () => {
+    const definition = releaseWorkflow();
+    const source = read('.github/workflows/production-beta-release.yml');
+    const rehearsal = definition.jobs.rehearsal;
+
+    expect(definition.on.workflow_dispatch.inputs.rehearsal_only).toEqual({
+      description: 'Run every release gate without migrations, Production deployment, aliases or acceptance',
+      required: false,
+      default: false,
+      type: 'boolean',
+    });
+    expect(definition.jobs.release.if).toBe("inputs.rehearsal_only != true");
+    expect(definition.jobs.acceptance.if).toBe("inputs.rehearsal_only != true");
+    expect(definition.jobs['release-record'].if)
+      .toContain("inputs.rehearsal_only != true");
+    expect(rehearsal.needs).toBe('validate');
+    expect(rehearsal.if).toBe("inputs.rehearsal_only == true");
+    expect(rehearsal.environment).toBe('production-beta-deployment');
+
+    const names = rehearsal.steps.map(({ name }) => name);
+    for (const name of [
+      'Verify rehearsal credentials are present',
+      'Verify Production Beta project binding',
+      'Capture migration state before rehearsal',
+      'Dry-run repository migrations',
+      'Prove migration ledger remained unchanged',
+      'Deploy exact release to Vercel Preview',
+      'Capture Vercel Preview deployment identity',
+      'Wait for Vercel Preview READY',
+      'Verify Vercel Preview deployment metadata',
+      'Verify Preview runtime release SHA',
+      'Prove canonical Production Beta remained unchanged',
+      'Report rehearsal gates',
+    ]) expect(names).toContain(name);
+
+    const dryRun = step(rehearsal, 'Dry-run repository migrations').run;
+    const unchanged = step(rehearsal, 'Prove migration ledger remained unchanged').run;
+    const deploy = step(rehearsal, 'Deploy exact release to Vercel Preview').run;
+    expect(dryRun).toContain('db push --linked --dry-run');
+    expect(unchanged).toContain('migration list --linked');
+    expect(unchanged).toContain('[[ "$post_remote_migration_ids" == "$PRE_REMOTE_MIGRATION_IDS" ]]');
+    expect(deploy).toContain('vercel@$VERCEL_CLI_VERSION" deploy');
+    expect(deploy).not.toContain('--prod');
+    expect(rehearsal.steps.some(({ run = '' }) => /db push --linked\s*(?:\n|$)/.test(run))).toBe(false);
+    expect(rehearsal.steps.some(({ run = '' }) => /alias\s+set|promote/.test(run))).toBe(false);
+    expect(step(rehearsal, 'Prove canonical Production Beta remained unchanged').run)
+      .toContain('[[ "$after_deployment_id" == "$BEFORE_PRODUCTION_DEPLOYMENT_ID" ]]');
+  });
+
   test('pins checkout, build, migration, deployment and verification to one release SHA', () => {
     const definition = releaseWorkflow();
     const validation = definition.jobs.validate;
@@ -220,7 +269,7 @@ describe('GitHub-managed Production Beta release governance', () => {
       'deployment-metadata-outcome', 'runtime-verification-outcome', 'canonical-alias-outcome',
     ]) expect(release.outputs[output]).toContain('.outcome');
     expect(record.needs).toEqual(['release', 'acceptance']);
-    expect(record.if).toBe("always() && needs.release.outputs.migration-boundary-crossed == 'true'");
+    expect(record.if).toBe("inputs.rehearsal_only != true && always() && needs.release.outputs.migration-boundary-crossed == 'true'");
     expect(step(record, 'Check out immutable release')).toBeUndefined();
 
     const writeRecord = step(record, 'Write canonical release record');
