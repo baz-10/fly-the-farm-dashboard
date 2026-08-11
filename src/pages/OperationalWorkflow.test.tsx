@@ -1,5 +1,5 @@
 import React from 'react';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, waitForElementToBeRemoved } from '@testing-library/react';
 import ClientList from './ClientList';
 import ClientDetail from './ClientDetail';
 import PropertyDetail from './PropertyDetail';
@@ -482,12 +482,14 @@ describe('authoritative client/property/field workflow screens', () => {
     mockSearchParams = new URLSearchParams('onboarding=client&returnTo=%2Fgetting-started');
     route('/jobs?onboarding=client&returnTo=%2Fgetting-started', <ClientList />);
 
-    expect(await screen.findByRole('dialog', { name: 'Add New Client' })).toBeVisible();
+    const clientDialog = await screen.findByRole('dialog', { name: 'Add New Client' });
+    expect(clientDialog).toBeVisible();
     fireEvent.change(screen.getByRole('textbox', { name: 'Client / Farmer Name' }), { target: { value: 'Onboarding Farm' } });
     fireEvent.click(screen.getByRole('button', { name: 'Confirm adjusted location' }));
     const saveButtons = screen.getAllByRole('button', { name: 'Add Client' });
     fireEvent.click(saveButtons[saveButtons.length - 1]);
 
+    await waitForElementToBeRemoved(clientDialog);
     expect(await screen.findByRole('button', { name: 'Return to Getting Started' })).toBeVisible();
     expect(mockNavigate).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole('button', { name: 'Return to Getting Started' }));
