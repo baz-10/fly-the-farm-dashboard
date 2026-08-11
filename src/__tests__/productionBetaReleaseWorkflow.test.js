@@ -6,6 +6,7 @@ const yaml = require('js-yaml');
 const root = path.resolve(__dirname, '../..');
 const read = (name) => fs.readFileSync(path.join(root, name), 'utf8');
 const releaseWorkflow = () => yaml.load(read('.github/workflows/production-beta-release.yml'));
+const secretPropagationWorkflow = () => yaml.load(read('.github/workflows/production-beta-secret-propagation.yml'));
 const vercelConfiguration = () => JSON.parse(read('vercel.json'));
 const step = (job, name) => job.steps.find((candidate) => candidate.name === name);
 const inlineIdentityValidator = (run, payloadVariable) => {
@@ -19,6 +20,21 @@ const validateIdentity = (script, payload, expectedReleaseSha) => spawnSync(
 );
 
 describe('GitHub-managed Production Beta release governance', () => {
+  test('compares database-password propagation without exposing derived credential material', () => {
+    const definition = secretPropagationWorkflow();
+    const source = read('.github/workflows/production-beta-secret-propagation.yml');
+    const diagnostic = definition.jobs.diagnostic;
+
+    expect(Object.keys(definition.on)).toEqual(['workflow_dispatch']);
+    expect(diagnostic.environment).toBe('production-beta-deployment');
+    expect(diagnostic.steps).toHaveLength(1);
+    expect(diagnostic.steps[0].env.SUPABASE_DB_PASSWORD).toBe('${{ secrets.SUPABASE_DB_PASSWORD }}');
+    expect(diagnostic.steps[0].run).toContain("process.env.SUPABASE_DB_PASSWORD");
+    expect(diagnostic.steps[0].run).toContain("printf 'MATCH\\n'");
+    expect(diagnostic.steps[0].run).toContain("printf 'MISMATCH\\n'");
+    expect(source).not.toMatch(/sha(?:256)?|digest|length|set -x|migration\s+list|db\s+push|vercel\s+deploy|alias\s+set|promote/i);
+  });
+
   test('uses a manual immutable release SHA and one protected deployment authority', () => {
     const definition = releaseWorkflow();
     const source = read('.github/workflows/production-beta-release.yml');
