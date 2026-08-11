@@ -31,6 +31,12 @@ const playwrightConfiguration = () => {
 };
 
 describe('Production Beta operational acceptance execution profile', () => {
+  test('pins deterministic acceptance execution to the approved operational timezone', () => {
+    const definition = workflowDefinition();
+
+    expect(definition.env).toEqual({ TZ: 'Australia/Brisbane' });
+  });
+
   test('declares the reusable acceptance secret contract and fails closed before browser execution', () => {
     const definition = workflowDefinition();
     const contract = definition.on.workflow_call.secrets;

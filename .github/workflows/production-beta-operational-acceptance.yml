@@ -43,6 +43,9 @@ on:
 permissions:
   contents: read
 
+env:
+  TZ: Australia/Brisbane
+
 concurrency:
   group: production-beta-operational-acceptance
   cancel-in-progress: false
