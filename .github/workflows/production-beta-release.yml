@@ -634,6 +634,7 @@ jobs:
     needs: release
     if: inputs.rehearsal_only != true && inputs.secret_propagation_only != true && inputs.connectivity_diagnostic_only != true
     uses: ./.github/workflows/production-beta-operational-acceptance.yml
+    secrets: inherit
     with:
       expected_release_sha: ${{ needs.release.outputs.release-sha }}
 

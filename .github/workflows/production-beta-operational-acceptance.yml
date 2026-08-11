@@ -14,6 +14,27 @@ on:
         description: Immutable release SHA that the deployed application must report
         required: true
         type: string
+    secrets:
+      E2E_ONBOARDING_APPLICANT_EMAIL:
+        required: false
+      E2E_ONBOARDING_APPLICANT_PASSWORD:
+        required: false
+      E2E_ORGANISATION_EMAIL:
+        required: false
+      E2E_ORGANISATION_PASSWORD:
+        required: false
+      E2E_PLATFORM_EMAIL:
+        required: false
+      E2E_PLATFORM_PASSWORD:
+        required: false
+      E2E_ONBOARDING_MAILBOX_URL:
+        required: false
+      E2E_ONBOARDING_MAILBOX_TOKEN:
+        required: false
+      SUPABASE_URL:
+        required: false
+      SUPABASE_SERVICE_ROLE_KEY:
+        required: false
   repository_dispatch:
     types: [production-beta-deployed]
   schedule:
@@ -137,6 +158,8 @@ jobs:
           printf 'Acceptance secrets present: email=%s password=%s\n' \
             "$([[ -n "$E2E_ORGANISATION_EMAIL" ]] && echo true || echo false)" \
             "$([[ -n "$E2E_ORGANISATION_PASSWORD" ]] && echo true || echo false)"
+          [[ -n "$E2E_ORGANISATION_EMAIL" ]]
+          [[ -n "$E2E_ORGANISATION_PASSWORD" ]]
 
       - name: Validate acceptance environment
         run: npx playwright test --project=environment
@@ -263,6 +286,8 @@ jobs:
           printf 'Acceptance secrets present: email=%s password=%s\n' \
             "$([[ -n "$E2E_ORGANISATION_EMAIL" ]] && echo true || echo false)" \
             "$([[ -n "$E2E_ORGANISATION_PASSWORD" ]] && echo true || echo false)"
+          [[ -n "$E2E_ORGANISATION_EMAIL" ]]
+          [[ -n "$E2E_ORGANISATION_PASSWORD" ]]
 
       - name: Validate acceptance environment
         id: environment

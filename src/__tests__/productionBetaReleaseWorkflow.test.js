@@ -19,6 +19,18 @@ const validateIdentity = (script, payload, expectedReleaseSha) => spawnSync(
 );
 
 describe('GitHub-managed Production Beta release governance', () => {
+  test('hands acceptance secrets across the reusable workflow boundary without crossing deployment trust scopes', () => {
+    const definition = releaseWorkflow();
+    const acceptance = definition.jobs.acceptance;
+    const release = definition.jobs.release;
+
+    expect(acceptance.uses).toBe('./.github/workflows/production-beta-operational-acceptance.yml');
+    expect(acceptance.secrets).toBe('inherit');
+    expect(acceptance.environment).toBeUndefined();
+    expect(JSON.stringify(acceptance)).not.toMatch(/SUPABASE_ACCESS_TOKEN|SUPABASE_DB_PASSWORD|VERCEL_TOKEN/);
+    expect(JSON.stringify(release)).not.toMatch(/E2E_ORGANISATION_EMAIL|E2E_ORGANISATION_PASSWORD/);
+  });
+
   test('compares database-password propagation without exposing derived credential material', () => {
     const definition = releaseWorkflow();
     const diagnostic = definition.jobs.diagnostic;
@@ -303,7 +315,7 @@ describe('GitHub-managed Production Beta release governance', () => {
     expect(acceptance.needs).toBe('release');
     expect(acceptance.uses).toBe('./.github/workflows/production-beta-operational-acceptance.yml');
     expect(acceptance.with.expected_release_sha).toBe('${{ needs.release.outputs.release-sha }}');
-    expect(acceptance.secrets).toBeUndefined();
+    expect(acceptance.secrets).toBe('inherit');
   });
 
   test('records complete staged evidence for every attempt that crosses the migration boundary', () => {

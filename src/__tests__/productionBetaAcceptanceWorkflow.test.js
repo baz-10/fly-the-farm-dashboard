@@ -31,6 +31,28 @@ const playwrightConfiguration = () => {
 };
 
 describe('Production Beta operational acceptance execution profile', () => {
+  test('declares the reusable acceptance secret contract and fails closed before browser execution', () => {
+    const definition = workflowDefinition();
+    const contract = definition.on.workflow_call.secrets;
+    const authentication = definition.jobs['authentication-acceptance'];
+    const operational = definition.jobs['operational-acceptance'];
+    const authGuard = workflowStep(authentication, 'Protect acceptance credentials in runner output');
+    const operationalGuard = workflowStep(operational, 'Protect acceptance credentials in runner output');
+
+    expect(contract.E2E_ORGANISATION_EMAIL).toEqual({ required: false });
+    expect(contract.E2E_ORGANISATION_PASSWORD).toEqual({ required: false });
+    expect(authentication.environment).toBe('production-beta-acceptance');
+    expect(operational.environment).toBe('production-beta-acceptance');
+    expect(authentication.env.E2E_ORGANISATION_EMAIL).toBe('${{ secrets.E2E_ORGANISATION_EMAIL }}');
+    expect(authentication.env.E2E_ORGANISATION_PASSWORD).toBe('${{ secrets.E2E_ORGANISATION_PASSWORD }}');
+    expect(authGuard.run).toContain('[[ -n "$E2E_ORGANISATION_EMAIL" ]]');
+    expect(authGuard.run).toContain('[[ -n "$E2E_ORGANISATION_PASSWORD" ]]');
+    expect(operationalGuard.run).toContain('[[ -n "$E2E_ORGANISATION_EMAIL" ]]');
+    expect(operationalGuard.run).toContain('[[ -n "$E2E_ORGANISATION_PASSWORD" ]]');
+    expect(JSON.stringify(definition.jobs)).not.toMatch(/production-beta-deployment/);
+    expect(JSON.stringify(definition.jobs)).not.toMatch(/SUPABASE_ACCESS_TOKEN|SUPABASE_DB_PASSWORD|VERCEL_TOKEN/);
+  });
+
   test('uses protected environment secrets without persisting credentials', () => {
     const workflow = fs.readFileSync(workflowPath, 'utf8');
 
