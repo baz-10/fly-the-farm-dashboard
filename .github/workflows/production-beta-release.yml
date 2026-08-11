@@ -12,6 +12,11 @@ on:
         required: false
         default: false
         type: boolean
+      secret_propagation_only:
+        description: Compare protected database-secret propagation without release activity
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -24,6 +29,7 @@ jobs:
   validate:
     name: Validate immutable release
     runs-on: ubuntu-latest
+    if: inputs.secret_propagation_only != true
     timeout-minutes: 45
     env:
       CI: 'true'
@@ -66,7 +72,7 @@ jobs:
   release:
     name: Migrate and deploy Production Beta
     needs: validate
-    if: inputs.rehearsal_only != true
+    if: inputs.rehearsal_only != true && inputs.secret_propagation_only != true
     runs-on: ubuntu-latest
     timeout-minutes: 45
     environment: production-beta-deployment
@@ -324,7 +330,7 @@ jobs:
   rehearsal:
     name: Rehearse Production Beta release without mutation
     needs: validate
-    if: inputs.rehearsal_only == true
+    if: inputs.rehearsal_only == true && inputs.secret_propagation_only != true
     runs-on: ubuntu-latest
     timeout-minutes: 45
     environment: production-beta-deployment
@@ -528,10 +534,37 @@ jobs:
         run: |
           printf '## Production Beta release rehearsal: PASS\n\nMigration application, Production deployment, alias mutation and Production acceptance were not executed.\n' >> "$GITHUB_STEP_SUMMARY"
 
+  diagnostic:
+    name: Verify database secret propagation
+    if: inputs.secret_propagation_only == true
+    runs-on: ubuntu-latest
+    environment: production-beta-deployment
+    steps:
+      - name: Compare database password propagation
+        shell: bash
+        env:
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+        run: |
+          set -euo pipefail
+          [[ -n "$SUPABASE_DB_PASSWORD" ]]
+          if printf '%s' "$SUPABASE_DB_PASSWORD" | node -e '
+            let supplied = "";
+            process.stdin.setEncoding("utf8");
+            process.stdin.on("data", (chunk) => { supplied += chunk; });
+            process.stdin.on("end", () => {
+              process.exit(supplied === (process["env"].SUPABASE_DB_PASSWORD || "") ? 0 : 1);
+            });
+          '; then
+            printf 'MATCH\n'
+          else
+            printf 'MISMATCH\n'
+            exit 1
+          fi
+
   acceptance:
     name: Production Beta Operational Acceptance
     needs: release
-    if: inputs.rehearsal_only != true
+    if: inputs.rehearsal_only != true && inputs.secret_propagation_only != true
     uses: ./.github/workflows/production-beta-operational-acceptance.yml
     with:
       expected_release_sha: ${{ needs.release.outputs.release-sha }}
@@ -539,7 +572,7 @@ jobs:
   release-record:
     name: Record Production Beta release
     needs: [release, acceptance]
-    if: inputs.rehearsal_only != true && always() && needs.release.outputs.migration-boundary-crossed == 'true'
+    if: inputs.rehearsal_only != true && inputs.secret_propagation_only != true && always() && needs.release.outputs.migration-boundary-crossed == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
