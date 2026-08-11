@@ -229,9 +229,14 @@ describe('GitHub-managed Production Beta release governance', () => {
     expect(runtime.run)
       .toContain('vercel@$VERCEL_CLI_VERSION" curl /api/v1/deployment --deployment "$DEPLOYMENT_URL"');
     expect(runtime.run).toContain('--fail --silent --show-error --retry 6 --retry-delay 5');
+    expect(runtime.run).not.toContain('--token "$VERCEL_TOKEN"');
     expect(runtime.run).not.toContain('curl --fail');
     expect(runtime.env.DEPLOYMENT_URL).toBe('${{ steps.vercel_deploy.outputs.deployment-url }}');
     expect(runtime.env.VERCEL_TOKEN).toBe('${{ secrets.VERCEL_TOKEN }}');
+
+    const rehearsalRuntime = step(releaseWorkflow().jobs.rehearsal, 'Verify Preview runtime release SHA');
+    expect(rehearsalRuntime.run).not.toContain('--token "$VERCEL_TOKEN"');
+    expect(rehearsalRuntime.env.VERCEL_TOKEN).toBe('${{ secrets.VERCEL_TOKEN }}');
   });
 
   test('machine-joins the canonical Production Beta alias to the newly created deployment ID', () => {
