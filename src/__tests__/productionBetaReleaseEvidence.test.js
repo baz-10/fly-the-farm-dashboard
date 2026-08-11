@@ -15,6 +15,31 @@ const productionFunction = (name) => {
 };
 
 describe('Production Beta release evidence', () => {
+  describe('redactReleaseDiagnostic', () => {
+    test('preserves actionable Supabase errors while removing credential-bearing material', () => {
+      const redactReleaseDiagnostic = productionFunction('redactReleaseDiagnostic');
+      const output = [
+        'failed to connect to postgres: dial tcp 203.0.113.7:5432: connection refused',
+        'postgresql://release_user:database-secret@db.example.test:5432/postgres',
+        'SUPABASE_ACCESS_TOKEN=sbp_example-secret',
+        'Authorization: Bearer bearer-secret',
+        'service_role_key=eyJhbGciOiJIUzI1NiJ9.payload.signature',
+      ].join('\n');
+
+      const redacted = redactReleaseDiagnostic(output, ['database-secret']);
+
+      expect(redacted).toContain('failed to connect to postgres: dial tcp 203.0.113.7:5432: connection refused');
+      expect(redacted).toContain('postgresql://release_user:[REDACTED]@db.example.test:5432/postgres');
+      expect(redacted).toContain('SUPABASE_ACCESS_TOKEN=[REDACTED]');
+      expect(redacted).toContain('Authorization: Bearer [REDACTED]');
+      expect(redacted).toContain('service_role_key=[REDACTED]');
+      expect(redacted).not.toContain('database-secret');
+      expect(redacted).not.toContain('sbp_example-secret');
+      expect(redacted).not.toContain('bearer-secret');
+      expect(redacted).not.toContain('eyJhbGciOiJIUzI1NiJ9.payload.signature');
+    });
+  });
+
   describe('parseMigrationPlan', () => {
     test('returns exact repository migration IDs in dry-run order', () => {
       const parseMigrationPlan = productionFunction('parseMigrationPlan');

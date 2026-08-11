@@ -94,9 +94,14 @@ describe('GitHub-managed Production Beta release governance', () => {
     ]) expect(names).toContain(name);
 
     const dryRun = step(rehearsal, 'Dry-run repository migrations').run;
+    const preState = step(rehearsal, 'Capture migration state before rehearsal').run;
     const unchanged = step(rehearsal, 'Prove migration ledger remained unchanged').run;
     const deploy = step(rehearsal, 'Deploy exact release to Vercel Preview').run;
     expect(dryRun).toContain('db push --linked --dry-run');
+    expect(preState).toContain('ledger_status=$?');
+    expect(preState).toContain('productionBetaReleaseEvidence.mjs redact-diagnostic');
+    expect(preState).toContain('exit "$ledger_status"');
+    expect(preState).not.toContain('set -x');
     expect(unchanged).toContain('migration list --linked');
     expect(unchanged).toContain('[[ "$post_remote_migration_ids" == "$PRE_REMOTE_MIGRATION_IDS" ]]');
     expect(deploy).toContain('vercel@$VERCEL_CLI_VERSION" deploy');

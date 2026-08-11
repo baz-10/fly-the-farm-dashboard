@@ -409,7 +409,14 @@ jobs:
           SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
         run: |
           set -euo pipefail
+          set +e
           ledger_output="$(npx --yes "supabase@$SUPABASE_CLI_VERSION" migration list --linked 2>&1)"
+          ledger_status=$?
+          set -e
+          if [[ "$ledger_status" -ne 0 ]]; then
+            printf '%s\n' "$ledger_output" | node scripts/productionBetaReleaseEvidence.mjs redact-diagnostic >&2
+            exit "$ledger_status"
+          fi
           migration_state="$(printf '%s\n' "$ledger_output" | node scripts/productionBetaReleaseEvidence.mjs ledger-state)"
           repository_migration_ids="$(node -e 'const value=JSON.parse(process.argv[1]); process.stdout.write(JSON.stringify(value.repositoryIds))' "$migration_state")"
           pre_remote_migration_ids="$(node -e 'const value=JSON.parse(process.argv[1]); process.stdout.write(JSON.stringify(value.remoteIds))' "$migration_state")"

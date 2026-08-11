@@ -35,6 +35,23 @@ const renderedMigrationTime = (id) => {
     : id;
 };
 
+const escapeRegExp = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+export function redactReleaseDiagnostic(output, sensitiveValues = []) {
+  let redacted = cleanOutput(output);
+  for (const value of sensitiveValues) {
+    if (typeof value === 'string' && value.length > 0) {
+      redacted = redacted.replace(new RegExp(escapeRegExp(value), 'g'), '[REDACTED]');
+    }
+  }
+  return redacted
+    .replace(/\b((?:postgres(?:ql)?|https?):\/\/[^\s/:@]+:)[^\s/@]+(@)/gi, '$1[REDACTED]$2')
+    .replace(/\b(Bearer\s+)[^\s]+/gi, '$1[REDACTED]')
+    .replace(/\b((?:SUPABASE_ACCESS_TOKEN|SUPABASE_DB_PASSWORD|SERVICE_ROLE_KEY|PASSWORD|ACCESS_TOKEN)\s*[=:]\s*)[^\s]+/gi, '$1[REDACTED]')
+    .replace(/\b(sbp_[A-Za-z0-9_-]+)/g, '[REDACTED]')
+    .replace(/\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g, '[REDACTED]');
+}
+
 export function parseMigrationPlan(output) {
   const lines = cleanOutput(output).split('\n');
   const nonEmptyLines = lines.filter((line) => line.trim() !== '');
@@ -339,6 +356,13 @@ async function main() {
     process.stdout.write(JSON.stringify(parseMigrationLedgerState(await readStdin())));
     return;
   }
+  if (command === 'redact-diagnostic') {
+    process.stdout.write(redactReleaseDiagnostic(await readStdin(), [
+      process.env.SUPABASE_ACCESS_TOKEN,
+      process.env.SUPABASE_DB_PASSWORD,
+    ]));
+    return;
+  }
   if (command === 'verify-plan') {
     process.stdout.write(JSON.stringify(verifyMigrationPlan({
       repositoryIds: parseJsonEnvironment('REPOSITORY_MIGRATION_IDS'),
@@ -389,7 +413,7 @@ async function main() {
     }));
     return;
   }
-  throw new Error('Usage: productionBetaReleaseEvidence.mjs <plan|ledger|ledger-state|verify-plan|reconcile|deployment|record>');
+  throw new Error('Usage: productionBetaReleaseEvidence.mjs <plan|ledger|ledger-state|redact-diagnostic|verify-plan|reconcile|deployment|record>');
 }
 
 if (process.argv[1]?.endsWith('productionBetaReleaseEvidence.mjs')) {
