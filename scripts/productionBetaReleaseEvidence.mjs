@@ -3,9 +3,20 @@ const migrationLikePattern = /(?:^|\D)\d{14}(?!\d)/;
 const ansiPattern = /\u001B\[[0-?]*[ -/]*[@-~]/g;
 const migrationPlanWarningPattern = /^\s*(?:WARN(?:ING)?\b|Skipping migration\b)/i;
 const ledgerConnectionPattern = /^\s*Connecting to remote database\.\.\.\s*$/;
-const ledgerHeaderPattern = /^\s*Local\s*│\s*Remote\s*│\s*Time \(UTC\)\s*$/i;
-const ledgerSeparatorPattern = /^\s*[-─]+\s*┼\s*[-─]+\s*┼\s*[-─]+\s*$/;
-const ledgerRowPattern = /^\s*(\d{14})?\s*│\s*(\d{14})?\s*│\s*(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}|\d{14})\s*$/;
+const ledgerFormats = [
+  {
+    name: 'unicode',
+    header: /^\s*Local\s*│\s*Remote\s*│\s*Time \(UTC\)\s*$/i,
+    separator: /^\s*[-─]+\s*┼\s*[-─]+\s*┼\s*[-─]+\s*$/,
+    row: /^\s*(\d{14})?\s*│\s*(\d{14})?\s*│\s*(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}|\d{14})\s*$/,
+  },
+  {
+    name: 'ascii',
+    header: /^\s*Local\s*\|\s*Remote\s*\|\s*Time \(UTC\)\s*$/i,
+    separator: /^\s*-+\s*\|\s*-+\s*\|\s*-+\s*$/,
+    row: /^\s*(\d{14})?\s*\|\s*(\d{14})?\s*\|\s*(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}|\d{14})\s*$/,
+  },
+];
 
 const cleanOutput = (output) => {
   if (typeof output !== 'string') throw new TypeError('Supabase output must be a string');
@@ -103,13 +114,14 @@ export function parseMigrationPlan(output) {
 export function parseMigrationLedgerState(output) {
   const lines = cleanOutput(output).split('\n').map((line) => line.replace(/`/g, ''));
   const headerMatches = lines
-    .map((line, index) => ({ index, match: line.match(ledgerHeaderPattern) }))
-    .filter(({ match }) => match);
+    .flatMap((line, index) => ledgerFormats
+      .filter(({ header }) => header.test(line))
+      .map((format) => ({ index, format })));
   if (headerMatches.length !== 1) {
     throw new Error('Supabase migration ledger header is missing');
   }
 
-  const [{ index: headerIndex }] = headerMatches;
+  const [{ index: headerIndex, format }] = headerMatches;
   const connectionIndexes = lines
     .map((line, index) => (ledgerConnectionPattern.test(line) ? index : -1))
     .filter((index) => index >= 0);
@@ -117,7 +129,7 @@ export function parseMigrationLedgerState(output) {
     throw new Error('Supabase migration ledger connection marker is missing');
   }
   const separatorIndex = lines.findIndex((line, index) => index > headerIndex && line.trim() !== '');
-  if (separatorIndex < 0 || !ledgerSeparatorPattern.test(lines[separatorIndex])) {
+  if (separatorIndex < 0 || !format.separator.test(lines[separatorIndex])) {
     throw new Error('Supabase migration ledger separator is malformed');
   }
 
@@ -127,7 +139,7 @@ export function parseMigrationLedgerState(output) {
   for (let index = separatorIndex + 1; index < lines.length; index += 1) {
     const line = lines[index];
     if (line.trim() === '') continue;
-    const match = line.match(ledgerRowPattern);
+    const match = line.match(format.row);
     if (!match) throw new Error('Supabase migration ledger row is malformed');
     const [, localId, remoteId, renderedTime] = match;
     if ((!localId && !remoteId) || (localId && remoteId && localId !== remoteId)) {

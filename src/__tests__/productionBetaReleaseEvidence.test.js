@@ -105,6 +105,23 @@ describe('Production Beta release evidence', () => {
   });
 
   describe('parseMigrationLedger', () => {
+    test('accepts the ASCII ledger table emitted by Supabase CLI in GitHub Actions', () => {
+      const parseMigrationLedgerState = productionFunction('parseMigrationLedgerState');
+      const output = [
+        'Connecting to remote database...',
+        '        LOCAL          |     REMOTE         |     TIME (UTC)',
+        '  ---------------------|--------------------|----------------------',
+        '   20260809090000 | 20260809090000 | 2026-08-09 09:00:00',
+        '   20260810010000 |                | 2026-08-10 01:00:00',
+        '                  | 20260810020000 | 2026-08-10 02:00:00',
+      ].join('\n');
+
+      expect(parseMigrationLedgerState(output)).toEqual({
+        repositoryIds: ['20260809090000', '20260810010000'],
+        remoteIds: ['20260809090000', '20260810020000'],
+      });
+    });
+
     test('returns the exact repository and remote columns from the pinned Supabase ledger table', () => {
       const parseMigrationLedger = productionFunction('parseMigrationLedger');
       const parseMigrationLedgerState = productionFunction('parseMigrationLedgerState');
@@ -188,6 +205,49 @@ describe('Production Beta release evidence', () => {
           pendingAfter: [],
         });
       }).toThrow();
+    });
+
+    test.each([
+      ['', 'Supabase migration ledger header is missing'],
+      [
+        [
+          'Connecting to remote database...',
+          'Local | Applied | Time (UTC)',
+          '------|---------|-----------',
+        ].join('\n'),
+        'Supabase migration ledger header is missing',
+      ],
+      [
+        [
+          'Connecting to remote database...',
+          'Local | Remote | Time (UTC)',
+          '------|--------|-----------',
+          '2026081001000 | 2026081001000 | 2026-08-10 01:00:00',
+        ].join('\n'),
+        'Supabase migration ledger row is malformed',
+      ],
+      [
+        [
+          'Connecting to remote database...',
+          'Local | Remote | Time (UTC)',
+          '------|--------|-----------',
+          '20260810010000 | 20260810010000 | 2026-08-10 01:00:00',
+          '20260810010000 | 20260810010000 | 2026-08-10 01:00:00',
+        ].join('\n'),
+        'repositoryIds contains duplicate migration IDs: 20260810010000',
+      ],
+      [
+        [
+          'Connecting to remote database...',
+          'Local | Remote | Time (UTC)',
+          '------|--------|-----------',
+          'unexpected output',
+        ].join('\n'),
+        'Supabase migration ledger row is malformed',
+      ],
+    ])('strictly rejects malformed or ambiguous ledger output', (output, error) => {
+      const parseMigrationLedgerState = productionFunction('parseMigrationLedgerState');
+      expect(() => parseMigrationLedgerState(output)).toThrow(error);
     });
   });
 
