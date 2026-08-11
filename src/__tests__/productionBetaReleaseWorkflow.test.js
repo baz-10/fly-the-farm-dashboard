@@ -36,11 +36,34 @@ describe('GitHub-managed Production Beta release governance', () => {
     expect(diagnostic.steps[0].run).toContain("printf 'MATCH\\n'");
     expect(diagnostic.steps[0].run).toContain("printf 'MISMATCH\\n'");
     expect(diagnostic.steps[0].run).not.toMatch(/sha(?:256)?|digest|length|set -x|migration\s+list|db\s+push|vercel\s+deploy|alias\s+set|promote/i);
-    expect(definition.jobs.validate.if).toBe('inputs.secret_propagation_only != true');
+    expect(definition.jobs.validate.if).toBe('inputs.secret_propagation_only != true && inputs.connectivity_diagnostic_only != true');
     expect(definition.jobs.release.if).toContain('inputs.secret_propagation_only != true');
     expect(definition.jobs.rehearsal.if).toContain('inputs.secret_propagation_only != true');
     expect(definition.jobs.acceptance.if).toContain('inputs.secret_propagation_only != true');
     expect(definition.jobs['release-record'].if).toContain('inputs.secret_propagation_only != true');
+  });
+
+  test('diagnoses session-pooler and direct connectivity without entering a release path', () => {
+    const definition = releaseWorkflow();
+    const diagnostic = definition.jobs['connectivity-diagnostic'];
+
+    expect(definition.on.workflow_dispatch.inputs.connectivity_diagnostic_only).toEqual({
+      description: 'Test read-only Production Beta PostgreSQL connectivity without release activity',
+      required: false,
+      default: false,
+      type: 'boolean',
+    });
+    expect(diagnostic.environment).toBe('production-beta-deployment');
+    expect(diagnostic.steps).toHaveLength(1);
+    expect(diagnostic.steps[0].env.SUPABASE_DB_PASSWORD).toBe('${{ secrets.SUPABASE_DB_PASSWORD }}');
+    expect(diagnostic.steps[0].run).toContain('aws-0-ap-southeast-2.pooler.supabase.com');
+    expect(diagnostic.steps[0].run).toContain('postgres.fzkrvglzompkuiodqllr');
+    expect(diagnostic.steps[0].run).toContain('db.fzkrvglzompkuiodqllr.supabase.co');
+    expect(diagnostic.steps[0].run).toContain("--command 'SELECT 1'");
+    expect(diagnostic.steps[0].run).not.toMatch(/migration\s+list|db\s+push|vercel\s+deploy|alias\s+set|promote|set -x/i);
+    for (const jobName of ['validate', 'release', 'rehearsal', 'acceptance', 'release-record', 'diagnostic']) {
+      expect(definition.jobs[jobName].if).toContain('inputs.connectivity_diagnostic_only != true');
+    }
   });
 
   test('uses a manual immutable release SHA and one protected deployment authority', () => {
@@ -93,12 +116,12 @@ describe('GitHub-managed Production Beta release governance', () => {
       default: false,
       type: 'boolean',
     });
-    expect(definition.jobs.release.if).toBe("inputs.rehearsal_only != true && inputs.secret_propagation_only != true");
-    expect(definition.jobs.acceptance.if).toBe("inputs.rehearsal_only != true && inputs.secret_propagation_only != true");
+    expect(definition.jobs.release.if).toBe("inputs.rehearsal_only != true && inputs.secret_propagation_only != true && inputs.connectivity_diagnostic_only != true");
+    expect(definition.jobs.acceptance.if).toBe("inputs.rehearsal_only != true && inputs.secret_propagation_only != true && inputs.connectivity_diagnostic_only != true");
     expect(definition.jobs['release-record'].if)
       .toContain("inputs.rehearsal_only != true");
     expect(rehearsal.needs).toBe('validate');
-    expect(rehearsal.if).toBe("inputs.rehearsal_only == true && inputs.secret_propagation_only != true");
+    expect(rehearsal.if).toBe("inputs.rehearsal_only == true && inputs.secret_propagation_only != true && inputs.connectivity_diagnostic_only != true");
     expect(rehearsal.environment).toBe('production-beta-deployment');
 
     const names = rehearsal.steps.map(({ name }) => name);
@@ -304,7 +327,7 @@ describe('GitHub-managed Production Beta release governance', () => {
       'deployment-metadata-outcome', 'runtime-verification-outcome', 'canonical-alias-outcome',
     ]) expect(release.outputs[output]).toContain('.outcome');
     expect(record.needs).toEqual(['release', 'acceptance']);
-    expect(record.if).toBe("inputs.rehearsal_only != true && inputs.secret_propagation_only != true && always() && needs.release.outputs.migration-boundary-crossed == 'true'");
+    expect(record.if).toBe("inputs.rehearsal_only != true && inputs.secret_propagation_only != true && inputs.connectivity_diagnostic_only != true && always() && needs.release.outputs.migration-boundary-crossed == 'true'");
     expect(step(record, 'Check out immutable release')).toBeUndefined();
 
     const writeRecord = step(record, 'Write canonical release record');

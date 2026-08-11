@@ -17,6 +17,11 @@ on:
         required: false
         default: false
         type: boolean
+      connectivity_diagnostic_only:
+        description: Test read-only Production Beta PostgreSQL connectivity without release activity
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -29,7 +34,7 @@ jobs:
   validate:
     name: Validate immutable release
     runs-on: ubuntu-latest
-    if: inputs.secret_propagation_only != true
+    if: inputs.secret_propagation_only != true && inputs.connectivity_diagnostic_only != true
     timeout-minutes: 45
     env:
       CI: 'true'
@@ -72,7 +77,7 @@ jobs:
   release:
     name: Migrate and deploy Production Beta
     needs: validate
-    if: inputs.rehearsal_only != true && inputs.secret_propagation_only != true
+    if: inputs.rehearsal_only != true && inputs.secret_propagation_only != true && inputs.connectivity_diagnostic_only != true
     runs-on: ubuntu-latest
     timeout-minutes: 45
     environment: production-beta-deployment
@@ -330,7 +335,7 @@ jobs:
   rehearsal:
     name: Rehearse Production Beta release without mutation
     needs: validate
-    if: inputs.rehearsal_only == true && inputs.secret_propagation_only != true
+    if: inputs.rehearsal_only == true && inputs.secret_propagation_only != true && inputs.connectivity_diagnostic_only != true
     runs-on: ubuntu-latest
     timeout-minutes: 45
     environment: production-beta-deployment
@@ -536,7 +541,7 @@ jobs:
 
   diagnostic:
     name: Verify database secret propagation
-    if: inputs.secret_propagation_only == true
+    if: inputs.secret_propagation_only == true && inputs.connectivity_diagnostic_only != true
     runs-on: ubuntu-latest
     environment: production-beta-deployment
     steps:
@@ -561,10 +566,73 @@ jobs:
             exit 1
           fi
 
+  connectivity-diagnostic:
+    name: Verify read-only database connectivity
+    if: inputs.connectivity_diagnostic_only == true && inputs.secret_propagation_only != true
+    runs-on: ubuntu-latest
+    environment: production-beta-deployment
+    steps:
+      - name: Test session pooler and direct PostgreSQL
+        shell: bash
+        env:
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+        run: |
+          set -euo pipefail
+          [[ -n "$SUPABASE_DB_PASSWORD" ]]
+          failed=0
+
+          check_connection() {
+            local label="$1"
+            local host="$2"
+            local user="$3"
+            local allow_unreachable="$4"
+            local output
+            local status
+            local safe_output
+
+            set +e
+            output="$(PGPASSWORD="$SUPABASE_DB_PASSWORD" PGCONNECT_TIMEOUT=10 psql \
+              --host "$host" \
+              --port 5432 \
+              --username "$user" \
+              --dbname postgres \
+              --no-password \
+              --tuples-only \
+              --no-align \
+              --command 'SELECT 1' 2>&1)"
+            status=$?
+            set -e
+
+            safe_output="$(printf '%s' "$output" | node -e '
+              let value = "";
+              process.stdin.setEncoding("utf8");
+              process.stdin.on("data", (chunk) => { value += chunk; });
+              process.stdin.on("end", () => {
+                const password = process["env"].SUPABASE_DB_PASSWORD || "";
+                process.stdout.write(password ? value.split(password).join("[REDACTED]") : value);
+              });
+            ')"
+
+            if [[ "$status" -eq 0 ]]; then
+              printf '%s: PASS\n' "$label"
+              return
+            fi
+            if [[ "$allow_unreachable" == "true" ]] && grep -Eqi 'network is unreachable|no route to host|cannot assign requested address|name or service not known|temporary failure in name resolution|could not translate host name|connection timed out' <<< "$safe_output"; then
+              printf '%s: UNREACHABLE\n' "$label"
+              return
+            fi
+            printf '%s: FAIL\n%s\n' "$label" "$safe_output"
+            failed=1
+          }
+
+          check_connection SESSION_POOLER aws-0-ap-southeast-2.pooler.supabase.com postgres.fzkrvglzompkuiodqllr false
+          check_connection DIRECT_CONNECTION db.fzkrvglzompkuiodqllr.supabase.co postgres true
+          exit "$failed"
+
   acceptance:
     name: Production Beta Operational Acceptance
     needs: release
-    if: inputs.rehearsal_only != true && inputs.secret_propagation_only != true
+    if: inputs.rehearsal_only != true && inputs.secret_propagation_only != true && inputs.connectivity_diagnostic_only != true
     uses: ./.github/workflows/production-beta-operational-acceptance.yml
     with:
       expected_release_sha: ${{ needs.release.outputs.release-sha }}
@@ -572,7 +640,7 @@ jobs:
   release-record:
     name: Record Production Beta release
     needs: [release, acceptance]
-    if: inputs.rehearsal_only != true && inputs.secret_propagation_only != true && always() && needs.release.outputs.migration-boundary-crossed == 'true'
+    if: inputs.rehearsal_only != true && inputs.secret_propagation_only != true && inputs.connectivity_diagnostic_only != true && always() && needs.release.outputs.migration-boundary-crossed == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
