@@ -134,8 +134,7 @@ async function buildControlledSnapshot(source, client = createTrustedClient(), r
     if (!invitationEvents.some((event) => event.to_status === state)) throw new Error(`Controlled onboarding invitation history is missing ${state}.`);
   }
   const audits = await rest(`audit_events?organisation_id=eq.${source.organisationId}&event_type=eq.commercial_onboarding.accepted&entity_id=eq.${source.invitationId}&select=id`);
-  const outbox = await rest(`transactional_outbox?organisation_id=eq.${source.organisationId}&topic=eq.commercial_onboarding.accepted&aggregate_id=eq.${source.invitationId}&select=id`);
-  if (audits.length !== 1 || outbox.length !== 1) throw new Error('Controlled onboarding completion audit/outbox evidence must exist exactly once.');
+  if (audits.length !== 1) throw new Error('Controlled onboarding completion audit evidence must exist exactly once.');
 
   const primary = [
     ['missions', 'missionId', 'title'], ['jobs', 'jobId', 'scope'], ['fields', 'fieldId', 'name'],
@@ -173,6 +172,20 @@ async function buildControlledSnapshot(source, client = createTrustedClient(), r
     const rows = await rest(`${table}?organisation_id=eq.${source.organisationId}&archived_at=is.null&select=id,row_version`);
     if (!rows.length) throw new Error(`Controlled onboarding ${table} evidence is unexpectedly absent.`);
     records[table] = rows.map(({ id, row_version: rowVersion }) => ({ id, rowVersion }));
+  }
+
+  if (requireCompleteOperationalEvidence) {
+    const outboxEvidence = await rest('rpc/ftf_verify_controlled_commercial_onboarding_evidence', {
+      method: 'POST', body: JSON.stringify({ p_evidence: { ...source, records } }),
+    });
+    if (outboxEvidence?.acceptance?.present !== true) {
+      throw new Error('Controlled onboarding acceptance outbox evidence is incomplete.');
+    }
+    for (const resource of ['clients', 'properties', 'fields', 'jobs', 'missions']) {
+      if (outboxEvidence?.resources?.[resource]?.present !== true) {
+        throw new Error(`Controlled onboarding ${resource} outbox evidence is incomplete.`);
+      }
+    }
   }
 
   return {
@@ -233,8 +246,12 @@ async function archiveControlledOnboarding(evidencePath) {
   const application = await client.rest(`commercial_onboarding_applications?id=eq.${source.applicationId}&status=eq.APPROVED&select=id`);
   if (invitation.length !== 1 || application.length !== 1) throw new Error('Transactional cleanup altered immutable onboarding history.');
   const audit = await client.rest(`audit_events?organisation_id=eq.${source.organisationId}&event_type=eq.commercial_onboarding.acceptance_archived&select=id`);
-  const outbox = await client.rest(`transactional_outbox?organisation_id=eq.${source.organisationId}&topic=eq.commercial_onboarding.acceptance_archived&select=id`);
-  if (audit.length !== 1 || outbox.length !== 1) throw new Error('Transactional cleanup audit/outbox evidence is incomplete.');
+  const outboxEvidence = await client.rest('rpc/ftf_verify_controlled_commercial_onboarding_evidence', {
+    method: 'POST', body: JSON.stringify({ p_evidence: snapshot }),
+  });
+  if (audit.length !== 1 || outboxEvidence?.archive?.present !== true) {
+    throw new Error('Transactional cleanup audit/outbox evidence is incomplete.');
+  }
   process.stdout.write('Controlled commercial onboarding organisation archived transactionally; exact provenance protected genuine organisation records.\n');
 }
 

@@ -102,6 +102,16 @@ describe('commercial onboarding acceptance governance', () => {
     }
   });
 
+  test('verifies outbox evidence only through the controlled service-role RPC', () => {
+    const verifier = read('scripts/verifyCommercialOnboardingPostgres.mjs');
+    expect(verifier).toContain("rest('rpc/ftf_verify_controlled_commercial_onboarding_evidence'");
+    expect(verifier).toContain('p_evidence: { ...source, records }');
+    expect(verifier).toContain('p_evidence: snapshot');
+    expect(verifier).not.toContain('p_evidence: source');
+    expect(verifier).not.toContain('rest(`transactional_outbox?');
+    expect(verifier).not.toContain("rest('transactional_outbox?");
+  });
+
   test('keeps authentication artefacts disabled and secrets environment-managed', () => {
     const workflow = read('.github/workflows/production-beta-operational-acceptance.yml');
     for (const secret of [

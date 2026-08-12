@@ -18,12 +18,15 @@ const forwardMigrationName = '20260809110000_commercial_onboarding_delivery_and_
 const resendMigrationName = '20260809120000_commercial_onboarding_immediate_resend.sql';
 const identityAcceptanceMigrationName = '20260809130000_commercial_onboarding_identity_acceptance.sql';
 const acceptanceCleanupMigrationName = '20260809140000_commercial_onboarding_acceptance_cleanup.sql';
+const acceptanceEvidenceMigrationName = '20260809150000_controlled_onboarding_evidence_verification.sql';
 const forwardMigrationPath = path.resolve(__dirname, `../../supabase/migrations/${forwardMigrationName}`);
 const forwardSql = fs.existsSync(forwardMigrationPath) ? fs.readFileSync(forwardMigrationPath, 'utf8') : '';
 const identityAcceptanceMigrationPath = path.resolve(__dirname, `../../supabase/migrations/${identityAcceptanceMigrationName}`);
 const identityAcceptanceSql = fs.existsSync(identityAcceptanceMigrationPath) ? fs.readFileSync(identityAcceptanceMigrationPath, 'utf8') : '';
 const acceptanceCleanupMigrationPath = path.resolve(__dirname, `../../supabase/migrations/${acceptanceCleanupMigrationName}`);
 const acceptanceCleanupSql = fs.existsSync(acceptanceCleanupMigrationPath) ? fs.readFileSync(acceptanceCleanupMigrationPath, 'utf8') : '';
+const acceptanceEvidenceMigrationPath = path.resolve(__dirname, `../../supabase/migrations/${acceptanceEvidenceMigrationName}`);
+const acceptanceEvidenceSql = fs.existsSync(acceptanceEvidenceMigrationPath) ? fs.readFileSync(acceptanceEvidenceMigrationPath, 'utf8') : '';
 
 const runPgliteInThisProcess = process.env.COMMERCIAL_ONBOARDING_PGLITE_CHILD === '1';
 const pureNodeTests = [];
@@ -267,6 +270,21 @@ test('defines a service-role-only transactional controlled-acceptance cleanup bo
   expect(acceptanceCleanupSql).not.toMatch(/update\s+public\.commercial_onboarding_(applications|application_events|invitations|invitation_events)/i);
 });
 
+test('defines a service-role-only controlled evidence projection without generic outbox access', () => {
+  expect(acceptanceEvidenceSql).toContain('ftf_verify_controlled_commercial_onboarding_evidence');
+  expect(acceptanceEvidenceSql).toContain("business_name like 'SC ACCEPTANCE — %'");
+  for (const topic of [
+    'commercial_onboarding.accepted', 'operational.clients.create', 'operational.properties.create',
+    'operational.fields.create', 'operational.jobs.create', 'operational.missions.create',
+  ]) expect(acceptanceEvidenceSql).toContain(`'${topic}'`);
+  expect(acceptanceEvidenceSql).toContain('COMMERCIAL_ONBOARDING_ACCEPTANCE_EVIDENCE_INVALID');
+  expect(acceptanceEvidenceSql).toContain('COMMERCIAL_ONBOARDING_ACCEPTANCE_PROVENANCE_MISMATCH');
+  expect(acceptanceEvidenceSql).toMatch(/revoke all on function public\.ftf_verify_controlled_commercial_onboarding_evidence\(jsonb\)[\s\S]*from public,anon,authenticated,service_role/);
+  expect(acceptanceEvidenceSql).toMatch(/grant execute on function public\.ftf_verify_controlled_commercial_onboarding_evidence\(jsonb\)\s+to service_role/);
+  expect(acceptanceEvidenceSql).not.toMatch(/grant\s+select\s+on(?:\s+table)?\s+public\.transactional_outbox/i);
+  expect(acceptanceEvidenceSql).not.toMatch(/(update|delete\s+from|insert\s+into)\s+public\.transactional_outbox/i);
+});
+
 if (runPgliteInThisProcess) test('atomically replaces an unexpired delivered invitation when resend is requested', async () => {
   const application = await submitApplication('resend-now@example.com', 'ResendNow');
   const review = await reviewApplication(application.application_id, application.row_version, 'UNDER_REVIEW');
@@ -344,6 +362,7 @@ beforeAll(async () => {
     resendMigrationName,
     identityAcceptanceMigrationName,
     acceptanceCleanupMigrationName,
+    acceptanceEvidenceMigrationName,
   ];
   for (const migrationName of migrationNames) {
     if (migrationName === acceptanceCleanupMigrationName) {
@@ -394,6 +413,12 @@ beforeAll(async () => {
         ('${legacySentInvitationId}','90000000-0000-4000-8000-000000000022',repeat('b',64),
           'legacy-sent@example.com','{"name":"Legacy Sent Air"}','{"name":"Legacy Base"}',
           'SENT','${platformUserId}','2099-01-01',now());
+      `);
+    }
+    if (migrationName === acceptanceEvidenceMigrationName) {
+      await db.exec(`
+        alter table public.jobs add column if not exists scope text not null default '';
+        alter table public.missions add column if not exists title text not null default ''
       `);
     }
     await db.exec(fs.readFileSync(path.join(migrationDirectory, migrationName), 'utf8'));
@@ -1128,6 +1153,79 @@ test('archives an exact controlled onboarding chain transactionally without rewr
     invitation: historyBefore.rows[0].invitation,
     application_events: historyBefore.rows[0].application_events,
     invitation_events: historyBefore.rows[0].invitation_events,
+  });
+});
+
+test('projects only exact controlled onboarding outbox evidence and fails closed for foreign or incomplete scope', async () => {
+  const onboarding = await createControlledAcceptedOnboarding(
+    'evidence-projection@example.com',
+    'EvidenceProjection',
+    '96200000-0000-4000-8000-000000000001',
+  );
+  const evidence = await controlledCleanupEvidence(onboarding);
+  const ids = {
+    clients: '96210000-0000-4000-8000-000000000001',
+    properties: '96210000-0000-4000-8000-000000000002',
+    fields: '96210000-0000-4000-8000-000000000003',
+    jobs: '96210000-0000-4000-8000-000000000004',
+    missions: '96210000-0000-4000-8000-000000000005',
+  };
+  await db.exec(`
+    insert into public.clients(id,organisation_id,name)
+      values('${ids.clients}','${evidence.organisationId}','SC ACCEPTANCE — Evidence');
+    insert into public.properties(id,organisation_id,client_id,name)
+      values('${ids.properties}','${evidence.organisationId}','${ids.clients}','SC ACCEPTANCE — Evidence');
+    insert into public.fields(id,organisation_id,property_id,name)
+      values('${ids.fields}','${evidence.organisationId}','${ids.properties}','SC ACCEPTANCE — Evidence');
+    insert into public.jobs(id,organisation_id,client_id,property_id,reference,scope)
+      values('${ids.jobs}','${evidence.organisationId}','${ids.clients}','${ids.properties}','SC-EVIDENCE','SC ACCEPTANCE — Evidence');
+    insert into public.missions(id,organisation_id,job_id,operating_location_id,mission_number,title)
+      values('${ids.missions}','${evidence.organisationId}','${ids.jobs}','${evidence.operatingLocationId}','SC-EVIDENCE','SC ACCEPTANCE — Evidence');
+    insert into public.transactional_outbox(organisation_id,topic,aggregate_type,aggregate_id,payload) values
+      ('${evidence.organisationId}','operational.clients.create','clients','${ids.clients}','{"private":"excluded"}'),
+      ('${evidence.organisationId}','operational.properties.create','properties','${ids.properties}','{}'),
+      ('${evidence.organisationId}','operational.fields.create','fields','${ids.fields}','{}'),
+      ('${evidence.organisationId}','operational.jobs.create','jobs','${ids.jobs}','{}'),
+      ('${evidence.organisationId}','operational.missions.create','missions','${ids.missions}','{}'),
+      ('${evidence.organisationId}','unrelated.private.event','clients','${ids.clients}','{"must":"not leak"}')
+  `);
+  for (const [resource, id] of Object.entries(ids)) evidence.records[resource] = [{ id, rowVersion: 1 }];
+
+  const projected = await db.query(
+    'select public.ftf_verify_controlled_commercial_onboarding_evidence($1::jsonb) as result',
+    [JSON.stringify(evidence)],
+  );
+  expect(projected.rows[0].result).toEqual({
+    acceptance: { present: true }, archive: { present: false },
+    resources: Object.fromEntries(Object.keys(ids).map((resource) => [resource, { present: true }])),
+  });
+  expect(JSON.stringify(projected.rows[0].result)).not.toMatch(/private|unrelated|payload|topic|aggregate/i);
+
+  const missingScope = structuredClone(evidence);
+  delete missingScope.records.clients;
+  await expect(db.query(
+    'select public.ftf_verify_controlled_commercial_onboarding_evidence($1::jsonb)',
+    [JSON.stringify(missingScope)],
+  )).rejects.toThrow(/COMMERCIAL_ONBOARDING_ACCEPTANCE_EVIDENCE_INVALID/);
+
+  const foreignId = structuredClone(evidence);
+  foreignId.records.clients[0].id = '96210000-0000-4000-8000-000000000099';
+  await expect(db.query(
+    'select public.ftf_verify_controlled_commercial_onboarding_evidence($1::jsonb)',
+    [JSON.stringify(foreignId)],
+  )).rejects.toThrow(/COMMERCIAL_ONBOARDING_ACCEPTANCE_PROVENANCE_MISMATCH/);
+
+  const privileges = await db.query(`
+    select
+      has_function_privilege('service_role','public.ftf_verify_controlled_commercial_onboarding_evidence(jsonb)','execute') as service_execute,
+      has_function_privilege('authenticated','public.ftf_verify_controlled_commercial_onboarding_evidence(jsonb)','execute') as authenticated_execute,
+      has_table_privilege('service_role','public.transactional_outbox','select') as service_outbox_select,
+      has_table_privilege('service_role','public.transactional_outbox','update') as service_outbox_update,
+      has_table_privilege('service_role','public.transactional_outbox','delete') as service_outbox_delete
+  `);
+  expect(privileges.rows[0]).toEqual({
+    service_execute: true, authenticated_execute: false,
+    service_outbox_select: false, service_outbox_update: false, service_outbox_delete: false,
   });
 });
 
