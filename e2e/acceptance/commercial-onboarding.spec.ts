@@ -329,8 +329,9 @@ test('Application → review → approval → invitation → first Draft Mission
     await page.getByRole('tab', { name: /Equipment Kits/ }).click();
     await expect(page.getByText(label).first()).toBeVisible();
     await page.goto('/getting-started');
-    await expect(page.getByRole('region', { name: 'Personnel readiness' })).toBeVisible();
-    await expect(page.getByText(/Personnel.*not yet|Add Personnel/i).first()).toBeVisible();
+    const personnelReadiness = page.getByRole('region', { name: 'Personnel readiness' });
+    await expect(personnelReadiness).toBeVisible();
+    await expect(personnelReadiness.getByRole('button', { name: 'Add Personnel' })).toBeVisible();
 
     await openMissionCreationWorkspace(page);
     await page.getByRole('button', { name: 'Add new Client' }).click();

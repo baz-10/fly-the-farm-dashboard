@@ -56,6 +56,14 @@ describe('commercial onboarding acceptance governance', () => {
     expect(source).not.toMatch(/localStorage\.setItem|sessionStorage\.setItem/);
   });
 
+  test('scopes Personnel readiness assertions to the visible semantic region', () => {
+    const source = read('e2e/acceptance/commercial-onboarding.spec.ts');
+
+    expect(source).toContain("const personnelReadiness = page.getByRole('region', { name: 'Personnel readiness' })");
+    expect(source).toContain("personnelReadiness.getByRole('button', { name: 'Add Personnel' })");
+    expect(source).not.toContain("page.getByText(/Personnel.*not yet|Add Personnel/i).first()");
+  });
+
   test('keeps authentication artefacts disabled and secrets environment-managed', () => {
     const workflow = read('.github/workflows/production-beta-operational-acceptance.yml');
     for (const secret of [
