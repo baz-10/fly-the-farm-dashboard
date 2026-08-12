@@ -14,6 +14,37 @@ type MailboxCredentials = {
   automationBypassSecret: string;
 };
 
+type AuthoritativeClientRecord = {
+  id: string;
+  name: string;
+  rowVersion: number;
+};
+
+function clientRecord(body: any): Partial<AuthoritativeClientRecord> {
+  return body?.data && typeof body.data === 'object' && !Array.isArray(body.data) ? body.data : {};
+}
+
+export function validateCreatedClientResponse(status: number, body: any, expectedLabel: string): AuthoritativeClientRecord {
+  if (status !== 201) throw new Error('CLIENT_CREATE_STATUS_INVALID');
+  const record = clientRecord(body);
+  if (typeof record.id !== 'string' || !record.id) throw new Error('CLIENT_CREATE_ID_MISSING');
+  if (record.name !== expectedLabel) throw new Error('CLIENT_CREATE_LABEL_MISMATCH');
+  return record as AuthoritativeClientRecord;
+}
+
+export function validatePersistedClientResponse(
+  status: number,
+  body: any,
+  expectedId: string,
+  expectedLabel: string,
+): AuthoritativeClientRecord {
+  if (status !== 200) throw new Error('CLIENT_PERSISTENCE_READ_FAILED');
+  const record = clientRecord(body);
+  if (record.id !== expectedId) throw new Error('CLIENT_PERSISTENCE_ID_MISMATCH');
+  if (record.name !== expectedLabel) throw new Error('CLIENT_PERSISTENCE_LABEL_MISMATCH');
+  return record as AuthoritativeClientRecord;
+}
+
 export function commercialOnboardingMailboxHeaders(credentials: MailboxCredentials): Record<string, string> {
   if (!credentials.mailboxToken) throw new Error('MAILBOX_BEARER_TOKEN_MISSING');
   if (!credentials.automationBypassSecret) throw new Error('VERCEL_AUTOMATION_BYPASS_MISSING');

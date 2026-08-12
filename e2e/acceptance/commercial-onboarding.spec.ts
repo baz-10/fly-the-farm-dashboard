@@ -9,6 +9,8 @@ import {
   classifyCommercialOnboardingInvitationLink,
   classifyMailboxFailure,
   commercialOnboardingMailboxHeaders,
+  validateCreatedClientResponse,
+  validatePersistedClientResponse,
 } from './fixtures/commercialOnboardingInvitation';
 import { openMissionCreationWorkspace } from './fixtures/missionCreationWorkspace';
 
@@ -336,8 +338,27 @@ test('Application → review → approval → invitation → first Draft Mission
     await openMissionCreationWorkspace(page);
     await page.getByRole('button', { name: 'Add new Client' }).click();
     await page.getByRole('textbox', { name: 'Client or business name' }).fill(label);
+    const clientCreateResponsePromise = page.waitForResponse((response) => {
+      const url = new URL(response.url());
+      return url.origin === environment.baseUrl && url.pathname === '/api/v1/clients'
+        && response.request().method() === 'POST';
+    });
     await page.getByRole('button', { name: 'Save Client and continue' }).click();
-    records.client = await findAcceptanceRecord(page.request, 'clients', label);
+    const clientCreateResponse = await clientCreateResponsePromise;
+    const createdClient = validateCreatedClientResponse(
+      clientCreateResponse.status(),
+      await clientCreateResponse.json().catch(() => ({})),
+      label,
+    );
+    const persistedClientResponse = await page.request.get(
+      `/api/v1/clients?id=${encodeURIComponent(createdClient.id)}`,
+    );
+    records.client = validatePersistedClientResponse(
+      persistedClientResponse.status(),
+      await persistedClientResponse.json().catch(() => ({})),
+      createdClient.id,
+      label,
+    );
     await page.getByRole('button', { name: 'Add new Property' }).click();
     await page.getByRole('textbox', { name: 'Property name' }).fill(label);
     await page.getByRole('textbox', { name: 'Property location' }).fill('1 Queen Street, Brisbane QLD 4000');

@@ -64,6 +64,22 @@ describe('commercial onboarding acceptance governance', () => {
     expect(source).not.toContain("page.getByText(/Personnel.*not yet|Add Personnel/i).first()");
   });
 
+  test('proves Client command completion before exact-ID persistence verification', () => {
+    const source = read('e2e/acceptance/commercial-onboarding.spec.ts');
+    const wait = source.indexOf('const clientCreateResponsePromise = page.waitForResponse');
+    const click = source.indexOf("page.getByRole('button', { name: 'Save Client and continue' }).click()");
+    const awaitResponse = source.indexOf('const clientCreateResponse = await clientCreateResponsePromise');
+    const exactRead = source.indexOf('`/api/v1/clients?id=${encodeURIComponent(createdClient.id)}`');
+
+    expect(wait).toBeGreaterThan(-1);
+    expect(wait).toBeLessThan(click);
+    expect(click).toBeLessThan(awaitResponse);
+    expect(awaitResponse).toBeLessThan(exactRead);
+    expect(source).toContain("response.request().method() === 'POST'");
+    expect(source).toContain("url.origin === environment.baseUrl && url.pathname === '/api/v1/clients'");
+    expect(source).not.toContain("findAcceptanceRecord(page.request, 'clients', label)");
+  });
+
   test('keeps authentication artefacts disabled and secrets environment-managed', () => {
     const workflow = read('.github/workflows/production-beta-operational-acceptance.yml');
     for (const secret of [

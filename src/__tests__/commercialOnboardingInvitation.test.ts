@@ -2,6 +2,8 @@ import {
   classifyCommercialOnboardingInvitationLink,
   classifyMailboxFailure,
   commercialOnboardingMailboxHeaders,
+  validateCreatedClientResponse,
+  validatePersistedClientResponse,
 } from '../../e2e/acceptance/fixtures/commercialOnboardingInvitation';
 
 const applicationOrigin = 'https://spray-command-production-beta.vercel.app';
@@ -55,4 +57,28 @@ test('distinguishes Vercel protection rejection from mailbox authentication reje
   expect(classifyMailboxFailure(401, {})).toBe('VERCEL_PROTECTION_REJECTED');
   expect(classifyMailboxFailure(401, { error: { code: 'MAILBOX_BRIDGE_UNAUTHENTICATED' } }))
     .toBe('MAILBOX_BRIDGE_UNAUTHENTICATED');
+});
+
+const clientId = '33333333-3333-4333-8333-333333333333';
+const clientLabel = 'SC ACCEPTANCE — CONTROLLED CLIENT';
+const clientRecord = { id: clientId, name: clientLabel, rowVersion: 1 };
+
+test('requires a 201 Client create response with an ID and exact controlled label', () => {
+  expect(validateCreatedClientResponse(201, { data: clientRecord }, clientLabel)).toEqual(clientRecord);
+  expect(() => validateCreatedClientResponse(200, { data: clientRecord }, clientLabel))
+    .toThrow('CLIENT_CREATE_STATUS_INVALID');
+  expect(() => validateCreatedClientResponse(201, { data: { name: clientLabel } }, clientLabel))
+    .toThrow('CLIENT_CREATE_ID_MISSING');
+  expect(() => validateCreatedClientResponse(201, { data: { ...clientRecord, name: `${clientLabel} changed` } }, clientLabel))
+    .toThrow('CLIENT_CREATE_LABEL_MISMATCH');
+});
+
+test('fails closed unless exact-ID persistence returns the same Client and label', () => {
+  expect(validatePersistedClientResponse(200, { data: clientRecord }, clientId, clientLabel)).toEqual(clientRecord);
+  expect(() => validatePersistedClientResponse(404, { error: { code: 'NOT_FOUND' } }, clientId, clientLabel))
+    .toThrow('CLIENT_PERSISTENCE_READ_FAILED');
+  expect(() => validatePersistedClientResponse(200, { data: { ...clientRecord, id: '44444444-4444-4444-8444-444444444444' } }, clientId, clientLabel))
+    .toThrow('CLIENT_PERSISTENCE_ID_MISMATCH');
+  expect(() => validatePersistedClientResponse(200, { data: { ...clientRecord, name: `${clientLabel} other tenant` } }, clientId, clientLabel))
+    .toThrow('CLIENT_PERSISTENCE_LABEL_MISMATCH');
 });
