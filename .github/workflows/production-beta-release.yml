@@ -513,7 +513,7 @@ jobs:
             [[ -n "$value" ]]
             echo "::add-mask::$value"
           done
-          after="$(date -u -d '5 seconds ago' +%Y-%m-%dT%H:%M:%SZ)"
+          after="$(date -u -d '5 seconds ago' +%Y-%m-%dT%H:%M:%S.%3NZ)"
           response_file="$RUNNER_TEMP/redeploy-mailbox-response.json"
           status="$(curl --silent --show-error --output "$response_file" --write-out '%{http_code}' --get \
             --header "Authorization: Bearer $E2E_ONBOARDING_MAILBOX_TOKEN" \

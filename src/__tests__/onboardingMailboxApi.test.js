@@ -96,6 +96,21 @@ test('accepts the base mailbox and controlled onboarding plus aliases', async ()
   }
 });
 
+test.each([
+  ['2026-08-12T01:23:45Z', 'missing milliseconds'],
+  ['2026-08-12T01:23:45.678+00:00', 'timezone offset'],
+  ['not-a-timestamp', 'malformed timestamp'],
+])('rejects non-canonical after timestamp %s (%s)', async (after) => {
+  const { handler, readMailboxMessages } = handlerWith();
+  const res = response();
+
+  await handler(request({ after }), res);
+
+  expect(res.statusCode).toBe(400);
+  expect(res.body).toEqual({ error: { code: 'MAILBOX_AFTER_INVALID' } });
+  expect(readMailboxMessages).not.toHaveBeenCalled();
+});
+
 test('returns only messages received strictly after the requested timestamp', async () => {
   const readMailboxMessages = jest.fn().mockResolvedValue([
     { receivedAt: '2026-08-09T23:59:59.999Z', links: ['https://old.example.test/invite'] },

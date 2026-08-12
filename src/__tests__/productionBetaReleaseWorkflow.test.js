@@ -83,6 +83,10 @@ describe('GitHub-managed Production Beta release governance', () => {
     expect(JSON.stringify(mailbox)).not.toMatch(/SUPABASE_ACCESS_TOKEN|SUPABASE_DB_PASSWORD|VERCEL_TOKEN/);
     expect(step(mailbox, 'Verify mailbox bridge authentication').run)
       .toContain('x-vercel-protection-bypass');
+    expect(step(mailbox, 'Verify mailbox bridge authentication').run)
+      .toContain("+%Y-%m-%dT%H:%M:%S.%3NZ");
+    expect(step(mailbox, 'Verify mailbox bridge authentication').run)
+      .not.toContain("+%Y-%m-%dT%H:%M:%SZ");
 
     expect(acceptance.needs).toEqual(['exact-sha-redeploy', 'redeploy-mailbox-verification']);
     expect(acceptance.uses).toBe('./.github/workflows/production-beta-operational-acceptance.yml');
