@@ -3,7 +3,9 @@ import {
   classifyMailboxFailure,
   commercialOnboardingMailboxHeaders,
   validateCreatedClientResponse,
+  validateCreatedOperationalRecordResponse,
   validatePersistedClientResponse,
+  validatePersistedOperationalRecordResponse,
 } from '../../e2e/acceptance/fixtures/commercialOnboardingInvitation';
 
 const applicationOrigin = 'https://spray-command-production-beta.vercel.app';
@@ -81,4 +83,33 @@ test('fails closed unless exact-ID persistence returns the same Client and label
     .toThrow('CLIENT_PERSISTENCE_ID_MISMATCH');
   expect(() => validatePersistedClientResponse(200, { data: { ...clientRecord, name: `${clientLabel} other tenant` } }, clientId, clientLabel))
     .toThrow('CLIENT_PERSISTENCE_LABEL_MISMATCH');
+});
+
+test.each([
+  ['properties', 'name'],
+  ['fields', 'name'],
+  ['jobs', 'scope'],
+  ['missions', 'title'],
+] as const)('requires authoritative create and exact-ID readback for %s', (resource, labelField) => {
+  const record = { id: clientId, [labelField]: clientLabel, rowVersion: 1 };
+  expect(validateCreatedOperationalRecordResponse(resource, 201, { data: record }, labelField, clientLabel)).toEqual(record);
+  expect(validatePersistedOperationalRecordResponse(resource, 200, { data: record }, clientId, labelField, clientLabel)).toEqual(record);
+});
+
+test('fails operational creation immediately on non-201, missing ID, or label mismatch', () => {
+  expect(() => validateCreatedOperationalRecordResponse('properties', 200, { data: clientRecord }, 'name', clientLabel))
+    .toThrow('PROPERTIES_CREATE_STATUS_INVALID');
+  expect(() => validateCreatedOperationalRecordResponse('fields', 201, { data: { name: clientLabel } }, 'name', clientLabel))
+    .toThrow('FIELDS_CREATE_ID_MISSING');
+  expect(() => validateCreatedOperationalRecordResponse('jobs', 201, { data: { id: clientId, scope: 'wrong' } }, 'scope', clientLabel))
+    .toThrow('JOBS_CREATE_LABEL_MISMATCH');
+});
+
+test('fails operational exact-ID persistence on missing, wrong-ID, or wrong-label records', () => {
+  expect(() => validatePersistedOperationalRecordResponse('properties', 404, {}, clientId, 'name', clientLabel))
+    .toThrow('PROPERTIES_PERSISTENCE_READ_FAILED');
+  expect(() => validatePersistedOperationalRecordResponse('fields', 200, { data: { id: 'wrong', name: clientLabel } }, clientId, 'name', clientLabel))
+    .toThrow('FIELDS_PERSISTENCE_ID_MISMATCH');
+  expect(() => validatePersistedOperationalRecordResponse('missions', 200, { data: { id: clientId, title: 'wrong' } }, clientId, 'title', clientLabel))
+    .toThrow('MISSIONS_PERSISTENCE_LABEL_MISMATCH');
 });

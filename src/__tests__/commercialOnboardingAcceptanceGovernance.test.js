@@ -80,6 +80,28 @@ describe('commercial onboarding acceptance governance', () => {
     expect(source).not.toContain("findAcceptanceRecord(page.request, 'clients', label)");
   });
 
+  test('uses authoritative create completion and exact-ID reads for every downstream record', () => {
+    const source = read('e2e/acceptance/commercial-onboarding.spec.ts');
+    const expectations = [
+      ['property', 'properties', 'Save Property and continue'],
+      ['field', 'fields', 'Save Field and boundary'],
+      ['job', 'jobs', 'Save Job and continue'],
+      ['mission', 'missions', 'Create Draft Mission'],
+    ];
+
+    for (const [variable, resource, action] of expectations) {
+      const wait = source.indexOf(`const ${variable}CreateResponsePromise = page.waitForResponse`);
+      const click = source.indexOf(`page.getByRole('button', { name: '${action}' }).click()`);
+      const awaitResponse = source.indexOf(`const ${variable}CreateResponse = await ${variable}CreateResponsePromise`);
+      const exactRead = source.indexOf(`\`/api/v1/${resource}?id=\${encodeURIComponent(created${variable[0].toUpperCase()}${variable.slice(1)}.id)}\``);
+      expect(wait).toBeGreaterThan(-1);
+      expect(wait).toBeLessThan(click);
+      expect(click).toBeLessThan(awaitResponse);
+      expect(awaitResponse).toBeLessThan(exactRead);
+      expect(source).not.toContain(`findAcceptanceRecord(page.request, '${resource}', label)`);
+    }
+  });
+
   test('keeps authentication artefacts disabled and secrets environment-managed', () => {
     const workflow = read('.github/workflows/production-beta-operational-acceptance.yml');
     for (const secret of [

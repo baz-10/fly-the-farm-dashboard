@@ -14,22 +14,50 @@ type MailboxCredentials = {
   automationBypassSecret: string;
 };
 
-type AuthoritativeClientRecord = {
+type AuthoritativeOperationalRecord = {
   id: string;
-  name: string;
   rowVersion: number;
-};
+} & Record<string, unknown>;
 
-function clientRecord(body: any): Partial<AuthoritativeClientRecord> {
+function operationalRecord(body: any): Partial<AuthoritativeOperationalRecord> {
   return body?.data && typeof body.data === 'object' && !Array.isArray(body.data) ? body.data : {};
 }
 
-export function validateCreatedClientResponse(status: number, body: any, expectedLabel: string): AuthoritativeClientRecord {
-  if (status !== 201) throw new Error('CLIENT_CREATE_STATUS_INVALID');
-  const record = clientRecord(body);
-  if (typeof record.id !== 'string' || !record.id) throw new Error('CLIENT_CREATE_ID_MISSING');
-  if (record.name !== expectedLabel) throw new Error('CLIENT_CREATE_LABEL_MISMATCH');
-  return record as AuthoritativeClientRecord;
+const errorPrefix = (resource: string) => resource.replace(/[^A-Za-z0-9]+/g, '_').toUpperCase();
+
+export function validateCreatedOperationalRecordResponse(
+  resource: string,
+  status: number,
+  body: any,
+  labelField: string,
+  expectedLabel: string,
+): AuthoritativeOperationalRecord {
+  const prefix = errorPrefix(resource);
+  if (status !== 201) throw new Error(`${prefix}_CREATE_STATUS_INVALID`);
+  const record = operationalRecord(body);
+  if (typeof record.id !== 'string' || !record.id) throw new Error(`${prefix}_CREATE_ID_MISSING`);
+  if (record[labelField] !== expectedLabel) throw new Error(`${prefix}_CREATE_LABEL_MISMATCH`);
+  return record as AuthoritativeOperationalRecord;
+}
+
+export function validatePersistedOperationalRecordResponse(
+  resource: string,
+  status: number,
+  body: any,
+  expectedId: string,
+  labelField: string,
+  expectedLabel: string,
+): AuthoritativeOperationalRecord {
+  const prefix = errorPrefix(resource);
+  if (status !== 200) throw new Error(`${prefix}_PERSISTENCE_READ_FAILED`);
+  const record = operationalRecord(body);
+  if (record.id !== expectedId) throw new Error(`${prefix}_PERSISTENCE_ID_MISMATCH`);
+  if (record[labelField] !== expectedLabel) throw new Error(`${prefix}_PERSISTENCE_LABEL_MISMATCH`);
+  return record as AuthoritativeOperationalRecord;
+}
+
+export function validateCreatedClientResponse(status: number, body: any, expectedLabel: string): AuthoritativeOperationalRecord {
+  return validateCreatedOperationalRecordResponse('client', status, body, 'name', expectedLabel);
 }
 
 export function validatePersistedClientResponse(
@@ -37,12 +65,8 @@ export function validatePersistedClientResponse(
   body: any,
   expectedId: string,
   expectedLabel: string,
-): AuthoritativeClientRecord {
-  if (status !== 200) throw new Error('CLIENT_PERSISTENCE_READ_FAILED');
-  const record = clientRecord(body);
-  if (record.id !== expectedId) throw new Error('CLIENT_PERSISTENCE_ID_MISMATCH');
-  if (record.name !== expectedLabel) throw new Error('CLIENT_PERSISTENCE_LABEL_MISMATCH');
-  return record as AuthoritativeClientRecord;
+): AuthoritativeOperationalRecord {
+  return validatePersistedOperationalRecordResponse('client', status, body, expectedId, 'name', expectedLabel);
 }
 
 export function commercialOnboardingMailboxHeaders(credentials: MailboxCredentials): Record<string, string> {

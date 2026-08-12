@@ -1,6 +1,6 @@
 import { expect, Page, test } from '@playwright/test';
 import path from 'node:path';
-import { acceptanceRunLabel, findAcceptanceRecord } from './fixtures/acceptanceRecords';
+import { acceptanceRunLabel } from './fixtures/acceptanceRecords';
 import {
   persistProvisionedOnboardingEvidence,
   persistProvisioningResponseBeforeAssertions,
@@ -10,7 +10,9 @@ import {
   classifyMailboxFailure,
   commercialOnboardingMailboxHeaders,
   validateCreatedClientResponse,
+  validateCreatedOperationalRecordResponse,
   validatePersistedClientResponse,
+  validatePersistedOperationalRecordResponse,
 } from './fixtures/commercialOnboardingInvitation';
 import { openMissionCreationWorkspace } from './fixtures/missionCreationWorkspace';
 
@@ -365,8 +367,23 @@ test('Application → review → approval → invitation → first Draft Mission
     await expect(page.getByRole('option')).not.toHaveCount(0);
     await page.getByRole('option').first().click();
     await page.getByRole('button', { name: 'Confirm location' }).click();
+    const propertyCreateResponsePromise = page.waitForResponse((response) => {
+      const url = new URL(response.url());
+      return url.origin === environment.baseUrl && url.pathname === '/api/v1/properties'
+        && response.request().method() === 'POST';
+    });
     await page.getByRole('button', { name: 'Save Property and continue' }).click();
-    records.property = await findAcceptanceRecord(page.request, 'properties', label);
+    const propertyCreateResponse = await propertyCreateResponsePromise;
+    const createdProperty = validateCreatedOperationalRecordResponse(
+      'properties', propertyCreateResponse.status(), await propertyCreateResponse.json().catch(() => ({})), 'name', label,
+    );
+    const persistedPropertyResponse = await page.request.get(
+      `/api/v1/properties?id=${encodeURIComponent(createdProperty.id)}`,
+    );
+    records.property = validatePersistedOperationalRecordResponse(
+      'properties', persistedPropertyResponse.status(), await persistedPropertyResponse.json().catch(() => ({})),
+      createdProperty.id, 'name', label,
+    );
     await page.getByRole('button', { name: 'Create new Field' }).click();
     await page.getByRole('textbox', { name: 'Field name' }).fill(label);
     await page.getByRole('button', { name: 'Upload' }).click();
@@ -374,16 +391,61 @@ test('Application → review → approval → invitation → first Draft Mission
       path.join(__dirname, 'fixtures/acceptance-boundary.kml'),
     );
     await expect(page.getByText(/Calculated area: (?!0\.00)/)).toBeVisible();
+    const fieldCreateResponsePromise = page.waitForResponse((response) => {
+      const url = new URL(response.url());
+      return url.origin === environment.baseUrl && url.pathname === '/api/v1/fields'
+        && response.request().method() === 'POST';
+    });
     await page.getByRole('button', { name: 'Save Field and boundary' }).click();
-    records.field = await findAcceptanceRecord(page.request, 'fields', label);
+    const fieldCreateResponse = await fieldCreateResponsePromise;
+    const createdField = validateCreatedOperationalRecordResponse(
+      'fields', fieldCreateResponse.status(), await fieldCreateResponse.json().catch(() => ({})), 'name', label,
+    );
+    const persistedFieldResponse = await page.request.get(
+      `/api/v1/fields?id=${encodeURIComponent(createdField.id)}`,
+    );
+    records.field = validatePersistedOperationalRecordResponse(
+      'fields', persistedFieldResponse.status(), await persistedFieldResponse.json().catch(() => ({})),
+      createdField.id, 'name', label,
+    );
     await page.getByRole('button', { name: 'Create new Job' }).click();
     await page.getByRole('textbox', { name: 'Job scope' }).fill(label);
+    const jobCreateResponsePromise = page.waitForResponse((response) => {
+      const url = new URL(response.url());
+      return url.origin === environment.baseUrl && url.pathname === '/api/v1/jobs'
+        && response.request().method() === 'POST';
+    });
     await page.getByRole('button', { name: 'Save Job and continue' }).click();
-    records.job = await findAcceptanceRecord(page.request, 'jobs', label);
+    const jobCreateResponse = await jobCreateResponsePromise;
+    const createdJob = validateCreatedOperationalRecordResponse(
+      'jobs', jobCreateResponse.status(), await jobCreateResponse.json().catch(() => ({})), 'scope', label,
+    );
+    const persistedJobResponse = await page.request.get(
+      `/api/v1/jobs?id=${encodeURIComponent(createdJob.id)}`,
+    );
+    records.job = validatePersistedOperationalRecordResponse(
+      'jobs', persistedJobResponse.status(), await persistedJobResponse.json().catch(() => ({})),
+      createdJob.id, 'scope', label,
+    );
     await page.getByRole('textbox', { name: 'Mission title' }).fill(label);
+    const missionCreateResponsePromise = page.waitForResponse((response) => {
+      const url = new URL(response.url());
+      return url.origin === environment.baseUrl && url.pathname === '/api/v1/missions'
+        && response.request().method() === 'POST';
+    });
     await page.getByRole('button', { name: 'Create Draft Mission' }).click();
+    const missionCreateResponse = await missionCreateResponsePromise;
+    const createdMission = validateCreatedOperationalRecordResponse(
+      'missions', missionCreateResponse.status(), await missionCreateResponse.json().catch(() => ({})), 'title', label,
+    );
+    const persistedMissionResponse = await page.request.get(
+      `/api/v1/missions?id=${encodeURIComponent(createdMission.id)}`,
+    );
+    records.mission = validatePersistedOperationalRecordResponse(
+      'missions', persistedMissionResponse.status(), await persistedMissionResponse.json().catch(() => ({})),
+      createdMission.id, 'title', label,
+    );
     await expect(page).toHaveURL(/\/missions\/[0-9a-f-]+\?guided=1$/, { timeout: 45_000 });
-    records.mission = await findAcceptanceRecord(page.request, 'missions', label);
 
     await page.goto('/getting-started');
     await expect(page.getByRole('heading', { name: 'Getting Started' })).toBeVisible();
