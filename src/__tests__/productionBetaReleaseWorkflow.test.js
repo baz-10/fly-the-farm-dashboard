@@ -19,6 +19,77 @@ const validateIdentity = (script, payload, expectedReleaseSha) => spawnSync(
 );
 
 describe('GitHub-managed Production Beta release governance', () => {
+  test('redeploys an approved immutable SHA without any Supabase migration authority', () => {
+    const definition = releaseWorkflow();
+    const redeploy = definition.jobs['exact-sha-redeploy'];
+    const source = JSON.stringify(redeploy);
+
+    expect(definition.on.workflow_dispatch.inputs.exact_sha_redeploy_only).toEqual({
+      description: 'Redeploy an approved immutable SHA without migrations',
+      required: false,
+      default: false,
+      type: 'boolean',
+    });
+    expect(redeploy.environment).toBe('production-beta-deployment');
+    expect(redeploy.if).toContain('inputs.exact_sha_redeploy_only == true');
+    expect(redeploy.env.RELEASE_SHA).toBe('${{ inputs.release_sha }}');
+    expect(redeploy.env.VERCEL_ORG_ID).toBe('${{ vars.VERCEL_ORG_ID }}');
+    expect(redeploy.env.VERCEL_PROJECT_ID).toBe('${{ vars.VERCEL_PROJECT_ID }}');
+    expect(source).not.toMatch(/SUPABASE_ACCESS_TOKEN|SUPABASE_DB_PASSWORD|supabase\b|migration\s+list|db\s+push/i);
+
+    const names = redeploy.steps.map(({ name }) => name);
+    const ordered = [
+      'Check out immutable release',
+      'Verify exact redeploy identity',
+      'Install locked dependencies',
+      'Build exact release',
+      'Deploy exact release to Vercel',
+      'Capture Vercel deployment identity',
+      'Wait for Vercel READY',
+      'Verify Vercel deployment metadata',
+      'Verify deployed release SHA',
+      'Verify canonical Production Beta alias',
+    ];
+    ordered.forEach((name) => expect(names).toContain(name));
+    ordered.slice(1).forEach((name, index) => {
+      expect(names.indexOf(ordered[index])).toBeLessThan(names.indexOf(name));
+    });
+
+    const deploy = step(redeploy, 'Deploy exact release to Vercel');
+    expect(deploy.env).toEqual({ VERCEL_TOKEN: '${{ secrets.VERCEL_TOKEN }}' });
+    expect(deploy.run).toContain('--prod');
+    expect(deploy.run).toContain('--env SPRAY_COMMAND_RELEASE_SHA="$RELEASE_SHA"');
+    expect(deploy.run).toContain('--meta githubCommitSha="$RELEASE_SHA"');
+  });
+
+  test('fails closed on conflicting workflow modes and gates acceptance behind mailbox authentication', () => {
+    const definition = releaseWorkflow();
+    const guard = definition.jobs['mode-guard'];
+    const mailbox = definition.jobs['redeploy-mailbox-verification'];
+    const acceptance = definition.jobs['redeploy-acceptance'];
+
+    expect(guard.environment).toBeUndefined();
+    expect(guard.steps[0].run).toContain('selected_modes');
+    expect(guard.steps[0].run).toContain('[[ "$selected_modes" -le 1 ]]');
+    expect(definition.jobs.release.if).toContain('inputs.exact_sha_redeploy_only != true');
+    expect(definition.jobs.rehearsal.if).toContain('inputs.exact_sha_redeploy_only != true');
+    expect(definition.jobs.acceptance.if).toContain('inputs.exact_sha_redeploy_only != true');
+    expect(definition.jobs['release-record'].if).toContain('inputs.exact_sha_redeploy_only != true');
+
+    expect(mailbox.needs).toBe('exact-sha-redeploy');
+    expect(mailbox.environment).toBe('production-beta-acceptance');
+    expect(JSON.stringify(mailbox)).toContain('E2E_ONBOARDING_MAILBOX_TOKEN');
+    expect(JSON.stringify(mailbox)).toContain('VERCEL_AUTOMATION_BYPASS_SECRET');
+    expect(JSON.stringify(mailbox)).not.toMatch(/SUPABASE_ACCESS_TOKEN|SUPABASE_DB_PASSWORD|VERCEL_TOKEN/);
+    expect(step(mailbox, 'Verify mailbox bridge authentication').run)
+      .toContain('x-vercel-protection-bypass');
+
+    expect(acceptance.needs).toEqual(['exact-sha-redeploy', 'redeploy-mailbox-verification']);
+    expect(acceptance.uses).toBe('./.github/workflows/production-beta-operational-acceptance.yml');
+    expect(acceptance.with.expected_release_sha)
+      .toBe('${{ needs.exact-sha-redeploy.outputs.release-sha }}');
+  });
+
   test('hands acceptance secrets across the reusable workflow boundary without crossing deployment trust scopes', () => {
     const definition = releaseWorkflow();
     const acceptance = definition.jobs.acceptance;
@@ -128,12 +199,12 @@ describe('GitHub-managed Production Beta release governance', () => {
       default: false,
       type: 'boolean',
     });
-    expect(definition.jobs.release.if).toBe("inputs.rehearsal_only != true && inputs.secret_propagation_only != true && inputs.connectivity_diagnostic_only != true");
-    expect(definition.jobs.acceptance.if).toBe("inputs.rehearsal_only != true && inputs.secret_propagation_only != true && inputs.connectivity_diagnostic_only != true");
+    expect(definition.jobs.release.if).toBe("inputs.rehearsal_only != true && inputs.secret_propagation_only != true && inputs.connectivity_diagnostic_only != true && inputs.exact_sha_redeploy_only != true");
+    expect(definition.jobs.acceptance.if).toBe("inputs.rehearsal_only != true && inputs.secret_propagation_only != true && inputs.connectivity_diagnostic_only != true && inputs.exact_sha_redeploy_only != true");
     expect(definition.jobs['release-record'].if)
       .toContain("inputs.rehearsal_only != true");
     expect(rehearsal.needs).toBe('validate');
-    expect(rehearsal.if).toBe("inputs.rehearsal_only == true && inputs.secret_propagation_only != true && inputs.connectivity_diagnostic_only != true");
+    expect(rehearsal.if).toBe("inputs.rehearsal_only == true && inputs.secret_propagation_only != true && inputs.connectivity_diagnostic_only != true && inputs.exact_sha_redeploy_only != true");
     expect(rehearsal.environment).toBe('production-beta-deployment');
 
     const names = rehearsal.steps.map(({ name }) => name);
@@ -344,7 +415,7 @@ describe('GitHub-managed Production Beta release governance', () => {
       'deployment-metadata-outcome', 'runtime-verification-outcome', 'canonical-alias-outcome',
     ]) expect(release.outputs[output]).toContain('.outcome');
     expect(record.needs).toEqual(['release', 'acceptance']);
-    expect(record.if).toBe("inputs.rehearsal_only != true && inputs.secret_propagation_only != true && inputs.connectivity_diagnostic_only != true && always() && needs.release.outputs.migration-boundary-crossed == 'true'");
+    expect(record.if).toBe("inputs.rehearsal_only != true && inputs.secret_propagation_only != true && inputs.connectivity_diagnostic_only != true && inputs.exact_sha_redeploy_only != true && always() && needs.release.outputs.migration-boundary-crossed == 'true'");
     expect(step(record, 'Check out immutable release')).toBeUndefined();
 
     const writeRecord = step(record, 'Write canonical release record');
