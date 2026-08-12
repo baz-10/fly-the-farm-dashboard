@@ -9,6 +9,28 @@ type InvitationBoundary = {
   invitationId: string;
 };
 
+type MailboxCredentials = {
+  mailboxToken: string;
+  automationBypassSecret: string;
+};
+
+export function commercialOnboardingMailboxHeaders(credentials: MailboxCredentials): Record<string, string> {
+  if (!credentials.mailboxToken) throw new Error('MAILBOX_BEARER_TOKEN_MISSING');
+  if (!credentials.automationBypassSecret) throw new Error('VERCEL_AUTOMATION_BYPASS_MISSING');
+  return {
+    Accept: 'application/json',
+    Authorization: `Bearer ${credentials.mailboxToken}`,
+    'x-vercel-protection-bypass': credentials.automationBypassSecret,
+  };
+}
+
+export function classifyMailboxFailure(status: number, body: any): string {
+  const mailboxCode = String(body?.error?.code || '');
+  if (mailboxCode) return mailboxCode;
+  if (status === 401) return 'VERCEL_PROTECTION_REJECTED';
+  return `MAILBOX_REQUEST_FAILED_${status}`;
+}
+
 function isExactApplicationInvitation(url: URL, boundary: InvitationBoundary) {
   return url.origin === boundary.applicationOrigin
     && url.pathname === '/onboarding/accept'

@@ -5,7 +5,11 @@ import {
   persistProvisionedOnboardingEvidence,
   persistProvisioningResponseBeforeAssertions,
 } from './fixtures/commercialOnboardingEvidence';
-import { classifyCommercialOnboardingInvitationLink } from './fixtures/commercialOnboardingInvitation';
+import {
+  classifyCommercialOnboardingInvitationLink,
+  classifyMailboxFailure,
+  commercialOnboardingMailboxHeaders,
+} from './fixtures/commercialOnboardingInvitation';
 import { openMissionCreationWorkspace } from './fixtures/missionCreationWorkspace';
 
 type SecretSource = Record<string, string | undefined>;
@@ -17,6 +21,7 @@ type OnboardingEnvironment = {
   platformPassword: string;
   mailboxUrl: string;
   mailboxToken: string;
+  automationBypassSecret: string;
   supabaseOrigin: string;
 };
 
@@ -41,6 +46,7 @@ export function commercialOnboardingEnvironment(source: SecretSource = process.e
     platformPassword: required(source, 'E2E_PLATFORM_PASSWORD'),
     mailboxUrl: mailboxUrl.toString(),
     mailboxToken: required(source, 'E2E_ONBOARDING_MAILBOX_TOKEN'),
+    automationBypassSecret: required(source, 'VERCEL_AUTOMATION_BYPASS_SECRET'),
     supabaseOrigin: supabaseUrl.origin,
   };
 }
@@ -82,11 +88,15 @@ async function waitForInvitationLink(page: Page, environment: OnboardingEnvironm
     mailbox.searchParams.set('recipient', applicantEmail);
     mailbox.searchParams.set('after', after);
     const response = await page.request.get(mailbox.toString(), {
-      headers: { Authorization: `Bearer ${environment.mailboxToken}`, Accept: 'application/json' },
+      headers: commercialOnboardingMailboxHeaders({
+        mailboxToken: environment.mailboxToken,
+        automationBypassSecret: environment.automationBypassSecret,
+      }),
       timeout: 15_000,
     });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok()) throw new Error(classifyMailboxFailure(response.status(), body));
     if (response.ok()) {
-      const body = await response.json().catch(() => ({}));
       const links = Array.isArray(body?.messages)
         ? body.messages.flatMap((message: any) => Array.isArray(message?.links) ? message.links : [])
         : [];

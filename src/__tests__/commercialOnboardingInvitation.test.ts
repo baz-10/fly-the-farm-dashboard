@@ -1,4 +1,8 @@
-import { classifyCommercialOnboardingInvitationLink } from '../../e2e/acceptance/fixtures/commercialOnboardingInvitation';
+import {
+  classifyCommercialOnboardingInvitationLink,
+  classifyMailboxFailure,
+  commercialOnboardingMailboxHeaders,
+} from '../../e2e/acceptance/fixtures/commercialOnboardingInvitation';
 
 const applicationOrigin = 'https://spray-command-production-beta.vercel.app';
 const supabaseOrigin = 'https://example.supabase.co';
@@ -27,4 +31,28 @@ test.each([
   ['unsupported type', `${supabaseOrigin}/auth/v1/verify?type=recovery&redirect_to=${encodeURIComponent(accepted)}`],
 ])('rejects an untrusted invitation link: %s', (_label, candidate) => {
   expect(classifyCommercialOnboardingInvitationLink(candidate, { applicationOrigin, supabaseOrigin, invitationId })).toBeNull();
+});
+
+test('sends separate mailbox and Vercel protection credentials', () => {
+  expect(commercialOnboardingMailboxHeaders({
+    mailboxToken: 'mailbox-secret',
+    automationBypassSecret: 'vercel-bypass-secret',
+  })).toEqual({
+    Accept: 'application/json',
+    Authorization: 'Bearer mailbox-secret',
+    'x-vercel-protection-bypass': 'vercel-bypass-secret',
+  });
+});
+
+test.each([
+  [{ mailboxToken: '', automationBypassSecret: 'vercel-bypass-secret' }, 'MAILBOX_BEARER_TOKEN_MISSING'],
+  [{ mailboxToken: 'mailbox-secret', automationBypassSecret: '' }, 'VERCEL_AUTOMATION_BYPASS_MISSING'],
+])('fails closed when either mailbox credential is missing', (credentials, error) => {
+  expect(() => commercialOnboardingMailboxHeaders(credentials)).toThrow(error);
+});
+
+test('distinguishes Vercel protection rejection from mailbox authentication rejection', () => {
+  expect(classifyMailboxFailure(401, {})).toBe('VERCEL_PROTECTION_REJECTED');
+  expect(classifyMailboxFailure(401, { error: { code: 'MAILBOX_BRIDGE_UNAUTHENTICATED' } }))
+    .toBe('MAILBOX_BRIDGE_UNAUTHENTICATED');
 });

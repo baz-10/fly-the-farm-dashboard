@@ -62,6 +62,7 @@ describe('commercial onboarding acceptance governance', () => {
       'E2E_ONBOARDING_APPLICANT_EMAIL', 'E2E_ONBOARDING_APPLICANT_PASSWORD',
       'E2E_PLATFORM_EMAIL', 'E2E_PLATFORM_PASSWORD',
       'E2E_ONBOARDING_MAILBOX_URL', 'E2E_ONBOARDING_MAILBOX_TOKEN',
+      'VERCEL_AUTOMATION_BYPASS_SECRET',
     ]) expect(workflow).toContain(`secrets.${secret}`);
     expect(workflow).toContain('commercial-onboarding.spec.ts');
     expect(workflow).toContain('verify:commercial-onboarding');
@@ -71,6 +72,24 @@ describe('commercial onboarding acceptance governance', () => {
     expect(playwright).toContain("video: 'off'");
     expect(playwright).toMatch(/name: 'commercial-onboarding'[\s\S]*retries: 0/);
     expect(workflow).not.toContain('name: commercial-onboarding-acceptance-failure');
+  });
+
+  test('propagates and masks the Vercel protection bypass only inside acceptance', () => {
+    const definition = workflow();
+    const contract = definition.on.workflow_call.secrets;
+    const onboarding = definition.jobs['commercial-onboarding-acceptance'];
+    const guard = step(onboarding, 'Mask and validate onboarding secrets');
+
+    expect(contract.VERCEL_AUTOMATION_BYPASS_SECRET).toEqual({ required: false });
+    expect(onboarding.environment).toBe('production-beta-acceptance');
+    expect(onboarding.env.VERCEL_AUTOMATION_BYPASS_SECRET)
+      .toBe('${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}');
+    expect(guard.run).toContain('::add-mask::$VERCEL_AUTOMATION_BYPASS_SECRET');
+    expect(guard.run).toContain('[[ -n "$VERCEL_AUTOMATION_BYPASS_SECRET" ]]');
+    expect(JSON.stringify(definition.jobs['deployment-identity']))
+      .not.toContain('VERCEL_AUTOMATION_BYPASS_SECRET');
+    expect(read('e2e/acceptance/commercial-onboarding.spec.ts'))
+      .not.toMatch(/console\.(?:log|error).*automationBypassSecret/);
   });
 
   test('orders exact-deployment gates and verifies controlled production evidence before transactional cleanup', () => {
@@ -92,6 +111,15 @@ describe('commercial onboarding acceptance governance', () => {
     }
 
     const onboardingSteps = onboarding.steps.map(({ name }) => name);
+    const harness = step(onboarding, 'Load reviewed mailbox acceptance harness');
+    expect(harness.env.ACCEPTANCE_HARNESS_SHA).toBe('${{ github.sha }}');
+    expect(harness.run).toContain('e2e/acceptance/commercial-onboarding.spec.ts');
+    expect(harness.run).toContain('e2e/acceptance/fixtures/commercialOnboardingInvitation.ts');
+    expect(harness.run).not.toMatch(/\bsrc\/|\bserver\/|\bapi\//);
+    expect(onboardingSteps.indexOf('Run deterministic sharded regression'))
+      .toBeLessThan(onboardingSteps.indexOf('Load reviewed mailbox acceptance harness'));
+    expect(onboardingSteps.indexOf('Load reviewed mailbox acceptance harness'))
+      .toBeLessThan(onboardingSteps.indexOf('Run unattended commercial onboarding'));
     expect(onboardingSteps.indexOf('Run unattended commercial onboarding'))
       .toBeLessThan(onboardingSteps.indexOf('Verify exact controlled onboarding evidence'));
     expect(onboardingSteps.indexOf('Verify exact controlled onboarding evidence'))

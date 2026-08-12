@@ -36,6 +36,8 @@ on:
         required: false
       E2E_ONBOARDING_MAILBOX_TOKEN:
         required: false
+      VERCEL_AUTOMATION_BYPASS_SECRET:
+        required: false
       SUPABASE_URL:
         required: false
       SUPABASE_SERVICE_ROLE_KEY:
@@ -218,6 +220,7 @@ jobs:
       E2E_PLATFORM_PASSWORD: ${{ secrets.E2E_PLATFORM_PASSWORD }}
       E2E_ONBOARDING_MAILBOX_URL: ${{ secrets.E2E_ONBOARDING_MAILBOX_URL }}
       E2E_ONBOARDING_MAILBOX_TOKEN: ${{ secrets.E2E_ONBOARDING_MAILBOX_TOKEN }}
+      VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
       SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
 
@@ -241,12 +244,14 @@ jobs:
         run: |
           set +x
           missing=0
-          for name in E2E_ONBOARDING_APPLICANT_EMAIL E2E_ONBOARDING_APPLICANT_PASSWORD E2E_PLATFORM_EMAIL E2E_PLATFORM_PASSWORD E2E_ONBOARDING_MAILBOX_URL E2E_ONBOARDING_MAILBOX_TOKEN SUPABASE_URL SUPABASE_SERVICE_ROLE_KEY; do
+          for name in E2E_ONBOARDING_APPLICANT_EMAIL E2E_ONBOARDING_APPLICANT_PASSWORD E2E_PLATFORM_EMAIL E2E_PLATFORM_PASSWORD E2E_ONBOARDING_MAILBOX_URL E2E_ONBOARDING_MAILBOX_TOKEN VERCEL_AUTOMATION_BYPASS_SECRET SUPABASE_URL SUPABASE_SERVICE_ROLE_KEY; do
             value="${!name}"
             if [[ -z "$value" ]]; then missing=1; else echo "::add-mask::$value"; fi
           done
           printf 'Commercial onboarding secrets present: %s\n' "$([[ "$missing" -eq 0 ]] && echo true || echo false)"
           [[ "$missing" -eq 0 ]]
+          [[ -n "$VERCEL_AUTOMATION_BYPASS_SECRET" ]]
+          echo "::add-mask::$VERCEL_AUTOMATION_BYPASS_SECRET"
 
       - name: Verify Product Maturity Registry completeness
         run: npm run verify:product-maturity
@@ -256,6 +261,15 @@ jobs:
 
       - name: Run deterministic sharded regression
         run: npm run test:ci:sharded
+
+      - name: Load reviewed mailbox acceptance harness
+        env:
+          ACCEPTANCE_HARNESS_SHA: ${{ github.sha }}
+        run: |
+          git fetch --no-tags origin "$ACCEPTANCE_HARNESS_SHA"
+          git checkout "$ACCEPTANCE_HARNESS_SHA" -- \
+            e2e/acceptance/commercial-onboarding.spec.ts \
+            e2e/acceptance/fixtures/commercialOnboardingInvitation.ts
 
       - name: Install isolated Chromium runtime
         run: npx playwright install --with-deps chromium
