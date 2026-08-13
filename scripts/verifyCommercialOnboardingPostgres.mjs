@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { controlledOnboardingRestError } from './controlledOnboardingRestError.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const REQUIRED_POSTGRES_EVIDENCE = [
@@ -58,7 +59,7 @@ function createTrustedClient() {
   const rest = async (path, init = {}) => {
     const response = await fetch(`${supabaseUrl}/rest/v1/${path}`, { ...init, headers: { ...headers, ...(init.headers || {}) } });
     const body = await response.json().catch(() => null);
-    if (!response.ok) throw new Error(`Controlled onboarding verification failed at ${path.split('?')[0]} (${response.status}).`);
+    if (!response.ok) throw controlledOnboardingRestError({ path, status: response.status, body, headers: response.headers });
     return body;
   };
   const authUser = async (id) => {
@@ -174,6 +175,17 @@ async function buildControlledSnapshot(source, client = createTrustedClient(), r
     records[table] = rows.map(({ id, row_version: rowVersion }) => ({ id, rowVersion }));
   }
 
+  const legacyStore = await rest('rpc/ftf_project_controlled_onboarding_legacy_store', {
+    method: 'POST', body: JSON.stringify({ p_organisation_id: source.organisationId }),
+  });
+  if (!Array.isArray(legacyStore) || legacyStore.length !== 1
+    || legacyStore[0].collection !== 'ftf_work_packs'
+    || legacyStore[0].recordId !== '__value__'
+    || !/^[0-9a-f]{64}$/.test(String(legacyStore[0].payloadDigest || ''))
+    || !legacyStore[0].updatedAt) {
+    throw new Error('Controlled onboarding legacy-store evidence did not resolve to the exact fixture-owned row.');
+  }
+
   if (requireCompleteOperationalEvidence) {
     const outboxEvidence = await rest('rpc/ftf_verify_controlled_commercial_onboarding_evidence', {
       method: 'POST', body: JSON.stringify({ p_evidence: { ...source, records } }),
@@ -201,7 +213,7 @@ async function buildControlledSnapshot(source, client = createTrustedClient(), r
       seatAllocation: seatAllocation.row_version, seatAssignment: seatAssignment.row_version,
       baseAssignment: baseAssignment.row_version,
     },
-    records,
+    records, legacyStore,
   };
 }
 
@@ -237,6 +249,8 @@ async function archiveControlledOnboarding(evidencePath) {
     const rows = await client.rest(`${table}?${scope}&select=*&limit=1`);
     if (rows.length) throw new Error(`Transactional cleanup left a controlled ${table} record.`);
   }
+  const legacyStore = await client.rest(`ftf_store?tenant_id=eq.${source.organisationId}&select=collection,record_id`);
+  if (legacyStore.length) throw new Error('Transactional cleanup left controlled legacy-store state.');
   const retainedBoundaries = await client.rest(`field_boundary_versions?organisation_id=eq.${source.organisationId}&select=id,archived_at`);
   if (retainedBoundaries.length !== snapshot.records.field_boundary_versions.length
     || retainedBoundaries.some((row) => row.archived_at)) {
