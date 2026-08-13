@@ -13,6 +13,22 @@ on:
         required: false
         type: boolean
         default: false
+      client_to_mission_only:
+        description: Run only the existing Client-to-Mission Production acceptance
+        required: false
+        type: boolean
+        default: false
+      target_environment:
+        description: Explicit protected target
+        required: true
+        type: choice
+        options: [production]
+        default: production
+      expected_release_sha:
+        description: Frozen Production application SHA
+        required: false
+        type: string
+        default: ''
   workflow_call:
     inputs:
       expected_release_sha:
@@ -41,6 +57,10 @@ on:
       SUPABASE_URL:
         required: false
       SUPABASE_SERVICE_ROLE_KEY:
+        required: false
+      SUPABASE_ACCESS_TOKEN:
+        required: false
+      SUPABASE_DB_PASSWORD:
         required: false
   repository_dispatch:
     types: [production-beta-deployed]
@@ -156,6 +176,7 @@ jobs:
   authentication-acceptance:
     name: Organisation authentication-only acceptance
     needs: deployment-identity
+    if: ${{ inputs.client_to_mission_only != true }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: production-beta-acceptance
@@ -208,6 +229,7 @@ jobs:
   commercial-onboarding-acceptance:
     name: Commercial onboarding acceptance
     needs: [deployment-identity, authentication-acceptance]
+    if: ${{ inputs.client_to_mission_only != true }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
     environment: production-beta-acceptance
@@ -293,9 +315,96 @@ jobs:
           rm -rf test-results/.auth
           rm -f test-results/commercial-onboarding-evidence.json
 
+  client-to-mission-preflight:
+    name: Client-to-Mission Production preflight
+    if: ${{ inputs.client_to_mission_only == true }}
+    needs: deployment-identity
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: production-beta-acceptance
+    env:
+      EXPECTED_RELEASE_SHA: 932f787d9ff9aa091a74a0543adc5d6e6be591f6
+      EXPECTED_SUPABASE_PROJECT_REF: fzkrvglzompkuiodqllr
+      SUPABASE_CLI_VERSION: 2.113.0
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+    steps:
+      - name: Check out reviewed acceptance source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Verify exact manual Production authority
+        shell: bash
+        env:
+          REQUESTED_TARGET: ${{ inputs.target_environment }}
+          REQUESTED_RELEASE_SHA: ${{ inputs.expected_release_sha }}
+          DEPLOYED_RELEASE_SHA: ${{ needs.deployment-identity.outputs.commit-sha }}
+        run: |
+          set +x
+          for name in SUPABASE_ACCESS_TOKEN SUPABASE_DB_PASSWORD SUPABASE_URL; do
+            value="${!name:-}"
+            [[ -n "$value" ]]
+            echo "::add-mask::$value"
+          done
+          set -euo pipefail
+          [[ "$REQUESTED_TARGET" == "production" ]]
+          [[ "$REQUESTED_RELEASE_SHA" == "$EXPECTED_RELEASE_SHA" ]]
+          [[ "$DEPLOYED_RELEASE_SHA" == "$EXPECTED_RELEASE_SHA" ]]
+          project_ref="$(node -e 'const url=new URL(process.argv[1]); const match=/^([a-z0-9]+)\.supabase\.co$/.exec(url.hostname); if(!match) process.exit(1); process.stdout.write(match[1]);' "$SUPABASE_URL")"
+          [[ "$project_ref" == "$EXPECTED_SUPABASE_PROJECT_REF" ]]
+
+      - name: Verify frozen Production deployment is healthy
+        shell: bash
+        run: |
+          set -euo pipefail
+          payload="$(curl --fail --silent --show-error https://spray-command-production-beta.vercel.app/api/v1/deployment)"
+          deployed="$(node -e 'const value=JSON.parse(process.argv[1])?.data?.commitSha||""; if(!/^[0-9a-f]{40}$/.test(value)) process.exit(1); process.stdout.write(value)' "$payload")"
+          [[ "$deployed" == "$EXPECTED_RELEASE_SHA" ]]
+
+      - name: Link exact Production database read-only preflight
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx --yes "supabase@$SUPABASE_CLI_VERSION" link --project-ref "$EXPECTED_SUPABASE_PROJECT_REF"
+
+      - name: Verify migration ledger and zero pending migrations
+        shell: bash
+        run: |
+          set -euo pipefail
+          ledger_output="$(npx --yes "supabase@$SUPABASE_CLI_VERSION" migration list --linked 2>&1)"
+          printf '%s\n' "$ledger_output"
+          migration_state="$(printf '%s\n' "$ledger_output" | node scripts/productionBetaReleaseEvidence.mjs ledger-state)"
+          node -e 'const value=JSON.parse(process.argv[1]); const expected="20260813130000"; if(value.remoteIds.filter(id=>id===expected).length!==1) process.exit(1); if(JSON.stringify(value.repositoryIds)!==JSON.stringify(value.remoteIds)) process.exit(1);' "$migration_state"
+          pending_output="$(npx --yes "supabase@$SUPABASE_CLI_VERSION" db push --linked --dry-run 2>&1)"
+          printf '%s\n' "$pending_output"
+          pending="$(printf '%s\n' "$pending_output" | node scripts/productionBetaReleaseEvidence.mjs plan)"
+          node -e 'const value=JSON.parse(process.argv[1]); if(!Array.isArray(value)||value.length!==0) process.exit(1);' "$pending"
+
+      - name: Verify archived fixture and genuine-data baseline
+        shell: bash
+        run: npx --yes "supabase@$SUPABASE_CLI_VERSION" db query --linked --file scripts/clientToMissionProductionPreflight.sql
+
   operational-acceptance:
     name: Client to Mission operational acceptance
-    needs: [deployment-identity, commercial-onboarding-acceptance]
+    needs: [deployment-identity, client-to-mission-preflight, commercial-onboarding-acceptance]
+    if: >-
+      ${{
+        always() &&
+        needs.deployment-identity.result == 'success' &&
+        (
+          (
+            inputs.client_to_mission_only == true &&
+            needs.client-to-mission-preflight.result == 'success' &&
+            needs.commercial-onboarding-acceptance.result == 'skipped'
+          ) ||
+          (
+            inputs.client_to_mission_only != true &&
+            needs.commercial-onboarding-acceptance.result == 'success'
+          )
+        )
+      }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: production-beta-acceptance
