@@ -176,7 +176,12 @@ async function buildControlledSnapshot(source, client = createTrustedClient(), r
   }
 
   const legacyStore = await rest('rpc/ftf_project_controlled_onboarding_legacy_store', {
-    method: 'POST', body: JSON.stringify({ p_organisation_id: source.organisationId }),
+    method: 'POST', body: JSON.stringify({ p_evidence: {
+      applicationId: source.applicationId,
+      applicationReference: source.applicationReference,
+      invitationId: source.invitationId,
+      organisationId: source.organisationId,
+    } }),
   });
   if (!Array.isArray(legacyStore) || legacyStore.length !== 1
     || legacyStore[0].collection !== 'ftf_work_packs'

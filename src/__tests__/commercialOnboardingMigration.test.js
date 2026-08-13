@@ -305,6 +305,7 @@ test('defines a forward-only exact legacy-store archive correction', () => {
   expect(legacyStoreArchiveSql).toContain('payloadDigest');
   expect(legacyStoreArchiveSql).toMatch(/sha256\(convert_to\((?:store\.)?payload::text,'UTF8'\)\)/);
   expect(legacyStoreArchiveSql).toContain('COMMERCIAL_ONBOARDING_ACCEPTANCE_LEGACY_STORE_MISMATCH');
+  expect(legacyStoreArchiveSql).toContain('COMMERCIAL_ONBOARDING_ACCEPTANCE_PROVENANCE_MISMATCH: legacyStore projection');
   expect(legacyStoreArchiveSql).toMatch(/revoke all on function public\.ftf_archive_controlled_commercial_onboarding\(jsonb\)[\s\S]*from public,anon,authenticated,service_role/);
   expect(legacyStoreArchiveSql).toMatch(/grant execute on function public\.ftf_archive_controlled_commercial_onboarding\(jsonb\)\s+to service_role/);
   expect(legacyStoreArchiveSql).not.toMatch(/delete\s+from\s+public\.ftf_store\s+where\s+tenant_id\s*=\s*v_organisation_id\s*;/i);
@@ -500,9 +501,9 @@ test('exposes only the controlled cleanup boundary to service_role', async () =>
       has_function_privilege('service_role','public.ftf_archive_controlled_commercial_onboarding(jsonb)','execute') as service_execute,
       has_function_privilege('authenticated','public.ftf_archive_controlled_commercial_onboarding(jsonb)','execute') as authenticated_execute,
       has_function_privilege('anon','public.ftf_archive_controlled_commercial_onboarding(jsonb)','execute') as anon_execute,
-      has_function_privilege('service_role','public.ftf_project_controlled_onboarding_legacy_store(uuid)','execute') as projection_execute,
-      has_function_privilege('authenticated','public.ftf_project_controlled_onboarding_legacy_store(uuid)','execute') as authenticated_projection_execute,
-      has_function_privilege('anon','public.ftf_project_controlled_onboarding_legacy_store(uuid)','execute') as anon_projection_execute,
+      has_function_privilege('service_role','public.ftf_project_controlled_onboarding_legacy_store(jsonb)','execute') as projection_execute,
+      has_function_privilege('authenticated','public.ftf_project_controlled_onboarding_legacy_store(jsonb)','execute') as authenticated_projection_execute,
+      has_function_privilege('anon','public.ftf_project_controlled_onboarding_legacy_store(jsonb)','execute') as anon_projection_execute,
       has_function_privilege('service_role','public.ftf_archive_controlled_commercial_onboarding_without_legacy_store(jsonb)','execute') as old_archive_execute,
       has_function_privilege('service_role','public.ftf_archive_controlled_acceptance_rows(text,uuid,uuid,jsonb,boolean,boolean)','execute') as helper_execute,
       has_function_privilege('service_role','public.ftf_remove_controlled_acceptance_equipment_links(uuid,jsonb)','execute') as link_helper_execute
@@ -1289,6 +1290,64 @@ test('uses stable JSONB payload digests independent of input key order', async (
   `);
   expect(digests.rows[0].first_digest).toBe(digests.rows[0].second_digest);
   expect(digests.rows[0].first_digest).toMatch(/^[0-9a-f]{64}$/);
+});
+
+test('projects only the exact controlled legacy-store row and rejects genuine, foreign, and unrelated scope', async () => {
+  const controlled = await createControlledAcceptedOnboarding(
+    'legacy-projection@example.com', 'LegacyProjection',
+    '96300000-0000-4000-8000-000000000001',
+  );
+  const controlledEvidence = await controlledCleanupEvidence(controlled);
+  const projected = await db.query(
+    'select public.ftf_project_controlled_onboarding_legacy_store($1::jsonb) as result',
+    [JSON.stringify(controlledEvidence)],
+  );
+  expect(projected.rows[0].result).toHaveLength(1);
+  expect(projected.rows[0].result[0]).toMatchObject({
+    collection: controlledEvidence.legacyStore[0].collection,
+    recordId: controlledEvidence.legacyStore[0].recordId,
+    payloadDigest: controlledEvidence.legacyStore[0].payloadDigest,
+  });
+  expect(Date.parse(projected.rows[0].result[0].updatedAt))
+    .toBe(Date.parse(controlledEvidence.legacyStore[0].updatedAt));
+
+  const foreign = await createControlledAcceptedOnboarding(
+    'legacy-foreign@example.com', 'LegacyForeign',
+    '96300000-0000-4000-8000-000000000002',
+  );
+  const foreignEvidence = await controlledCleanupEvidence(foreign);
+  const crossOrganisation = structuredClone(controlledEvidence);
+  crossOrganisation.organisationId = foreignEvidence.organisationId;
+  await expect(db.query(
+    'select public.ftf_project_controlled_onboarding_legacy_store($1::jsonb)',
+    [JSON.stringify(crossOrganisation)],
+  )).rejects.toThrow(/COMMERCIAL_ONBOARDING_ACCEPTANCE_PROVENANCE_MISMATCH/);
+
+  await db.query(
+    `insert into public.ftf_store(tenant_id,collection,record_id,payload)
+     values($1::uuid,'unrelated_collection','unrelated_record','{}'::jsonb)`,
+    [controlledEvidence.organisationId],
+  );
+  await expect(db.query(
+    'select public.ftf_project_controlled_onboarding_legacy_store($1::jsonb)',
+    [JSON.stringify(controlledEvidence)],
+  )).rejects.toThrow(/COMMERCIAL_ONBOARDING_ACCEPTANCE_LEGACY_STORE_MISMATCH/);
+
+  const genuineOrganisationId = '96300000-0000-4000-8000-000000000099';
+  await db.query(
+    `insert into public.organisations(id,organisation_id,name) values($1,$1,'Genuine Organisation')`,
+    [genuineOrganisationId],
+  );
+  await db.query(
+    `insert into public.ftf_store(tenant_id,collection,record_id,payload)
+       values($1,'ftf_work_packs','__value__','{}'::jsonb)`,
+    [genuineOrganisationId],
+  );
+  const genuineEvidence = { ...controlledEvidence, organisationId: genuineOrganisationId };
+  await expect(db.query(
+    'select public.ftf_project_controlled_onboarding_legacy_store($1::jsonb)',
+    [JSON.stringify(genuineEvidence)],
+  )).rejects.toThrow(/COMMERCIAL_ONBOARDING_ACCEPTANCE_PROVENANCE_MISMATCH/);
 });
 
 test('rolls the entire cleanup back when any optimistic row version is wrong', async () => {
