@@ -35,6 +35,32 @@ const playwrightConfiguration = () => {
 };
 
 describe('Production Beta operational acceptance execution profile', () => {
+  test('provides one isolated protected-runner migration-ledger diagnostic without operational execution', () => {
+    const definition = workflowDefinition();
+    const inputs = definition.on.workflow_dispatch.inputs;
+    const diagnostic = definition.jobs['supabase-ledger-diagnostic'];
+    const source = JSON.stringify(diagnostic);
+
+    expect(inputs.supabase_ledger_diagnostic_only).toEqual({
+      description: 'Diagnose only the protected-runner Supabase migration ledger path',
+      required: false,
+      type: 'boolean',
+      default: false,
+    });
+    expect(diagnostic.environment).toBe('production-beta-acceptance');
+    expect(diagnostic.if).toContain('inputs.supabase_ledger_diagnostic_only == true');
+    expect(diagnostic.env).toEqual(expect.objectContaining({
+      EXPECTED_SUPABASE_PROJECT_REF: 'fzkrvglzompkuiodqllr',
+      SUPABASE_CLI_VERSION: '2.113.0',
+      SUPABASE_ACCESS_TOKEN: '${{ secrets.SUPABASE_ACCESS_TOKEN }}',
+      SUPABASE_DB_PASSWORD: '${{ secrets.SUPABASE_DB_PASSWORD }}',
+    }));
+    expect(source).toContain('migration list --linked');
+    expect(source).toContain('exit_code=$?');
+    expect(source).toContain('redact-diagnostic');
+    expect(source).not.toMatch(/playwright|commercial-onboarding|archive-controlled|ftf_archive|db push|migration up|vercel deploy/);
+  });
+
   test('dispatches Client-to-Mission alone only for the frozen healthy Production release', () => {
     const definition = workflowDefinition();
     const inputs = definition.on.workflow_dispatch.inputs;
