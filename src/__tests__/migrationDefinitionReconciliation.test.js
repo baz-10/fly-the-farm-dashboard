@@ -50,6 +50,18 @@ describe('migration definition reconciliation', () => {
     expect(compareEvidence(evidence(), live).result).toBe('C');
   });
 
+  test('reports exact safe discrepancy paths without emitting function bodies', () => {
+    const live = clone(evidence());
+    live.functions[0].securityDefiner = false;
+    live.functions[0].definition = 'SECRET BODY';
+    const result = compareEvidence(evidence(), live);
+    expect(result.discrepancies).toEqual(expect.arrayContaining([
+      'functions[public.example(jsonb)].definitionSha256',
+      'functions[public.example(jsonb)].securityDefiner',
+    ]));
+    expect(JSON.stringify(result)).not.toContain('SECRET BODY');
+  });
+
   test('classifies identical evidence as independently proven exact', () => {
     const result = compareEvidence(evidence(), clone(evidence()));
     expect(result.result).toBe('B');

@@ -46,6 +46,36 @@ const complete = (input) => Array.isArray(input?.functions)
 
 const digest = (value) => crypto.createHash('sha256').update(value).digest('hex');
 
+const safeView = (input) => ({
+  functions: (input.functions || []).map((entry) => ({
+    ...entry,
+    definitionSha256: digest(normaliseSql(entry.definition)),
+    definition: undefined,
+  })),
+  tablePrivileges: input.tablePrivileges || [],
+});
+
+const discrepancyPaths = (expected, live) => {
+  const differences = [];
+  const walk = (left, right, prefix) => {
+    if (JSON.stringify(left) === JSON.stringify(right)) return;
+    if (!left || !right || typeof left !== 'object' || typeof right !== 'object' || Array.isArray(left) || Array.isArray(right)) {
+      differences.push(prefix);
+      return;
+    }
+    [...new Set([...Object.keys(left), ...Object.keys(right)])].sort()
+      .forEach((key) => walk(left[key], right[key], prefix ? `${prefix}.${key}` : key));
+  };
+  const expectedSafe = safeView(expected);
+  const liveSafe = safeView(live);
+  const byIdentity = (entries) => Object.fromEntries(entries.map((entry) => [entry.identity, entry]));
+  walk(byIdentity(expectedSafe.functions), byIdentity(liveSafe.functions), 'functions');
+  walk(byIdentity(expectedSafe.tablePrivileges), byIdentity(liveSafe.tablePrivileges), 'tablePrivileges');
+  return differences.map((value) => value
+    .replace(/^functions\.([^.]+(?:\.[^(]+)?\([^)]*\))\./, 'functions[$1].')
+    .replace(/^tablePrivileges\.([^.]+\.[^.]+)\./, 'tablePrivileges[$1].'));
+};
+
 const compareEvidence = (expected, live) => {
   if (!complete(expected) || !complete(live)) return { result: 'D', discrepancies: ['required evidence missing'] };
   const expectedCanonical = canonicaliseEvidence(expected);
@@ -56,7 +86,7 @@ const compareEvidence = (expected, live) => {
     result: expectedCanonical === liveCanonical ? 'B' : 'C',
     expectedSha256,
     liveSha256,
-    discrepancies: expectedCanonical === liveCanonical ? [] : ['canonical definition or authority mismatch'],
+    discrepancies: expectedCanonical === liveCanonical ? [] : discrepancyPaths(expected, live),
   };
 };
 
