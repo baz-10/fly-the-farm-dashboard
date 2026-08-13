@@ -21,6 +21,7 @@ const acceptanceCleanupMigrationName = '20260809140000_commercial_onboarding_acc
 const acceptanceEvidenceMigrationName = '20260809150000_controlled_onboarding_evidence_verification.sql';
 const legacyStoreArchiveMigrationName = '20260813130000_controlled_onboarding_archive_legacy_store_scope.sql';
 const legacyStoreAuthorityReconciliationMigrationName = '20260813140000_controlled_onboarding_authority_reconciliation.sql';
+const legacyStorePrivilegeReconciliationMigrationName = '20260813150000_controlled_onboarding_ftf_store_privilege_reconciliation.sql';
 const forwardMigrationPath = path.resolve(__dirname, `../../supabase/migrations/${forwardMigrationName}`);
 const forwardSql = fs.existsSync(forwardMigrationPath) ? fs.readFileSync(forwardMigrationPath, 'utf8') : '';
 const identityAcceptanceMigrationPath = path.resolve(__dirname, `../../supabase/migrations/${identityAcceptanceMigrationName}`);
@@ -33,6 +34,8 @@ const legacyStoreArchiveMigrationPath = path.resolve(__dirname, `../../supabase/
 const legacyStoreArchiveSql = fs.existsSync(legacyStoreArchiveMigrationPath) ? fs.readFileSync(legacyStoreArchiveMigrationPath, 'utf8') : '';
 const legacyStoreAuthorityReconciliationPath = path.resolve(__dirname, `../../supabase/migrations/${legacyStoreAuthorityReconciliationMigrationName}`);
 const legacyStoreAuthorityReconciliationSql = fs.existsSync(legacyStoreAuthorityReconciliationPath) ? fs.readFileSync(legacyStoreAuthorityReconciliationPath, 'utf8') : '';
+const legacyStorePrivilegeReconciliationPath = path.resolve(__dirname, `../../supabase/migrations/${legacyStorePrivilegeReconciliationMigrationName}`);
+const legacyStorePrivilegeReconciliationSql = fs.existsSync(legacyStorePrivilegeReconciliationPath) ? fs.readFileSync(legacyStorePrivilegeReconciliationPath, 'utf8') : '';
 
 const runPgliteInThisProcess = process.env.COMMERCIAL_ONBOARDING_PGLITE_CHILD === '1';
 const pureNodeTests = [];
@@ -54,6 +57,8 @@ const platformUserId = '90000000-0000-4000-8000-000000000002';
 const legacyPendingInvitationId = '90000000-0000-4000-8000-000000000011';
 const legacySentInvitationId = '90000000-0000-4000-8000-000000000012';
 let db;
+let legacyStoreRowsBeforePrivilegeReconciliation;
+let legacyStoreRowsAfterPrivilegeReconciliation;
 
 const validApplication = (email, suffix) => ({
   businessName: `Onboarding Air ${suffix}`,
@@ -327,6 +332,16 @@ test('reconciles legacy-store cleanup authority without silent identifier trunca
   ]) expect(Buffer.byteLength(functionName, 'utf8')).toBeLessThanOrEqual(63);
 });
 
+test('removes only the residual ftf_store MAINTAIN privilege from service_role', () => {
+  expect(legacyStorePrivilegeReconciliationSql).toMatch(
+    /revoke\s+maintain\s+on\s+table\s+public\.ftf_store\s+from\s+service_role/i,
+  );
+  expect(legacyStorePrivilegeReconciliationSql).not.toMatch(/revoke\s+all/i);
+  expect(legacyStorePrivilegeReconciliationSql).not.toMatch(/(insert\s+into|update\s+public\.|delete\s+from|truncate\s+table)/i);
+  expect(legacyStorePrivilegeReconciliationSql).not.toMatch(/create\s+(or\s+replace\s+)?function/i);
+  expect(legacyStorePrivilegeReconciliationSql).not.toMatch(/grant\s+/i);
+});
+
 if (runPgliteInThisProcess) test('atomically replaces an unexpired delivered invitation when resend is requested', async () => {
   const application = await submitApplication('resend-now@example.com', 'ResendNow');
   const review = await reviewApplication(application.application_id, application.row_version, 'UNDER_REVIEW');
@@ -407,6 +422,7 @@ beforeAll(async () => {
     acceptanceEvidenceMigrationName,
     legacyStoreArchiveMigrationName,
     legacyStoreAuthorityReconciliationMigrationName,
+    legacyStorePrivilegeReconciliationMigrationName,
   ];
   for (const migrationName of migrationNames) {
     if (migrationName === acceptanceCleanupMigrationName) {
@@ -465,7 +481,20 @@ beforeAll(async () => {
         alter table public.missions add column if not exists title text not null default ''
       `);
     }
+    if (migrationName === legacyStorePrivilegeReconciliationMigrationName) {
+      await db.exec('grant maintain on table public.ftf_store to service_role');
+      legacyStoreRowsBeforePrivilegeReconciliation = await db.query(`
+        select tenant_id,collection,record_id,payload,created_at,updated_at
+        from public.ftf_store order by tenant_id,collection,record_id
+      `);
+    }
     await db.exec(fs.readFileSync(path.join(migrationDirectory, migrationName), 'utf8'));
+    if (migrationName === legacyStorePrivilegeReconciliationMigrationName) {
+      legacyStoreRowsAfterPrivilegeReconciliation = await db.query(`
+        select tenant_id,collection,record_id,payload,created_at,updated_at
+        from public.ftf_store order by tenant_id,collection,record_id
+      `);
+    }
   }
   // This focused harness omits the larger live-chain migration that installs
   // the production append-only boundary trigger. Install the same guard here
@@ -547,12 +576,44 @@ test('reconciles ftf_store service-role privileges to CRUD only', async () => {
       has_table_privilege('service_role','public.ftf_store','delete') as can_delete,
       has_table_privilege('service_role','public.ftf_store','truncate') as can_truncate,
       has_table_privilege('service_role','public.ftf_store','references') as can_reference,
-      has_table_privilege('service_role','public.ftf_store','trigger') as can_trigger
+      has_table_privilege('service_role','public.ftf_store','trigger') as can_trigger,
+      has_table_privilege('service_role','public.ftf_store','maintain') as can_maintain
   `);
   expect(privileges.rows[0]).toEqual({
     can_select: true, can_insert: true, can_update: true, can_delete: true,
-    can_truncate: false, can_reference: false, can_trigger: false,
+    can_truncate: false, can_reference: false, can_trigger: false, can_maintain: false,
   });
+});
+
+test('preserves ftf_store ownership and denies every non-runtime role', async () => {
+  const result = await db.query(`
+    select
+      pg_get_userbyid(c.relowner) as owner,
+      has_table_privilege('anon',c.oid,'select,insert,update,delete,truncate,references,trigger,maintain') as anon_any,
+      has_table_privilege('authenticated',c.oid,'select,insert,update,delete,truncate,references,trigger,maintain') as authenticated_any,
+      has_table_privilege('public',c.oid,'select,insert,update,delete,truncate,references,trigger,maintain') as public_any
+    from pg_class c
+    where c.oid='public.ftf_store'::regclass
+  `);
+  expect(result.rows[0]).toEqual({
+    owner: 'postgres', anon_any: false, authenticated_any: false, public_any: false,
+  });
+});
+
+test('changes no ftf_store row while upgrading from migration 140000', () => {
+  expect(legacyStoreRowsAfterPrivilegeReconciliation.rows).toEqual(
+    legacyStoreRowsBeforePrivilegeReconciliation.rows,
+  );
+});
+
+test('is safe under a repeated SQL rehearsal without broadening authority', async () => {
+  await db.exec(legacyStorePrivilegeReconciliationSql);
+  const result = await db.query(`
+    select
+      has_table_privilege('service_role','public.ftf_store','select,insert,update,delete') as crud,
+      has_table_privilege('service_role','public.ftf_store','truncate,references,trigger,maintain') as elevated
+  `);
+  expect(result.rows[0]).toEqual({ crud: true, elevated: false });
 });
 
 test('adds only the four repository-controlled onboarding permissions', async () => {

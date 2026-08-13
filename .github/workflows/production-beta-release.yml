@@ -878,6 +878,28 @@ jobs:
             --set ON_ERROR_STOP=1 \
             --tuples-only \
             --no-align \
+            --file scripts/productionPrivilegeProvenance.sql
+          psql \
+            --host aws-0-ap-southeast-2.pooler.supabase.com \
+            --port 5432 \
+            --username postgres.fzkrvglzompkuiodqllr \
+            --dbname postgres \
+            --no-password \
+            --no-psqlrc \
+            --set ON_ERROR_STOP=1 \
+            --tuples-only \
+            --no-align \
+            --file scripts/productionStateIntegrityReconciliation.sql
+          psql \
+            --host aws-0-ap-southeast-2.pooler.supabase.com \
+            --port 5432 \
+            --username postgres.fzkrvglzompkuiodqllr \
+            --dbname postgres \
+            --no-password \
+            --no-psqlrc \
+            --set ON_ERROR_STOP=1 \
+            --tuples-only \
+            --no-align \
             --file scripts/migrationDefinitionReconciliation.sql > "$RUNNER_TEMP/live-definition.json"
           node scripts/migrationDefinitionReconciliation.cjs compare "$GITHUB_WORKSPACE" "$RUNNER_TEMP/live-definition.json"
 
