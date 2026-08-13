@@ -82,6 +82,7 @@ describe('Production Beta operational acceptance execution profile', () => {
     expect(preflightSource).toContain("topic='commercial_onboarding.acceptance_archived'");
     expect(preflightSource).toContain("tenant_id='961a4354-40f5-479d-a577-74839596ad14'::uuid");
     expect(preflightSource).toContain("digest mismatch: clients");
+    expect(preflightSource).not.toContain("name like 'SC ACCEPTANCE — %'");
   });
 
   test('manual Client-to-Mission mode reuses the existing gate and cannot onboard, archive, migrate, or deploy', () => {

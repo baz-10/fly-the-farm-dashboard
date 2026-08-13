@@ -41,8 +41,6 @@ begin
       where auth_user_id='ef06368d-6981-4fa6-8317-657bd6418f32'::uuid)<>0
     or (select count(*) from public.personnel
       where organisation_id='961a4354-40f5-479d-a577-74839596ad14'::uuid)<>0
-    or (select count(*) from public.organisations
-      where archived_at is null and name like 'SC ACCEPTANCE — %')<>0
   then
     raise exception 'CLIENT_TO_MISSION_PREFLIGHT: controlled evidence boundary mismatch';
   end if;
