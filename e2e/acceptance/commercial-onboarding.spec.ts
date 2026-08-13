@@ -1,11 +1,19 @@
 import { expect, Page, test } from '@playwright/test';
 import path from 'node:path';
-import { acceptanceRunLabel, findAcceptanceRecord } from './fixtures/acceptanceRecords';
+import { acceptanceRunLabel } from './fixtures/acceptanceRecords';
 import {
   persistProvisionedOnboardingEvidence,
   persistProvisioningResponseBeforeAssertions,
 } from './fixtures/commercialOnboardingEvidence';
-import { classifyCommercialOnboardingInvitationLink } from './fixtures/commercialOnboardingInvitation';
+import {
+  classifyCommercialOnboardingInvitationLink,
+  classifyMailboxFailure,
+  commercialOnboardingMailboxHeaders,
+  validateCreatedClientResponse,
+  validateCreatedOperationalRecordResponse,
+  validatePersistedClientResponse,
+  validatePersistedOperationalRecordResponse,
+} from './fixtures/commercialOnboardingInvitation';
 import { openMissionCreationWorkspace } from './fixtures/missionCreationWorkspace';
 
 type SecretSource = Record<string, string | undefined>;
@@ -17,6 +25,7 @@ type OnboardingEnvironment = {
   platformPassword: string;
   mailboxUrl: string;
   mailboxToken: string;
+  automationBypassSecret: string;
   supabaseOrigin: string;
 };
 
@@ -41,6 +50,7 @@ export function commercialOnboardingEnvironment(source: SecretSource = process.e
     platformPassword: required(source, 'E2E_PLATFORM_PASSWORD'),
     mailboxUrl: mailboxUrl.toString(),
     mailboxToken: required(source, 'E2E_ONBOARDING_MAILBOX_TOKEN'),
+    automationBypassSecret: required(source, 'VERCEL_AUTOMATION_BYPASS_SECRET'),
     supabaseOrigin: supabaseUrl.origin,
   };
 }
@@ -82,11 +92,15 @@ async function waitForInvitationLink(page: Page, environment: OnboardingEnvironm
     mailbox.searchParams.set('recipient', applicantEmail);
     mailbox.searchParams.set('after', after);
     const response = await page.request.get(mailbox.toString(), {
-      headers: { Authorization: `Bearer ${environment.mailboxToken}`, Accept: 'application/json' },
+      headers: commercialOnboardingMailboxHeaders({
+        mailboxToken: environment.mailboxToken,
+        automationBypassSecret: environment.automationBypassSecret,
+      }),
       timeout: 15_000,
     });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok()) throw new Error(classifyMailboxFailure(response.status(), body));
     if (response.ok()) {
-      const body = await response.json().catch(() => ({}));
       const links = Array.isArray(body?.messages)
         ? body.messages.flatMap((message: any) => Array.isArray(message?.links) ? message.links : [])
         : [];
@@ -319,22 +333,57 @@ test('Application → review → approval → invitation → first Draft Mission
     await page.getByRole('tab', { name: /Equipment Kits/ }).click();
     await expect(page.getByText(label).first()).toBeVisible();
     await page.goto('/getting-started');
-    await expect(page.getByRole('region', { name: 'Personnel readiness' })).toBeVisible();
-    await expect(page.getByText(/Personnel.*not yet|Add Personnel/i).first()).toBeVisible();
+    const personnelReadiness = page.getByRole('region', { name: 'Personnel readiness' });
+    await expect(personnelReadiness).toBeVisible();
+    await expect(personnelReadiness.getByRole('button', { name: 'Add Personnel' })).toBeVisible();
 
     await openMissionCreationWorkspace(page);
     await page.getByRole('button', { name: 'Add new Client' }).click();
     await page.getByRole('textbox', { name: 'Client or business name' }).fill(label);
+    const clientCreateResponsePromise = page.waitForResponse((response) => {
+      const url = new URL(response.url());
+      return url.origin === environment.baseUrl && url.pathname === '/api/v1/clients'
+        && response.request().method() === 'POST';
+    });
     await page.getByRole('button', { name: 'Save Client and continue' }).click();
-    records.client = await findAcceptanceRecord(page.request, 'clients', label);
+    const clientCreateResponse = await clientCreateResponsePromise;
+    const createdClient = validateCreatedClientResponse(
+      clientCreateResponse.status(),
+      await clientCreateResponse.json().catch(() => ({})),
+      label,
+    );
+    const persistedClientResponse = await page.request.get(
+      `/api/v1/clients?id=${encodeURIComponent(createdClient.id)}`,
+    );
+    records.client = validatePersistedClientResponse(
+      persistedClientResponse.status(),
+      await persistedClientResponse.json().catch(() => ({})),
+      createdClient.id,
+      label,
+    );
     await page.getByRole('button', { name: 'Add new Property' }).click();
     await page.getByRole('textbox', { name: 'Property name' }).fill(label);
     await page.getByRole('textbox', { name: 'Property location' }).fill('1 Queen Street, Brisbane QLD 4000');
     await expect(page.getByRole('option')).not.toHaveCount(0);
     await page.getByRole('option').first().click();
     await page.getByRole('button', { name: 'Confirm location' }).click();
+    const propertyCreateResponsePromise = page.waitForResponse((response) => {
+      const url = new URL(response.url());
+      return url.origin === environment.baseUrl && url.pathname === '/api/v1/properties'
+        && response.request().method() === 'POST';
+    });
     await page.getByRole('button', { name: 'Save Property and continue' }).click();
-    records.property = await findAcceptanceRecord(page.request, 'properties', label);
+    const propertyCreateResponse = await propertyCreateResponsePromise;
+    const createdProperty = validateCreatedOperationalRecordResponse(
+      'properties', propertyCreateResponse.status(), await propertyCreateResponse.json().catch(() => ({})), 'name', label,
+    );
+    const persistedPropertyResponse = await page.request.get(
+      `/api/v1/properties?id=${encodeURIComponent(createdProperty.id)}`,
+    );
+    records.property = validatePersistedOperationalRecordResponse(
+      'properties', persistedPropertyResponse.status(), await persistedPropertyResponse.json().catch(() => ({})),
+      createdProperty.id, 'name', label,
+    );
     await page.getByRole('button', { name: 'Create new Field' }).click();
     await page.getByRole('textbox', { name: 'Field name' }).fill(label);
     await page.getByRole('button', { name: 'Upload' }).click();
@@ -342,16 +391,61 @@ test('Application → review → approval → invitation → first Draft Mission
       path.join(__dirname, 'fixtures/acceptance-boundary.kml'),
     );
     await expect(page.getByText(/Calculated area: (?!0\.00)/)).toBeVisible();
+    const fieldCreateResponsePromise = page.waitForResponse((response) => {
+      const url = new URL(response.url());
+      return url.origin === environment.baseUrl && url.pathname === '/api/v1/fields'
+        && response.request().method() === 'POST';
+    });
     await page.getByRole('button', { name: 'Save Field and boundary' }).click();
-    records.field = await findAcceptanceRecord(page.request, 'fields', label);
+    const fieldCreateResponse = await fieldCreateResponsePromise;
+    const createdField = validateCreatedOperationalRecordResponse(
+      'fields', fieldCreateResponse.status(), await fieldCreateResponse.json().catch(() => ({})), 'name', label,
+    );
+    const persistedFieldResponse = await page.request.get(
+      `/api/v1/fields?id=${encodeURIComponent(createdField.id)}`,
+    );
+    records.field = validatePersistedOperationalRecordResponse(
+      'fields', persistedFieldResponse.status(), await persistedFieldResponse.json().catch(() => ({})),
+      createdField.id, 'name', label,
+    );
     await page.getByRole('button', { name: 'Create new Job' }).click();
     await page.getByRole('textbox', { name: 'Job scope' }).fill(label);
+    const jobCreateResponsePromise = page.waitForResponse((response) => {
+      const url = new URL(response.url());
+      return url.origin === environment.baseUrl && url.pathname === '/api/v1/jobs'
+        && response.request().method() === 'POST';
+    });
     await page.getByRole('button', { name: 'Save Job and continue' }).click();
-    records.job = await findAcceptanceRecord(page.request, 'jobs', label);
+    const jobCreateResponse = await jobCreateResponsePromise;
+    const createdJob = validateCreatedOperationalRecordResponse(
+      'jobs', jobCreateResponse.status(), await jobCreateResponse.json().catch(() => ({})), 'scope', label,
+    );
+    const persistedJobResponse = await page.request.get(
+      `/api/v1/jobs?id=${encodeURIComponent(createdJob.id)}`,
+    );
+    records.job = validatePersistedOperationalRecordResponse(
+      'jobs', persistedJobResponse.status(), await persistedJobResponse.json().catch(() => ({})),
+      createdJob.id, 'scope', label,
+    );
     await page.getByRole('textbox', { name: 'Mission title' }).fill(label);
+    const missionCreateResponsePromise = page.waitForResponse((response) => {
+      const url = new URL(response.url());
+      return url.origin === environment.baseUrl && url.pathname === '/api/v1/missions'
+        && response.request().method() === 'POST';
+    });
     await page.getByRole('button', { name: 'Create Draft Mission' }).click();
+    const missionCreateResponse = await missionCreateResponsePromise;
+    const createdMission = validateCreatedOperationalRecordResponse(
+      'missions', missionCreateResponse.status(), await missionCreateResponse.json().catch(() => ({})), 'title', label,
+    );
+    const persistedMissionResponse = await page.request.get(
+      `/api/v1/missions?id=${encodeURIComponent(createdMission.id)}`,
+    );
+    records.mission = validatePersistedOperationalRecordResponse(
+      'missions', persistedMissionResponse.status(), await persistedMissionResponse.json().catch(() => ({})),
+      createdMission.id, 'title', label,
+    );
     await expect(page).toHaveURL(/\/missions\/[0-9a-f-]+\?guided=1$/, { timeout: 45_000 });
-    records.mission = await findAcceptanceRecord(page.request, 'missions', label);
 
     await page.goto('/getting-started');
     await expect(page.getByRole('heading', { name: 'Getting Started' })).toBeVisible();

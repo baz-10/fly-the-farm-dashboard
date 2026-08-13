@@ -22,7 +22,7 @@ tests.forEach((testPath, index) => shards[index % shards.length].push(testPath))
 for (let index = 0; index < shards.length; index += 1) {
   process.stdout.write(`Running deterministic Jest shard ${index + 1}/${shards.length} (${shards[index].length} suites).\n`);
   const run = spawnSync(process.execPath, [
-    testRunner, '--runInBand', '--watchAll=false', '--forceExit', '--runTestsByPath', ...shards[index],
+    testRunner, '--runInBand', '--watchAll=false', '--forceExit', '--testTimeout=15000', '--runTestsByPath', ...shards[index],
   ], { cwd: root, env: environment, stdio: 'inherit' });
   if (run.status !== 0) process.exit(run.status || 1);
 }

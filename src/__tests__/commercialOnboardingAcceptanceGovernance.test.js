@@ -56,12 +56,69 @@ describe('commercial onboarding acceptance governance', () => {
     expect(source).not.toMatch(/localStorage\.setItem|sessionStorage\.setItem/);
   });
 
+  test('scopes Personnel readiness assertions to the visible semantic region', () => {
+    const source = read('e2e/acceptance/commercial-onboarding.spec.ts');
+
+    expect(source).toContain("const personnelReadiness = page.getByRole('region', { name: 'Personnel readiness' })");
+    expect(source).toContain("personnelReadiness.getByRole('button', { name: 'Add Personnel' })");
+    expect(source).not.toContain("page.getByText(/Personnel.*not yet|Add Personnel/i).first()");
+  });
+
+  test('proves Client command completion before exact-ID persistence verification', () => {
+    const source = read('e2e/acceptance/commercial-onboarding.spec.ts');
+    const wait = source.indexOf('const clientCreateResponsePromise = page.waitForResponse');
+    const click = source.indexOf("page.getByRole('button', { name: 'Save Client and continue' }).click()");
+    const awaitResponse = source.indexOf('const clientCreateResponse = await clientCreateResponsePromise');
+    const exactRead = source.indexOf('`/api/v1/clients?id=${encodeURIComponent(createdClient.id)}`');
+
+    expect(wait).toBeGreaterThan(-1);
+    expect(wait).toBeLessThan(click);
+    expect(click).toBeLessThan(awaitResponse);
+    expect(awaitResponse).toBeLessThan(exactRead);
+    expect(source).toContain("response.request().method() === 'POST'");
+    expect(source).toContain("url.origin === environment.baseUrl && url.pathname === '/api/v1/clients'");
+    expect(source).not.toContain("findAcceptanceRecord(page.request, 'clients', label)");
+  });
+
+  test('uses authoritative create completion and exact-ID reads for every downstream record', () => {
+    const source = read('e2e/acceptance/commercial-onboarding.spec.ts');
+    const expectations = [
+      ['property', 'properties', 'Save Property and continue'],
+      ['field', 'fields', 'Save Field and boundary'],
+      ['job', 'jobs', 'Save Job and continue'],
+      ['mission', 'missions', 'Create Draft Mission'],
+    ];
+
+    for (const [variable, resource, action] of expectations) {
+      const wait = source.indexOf(`const ${variable}CreateResponsePromise = page.waitForResponse`);
+      const click = source.indexOf(`page.getByRole('button', { name: '${action}' }).click()`);
+      const awaitResponse = source.indexOf(`const ${variable}CreateResponse = await ${variable}CreateResponsePromise`);
+      const exactRead = source.indexOf(`\`/api/v1/${resource}?id=\${encodeURIComponent(created${variable[0].toUpperCase()}${variable.slice(1)}.id)}\``);
+      expect(wait).toBeGreaterThan(-1);
+      expect(wait).toBeLessThan(click);
+      expect(click).toBeLessThan(awaitResponse);
+      expect(awaitResponse).toBeLessThan(exactRead);
+      expect(source).not.toContain(`findAcceptanceRecord(page.request, '${resource}', label)`);
+    }
+  });
+
+  test('verifies outbox evidence only through the controlled service-role RPC', () => {
+    const verifier = read('scripts/verifyCommercialOnboardingPostgres.mjs');
+    expect(verifier).toContain("rest('rpc/ftf_verify_controlled_commercial_onboarding_evidence'");
+    expect(verifier).toContain('p_evidence: { ...source, records }');
+    expect(verifier).toContain('p_evidence: snapshot');
+    expect(verifier).not.toContain('p_evidence: source');
+    expect(verifier).not.toContain('rest(`transactional_outbox?');
+    expect(verifier).not.toContain("rest('transactional_outbox?");
+  });
+
   test('keeps authentication artefacts disabled and secrets environment-managed', () => {
     const workflow = read('.github/workflows/production-beta-operational-acceptance.yml');
     for (const secret of [
       'E2E_ONBOARDING_APPLICANT_EMAIL', 'E2E_ONBOARDING_APPLICANT_PASSWORD',
       'E2E_PLATFORM_EMAIL', 'E2E_PLATFORM_PASSWORD',
       'E2E_ONBOARDING_MAILBOX_URL', 'E2E_ONBOARDING_MAILBOX_TOKEN',
+      'VERCEL_AUTOMATION_BYPASS_SECRET',
     ]) expect(workflow).toContain(`secrets.${secret}`);
     expect(workflow).toContain('commercial-onboarding.spec.ts');
     expect(workflow).toContain('verify:commercial-onboarding');
@@ -71,6 +128,24 @@ describe('commercial onboarding acceptance governance', () => {
     expect(playwright).toContain("video: 'off'");
     expect(playwright).toMatch(/name: 'commercial-onboarding'[\s\S]*retries: 0/);
     expect(workflow).not.toContain('name: commercial-onboarding-acceptance-failure');
+  });
+
+  test('propagates and masks the Vercel protection bypass only inside acceptance', () => {
+    const definition = workflow();
+    const contract = definition.on.workflow_call.secrets;
+    const onboarding = definition.jobs['commercial-onboarding-acceptance'];
+    const guard = step(onboarding, 'Mask and validate onboarding secrets');
+
+    expect(contract.VERCEL_AUTOMATION_BYPASS_SECRET).toEqual({ required: false });
+    expect(onboarding.environment).toBe('production-beta-acceptance');
+    expect(onboarding.env.VERCEL_AUTOMATION_BYPASS_SECRET)
+      .toBe('${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}');
+    expect(guard.run).toContain('::add-mask::$VERCEL_AUTOMATION_BYPASS_SECRET');
+    expect(guard.run).toContain('[[ -n "$VERCEL_AUTOMATION_BYPASS_SECRET" ]]');
+    expect(JSON.stringify(definition.jobs['deployment-identity']))
+      .not.toContain('VERCEL_AUTOMATION_BYPASS_SECRET');
+    expect(read('e2e/acceptance/commercial-onboarding.spec.ts'))
+      .not.toMatch(/console\.(?:log|error).*automationBypassSecret/);
   });
 
   test('orders exact-deployment gates and verifies controlled production evidence before transactional cleanup', () => {
@@ -92,6 +167,15 @@ describe('commercial onboarding acceptance governance', () => {
     }
 
     const onboardingSteps = onboarding.steps.map(({ name }) => name);
+    const harness = step(onboarding, 'Load reviewed mailbox acceptance harness');
+    expect(harness.env.ACCEPTANCE_HARNESS_SHA).toBe('${{ github.sha }}');
+    expect(harness.run).toContain('e2e/acceptance/commercial-onboarding.spec.ts');
+    expect(harness.run).toContain('e2e/acceptance/fixtures/commercialOnboardingInvitation.ts');
+    expect(harness.run).not.toMatch(/\bsrc\/|\bserver\/|\bapi\//);
+    expect(onboardingSteps.indexOf('Run deterministic sharded regression'))
+      .toBeLessThan(onboardingSteps.indexOf('Load reviewed mailbox acceptance harness'));
+    expect(onboardingSteps.indexOf('Load reviewed mailbox acceptance harness'))
+      .toBeLessThan(onboardingSteps.indexOf('Run unattended commercial onboarding'));
     expect(onboardingSteps.indexOf('Run unattended commercial onboarding'))
       .toBeLessThan(onboardingSteps.indexOf('Verify exact controlled onboarding evidence'));
     expect(onboardingSteps.indexOf('Verify exact controlled onboarding evidence'))

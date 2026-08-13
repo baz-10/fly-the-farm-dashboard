@@ -2,12 +2,46 @@ name: Production Beta Operational Acceptance
 
 on:
   workflow_dispatch:
+    inputs:
+      mailbox_preflight_only:
+        description: Run only the protected Preview mailbox runtime check
+        required: false
+        type: boolean
+        default: false
+      invitation_diagnostic_only:
+        description: Trace the failed Production Beta invitation without mutation
+        required: false
+        type: boolean
+        default: false
   workflow_call:
     inputs:
       expected_release_sha:
         description: Immutable release SHA that the deployed application must report
         required: true
         type: string
+    secrets:
+      E2E_ONBOARDING_APPLICANT_EMAIL:
+        required: false
+      E2E_ONBOARDING_APPLICANT_PASSWORD:
+        required: false
+      E2E_ORGANISATION_EMAIL:
+        required: false
+      E2E_ORGANISATION_PASSWORD:
+        required: false
+      E2E_PLATFORM_EMAIL:
+        required: false
+      E2E_PLATFORM_PASSWORD:
+        required: false
+      E2E_ONBOARDING_MAILBOX_URL:
+        required: false
+      E2E_ONBOARDING_MAILBOX_TOKEN:
+        required: false
+      VERCEL_AUTOMATION_BYPASS_SECRET:
+        required: false
+      SUPABASE_URL:
+        required: false
+      SUPABASE_SERVICE_ROLE_KEY:
+        required: false
   repository_dispatch:
     types: [production-beta-deployed]
   schedule:
@@ -16,13 +50,89 @@ on:
 permissions:
   contents: read
 
+env:
+  TZ: Australia/Brisbane
+
 concurrency:
   group: production-beta-operational-acceptance
   cancel-in-progress: false
 
 jobs:
+  mailbox-preview-preflight:
+    name: Mailbox Preview runtime preflight
+    if: ${{ inputs.mailbox_preflight_only == true }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: production-beta-acceptance
+    env:
+      MAILBOX_PREVIEW_URL: https://spray-command-production-beta-ra6pdkcu5-bjt-ftfs-projects.vercel.app
+      E2E_ONBOARDING_MAILBOX_TOKEN: ${{ secrets.E2E_ONBOARDING_MAILBOX_TOKEN }}
+      VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+    steps:
+      - name: Verify mailbox Preview runtime sequence
+        shell: bash
+        run: |
+          set +x
+          [[ -n "$E2E_ONBOARDING_MAILBOX_TOKEN" ]]
+          [[ -n "$VERCEL_AUTOMATION_BYPASS_SECRET" ]]
+          echo "::add-mask::$E2E_ONBOARDING_MAILBOX_TOKEN"
+          echo "::add-mask::$VERCEL_AUTOMATION_BYPASS_SECRET"
+          node <<'NODE'
+          const preview = new URL(process.env.MAILBOX_PREVIEW_URL || '');
+          if (preview.protocol !== 'https:' || preview.pathname !== '/' || !preview.hostname.endsWith('.vercel.app')) {
+            throw new Error('MAILBOX_PREVIEW_URL_INVALID');
+          }
+          const endpoint = new URL('/api/v1/onboarding-mailbox', preview);
+          endpoint.searchParams.set('recipient', `info+sc-onboarding-preflight-${process.env.GITHUB_RUN_ID}@flythefarm.com.au`);
+          endpoint.searchParams.set('after', new Date(Date.now() - 300_000).toISOString());
+          const response = await fetch(endpoint, {
+            redirect: 'manual',
+            headers: {
+              Accept: 'application/json',
+              Authorization: `Bearer ${process.env.E2E_ONBOARDING_MAILBOX_TOKEN}`,
+              'x-vercel-protection-bypass': process.env.VERCEL_AUTOMATION_BYPASS_SECRET,
+            },
+          });
+          let body = {};
+          try { body = await response.json(); } catch {}
+          if (response.status !== 200) {
+            const code = String(body?.error?.code || body?.error || `HTTP_${response.status}`).replace(/[^A-Z0-9_-]/gi, '_').slice(0, 100);
+            throw new Error(`MAILBOX_PREFLIGHT_FAILED:${code}`);
+          }
+          if (!Array.isArray(body?.messages)) throw new Error('MAILBOX_PREFLIGHT_RESPONSE_INVALID');
+          console.log('mailbox_endpoint_reachable=true');
+          console.log('mailbox_bearer_authentication=true');
+          console.log('gmail_oauth_refresh=true');
+          console.log('controlled_plus_alias_query=true');
+          NODE
+
+  invitation-delivery-diagnostic:
+    name: Invitation delivery diagnostic
+    if: ${{ inputs.invitation_diagnostic_only == true }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: production-beta-acceptance
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      E2E_ONBOARDING_MAILBOX_URL: ${{ secrets.E2E_ONBOARDING_MAILBOX_URL }}
+      E2E_ONBOARDING_MAILBOX_TOKEN: ${{ secrets.E2E_ONBOARDING_MAILBOX_TOKEN }}
+    steps:
+      - name: Check out diagnostic source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Trace failed invitation without mutation
+        shell: bash
+        run: |
+          set +x
+          for name in SUPABASE_URL SUPABASE_SERVICE_ROLE_KEY E2E_ONBOARDING_MAILBOX_URL E2E_ONBOARDING_MAILBOX_TOKEN; do
+            [[ -n "${!name:-}" ]] || { echo "DIAGNOSTIC_CONFIGURATION_MISSING:${name}" >&2; exit 1; }
+            echo "::add-mask::${!name}"
+          done
+          node scripts/diagnoseProductionInvitation.mjs
+
   deployment-identity:
     name: Resolve exact deployed commit
+    if: ${{ inputs.mailbox_preflight_only != true && inputs.invitation_diagnostic_only != true }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
@@ -82,6 +192,8 @@ jobs:
           printf 'Acceptance secrets present: email=%s password=%s\n' \
             "$([[ -n "$E2E_ORGANISATION_EMAIL" ]] && echo true || echo false)" \
             "$([[ -n "$E2E_ORGANISATION_PASSWORD" ]] && echo true || echo false)"
+          [[ -n "$E2E_ORGANISATION_EMAIL" ]]
+          [[ -n "$E2E_ORGANISATION_PASSWORD" ]]
 
       - name: Validate acceptance environment
         run: npx playwright test --project=environment
@@ -108,6 +220,7 @@ jobs:
       E2E_PLATFORM_PASSWORD: ${{ secrets.E2E_PLATFORM_PASSWORD }}
       E2E_ONBOARDING_MAILBOX_URL: ${{ secrets.E2E_ONBOARDING_MAILBOX_URL }}
       E2E_ONBOARDING_MAILBOX_TOKEN: ${{ secrets.E2E_ONBOARDING_MAILBOX_TOKEN }}
+      VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
       SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
 
@@ -131,12 +244,14 @@ jobs:
         run: |
           set +x
           missing=0
-          for name in E2E_ONBOARDING_APPLICANT_EMAIL E2E_ONBOARDING_APPLICANT_PASSWORD E2E_PLATFORM_EMAIL E2E_PLATFORM_PASSWORD E2E_ONBOARDING_MAILBOX_URL E2E_ONBOARDING_MAILBOX_TOKEN SUPABASE_URL SUPABASE_SERVICE_ROLE_KEY; do
+          for name in E2E_ONBOARDING_APPLICANT_EMAIL E2E_ONBOARDING_APPLICANT_PASSWORD E2E_PLATFORM_EMAIL E2E_PLATFORM_PASSWORD E2E_ONBOARDING_MAILBOX_URL E2E_ONBOARDING_MAILBOX_TOKEN VERCEL_AUTOMATION_BYPASS_SECRET SUPABASE_URL SUPABASE_SERVICE_ROLE_KEY; do
             value="${!name}"
             if [[ -z "$value" ]]; then missing=1; else echo "::add-mask::$value"; fi
           done
           printf 'Commercial onboarding secrets present: %s\n' "$([[ "$missing" -eq 0 ]] && echo true || echo false)"
           [[ "$missing" -eq 0 ]]
+          [[ -n "$VERCEL_AUTOMATION_BYPASS_SECRET" ]]
+          echo "::add-mask::$VERCEL_AUTOMATION_BYPASS_SECRET"
 
       - name: Verify Product Maturity Registry completeness
         run: npm run verify:product-maturity
@@ -146,6 +261,15 @@ jobs:
 
       - name: Run deterministic sharded regression
         run: npm run test:ci:sharded
+
+      - name: Load reviewed mailbox acceptance harness
+        env:
+          ACCEPTANCE_HARNESS_SHA: ${{ github.sha }}
+        run: |
+          git fetch --no-tags origin "$ACCEPTANCE_HARNESS_SHA"
+          git checkout "$ACCEPTANCE_HARNESS_SHA" -- \
+            e2e/acceptance/commercial-onboarding.spec.ts \
+            e2e/acceptance/fixtures/commercialOnboardingInvitation.ts
 
       - name: Install isolated Chromium runtime
         run: npx playwright install --with-deps chromium
@@ -208,6 +332,8 @@ jobs:
           printf 'Acceptance secrets present: email=%s password=%s\n' \
             "$([[ -n "$E2E_ORGANISATION_EMAIL" ]] && echo true || echo false)" \
             "$([[ -n "$E2E_ORGANISATION_PASSWORD" ]] && echo true || echo false)"
+          [[ -n "$E2E_ORGANISATION_EMAIL" ]]
+          [[ -n "$E2E_ORGANISATION_PASSWORD" ]]
 
       - name: Validate acceptance environment
         id: environment

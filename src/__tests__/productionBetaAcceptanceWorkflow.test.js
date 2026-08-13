@@ -31,6 +31,34 @@ const playwrightConfiguration = () => {
 };
 
 describe('Production Beta operational acceptance execution profile', () => {
+  test('pins deterministic acceptance execution to the approved operational timezone', () => {
+    const definition = workflowDefinition();
+
+    expect(definition.env).toEqual({ TZ: 'Australia/Brisbane' });
+  });
+
+  test('declares the reusable acceptance secret contract and fails closed before browser execution', () => {
+    const definition = workflowDefinition();
+    const contract = definition.on.workflow_call.secrets;
+    const authentication = definition.jobs['authentication-acceptance'];
+    const operational = definition.jobs['operational-acceptance'];
+    const authGuard = workflowStep(authentication, 'Protect acceptance credentials in runner output');
+    const operationalGuard = workflowStep(operational, 'Protect acceptance credentials in runner output');
+
+    expect(contract.E2E_ORGANISATION_EMAIL).toEqual({ required: false });
+    expect(contract.E2E_ORGANISATION_PASSWORD).toEqual({ required: false });
+    expect(authentication.environment).toBe('production-beta-acceptance');
+    expect(operational.environment).toBe('production-beta-acceptance');
+    expect(authentication.env.E2E_ORGANISATION_EMAIL).toBe('${{ secrets.E2E_ORGANISATION_EMAIL }}');
+    expect(authentication.env.E2E_ORGANISATION_PASSWORD).toBe('${{ secrets.E2E_ORGANISATION_PASSWORD }}');
+    expect(authGuard.run).toContain('[[ -n "$E2E_ORGANISATION_EMAIL" ]]');
+    expect(authGuard.run).toContain('[[ -n "$E2E_ORGANISATION_PASSWORD" ]]');
+    expect(operationalGuard.run).toContain('[[ -n "$E2E_ORGANISATION_EMAIL" ]]');
+    expect(operationalGuard.run).toContain('[[ -n "$E2E_ORGANISATION_PASSWORD" ]]');
+    expect(JSON.stringify(definition.jobs)).not.toMatch(/production-beta-deployment/);
+    expect(JSON.stringify(definition.jobs)).not.toMatch(/SUPABASE_ACCESS_TOKEN|SUPABASE_DB_PASSWORD|VERCEL_TOKEN/);
+  });
+
   test('uses protected environment secrets without persisting credentials', () => {
     const workflow = fs.readFileSync(workflowPath, 'utf8');
 
@@ -49,7 +77,8 @@ describe('Production Beta operational acceptance execution profile', () => {
 
     expect(workflow).not.toMatch(/password\s*:\s*['"][^$]/i);
     expect(workflow).not.toMatch(/email\s*:\s*['"][^$]/i);
-    expect(workflow).not.toContain('workflow_dispatch:\n      inputs:');
+    const dispatchInputs = workflowDefinition().on.workflow_dispatch.inputs;
+    expect(Object.keys(dispatchInputs).some((name) => name.startsWith('E2E_'))).toBe(false);
   });
 
   test('disables reusable authentication captures for every project that consumes credentials or storage state', () => {
@@ -98,5 +127,27 @@ describe('Production Beta operational acceptance execution profile', () => {
     expect(authenticationIndex).toBeGreaterThan(environmentIndex);
     expect(cleanupIndex).toBeGreaterThan(authenticationIndex);
     expect(operationalIndex).toBeGreaterThan(cleanupIndex);
+  });
+
+  test('supports a mailbox-only Preview preflight without entering operational acceptance', () => {
+    const definition = workflowDefinition();
+    const dispatch = definition.on.workflow_dispatch;
+    const preflight = definition.jobs['mailbox-preview-preflight'];
+
+    expect(dispatch.inputs.mailbox_preflight_only).toMatchObject({
+      required: false,
+      type: 'boolean',
+      default: false,
+    });
+    expect(dispatch.inputs.mailbox_preview_url).toBeUndefined();
+    expect(preflight.environment).toBe('production-beta-acceptance');
+    expect(preflight.if).toContain('inputs.mailbox_preflight_only == true');
+    expect(preflight.env).toEqual(expect.objectContaining({
+      MAILBOX_PREVIEW_URL: 'https://spray-command-production-beta-ra6pdkcu5-bjt-ftfs-projects.vercel.app',
+      E2E_ONBOARDING_MAILBOX_TOKEN: '${{ secrets.E2E_ONBOARDING_MAILBOX_TOKEN }}',
+      VERCEL_AUTOMATION_BYPASS_SECRET: '${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}',
+    }));
+    expect(preflight.steps.map(({ name }) => name)).toContain('Verify mailbox Preview runtime sequence');
+    expect(definition.jobs['deployment-identity'].if).toContain('inputs.mailbox_preflight_only != true');
   });
 });
