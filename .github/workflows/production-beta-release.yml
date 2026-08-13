@@ -878,6 +878,17 @@ jobs:
             --set ON_ERROR_STOP=1 \
             --tuples-only \
             --no-align \
+            --file scripts/defaultMaintainPrivilegeDiagnostic.sql
+          psql \
+            --host aws-0-ap-southeast-2.pooler.supabase.com \
+            --port 5432 \
+            --username postgres.fzkrvglzompkuiodqllr \
+            --dbname postgres \
+            --no-password \
+            --no-psqlrc \
+            --set ON_ERROR_STOP=1 \
+            --tuples-only \
+            --no-align \
             --file scripts/productionPrivilegeProvenance.sql
           psql \
             --host aws-0-ap-southeast-2.pooler.supabase.com \
