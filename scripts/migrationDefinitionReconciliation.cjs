@@ -69,12 +69,12 @@ const safeView = (input) => ({
   })),
 });
 
-const discrepancyPaths = (expected, live) => {
+const discrepancyComparison = (expected, live) => {
   const differences = [];
   const walk = (left, right, prefix) => {
     if (JSON.stringify(left) === JSON.stringify(right)) return;
     if (!left || !right || typeof left !== 'object' || typeof right !== 'object' || Array.isArray(left) || Array.isArray(right)) {
-      differences.push(prefix);
+      differences.push({ path: prefix, expected: left ?? null, live: right ?? null });
       return;
     }
     [...new Set([...Object.keys(left), ...Object.keys(right)])].sort()
@@ -85,9 +85,12 @@ const discrepancyPaths = (expected, live) => {
   const byIdentity = (entries) => Object.fromEntries(entries.map((entry) => [entry.identity, entry]));
   walk(byIdentity(expectedSafe.functions), byIdentity(liveSafe.functions), 'functions');
   walk(byIdentity(expectedSafe.tablePrivileges), byIdentity(liveSafe.tablePrivileges), 'tablePrivileges');
-  return differences.map((value) => value
-    .replace(/^functions\.(.+\))\.(.+)$/, 'functions[$1].$2')
-    .replace(/^tablePrivileges\.(.+)\.(acl|publicPrivileges|serviceRolePrivileges)$/, 'tablePrivileges[$1].$2'));
+  return differences.map((difference) => ({
+    ...difference,
+    path: difference.path
+      .replace(/^functions\.(.+\))\.(.+)$/, 'functions[$1].$2')
+      .replace(/^tablePrivileges\.(.+)\.(acl|publicPrivileges|serviceRolePrivileges)$/, 'tablePrivileges[$1].$2'),
+  }));
 };
 
 const compareEvidence = (expected, live) => {
@@ -96,11 +99,13 @@ const compareEvidence = (expected, live) => {
   const liveCanonical = canonicaliseEvidence(live);
   const expectedSha256 = digest(expectedCanonical);
   const liveSha256 = digest(liveCanonical);
+  const comparison = expectedCanonical === liveCanonical ? [] : discrepancyComparison(expected, live);
   return {
     result: expectedCanonical === liveCanonical ? 'B' : 'C',
     expectedSha256,
     liveSha256,
-    discrepancies: expectedCanonical === liveCanonical ? [] : discrepancyPaths(expected, live),
+    discrepancies: comparison.map(({ path }) => path),
+    comparison,
   };
 };
 
@@ -154,6 +159,7 @@ if (require.main === module) {
   console.log(`LIVE_CANONICAL_SHA256=${result.liveSha256 || 'UNAVAILABLE'}`);
   console.log(`RECONCILIATION_RESULT=${result.result}`);
   if (result.discrepancies.length) console.log(`DISCREPANCY=${result.discrepancies.join(';')}`);
+  if (result.comparison?.length) console.log(`COMPARISON=${JSON.stringify(result.comparison)}`);
   process.exit(result.result === 'B' ? 0 : 1);
 }
 

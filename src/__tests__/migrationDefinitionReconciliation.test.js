@@ -62,6 +62,17 @@ describe('migration definition reconciliation', () => {
     expect(JSON.stringify(result)).not.toContain('SECRET BODY');
   });
 
+  test('reports safe expected and live values for each discrepancy', () => {
+    const live = evidence();
+    live.functions[0].securityDefiner = false;
+    live.tablePrivileges[0].serviceRolePrivileges = ['SELECT'];
+    const result = compareEvidence(evidence(), live);
+    expect(result.comparison).toEqual(expect.arrayContaining([
+      expect.objectContaining({ path: 'functions[public.example(jsonb)].securityDefiner', expected: true, live: false }),
+      expect.objectContaining({ path: 'tablePrivileges[public.ftf_store].serviceRolePrivileges', expected: [], live: ['SELECT'] }),
+    ]));
+  });
+
   test('classifies identical evidence as independently proven exact', () => {
     const result = compareEvidence(evidence(), clone(evidence()));
     expect(result.result).toBe('B');
