@@ -18,7 +18,7 @@ with target_functions as (
   where n.nspname='public'
     and p.proname in (
       'ftf_archive_controlled_commercial_onboarding',
-      'ftf_archive_controlled_commercial_onboarding_without_legacy_store',
+      'ftf_archive_controlled_commercial_onboarding_without_legacy_sto',
       'ftf_project_controlled_onboarding_legacy_store'
     )
     and pg_get_function_identity_arguments(p.oid)='p_evidence jsonb'

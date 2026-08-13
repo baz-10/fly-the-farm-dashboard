@@ -118,7 +118,7 @@ const extractFunction = (sql, name) => {
 };
 
 const buildExpectedEvidence = (root) => {
-  const current = fs.readFileSync(path.join(root, 'supabase/migrations/20260813130000_controlled_onboarding_archive_legacy_store_scope.sql'), 'utf8');
+  const current = fs.readFileSync(path.join(root, 'supabase/migrations/20260813140000_controlled_onboarding_authority_reconciliation.sql'), 'utf8');
   const previous = fs.readFileSync(path.join(root, 'supabase/migrations/20260809140000_commercial_onboarding_acceptance_cleanup.sql'), 'utf8');
   const functionEvidence = (identity, source, volatility, serviceRoleExecute) => ({
     identity,
@@ -137,12 +137,12 @@ const buildExpectedEvidence = (root) => {
   return {
     functions: [
       functionEvidence('public.ftf_archive_controlled_commercial_onboarding(jsonb)', extractFunction(current, 'ftf_archive_controlled_commercial_onboarding'), 'volatile', true),
-      functionEvidence('public.ftf_archive_controlled_commercial_onboarding_without_legacy_store(jsonb)', extractFunction(previous, 'ftf_archive_controlled_commercial_onboarding'), 'volatile', false),
+      functionEvidence('public.ftf_archive_controlled_commercial_onboarding_without_legacy_sto(jsonb)', extractFunction(previous, 'ftf_archive_controlled_commercial_onboarding'), 'volatile', false),
       functionEvidence('public.ftf_project_controlled_onboarding_legacy_store(jsonb)', extractFunction(current, 'ftf_project_controlled_onboarding_legacy_store'), 'stable', true),
     ],
     tablePrivileges: [{
       identity: 'public.ftf_store',
-      acl: ['postgres=arwdDxt/postgres', 'service_role=arwd/postgres'],
+      acl: ['postgres=arwdDxtm/postgres', 'service_role=arwd/postgres'],
       publicPrivileges: [],
       serviceRolePrivileges: ['DELETE', 'INSERT', 'SELECT', 'UPDATE'],
     }],
