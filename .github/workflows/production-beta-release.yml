@@ -889,7 +889,7 @@ jobs:
             --set ON_ERROR_STOP=1 \
             --tuples-only \
             --no-align \
-            --file scripts/productionPrivilegeProvenance.sql
+            --file scripts/controlledEvidenceDiagnostic.sql
           psql \
             --host aws-0-ap-southeast-2.pooler.supabase.com \
             --port 5432 \
@@ -900,7 +900,7 @@ jobs:
             --set ON_ERROR_STOP=1 \
             --tuples-only \
             --no-align \
-            --file scripts/controlledEvidenceDiagnostic.sql
+            --file scripts/productionPrivilegeProvenance.sql
           psql \
             --host aws-0-ap-southeast-2.pooler.supabase.com \
             --port 5432 \
