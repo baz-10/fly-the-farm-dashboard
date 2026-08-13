@@ -20,6 +20,7 @@ const identityAcceptanceMigrationName = '20260809130000_commercial_onboarding_id
 const acceptanceCleanupMigrationName = '20260809140000_commercial_onboarding_acceptance_cleanup.sql';
 const acceptanceEvidenceMigrationName = '20260809150000_controlled_onboarding_evidence_verification.sql';
 const legacyStoreArchiveMigrationName = '20260813130000_controlled_onboarding_archive_legacy_store_scope.sql';
+const legacyStoreAuthorityReconciliationMigrationName = '20260813140000_controlled_onboarding_authority_reconciliation.sql';
 const forwardMigrationPath = path.resolve(__dirname, `../../supabase/migrations/${forwardMigrationName}`);
 const forwardSql = fs.existsSync(forwardMigrationPath) ? fs.readFileSync(forwardMigrationPath, 'utf8') : '';
 const identityAcceptanceMigrationPath = path.resolve(__dirname, `../../supabase/migrations/${identityAcceptanceMigrationName}`);
@@ -30,6 +31,8 @@ const acceptanceEvidenceMigrationPath = path.resolve(__dirname, `../../supabase/
 const acceptanceEvidenceSql = fs.existsSync(acceptanceEvidenceMigrationPath) ? fs.readFileSync(acceptanceEvidenceMigrationPath, 'utf8') : '';
 const legacyStoreArchiveMigrationPath = path.resolve(__dirname, `../../supabase/migrations/${legacyStoreArchiveMigrationName}`);
 const legacyStoreArchiveSql = fs.existsSync(legacyStoreArchiveMigrationPath) ? fs.readFileSync(legacyStoreArchiveMigrationPath, 'utf8') : '';
+const legacyStoreAuthorityReconciliationPath = path.resolve(__dirname, `../../supabase/migrations/${legacyStoreAuthorityReconciliationMigrationName}`);
+const legacyStoreAuthorityReconciliationSql = fs.existsSync(legacyStoreAuthorityReconciliationPath) ? fs.readFileSync(legacyStoreAuthorityReconciliationPath, 'utf8') : '';
 
 const runPgliteInThisProcess = process.env.COMMERCIAL_ONBOARDING_PGLITE_CHILD === '1';
 const pureNodeTests = [];
@@ -311,6 +314,19 @@ test('defines a forward-only exact legacy-store archive correction', () => {
   expect(legacyStoreArchiveSql).not.toMatch(/delete\s+from\s+public\.ftf_store\s+where\s+tenant_id\s*=\s*v_organisation_id\s*;/i);
 });
 
+test('reconciles legacy-store cleanup authority without silent identifier truncation or broad table grants', () => {
+  expect(legacyStoreAuthorityReconciliationSql).toContain('ftf_archive_controlled_commercial_onboarding_without_legacy_sto');
+  expect(legacyStoreAuthorityReconciliationSql).not.toContain('ftf_archive_controlled_commercial_onboarding_without_legacy_store');
+  expect(legacyStoreAuthorityReconciliationSql).toContain('ftf_project_controlled_onboarding_legacy_store');
+  expect(legacyStoreAuthorityReconciliationSql).toMatch(/revoke\s+truncate,references,trigger\s+on\s+table\s+public\.ftf_store\s+from\s+service_role/i);
+  expect(legacyStoreAuthorityReconciliationSql).toMatch(/grant\s+select,insert,update,delete\s+on\s+table\s+public\.ftf_store\s+to\s+service_role/i);
+  expect(legacyStoreAuthorityReconciliationSql).not.toMatch(/grant\s+all/i);
+  for (const functionName of [
+    'ftf_archive_controlled_commercial_onboarding_without_legacy_sto',
+    'ftf_project_controlled_onboarding_legacy_store',
+  ]) expect(Buffer.byteLength(functionName, 'utf8')).toBeLessThanOrEqual(63);
+});
+
 if (runPgliteInThisProcess) test('atomically replaces an unexpired delivered invitation when resend is requested', async () => {
   const application = await submitApplication('resend-now@example.com', 'ResendNow');
   const review = await reviewApplication(application.application_id, application.row_version, 'UNDER_REVIEW');
@@ -390,6 +406,7 @@ beforeAll(async () => {
     acceptanceCleanupMigrationName,
     acceptanceEvidenceMigrationName,
     legacyStoreArchiveMigrationName,
+    legacyStoreAuthorityReconciliationMigrationName,
   ];
   for (const migrationName of migrationNames) {
     if (migrationName === acceptanceCleanupMigrationName) {
@@ -504,7 +521,7 @@ test('exposes only the controlled cleanup boundary to service_role', async () =>
       has_function_privilege('service_role','public.ftf_project_controlled_onboarding_legacy_store(jsonb)','execute') as projection_execute,
       has_function_privilege('authenticated','public.ftf_project_controlled_onboarding_legacy_store(jsonb)','execute') as authenticated_projection_execute,
       has_function_privilege('anon','public.ftf_project_controlled_onboarding_legacy_store(jsonb)','execute') as anon_projection_execute,
-      has_function_privilege('service_role','public.ftf_archive_controlled_commercial_onboarding_without_legacy_store(jsonb)','execute') as old_archive_execute,
+      has_function_privilege('service_role','public.ftf_archive_controlled_commercial_onboarding_without_legacy_sto(jsonb)','execute') as old_archive_execute,
       has_function_privilege('service_role','public.ftf_archive_controlled_acceptance_rows(text,uuid,uuid,jsonb,boolean,boolean)','execute') as helper_execute,
       has_function_privilege('service_role','public.ftf_remove_controlled_acceptance_equipment_links(uuid,jsonb)','execute') as link_helper_execute
   `);
@@ -518,6 +535,23 @@ test('exposes only the controlled cleanup boundary to service_role', async () =>
     old_archive_execute: false,
     helper_execute: false,
     link_helper_execute: false,
+  });
+});
+
+test('reconciles ftf_store service-role privileges to CRUD only', async () => {
+  const privileges = await db.query(`
+    select
+      has_table_privilege('service_role','public.ftf_store','select') as can_select,
+      has_table_privilege('service_role','public.ftf_store','insert') as can_insert,
+      has_table_privilege('service_role','public.ftf_store','update') as can_update,
+      has_table_privilege('service_role','public.ftf_store','delete') as can_delete,
+      has_table_privilege('service_role','public.ftf_store','truncate') as can_truncate,
+      has_table_privilege('service_role','public.ftf_store','references') as can_reference,
+      has_table_privilege('service_role','public.ftf_store','trigger') as can_trigger
+  `);
+  expect(privileges.rows[0]).toEqual({
+    can_select: true, can_insert: true, can_update: true, can_delete: true,
+    can_truncate: false, can_reference: false, can_trigger: false,
   });
 });
 
@@ -1198,7 +1232,7 @@ test('reproduces the Production scope mismatch with the immutable pre-correction
   );
   const evidence = await controlledCleanupEvidence(onboarding);
   await expect(db.query(
-    'select public.ftf_archive_controlled_commercial_onboarding_without_legacy_store($1::jsonb)',
+    'select public.ftf_archive_controlled_commercial_onboarding_without_legacy_sto($1::jsonb)',
     [JSON.stringify(evidence)],
   )).rejects.toThrow(/COMMERCIAL_ONBOARDING_ACCEPTANCE_SCOPE_MISMATCH: identity chain/);
   const unchanged = await db.query(`
@@ -1664,7 +1698,7 @@ test('refuses a second direct migration application without changing the install
   const installed = await db.query(`
     select
       to_regprocedure('public.ftf_archive_controlled_commercial_onboarding(jsonb)') is not null as wrapper_present,
-      to_regprocedure('public.ftf_archive_controlled_commercial_onboarding_without_legacy_store(jsonb)') is not null as prior_present
+      to_regprocedure('public.ftf_archive_controlled_commercial_onboarding_without_legacy_sto(jsonb)') is not null as prior_present
   `);
   expect(installed.rows[0]).toEqual({ wrapper_present: true, prior_present: true });
 });
