@@ -22,6 +22,11 @@ on:
         required: false
         default: false
         type: boolean
+      migration_definition_reconciliation_only:
+        description: Compare reviewed and live PostgreSQL definitions without mutation
+        required: false
+        default: false
+        type: boolean
       exact_sha_redeploy_only:
         description: Redeploy an approved immutable SHA without migrations
         required: false
@@ -46,11 +51,12 @@ jobs:
           REHEARSAL_ONLY: ${{ inputs.rehearsal_only }}
           SECRET_PROPAGATION_ONLY: ${{ inputs.secret_propagation_only }}
           CONNECTIVITY_DIAGNOSTIC_ONLY: ${{ inputs.connectivity_diagnostic_only }}
+          MIGRATION_DEFINITION_RECONCILIATION_ONLY: ${{ inputs.migration_definition_reconciliation_only }}
           EXACT_SHA_REDEPLOY_ONLY: ${{ inputs.exact_sha_redeploy_only }}
         run: |
           set -euo pipefail
           selected_modes=0
-          for value in "$REHEARSAL_ONLY" "$SECRET_PROPAGATION_ONLY" "$CONNECTIVITY_DIAGNOSTIC_ONLY" "$EXACT_SHA_REDEPLOY_ONLY"; do
+          for value in "$REHEARSAL_ONLY" "$SECRET_PROPAGATION_ONLY" "$CONNECTIVITY_DIAGNOSTIC_ONLY" "$MIGRATION_DEFINITION_RECONCILIATION_ONLY" "$EXACT_SHA_REDEPLOY_ONLY"; do
             if [[ "$value" == "true" ]]; then selected_modes=$((selected_modes + 1)); fi
           done
           [[ "$selected_modes" -le 1 ]]
@@ -59,7 +65,7 @@ jobs:
     name: Validate immutable release
     needs: mode-guard
     runs-on: ubuntu-latest
-    if: inputs.secret_propagation_only != true && inputs.connectivity_diagnostic_only != true
+    if: inputs.secret_propagation_only != true && inputs.connectivity_diagnostic_only != true && inputs.migration_definition_reconciliation_only != true
     timeout-minutes: 45
     env:
       CI: 'true'
@@ -102,7 +108,7 @@ jobs:
   release:
     name: Migrate and deploy Production Beta
     needs: validate
-    if: inputs.rehearsal_only != true && inputs.secret_propagation_only != true && inputs.connectivity_diagnostic_only != true && inputs.exact_sha_redeploy_only != true
+    if: inputs.rehearsal_only != true && inputs.secret_propagation_only != true && inputs.connectivity_diagnostic_only != true && inputs.migration_definition_reconciliation_only != true && inputs.exact_sha_redeploy_only != true
     runs-on: ubuntu-latest
     timeout-minutes: 45
     environment: production-beta-deployment
@@ -360,7 +366,7 @@ jobs:
   exact-sha-redeploy:
     name: Redeploy exact SHA without migrations
     needs: validate
-    if: inputs.exact_sha_redeploy_only == true && inputs.rehearsal_only != true && inputs.secret_propagation_only != true && inputs.connectivity_diagnostic_only != true
+    if: inputs.exact_sha_redeploy_only == true && inputs.rehearsal_only != true && inputs.secret_propagation_only != true && inputs.connectivity_diagnostic_only != true && inputs.migration_definition_reconciliation_only != true
     runs-on: ubuntu-latest
     timeout-minutes: 45
     environment: production-beta-deployment
@@ -496,7 +502,7 @@ jobs:
   redeploy-mailbox-verification:
     name: Verify redeployed mailbox bridge
     needs: exact-sha-redeploy
-    if: inputs.exact_sha_redeploy_only == true
+    if: inputs.exact_sha_redeploy_only == true && inputs.migration_definition_reconciliation_only != true
     runs-on: ubuntu-latest
     environment: production-beta-acceptance
     steps:
@@ -531,7 +537,7 @@ jobs:
   redeploy-acceptance:
     name: Exact-SHA redeploy operational acceptance
     needs: [exact-sha-redeploy, redeploy-mailbox-verification]
-    if: inputs.exact_sha_redeploy_only == true
+    if: inputs.exact_sha_redeploy_only == true && inputs.migration_definition_reconciliation_only != true
     uses: ./.github/workflows/production-beta-operational-acceptance.yml
     secrets: inherit
     with:
@@ -540,7 +546,7 @@ jobs:
   rehearsal:
     name: Rehearse Production Beta release without mutation
     needs: validate
-    if: inputs.rehearsal_only == true && inputs.secret_propagation_only != true && inputs.connectivity_diagnostic_only != true && inputs.exact_sha_redeploy_only != true
+    if: inputs.rehearsal_only == true && inputs.secret_propagation_only != true && inputs.connectivity_diagnostic_only != true && inputs.migration_definition_reconciliation_only != true && inputs.exact_sha_redeploy_only != true
     runs-on: ubuntu-latest
     timeout-minutes: 45
     environment: production-beta-deployment
@@ -747,7 +753,7 @@ jobs:
   diagnostic:
     name: Verify database secret propagation
     needs: mode-guard
-    if: inputs.secret_propagation_only == true && inputs.connectivity_diagnostic_only != true && inputs.exact_sha_redeploy_only != true
+    if: inputs.secret_propagation_only == true && inputs.connectivity_diagnostic_only != true && inputs.migration_definition_reconciliation_only != true && inputs.exact_sha_redeploy_only != true
     runs-on: ubuntu-latest
     environment: production-beta-deployment
     steps:
@@ -775,7 +781,7 @@ jobs:
   connectivity-diagnostic:
     name: Verify read-only database connectivity
     needs: mode-guard
-    if: inputs.connectivity_diagnostic_only == true && inputs.secret_propagation_only != true && inputs.exact_sha_redeploy_only != true
+    if: inputs.connectivity_diagnostic_only == true && inputs.secret_propagation_only != true && inputs.migration_definition_reconciliation_only != true && inputs.exact_sha_redeploy_only != true
     runs-on: ubuntu-latest
     environment: production-beta-deployment
     steps:
@@ -836,10 +842,49 @@ jobs:
           check_connection DIRECT_CONNECTION db.fzkrvglzompkuiodqllr.supabase.co postgres true
           exit "$failed"
 
+  migration-definition-reconciliation:
+    name: Reconcile live migration definitions
+    needs: mode-guard
+    if: inputs.migration_definition_reconciliation_only == true && inputs.rehearsal_only != true && inputs.secret_propagation_only != true && inputs.connectivity_diagnostic_only != true && inputs.exact_sha_redeploy_only != true
+    runs-on: ubuntu-latest
+    environment: production-beta-deployment
+    permissions:
+      contents: read
+    steps:
+      - name: Check out reviewed diagnostic source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ inputs.release_sha }}
+          persist-credentials: false
+
+      - name: Query PostgreSQL catalogues and compare authority
+        shell: bash
+        env:
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+        run: |
+          set +x
+          [[ -n "$SUPABASE_DB_PASSWORD" ]]
+          echo "::add-mask::$SUPABASE_DB_PASSWORD"
+          export PGPASSWORD="$SUPABASE_DB_PASSWORD"
+          trap 'unset PGPASSWORD' EXIT
+          set -euo pipefail
+          psql \
+            --host aws-0-ap-southeast-2.pooler.supabase.com \
+            --port 5432 \
+            --username postgres.fzkrvglzompkuiodqllr \
+            --dbname postgres \
+            --no-password \
+            --no-psqlrc \
+            --set ON_ERROR_STOP=1 \
+            --tuples-only \
+            --no-align \
+            --file scripts/migrationDefinitionReconciliation.sql > "$RUNNER_TEMP/live-definition.json"
+          node scripts/migrationDefinitionReconciliation.cjs compare "$GITHUB_WORKSPACE" "$RUNNER_TEMP/live-definition.json"
+
   acceptance:
     name: Production Beta Operational Acceptance
     needs: release
-    if: inputs.rehearsal_only != true && inputs.secret_propagation_only != true && inputs.connectivity_diagnostic_only != true && inputs.exact_sha_redeploy_only != true
+    if: inputs.rehearsal_only != true && inputs.secret_propagation_only != true && inputs.connectivity_diagnostic_only != true && inputs.migration_definition_reconciliation_only != true && inputs.exact_sha_redeploy_only != true
     uses: ./.github/workflows/production-beta-operational-acceptance.yml
     secrets: inherit
     with:
@@ -848,7 +893,7 @@ jobs:
   release-record:
     name: Record Production Beta release
     needs: [release, acceptance]
-    if: inputs.rehearsal_only != true && inputs.secret_propagation_only != true && inputs.connectivity_diagnostic_only != true && inputs.exact_sha_redeploy_only != true && always() && needs.release.outputs.migration-boundary-crossed == 'true'
+    if: inputs.rehearsal_only != true && inputs.secret_propagation_only != true && inputs.connectivity_diagnostic_only != true && inputs.migration_definition_reconciliation_only != true && inputs.exact_sha_redeploy_only != true && always() && needs.release.outputs.migration-boundary-crossed == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
