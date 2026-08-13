@@ -19,6 +19,7 @@ const resendMigrationName = '20260809120000_commercial_onboarding_immediate_rese
 const identityAcceptanceMigrationName = '20260809130000_commercial_onboarding_identity_acceptance.sql';
 const acceptanceCleanupMigrationName = '20260809140000_commercial_onboarding_acceptance_cleanup.sql';
 const acceptanceEvidenceMigrationName = '20260809150000_controlled_onboarding_evidence_verification.sql';
+const legacyStoreArchiveMigrationName = '20260813130000_controlled_onboarding_archive_legacy_store_scope.sql';
 const forwardMigrationPath = path.resolve(__dirname, `../../supabase/migrations/${forwardMigrationName}`);
 const forwardSql = fs.existsSync(forwardMigrationPath) ? fs.readFileSync(forwardMigrationPath, 'utf8') : '';
 const identityAcceptanceMigrationPath = path.resolve(__dirname, `../../supabase/migrations/${identityAcceptanceMigrationName}`);
@@ -27,6 +28,8 @@ const acceptanceCleanupMigrationPath = path.resolve(__dirname, `../../supabase/m
 const acceptanceCleanupSql = fs.existsSync(acceptanceCleanupMigrationPath) ? fs.readFileSync(acceptanceCleanupMigrationPath, 'utf8') : '';
 const acceptanceEvidenceMigrationPath = path.resolve(__dirname, `../../supabase/migrations/${acceptanceEvidenceMigrationName}`);
 const acceptanceEvidenceSql = fs.existsSync(acceptanceEvidenceMigrationPath) ? fs.readFileSync(acceptanceEvidenceMigrationPath, 'utf8') : '';
+const legacyStoreArchiveMigrationPath = path.resolve(__dirname, `../../supabase/migrations/${legacyStoreArchiveMigrationName}`);
+const legacyStoreArchiveSql = fs.existsSync(legacyStoreArchiveMigrationPath) ? fs.readFileSync(legacyStoreArchiveMigrationPath, 'utf8') : '';
 
 const runPgliteInThisProcess = process.env.COMMERCIAL_ONBOARDING_PGLITE_CHILD === '1';
 const pureNodeTests = [];
@@ -155,6 +158,11 @@ async function createControlledAcceptedOnboarding(email, suffix, authUserId) {
     [delivered.invitation_id, authUserId],
   );
   expect(accepted.rows[0].result).toMatchObject({ accepted: true, already_provisioned: false });
+  await db.query(
+    `insert into public.ftf_store(tenant_id,collection,record_id,payload)
+     values($1::uuid,'ftf_work_packs','__value__',$2::jsonb)`,
+    [accepted.rows[0].result.organisation_id, JSON.stringify({ filters: { status: 'all' }, workPacks: [] })],
+  );
   return { application, invitation: delivered, accepted: accepted.rows[0].result, authUserId };
 }
 
@@ -202,6 +210,11 @@ async function controlledCleanupEvidence(onboarding) {
         .map(({ id, rowVersion }) => ({ id, rowVersion })),
     ]),
   );
+  const legacyStore = await db.query(`
+    select collection,record_id as "recordId",updated_at::text as "updatedAt",
+      encode(sha256(convert_to(payload::text,'UTF8')),'hex') as "payloadDigest"
+    from public.ftf_store where tenant_id=$1 order by collection,record_id
+  `, [accepted.organisation_id]);
   return {
     applicationId: onboarding.application.application_id,
     applicationReference: row.application_reference,
@@ -231,6 +244,7 @@ async function controlledCleanupEvidence(onboarding) {
       equipment_kit_aircraft_compatibility: [], aircraft_equipment_kit_assignments: [],
       equipment_kits: [], aircraft: [], ...governanceRecords,
     },
+    legacyStore: legacyStore.rows,
   };
 }
 
@@ -283,6 +297,17 @@ test('defines a service-role-only controlled evidence projection without generic
   expect(acceptanceEvidenceSql).toMatch(/grant execute on function public\.ftf_verify_controlled_commercial_onboarding_evidence\(jsonb\)\s+to service_role/);
   expect(acceptanceEvidenceSql).not.toMatch(/grant\s+select\s+on(?:\s+table)?\s+public\.transactional_outbox/i);
   expect(acceptanceEvidenceSql).not.toMatch(/(update|delete\s+from|insert\s+into)\s+public\.transactional_outbox/i);
+});
+
+test('defines a forward-only exact legacy-store archive correction', () => {
+  expect(legacyStoreArchiveSql).toContain('ftf_archive_controlled_commercial_onboarding');
+  expect(legacyStoreArchiveSql).toContain('legacyStore');
+  expect(legacyStoreArchiveSql).toContain('payloadDigest');
+  expect(legacyStoreArchiveSql).toMatch(/sha256\(convert_to\((?:store\.)?payload::text,'UTF8'\)\)/);
+  expect(legacyStoreArchiveSql).toContain('COMMERCIAL_ONBOARDING_ACCEPTANCE_LEGACY_STORE_MISMATCH');
+  expect(legacyStoreArchiveSql).toMatch(/revoke all on function public\.ftf_archive_controlled_commercial_onboarding\(jsonb\)[\s\S]*from public,anon,authenticated,service_role/);
+  expect(legacyStoreArchiveSql).toMatch(/grant execute on function public\.ftf_archive_controlled_commercial_onboarding\(jsonb\)\s+to service_role/);
+  expect(legacyStoreArchiveSql).not.toMatch(/delete\s+from\s+public\.ftf_store\s+where\s+tenant_id\s*=\s*v_organisation_id\s*;/i);
 });
 
 if (runPgliteInThisProcess) test('atomically replaces an unexpired delivered invitation when resend is requested', async () => {
@@ -363,6 +388,7 @@ beforeAll(async () => {
     identityAcceptanceMigrationName,
     acceptanceCleanupMigrationName,
     acceptanceEvidenceMigrationName,
+    legacyStoreArchiveMigrationName,
   ];
   for (const migrationName of migrationNames) {
     if (migrationName === acceptanceCleanupMigrationName) {
@@ -474,6 +500,10 @@ test('exposes only the controlled cleanup boundary to service_role', async () =>
       has_function_privilege('service_role','public.ftf_archive_controlled_commercial_onboarding(jsonb)','execute') as service_execute,
       has_function_privilege('authenticated','public.ftf_archive_controlled_commercial_onboarding(jsonb)','execute') as authenticated_execute,
       has_function_privilege('anon','public.ftf_archive_controlled_commercial_onboarding(jsonb)','execute') as anon_execute,
+      has_function_privilege('service_role','public.ftf_project_controlled_onboarding_legacy_store(uuid)','execute') as projection_execute,
+      has_function_privilege('authenticated','public.ftf_project_controlled_onboarding_legacy_store(uuid)','execute') as authenticated_projection_execute,
+      has_function_privilege('anon','public.ftf_project_controlled_onboarding_legacy_store(uuid)','execute') as anon_projection_execute,
+      has_function_privilege('service_role','public.ftf_archive_controlled_commercial_onboarding_without_legacy_store(jsonb)','execute') as old_archive_execute,
       has_function_privilege('service_role','public.ftf_archive_controlled_acceptance_rows(text,uuid,uuid,jsonb,boolean,boolean)','execute') as helper_execute,
       has_function_privilege('service_role','public.ftf_remove_controlled_acceptance_equipment_links(uuid,jsonb)','execute') as link_helper_execute
   `);
@@ -481,6 +511,10 @@ test('exposes only the controlled cleanup boundary to service_role', async () =>
     service_execute: true,
     authenticated_execute: false,
     anon_execute: false,
+    projection_execute: true,
+    authenticated_projection_execute: false,
+    anon_projection_execute: false,
+    old_archive_execute: false,
     helper_execute: false,
     link_helper_execute: false,
   });
@@ -1156,6 +1190,24 @@ test('archives an exact controlled onboarding chain transactionally without rewr
   });
 });
 
+test('reproduces the Production scope mismatch with the immutable pre-correction archive function', async () => {
+  const onboarding = await createControlledAcceptedOnboarding(
+    'cleanup-production-regression@example.com', 'CleanupProductionRegression',
+    '96000000-0000-4000-8000-000000000030',
+  );
+  const evidence = await controlledCleanupEvidence(onboarding);
+  await expect(db.query(
+    'select public.ftf_archive_controlled_commercial_onboarding_without_legacy_store($1::jsonb)',
+    [JSON.stringify(evidence)],
+  )).rejects.toThrow(/COMMERCIAL_ONBOARDING_ACCEPTANCE_SCOPE_MISMATCH: identity chain/);
+  const unchanged = await db.query(`
+    select
+      (select archived_at is null from public.organisations where id=$1) as organisation_active,
+      (select count(*)::integer from public.ftf_store where tenant_id=$1) as legacy_store
+  `, [evidence.organisationId]);
+  expect(unchanged.rows[0]).toEqual({ organisation_active: true, legacy_store: 1 });
+});
+
 test('projects only exact controlled onboarding outbox evidence and fails closed for foreign or incomplete scope', async () => {
   const onboarding = await createControlledAcceptedOnboarding(
     'evidence-projection@example.com',
@@ -1229,6 +1281,16 @@ test('projects only exact controlled onboarding outbox evidence and fails closed
   });
 });
 
+test('uses stable JSONB payload digests independent of input key order', async () => {
+  const digests = await db.query(`
+    select
+      encode(sha256(convert_to('{"b":2,"a":1}'::jsonb::text,'UTF8')),'hex') as first_digest,
+      encode(sha256(convert_to('{"a":1,"b":2}'::jsonb::text,'UTF8')),'hex') as second_digest
+  `);
+  expect(digests.rows[0].first_digest).toBe(digests.rows[0].second_digest);
+  expect(digests.rows[0].first_digest).toMatch(/^[0-9a-f]{64}$/);
+});
+
 test('rolls the entire cleanup back when any optimistic row version is wrong', async () => {
   const onboarding = await createControlledAcceptedOnboarding(
     'cleanup-conflict@example.com',
@@ -1249,7 +1311,8 @@ test('rolls the entire cleanup back when any optimistic row version is wrong', a
       (select archived_at is null and is_active from public.internal_users where id=$2) as user_active,
       (select archived_at is null and status='active' from public.internal_user_seat_assignments where id=$3) as seat_active,
       (select count(*)::integer from public.audit_events where organisation_id=$1 and event_type='commercial_onboarding.acceptance_archived') as audits,
-      (select count(*)::integer from public.transactional_outbox where organisation_id=$1 and topic='commercial_onboarding.acceptance_archived') as outbox
+      (select count(*)::integer from public.transactional_outbox where organisation_id=$1 and topic='commercial_onboarding.acceptance_archived') as outbox,
+      (select count(*)::integer from public.ftf_store where tenant_id=$1 and collection='ftf_work_packs' and record_id='__value__') as legacy_store
   `, [evidence.organisationId, evidence.internalUserId, evidence.seatAssignmentId]);
   expect(unchanged.rows[0]).toEqual({
     organisation_active: true,
@@ -1257,7 +1320,262 @@ test('rolls the entire cleanup back when any optimistic row version is wrong', a
     seat_active: true,
     audits: 0,
     outbox: 0,
+    legacy_store: 1,
   });
+});
+
+test('refuses missing, changed, additional, and ambiguous legacy-store evidence', async () => {
+  const cases = [
+    ['missing evidence', (evidence) => { delete evidence.legacyStore; }],
+    ['wrong record id', (evidence) => { evidence.legacyStore[0].recordId = 'wrong'; }],
+    ['digest mismatch', (evidence) => { evidence.legacyStore[0].payloadDigest = '0'.repeat(64); }],
+    ['timestamp mismatch', (evidence) => { evidence.legacyStore[0].updatedAt = '2000-01-01T00:00:00Z'; }],
+    ['duplicate evidence', (evidence) => { evidence.legacyStore.push({ ...evidence.legacyStore[0] }); }],
+  ];
+  let suffix = 10;
+  for (const [, mutate] of cases) {
+    const onboarding = await createControlledAcceptedOnboarding(
+      `cleanup-legacy-${suffix}@example.com`,
+      `CleanupLegacy${suffix}`,
+      `96000000-0000-4000-8000-${String(suffix).padStart(12, '0')}`,
+    );
+    suffix += 1;
+    const evidence = await controlledCleanupEvidence(onboarding);
+    mutate(evidence);
+    await expect(db.query(
+      'select public.ftf_archive_controlled_commercial_onboarding($1::jsonb)',
+      [JSON.stringify(evidence)],
+    )).rejects.toThrow(/COMMERCIAL_ONBOARDING_ACCEPTANCE_(EVIDENCE_INVALID|LEGACY_STORE_MISMATCH)/);
+  }
+});
+
+test('refuses an absent or unexpected extra legacy-store row without mutating the controlled fixture', async () => {
+  const absent = await createControlledAcceptedOnboarding(
+    'cleanup-legacy-absent@example.com', 'CleanupLegacyAbsent',
+    '96000000-0000-4000-8000-000000000020',
+  );
+  const absentEvidence = await controlledCleanupEvidence(absent);
+  await db.query('delete from public.ftf_store where tenant_id=$1', [absentEvidence.organisationId]);
+  await expect(db.query(
+    'select public.ftf_archive_controlled_commercial_onboarding($1::jsonb)',
+    [JSON.stringify(absentEvidence)],
+  )).rejects.toThrow(/COMMERCIAL_ONBOARDING_ACCEPTANCE_LEGACY_STORE_MISMATCH/);
+
+  const extra = await createControlledAcceptedOnboarding(
+    'cleanup-legacy-extra@example.com', 'CleanupLegacyExtra',
+    '96000000-0000-4000-8000-000000000021',
+  );
+  const extraEvidence = await controlledCleanupEvidence(extra);
+  await db.query(
+    `insert into public.ftf_store(tenant_id,collection,record_id,payload)
+     values($1::uuid,'unexpected_collection','__value__','{}'::jsonb)`,
+    [extraEvidence.organisationId],
+  );
+  await expect(db.query(
+    'select public.ftf_archive_controlled_commercial_onboarding($1::jsonb)',
+    [JSON.stringify(extraEvidence)],
+  )).rejects.toThrow(/COMMERCIAL_ONBOARDING_ACCEPTANCE_LEGACY_STORE_MISMATCH/);
+  const unchanged = await db.query(
+    'select archived_at is null as active from public.organisations where id=$1',
+    [extraEvidence.organisationId],
+  );
+  expect(unchanged.rows[0]).toEqual({ active: true });
+});
+
+test('refuses when the stored payload changes after snapshot and preserves the changed row', async () => {
+  const onboarding = await createControlledAcceptedOnboarding(
+    'cleanup-legacy-changed-payload@example.com', 'CleanupLegacyChangedPayload',
+    '96000000-0000-4000-8000-000000000070',
+  );
+  const evidence = await controlledCleanupEvidence(onboarding);
+  await db.query(`
+    update public.ftf_store
+    set payload='{"changedAfterSnapshot":true}'::jsonb
+    where tenant_id=$1::uuid and collection='ftf_work_packs' and record_id='__value__'
+  `, [evidence.organisationId]);
+  await expect(db.query(
+    'select public.ftf_archive_controlled_commercial_onboarding($1::jsonb)',
+    [JSON.stringify(evidence)],
+  )).rejects.toThrow(/COMMERCIAL_ONBOARDING_ACCEPTANCE_LEGACY_STORE_MISMATCH/);
+  const unchanged = await db.query(`
+    select
+      (select payload from public.ftf_store where tenant_id=$1::uuid and collection='ftf_work_packs' and record_id='__value__') as payload,
+      (select archived_at is null from public.organisations where id=$1::uuid) as active,
+      (select count(*)::integer from public.audit_events where organisation_id=$1::uuid and event_type='commercial_onboarding.acceptance_archived') as archive_audits
+  `, [evidence.organisationId]);
+  expect(unchanged.rows[0]).toEqual({
+    payload: { changedAfterSnapshot: true }, active: true, archive_audits: 0,
+  });
+});
+
+test('refuses multiple ftf_work_packs rows and preserves every row', async () => {
+  const onboarding = await createControlledAcceptedOnboarding(
+    'cleanup-legacy-multiple-work-packs@example.com', 'CleanupLegacyMultipleWorkPacks',
+    '96000000-0000-4000-8000-000000000071',
+  );
+  const evidence = await controlledCleanupEvidence(onboarding);
+  await db.query(`
+    insert into public.ftf_store(tenant_id,collection,record_id,payload)
+    values($1::uuid,'ftf_work_packs','second-controlled-record','{"unexpected":true}'::jsonb)
+  `, [evidence.organisationId]);
+  await expect(db.query(
+    'select public.ftf_archive_controlled_commercial_onboarding($1::jsonb)',
+    [JSON.stringify(evidence)],
+  )).rejects.toThrow(/COMMERCIAL_ONBOARDING_ACCEPTANCE_LEGACY_STORE_MISMATCH/);
+  const unchanged = await db.query(`
+    select
+      count(*)::integer as work_pack_rows,
+      bool_and(collection='ftf_work_packs') as only_work_pack_collection
+    from public.ftf_store where tenant_id=$1::uuid
+  `, [evidence.organisationId]);
+  expect(unchanged.rows[0]).toEqual({ work_pack_rows: 2, only_work_pack_collection: true });
+});
+
+test('refuses wrong and genuine organisation identities and rolls back their legacy-store rows', async () => {
+  const first = await createControlledAcceptedOnboarding(
+    'cleanup-wrong-first@example.com', 'CleanupWrongFirst',
+    '96000000-0000-4000-8000-000000000031',
+  );
+  const second = await createControlledAcceptedOnboarding(
+    'cleanup-wrong-second@example.com', 'CleanupWrongSecond',
+    '96000000-0000-4000-8000-000000000032',
+  );
+  const firstEvidence = await controlledCleanupEvidence(first);
+  const secondEvidence = await controlledCleanupEvidence(second);
+  firstEvidence.organisationId = secondEvidence.organisationId;
+  firstEvidence.legacyStore = secondEvidence.legacyStore;
+  await expect(db.query(
+    'select public.ftf_archive_controlled_commercial_onboarding($1::jsonb)',
+    [JSON.stringify(firstEvidence)],
+  )).rejects.toThrow(/COMMERCIAL_ONBOARDING_ACCEPTANCE_PROVENANCE_MISMATCH/);
+
+  const genuineAuth = '96000000-0000-4000-8000-000000000033';
+  await db.exec(`insert into auth.users(id,email) values('${genuineAuth}','genuine-archive@example.com')`);
+  const genuine = await db.query(
+    `select public.ftf_bootstrap_production_beta_organisation(
+      $1::uuid,'Genuine Fly The Farm','Genuine Operator','Genuine Base',null,'Australia/Brisbane'
+    ) as result`,
+    [genuineAuth],
+  );
+  const genuineOrganisationId = genuine.rows[0].result.organisation_id;
+  await db.query(
+    `insert into public.ftf_store(tenant_id,collection,record_id,payload)
+     values($1::uuid,'ftf_work_packs','__value__','{"genuine":true}'::jsonb)`,
+    [genuineOrganisationId],
+  );
+  const genuineLegacy = await db.query(`
+    select collection,record_id as "recordId",updated_at::text as "updatedAt",
+      encode(sha256(convert_to(payload::text,'UTF8')),'hex') as "payloadDigest"
+    from public.ftf_store where tenant_id=$1
+  `, [genuineOrganisationId]);
+  const genuineAttempt = await controlledCleanupEvidence(second);
+  genuineAttempt.organisationId = genuineOrganisationId;
+  genuineAttempt.legacyStore = genuineLegacy.rows;
+  await expect(db.query(
+    'select public.ftf_archive_controlled_commercial_onboarding($1::jsonb)',
+    [JSON.stringify(genuineAttempt)],
+  )).rejects.toThrow(/COMMERCIAL_ONBOARDING_ACCEPTANCE_PROVENANCE_MISMATCH/);
+
+  const safety = await db.query(`
+    select
+      (select count(*)::integer from public.ftf_store where tenant_id=$1) as wrong_store,
+      (select count(*)::integer from public.ftf_store where tenant_id=$2) as genuine_store,
+      (select archived_at is null from public.organisations where id=$1) as wrong_active,
+      (select archived_at is null from public.organisations where id=$2) as genuine_active
+  `, [secondEvidence.organisationId, genuineOrganisationId]);
+  expect(safety.rows[0]).toEqual({
+    wrong_store: 1, genuine_store: 1, wrong_active: true, genuine_active: true,
+  });
+});
+
+test('refuses unexpected membership-seat-Base topology and restores the exact legacy row', async () => {
+  const onboarding = await createControlledAcceptedOnboarding(
+    'cleanup-topology@example.com', 'CleanupTopology',
+    '96000000-0000-4000-8000-000000000034',
+  );
+  const evidence = await controlledCleanupEvidence(onboarding);
+  await db.query(`
+    update public.organisation_seat_allocations
+    set allocated_seats=2, allocation_source='synthetic_topology_regression'
+    where id=$1::uuid
+  `, [evidence.seatAllocationId]);
+  await expect(db.query(
+    'select public.ftf_archive_controlled_commercial_onboarding($1::jsonb)',
+    [JSON.stringify(evidence)],
+  )).rejects.toThrow(/COMMERCIAL_ONBOARDING_ACCEPTANCE_PROVENANCE_MISMATCH: identity chain/);
+  const unchanged = await db.query(`
+    select
+      (select count(*)::integer from public.ftf_store where tenant_id=$1) as legacy_store,
+      (select archived_at is null from public.organisations where id=$1) as organisation_active
+  `, [evidence.organisationId]);
+  expect(unchanged.rows[0]).toEqual({ legacy_store: 1, organisation_active: true });
+});
+
+test('archives only the controlled tenant and preserves unrelated Platform, Personnel, and legacy state', async () => {
+  const genuineAuth = '96000000-0000-4000-8000-000000000035';
+  await db.exec(`insert into auth.users(id,email) values('${genuineAuth}','genuine-safety@example.com')`);
+  const genuine = await db.query(
+    `select public.ftf_bootstrap_production_beta_organisation(
+      $1::uuid,'Genuine Safety Organisation','Genuine Safety User','Genuine Safety Base',null,'Australia/Brisbane'
+    ) as result`,
+    [genuineAuth],
+  );
+  const genuineOrganisationId = genuine.rows[0].result.organisation_id;
+  await db.query(
+    `insert into public.ftf_store(tenant_id,collection,record_id,payload)
+     values($1::uuid,'ftf_work_packs','__value__','{"preserve":"byte-equivalent"}'::jsonb)`,
+    [genuineOrganisationId],
+  );
+  const before = await db.query(`
+    select to_jsonb(o) organisation,
+      (select to_jsonb(s) from public.ftf_store s where s.tenant_id=o.id) legacy_store,
+      (select count(*)::integer from public.platform_users) platform_users,
+      (select count(*)::integer from public.personnel where organisation_id=o.id) personnel
+    from public.organisations o where o.id=$1
+  `, [genuineOrganisationId]);
+
+  const controlled = await createControlledAcceptedOnboarding(
+    'cleanup-safety@example.com', 'CleanupSafety',
+    '96000000-0000-4000-8000-000000000036',
+  );
+  const evidence = await controlledCleanupEvidence(controlled);
+  const archived = await db.query(
+    'select public.ftf_archive_controlled_commercial_onboarding($1::jsonb) as result',
+    [JSON.stringify(evidence)],
+  );
+  expect(archived.rows[0].result.archivedCounts.legacy_store).toBe(1);
+
+  const after = await db.query(`
+    select to_jsonb(o) organisation,
+      (select to_jsonb(s) from public.ftf_store s where s.tenant_id=o.id) legacy_store,
+      (select count(*)::integer from public.platform_users) platform_users,
+      (select count(*)::integer from public.personnel where organisation_id=o.id) personnel
+    from public.organisations o where o.id=$1
+  `, [genuineOrganisationId]);
+  expect(after.rows[0]).toEqual(before.rows[0]);
+});
+
+test('refuses a repeat archive and does not duplicate archive evidence', async () => {
+  const onboarding = await createControlledAcceptedOnboarding(
+    'cleanup-repeat@example.com', 'CleanupRepeat',
+    '96000000-0000-4000-8000-000000000022',
+  );
+  const evidence = await controlledCleanupEvidence(onboarding);
+  const first = await db.query(
+    'select public.ftf_archive_controlled_commercial_onboarding($1::jsonb) as result',
+    [JSON.stringify(evidence)],
+  );
+  expect(first.rows[0].result.archived).toBe(true);
+  await expect(db.query(
+    'select public.ftf_archive_controlled_commercial_onboarding($1::jsonb)',
+    [JSON.stringify(evidence)],
+  )).rejects.toThrow(/COMMERCIAL_ONBOARDING_ACCEPTANCE_(LEGACY_STORE_MISMATCH|ALREADY_ARCHIVED)/);
+  const evidenceCounts = await db.query(`
+    select
+      (select count(*)::integer from public.audit_events where organisation_id=$1 and event_type='commercial_onboarding.acceptance_archived') as archive_audits,
+      (select count(*)::integer from public.transactional_outbox where organisation_id=$1 and topic='commercial_onboarding.acceptance_archived') as archive_outbox
+  `, [evidence.organisationId]);
+  expect(evidenceCounts.rows[0]).toEqual({ archive_audits: 1, archive_outbox: 1 });
 });
 
 test('fails before cleanup when the organisation is not active', async () => {
@@ -1280,6 +1598,16 @@ test('fails before cleanup when the organisation is not active', async () => {
       (select count(*)::integer from public.transactional_outbox where organisation_id=$1 and topic='commercial_onboarding.acceptance_archived') as outbox
   `, [evidence.organisationId]);
   expect(effects.rows[0]).toEqual({ audits: 0, outbox: 0 });
+});
+
+test('refuses a second direct migration application without changing the installed contract', async () => {
+  await expect(db.exec(legacyStoreArchiveSql)).rejects.toThrow();
+  const installed = await db.query(`
+    select
+      to_regprocedure('public.ftf_archive_controlled_commercial_onboarding(jsonb)') is not null as wrapper_present,
+      to_regprocedure('public.ftf_archive_controlled_commercial_onboarding_without_legacy_store(jsonb)') is not null as prior_present
+  `);
+  expect(installed.rows[0]).toEqual({ wrapper_present: true, prior_present: true });
 });
 
 test('keeps application events, invitation events, and consumed invitations immutable', async () => {
