@@ -8,6 +8,20 @@ const workflow = () => yaml.load(read('.github/workflows/production-beta-operati
 const releaseWorkflow = () => yaml.load(read('.github/workflows/production-beta-release.yml'));
 
 const step = (job, name) => job.steps.find((candidate) => candidate.name === name);
+const exactCredentialBearingManualJobs = new Set([
+  'client-to-mission-preflight',
+  'supabase-ledger-diagnostic',
+]);
+const normalReusableJobs = (definition) => Object.fromEntries(Object.entries(definition.jobs)
+  .filter(([name]) => !exactCredentialBearingManualJobs.has(name)));
+const assertNormalReusableJobsAreCredentialFree = (definition) => {
+  const source = JSON.stringify(normalReusableJobs(definition));
+  for (const forbidden of ['SUPABASE_ACCESS_TOKEN', 'SUPABASE_DB_PASSWORD', 'VERCEL_TOKEN']) {
+    if (source.includes(`secrets.${forbidden}`)) {
+      throw new Error(`Normal reusable release job references forbidden credential: ${forbidden}`);
+    }
+  }
+};
 
 describe('commercial onboarding acceptance governance', () => {
   test('pins every external action in both protected workflows to its reviewed immutable commit', () => {
@@ -32,19 +46,79 @@ describe('commercial onboarding acceptance governance', () => {
 
   test('supports exact-SHA reusable release acceptance without deployment credentials', () => {
     const definition = workflow();
-    const reusableJobs = Object.fromEntries(Object.entries(definition.jobs)
-      .filter(([name]) => name !== 'client-to-mission-preflight'));
+    const reusableJobs = normalReusableJobs(definition);
     const manualPreflight = definition.jobs['client-to-mission-preflight'];
 
     expect(definition.on.workflow_call.inputs.expected_release_sha.required).toBe(true);
     expect(definition.on.workflow_call.inputs.expected_release_sha.type).toBe('string');
     expect(definition.jobs['deployment-identity'].steps[0].env.EXPECTED_RELEASE_SHA)
       .toContain('inputs.expected_release_sha');
-    for (const forbidden of ['SUPABASE_ACCESS_TOKEN', 'SUPABASE_DB_PASSWORD', 'VERCEL_TOKEN']) {
-      expect(JSON.stringify(reusableJobs)).not.toContain(`secrets.${forbidden}`);
-    }
+    expect(reusableJobs).toEqual(normalReusableJobs(definition));
+    expect(() => assertNormalReusableJobsAreCredentialFree(definition)).not.toThrow();
     expect(manualPreflight.if).toContain('inputs.client_to_mission_only == true');
     expect(manualPreflight.environment).toBe('production-beta-acceptance');
+  });
+
+  test('binds the deployment-credential exception to the exact protected ledger diagnostic', () => {
+    const definition = workflow();
+    const diagnostic = definition.jobs['supabase-ledger-diagnostic'];
+    const diagnosticSource = JSON.stringify(diagnostic);
+
+    expect(exactCredentialBearingManualJobs).toEqual(new Set([
+      'client-to-mission-preflight',
+      'supabase-ledger-diagnostic',
+    ]));
+    expect(diagnostic.if).toBe('${{ inputs.supabase_ledger_diagnostic_only == true }}');
+    expect(diagnostic.environment).toBe('production-beta-acceptance');
+    expect(diagnostic.env.SUPABASE_ACCESS_TOKEN).toBe('${{ secrets.SUPABASE_ACCESS_TOKEN }}');
+    expect(diagnostic.env.SUPABASE_DB_PASSWORD).toBe('${{ secrets.SUPABASE_DB_PASSWORD }}');
+    expect(diagnosticSource).toContain('migration list --linked');
+    expect(diagnosticSource).not.toMatch(/commercial-onboarding|client-to-mission|archive-controlled|ftf_archive|db push|migration up|vercel deploy|playwright/);
+    expect(JSON.stringify(normalReusableJobs(definition)))
+      .not.toMatch(/secrets\.SUPABASE_ACCESS_TOKEN|secrets\.SUPABASE_DB_PASSWORD|secrets\.VERCEL_TOKEN/);
+  });
+
+  test('normal release paths cannot execute the protected ledger diagnostic', () => {
+    const definition = workflow();
+    const diagnostic = definition.jobs['supabase-ledger-diagnostic'];
+
+    expect(definition.on.workflow_dispatch.inputs.supabase_ledger_diagnostic_only).toEqual({
+      description: 'Diagnose only the protected-runner Supabase migration ledger path',
+      required: false,
+      type: 'boolean',
+      default: false,
+    });
+    expect(diagnostic.if).toContain('inputs.supabase_ledger_diagnostic_only == true');
+    expect(definition.jobs['deployment-identity'].if).toContain('inputs.supabase_ledger_diagnostic_only != true');
+    expect(definition.jobs['authentication-acceptance'].if).toContain('inputs.supabase_ledger_diagnostic_only != true');
+    expect(definition.jobs['commercial-onboarding-acceptance'].if).toContain('inputs.supabase_ledger_diagnostic_only != true');
+  });
+
+  test.each(['SUPABASE_ACCESS_TOKEN', 'SUPABASE_DB_PASSWORD'])(
+    'keeps %s forbidden in a normal reusable release job',
+    (credentialName) => {
+      const definition = workflow();
+      definition.jobs['deployment-identity'].env = {
+        ...(definition.jobs['deployment-identity'].env || {}),
+        [credentialName]: `\${{ secrets.${credentialName} }}`,
+      };
+
+      expect(() => assertNormalReusableJobsAreCredentialFree(definition))
+        .toThrow(`Normal reusable release job references forbidden credential: ${credentialName}`);
+    },
+  );
+
+  test('does not exempt another arbitrary credential-bearing job', () => {
+    const definition = workflow();
+    definition.jobs['another-ledger-diagnostic'] = {
+      if: '${{ inputs.supabase_ledger_diagnostic_only == true }}',
+      env: { SUPABASE_ACCESS_TOKEN: '${{ secrets.SUPABASE_ACCESS_TOKEN }}' },
+      steps: [],
+    };
+
+    expect(normalReusableJobs(definition)).toHaveProperty('another-ledger-diagnostic');
+    expect(() => assertNormalReusableJobsAreCredentialFree(definition))
+      .toThrow('Normal reusable release job references forbidden credential: SUPABASE_ACCESS_TOKEN');
   });
 
   test('defines the complete unattended lifecycle and hostile boundaries', () => {
