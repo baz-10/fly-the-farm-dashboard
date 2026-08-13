@@ -48,11 +48,25 @@ const digest = (value) => crypto.createHash('sha256').update(value).digest('hex'
 
 const safeView = (input) => ({
   functions: (input.functions || []).map((entry) => ({
-    ...entry,
+    identity: entry.identity,
+    returnType: entry.returnType,
     definitionSha256: digest(normaliseSql(entry.definition)),
-    definition: undefined,
+    securityDefiner: entry.securityDefiner,
+    volatility: entry.volatility,
+    parallelSafety: entry.parallelSafety,
+    leakproof: entry.leakproof,
+    configuration: [...(entry.configuration || [])].sort(),
+    owner: entry.owner,
+    acl: [...(entry.acl || [])].sort(),
+    publicExecute: entry.publicExecute,
+    serviceRoleExecute: entry.serviceRoleExecute,
   })),
-  tablePrivileges: input.tablePrivileges || [],
+  tablePrivileges: (input.tablePrivileges || []).map((entry) => ({
+    identity: entry.identity,
+    acl: [...(entry.acl || [])].sort(),
+    publicPrivileges: [...(entry.publicPrivileges || [])].sort(),
+    serviceRolePrivileges: [...(entry.serviceRolePrivileges || [])].sort(),
+  })),
 });
 
 const discrepancyPaths = (expected, live) => {
@@ -72,8 +86,8 @@ const discrepancyPaths = (expected, live) => {
   walk(byIdentity(expectedSafe.functions), byIdentity(liveSafe.functions), 'functions');
   walk(byIdentity(expectedSafe.tablePrivileges), byIdentity(liveSafe.tablePrivileges), 'tablePrivileges');
   return differences.map((value) => value
-    .replace(/^functions\.([^.]+(?:\.[^(]+)?\([^)]*\))\./, 'functions[$1].')
-    .replace(/^tablePrivileges\.([^.]+\.[^.]+)\./, 'tablePrivileges[$1].'));
+    .replace(/^functions\.(.+\))\.(.+)$/, 'functions[$1].$2')
+    .replace(/^tablePrivileges\.(.+)\.(acl|publicPrivileges|serviceRolePrivileges)$/, 'tablePrivileges[$1].$2'));
 };
 
 const compareEvidence = (expected, live) => {
