@@ -7,6 +7,10 @@ const workflowPath = path.resolve(
   process.cwd(),
   '.github/workflows/production-beta-operational-acceptance.yml',
 );
+const clientToMissionPreflightPath = path.resolve(
+  process.cwd(),
+  'scripts/clientToMissionProductionPreflight.sql',
+);
 const playwrightConfigPath = path.resolve(process.cwd(), 'playwright.config.ts');
 const workflowDefinition = () => yaml.load(fs.readFileSync(workflowPath, 'utf8'));
 const workflowStep = (job, name) => job.steps.find((candidate) => candidate.name === name);
@@ -31,6 +35,71 @@ const playwrightConfiguration = () => {
 };
 
 describe('Production Beta operational acceptance execution profile', () => {
+  test('dispatches Client-to-Mission alone only for the frozen healthy Production release', () => {
+    const definition = workflowDefinition();
+    const inputs = definition.on.workflow_dispatch.inputs;
+    const preflight = definition.jobs['client-to-mission-preflight'];
+    const authentication = definition.jobs['authentication-acceptance'];
+    const onboarding = definition.jobs['commercial-onboarding-acceptance'];
+    const operational = definition.jobs['operational-acceptance'];
+
+    expect(inputs.client_to_mission_only).toEqual({
+      description: 'Run only the existing Client-to-Mission Production acceptance',
+      required: false,
+      type: 'boolean',
+      default: false,
+    });
+    expect(inputs.target_environment).toEqual({
+      description: 'Explicit protected target',
+      required: true,
+      type: 'choice',
+      options: ['production'],
+      default: 'production',
+    });
+    expect(inputs.expected_release_sha).toEqual({
+      description: 'Frozen Production application SHA',
+      required: false,
+      type: 'string',
+      default: '',
+    });
+    expect(preflight.environment).toBe('production-beta-acceptance');
+    expect(preflight.if).toContain('inputs.client_to_mission_only == true');
+    expect(authentication.if).toContain('inputs.client_to_mission_only != true');
+    expect(onboarding.if).toContain('inputs.client_to_mission_only != true');
+    expect(operational.needs).toEqual(expect.arrayContaining([
+      'deployment-identity',
+      'client-to-mission-preflight',
+      'commercial-onboarding-acceptance',
+    ]));
+    expect(operational.if).toContain("needs.client-to-mission-preflight.result == 'success'");
+    expect(operational.if).toContain("needs.commercial-onboarding-acceptance.result == 'skipped'");
+    expect(preflight.env.EXPECTED_RELEASE_SHA).toBe('932f787d9ff9aa091a74a0543adc5d6e6be591f6');
+    expect(preflight.env.EXPECTED_SUPABASE_PROJECT_REF).toBe('fzkrvglzompkuiodqllr');
+
+    const preflightSource = fs.readFileSync(clientToMissionPreflightPath, 'utf8');
+    expect(preflightSource).toContain("version='20260813130000'");
+    expect(preflightSource).toContain("event_type='commercial_onboarding.acceptance_archived'");
+    expect(preflightSource).toContain("topic='commercial_onboarding.acceptance_archived'");
+    expect(preflightSource).toContain("tenant_id='961a4354-40f5-479d-a577-74839596ad14'::uuid");
+    expect(preflightSource).toContain("digest mismatch: clients");
+  });
+
+  test('manual Client-to-Mission mode reuses the existing gate and cannot onboard, archive, migrate, or deploy', () => {
+    const definition = workflowDefinition();
+    const preflight = definition.jobs['client-to-mission-preflight'];
+    const operational = definition.jobs['operational-acceptance'];
+    const preflightSource = JSON.stringify(preflight);
+    const operationalSource = JSON.stringify(operational);
+
+    expect(workflowStep(operational, 'Run established Client-to-Mission gate').run)
+      .toBe('npx playwright test --project=chromium --no-deps');
+    expect(workflowStep(operational, 'Prove deterministic acceptance cleanup').run)
+      .toBe('npx playwright test --project=cleanup --no-deps');
+    expect(preflightSource).not.toMatch(/commercial-onboarding\.spec|archive-controlled|ftf_archive_controlled_commercial_onboarding/);
+    expect(`${preflightSource}${operationalSource}`).not.toMatch(/db push(?! --linked --dry-run)|vercel deploy|supabase migration up/);
+    expect(operationalSource).not.toMatch(/commercial-onboarding\.spec|archive-controlled|ftf_archive_controlled_commercial_onboarding/);
+  });
+
   test('pins deterministic acceptance execution to the approved operational timezone', () => {
     const definition = workflowDefinition();
 
@@ -47,6 +116,8 @@ describe('Production Beta operational acceptance execution profile', () => {
 
     expect(contract.E2E_ORGANISATION_EMAIL).toEqual({ required: false });
     expect(contract.E2E_ORGANISATION_PASSWORD).toEqual({ required: false });
+    expect(contract.SUPABASE_ACCESS_TOKEN).toEqual({ required: false });
+    expect(contract.SUPABASE_DB_PASSWORD).toEqual({ required: false });
     expect(authentication.environment).toBe('production-beta-acceptance');
     expect(operational.environment).toBe('production-beta-acceptance');
     expect(authentication.env.E2E_ORGANISATION_EMAIL).toBe('${{ secrets.E2E_ORGANISATION_EMAIL }}');
@@ -56,7 +127,8 @@ describe('Production Beta operational acceptance execution profile', () => {
     expect(operationalGuard.run).toContain('[[ -n "$E2E_ORGANISATION_EMAIL" ]]');
     expect(operationalGuard.run).toContain('[[ -n "$E2E_ORGANISATION_PASSWORD" ]]');
     expect(JSON.stringify(definition.jobs)).not.toMatch(/production-beta-deployment/);
-    expect(JSON.stringify(definition.jobs)).not.toMatch(/SUPABASE_ACCESS_TOKEN|SUPABASE_DB_PASSWORD|VERCEL_TOKEN/);
+    expect(JSON.stringify({ authentication, operational }))
+      .not.toMatch(/SUPABASE_ACCESS_TOKEN|SUPABASE_DB_PASSWORD|VERCEL_TOKEN/);
   });
 
   test('uses protected environment secrets without persisting credentials', () => {

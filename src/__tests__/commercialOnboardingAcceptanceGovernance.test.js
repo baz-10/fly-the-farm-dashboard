@@ -32,15 +32,19 @@ describe('commercial onboarding acceptance governance', () => {
 
   test('supports exact-SHA reusable release acceptance without deployment credentials', () => {
     const definition = workflow();
-    const source = read('.github/workflows/production-beta-operational-acceptance.yml');
+    const reusableJobs = Object.fromEntries(Object.entries(definition.jobs)
+      .filter(([name]) => name !== 'client-to-mission-preflight'));
+    const manualPreflight = definition.jobs['client-to-mission-preflight'];
 
     expect(definition.on.workflow_call.inputs.expected_release_sha.required).toBe(true);
     expect(definition.on.workflow_call.inputs.expected_release_sha.type).toBe('string');
     expect(definition.jobs['deployment-identity'].steps[0].env.EXPECTED_RELEASE_SHA)
       .toContain('inputs.expected_release_sha');
     for (const forbidden of ['SUPABASE_ACCESS_TOKEN', 'SUPABASE_DB_PASSWORD', 'VERCEL_TOKEN']) {
-      expect(source).not.toContain(`secrets.${forbidden}`);
+      expect(JSON.stringify(reusableJobs)).not.toContain(`secrets.${forbidden}`);
     }
+    expect(manualPreflight.if).toContain('inputs.client_to_mission_only == true');
+    expect(manualPreflight.environment).toBe('production-beta-acceptance');
   });
 
   test('defines the complete unattended lifecycle and hostile boundaries', () => {
@@ -159,7 +163,11 @@ describe('commercial onboarding acceptance governance', () => {
     expect(operational).toBeDefined();
     expect(authentication.needs).toBe('deployment-identity');
     expect(onboarding.needs).toEqual(['deployment-identity', 'authentication-acceptance']);
-    expect(operational.needs).toEqual(['deployment-identity', 'commercial-onboarding-acceptance']);
+    expect(operational.needs).toEqual([
+      'deployment-identity',
+      'client-to-mission-preflight',
+      'commercial-onboarding-acceptance',
+    ]);
 
     for (const job of [authentication, onboarding, operational]) {
       expect(step(job, 'Check out accepted source').with.ref)
