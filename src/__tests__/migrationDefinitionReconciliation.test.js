@@ -29,13 +29,51 @@ const evidence = (overrides = {}) => ({
 const clone = (value) => JSON.parse(JSON.stringify(value));
 
 describe('migration definition reconciliation', () => {
-  test('canonicalisation is deterministic and normalises formatting only', () => {
-    const first = evidence();
+  test('normalises line endings only', () => {
+    const first = evidence({ functions: [{
+      ...evidence().functions[0],
+      definition: 'BEGIN\nRETURN p;\nEND;',
+    }] });
     const second = evidence({ functions: [{
       ...first.functions[0],
-      definition: first.functions[0].definition.replaceAll(' ', '  ').replace('BEGIN', '\r\nBEGIN'),
+      definition: first.functions[0].definition.replaceAll('\n', '\r\n'),
     }] });
     expect(canonicaliseEvidence(first)).toEqual(canonicaliseEvidence(second));
+  });
+
+  test('preserves a lone carriage return as exact source content', () => {
+    const expected = evidence({ functions: [{
+      ...evidence().functions[0],
+      definition: "RETURN E'A\rB';",
+    }] });
+    const observed = evidence({ functions: [{
+      ...evidence().functions[0],
+      definition: "RETURN E'A\nB';",
+    }] });
+    expect(compareEvidence(expected, observed).result).toBe('C');
+  });
+
+  test.each([
+    ['literal whitespace', "RETURN 'A  B'", "RETURN 'A B'"],
+    ['literal content', "RETURN 'A'", "RETURN 'B'"],
+    ['newline inside literal', "RETURN E'A\\nB'", "RETURN E'A B'"],
+    ['comment content', 'RETURN p; -- first', 'RETURN p; -- second'],
+    ['dollar-quoted content', "RETURN $value$A  B$value$", "RETURN $value$A B$value$"],
+    ['added statement', 'RETURN p;', 'PERFORM 1; RETURN p;'],
+    ['function call', 'RETURN lower(p::text);', 'RETURN upper(p::text);'],
+    ['schema qualification', 'RETURN public.example(p);', 'RETURN private.example(p);'],
+    ['predicate', 'IF p IS NULL THEN', 'IF p IS NOT NULL THEN'],
+    ['digest expression', "sha256(convert_to(p::text,'UTF8'))", "md5(p::text)"],
+  ])('detects exact source difference: %s', (_label, reviewed, live) => {
+    const expected = evidence({ functions: [{ ...evidence().functions[0], definition: reviewed }] });
+    const observed = evidence({ functions: [{ ...evidence().functions[0], definition: live }] });
+    const result = compareEvidence(expected, observed);
+    expect(result.result).toBe('C');
+    expect(result.discrepancies).toContain('functions[public.example(jsonb)].definitionSha256');
+  });
+
+  test('matches byte-identical function source', () => {
+    expect(compareEvidence(evidence(), clone(evidence())).result).toBe('B');
   });
 
   test.each([

@@ -6,10 +6,7 @@ const requiredFunctionKeys = ['identity', 'returnType', 'definition', 'securityD
 const requiredTableKeys = ['identity', 'acl', 'publicPrivileges', 'serviceRolePrivileges'];
 
 const normaliseSql = (value) => String(value)
-  .replace(/\r\n?/g, '\n')
-  .replace(/\s+/g, ' ')
-  .replace(/\s*([(),;=])\s*/g, '$1')
-  .trim();
+  .replace(/\r\n/g, '\n');
 
 const canonicaliseEvidence = (input) => {
   const canonical = {
