@@ -12,6 +12,8 @@ test('captures direct, inherited, default and effective ftf_store privilege prov
     'with recursive', 'pg_auth_members', 'pg_default_acl', 'aclexplode', 'has_table_privilege',
     'rolinherit', 'rolsuper', 'direct ACL mismatch', 'effective privilege mismatch',
     'acl.grantee=0', 'PUBLIC direct privilege present',
+    'PRE_CORRECTION', 'POST_CORRECTION', 'partial privilege reconciliation',
+    "defaclobjtype='r'", "nspname='public'", "defaclrole",
     'maintain', 'truncate', 'references', 'trigger',
   ]) expect(sql.toLowerCase()).toContain(token.toLowerCase());
   expect(sql.toLowerCase()).not.toContain("has_table_privilege('public'");
