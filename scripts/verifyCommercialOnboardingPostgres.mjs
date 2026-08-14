@@ -107,7 +107,7 @@ export async function buildControlledSnapshot(source, client = createTrustedClie
   if (auth.id !== invitation.accepted_by_auth_user_id || auth.email?.toLowerCase() !== application.intended_administrator_email
     || !auth.email_confirmed_at) throw new Error('Controlled onboarding authentication identity is not active and exact.');
 
-  const organisation = await one(`organisations?id=eq.${source.organisationId}&archived_at=is.null&select=id,name,row_version`, 'organisation');
+  const organisation = await one(`organisations?id=eq.${source.organisationId}&archived_at=is.null&select=id,name,row_version,created_at`, 'organisation');
   if (organisation.name !== application.business_name) throw new Error('Controlled onboarding organisation name does not match approved evidence.');
   const internalUser = await one(`internal_users?id=eq.${invitation.resulting_internal_user_id}&organisation_id=eq.${source.organisationId}&auth_user_id=eq.${invitation.accepted_by_auth_user_id}&is_active=eq.true&archived_at=is.null&select=id,auth_user_id,row_version`, 'internal user');
   const membership = await one(`memberships?id=eq.${invitation.resulting_membership_id}&organisation_id=eq.${source.organisationId}&internal_user_id=eq.${internalUser.id}&is_active=eq.true&archived_at=is.null&select=id,role_id,row_version`, 'membership');
@@ -124,7 +124,48 @@ export async function buildControlledSnapshot(source, client = createTrustedClie
   const baseAssignment = await one(`membership_operating_location_assignments?organisation_id=eq.${source.organisationId}&membership_id=eq.${membership.id}&operating_location_id=eq.${location.id}&is_active=eq.true&archived_at=is.null&select=id,row_version`, 'Base assignment');
 
   await none(`platform_users?auth_user_id=eq.${invitation.accepted_by_auth_user_id}&archived_at=is.null&select=id`, 'Platform identity');
-  await none(`personnel?organisation_id=eq.${source.organisationId}&archived_at=is.null&select=id`, 'Personnel');
+  let personnel;
+  if (source.expectedPersonnel === null || source.expectedPersonnel === undefined) {
+    await none(`personnel?organisation_id=eq.${source.organisationId}&select=id`, 'Personnel');
+  } else {
+    const people = await rest(`personnel?organisation_id=eq.${source.organisationId}&select=id,internal_user_id,membership_id,full_name,engagement_status,is_active,archived_at,row_version,created_at,created_by_internal_user_id,updated_by_internal_user_id`);
+    if (people.length !== 1) throw new Error('Controlled onboarding Personnel must resolve to exactly one record.');
+    const person = people[0];
+    if (person.id !== source.expectedPersonnel.personnelId || person.internal_user_id || person.membership_id
+      || person.archived_at || person.is_active !== true || person.engagement_status !== 'employee'
+      || !person.full_name?.startsWith(`${CONTROLLED_PREFIX} `)
+      || person.created_by_internal_user_id !== internalUser.id || person.updated_by_internal_user_id !== internalUser.id
+      || Date.parse(person.created_at) < Date.parse(organisation.created_at)) {
+      throw new Error('Controlled onboarding Personnel provenance is inconsistent.');
+    }
+    const baseLinks = await rest(`personnel_operating_locations?organisation_id=eq.${source.organisationId}&personnel_id=eq.${person.id}&select=id,operating_location_id,created_by_internal_user_id&order=id.asc`);
+    const roleLinks = await rest(`personnel_operational_roles?organisation_id=eq.${source.organisationId}&personnel_id=eq.${person.id}&select=id,role_code,created_by_internal_user_id&order=id.asc`);
+    if (baseLinks.length !== source.expectedPersonnel.baseLinkCount
+      || baseLinks[0]?.operating_location_id !== location.id
+      || baseLinks.some((link) => link.created_by_internal_user_id !== internalUser.id)
+      || roleLinks.length !== source.expectedPersonnel.roleLinkCount
+      || roleLinks.some((link) => link.created_by_internal_user_id !== internalUser.id)
+      || roleLinks.map(({ role_code: code }) => code).sort().join(',')
+        !== ['chemical_operator', 'ground_crew', 'loader', 'observer', 'pilot', 'pilot_in_command', 'supervisor'].join(',')) {
+      throw new Error('Controlled onboarding Personnel dependency topology is inconsistent.');
+    }
+    await none(`personnel_credentials?organisation_id=eq.${source.organisationId}&personnel_id=eq.${person.id}&select=id`, 'Personnel credential');
+    await none(`personnel_evidence?organisation_id=eq.${source.organisationId}&personnel_id=eq.${person.id}&select=id`, 'Personnel evidence');
+    await none(`mission_personnel_assignments?organisation_id=eq.${source.organisationId}&personnel_id=eq.${person.id}&select=id`, 'Personnel Mission assignment');
+    const creationAudits = await rest(`audit_events?organisation_id=eq.${source.organisationId}&entity_type=eq.personnel&entity_id=eq.${person.id}&event_type=eq.personnel.create&select=id,actor_internal_user_id,created_at`);
+    if (creationAudits.length !== 1 || creationAudits[0].actor_internal_user_id !== internalUser.id
+      || Date.parse(creationAudits[0].created_at) < Date.parse(person.created_at)) {
+      throw new Error('Controlled onboarding Personnel creation audit is inconsistent.');
+    }
+    personnel = {
+      personnelId: person.id, rowVersion: person.row_version, createdAt: person.created_at,
+      createdByInternalUserId: person.created_by_internal_user_id,
+      updatedByInternalUserId: person.updated_by_internal_user_id,
+      engagementStatus: person.engagement_status, creationAuditId: creationAudits[0].id,
+      baseLinks: baseLinks.map((link) => ({ id: link.id, operatingLocationId: link.operating_location_id })),
+      roleLinks: roleLinks.map((link) => ({ id: link.id, roleCode: link.role_code })),
+    };
+  }
 
   const applicationEvents = await rest(`commercial_onboarding_application_events?application_id=eq.${source.applicationId}&select=event_type,to_status&order=created_at.asc`);
   for (const state of ['SUBMITTED', 'UNDER_REVIEW', 'APPROVED']) {
@@ -218,7 +259,7 @@ export async function buildControlledSnapshot(source, client = createTrustedClie
       seatAllocation: seatAllocation.row_version, seatAssignment: seatAssignment.row_version,
       baseAssignment: baseAssignment.row_version,
     },
-    records, legacyStore,
+    records, legacyStore, ...(personnel ? { personnel } : {}),
   };
 }
 
@@ -241,6 +282,7 @@ export async function archiveControlledSnapshot(source, snapshot, client = creat
   for (const table of [
     'missions', 'jobs', 'fields', 'properties', 'clients', 'equipment_kits', 'aircraft',
     'role_permissions', 'permissions', 'roles', 'memberships', 'internal_users', 'operating_locations',
+    'personnel',
     'organisation_seat_allocations', 'internal_user_seat_assignments', 'membership_operating_location_assignments',
   ]) {
     const rows = await client.rest(`${table}?organisation_id=eq.${source.organisationId}&archived_at=is.null&select=id&limit=1`);
@@ -261,6 +303,19 @@ export async function archiveControlledSnapshot(source, snapshot, client = creat
   const invitation = await client.rest(`commercial_onboarding_invitations?id=eq.${source.invitationId}&status=eq.ACCEPTED&select=id`);
   const application = await client.rest(`commercial_onboarding_applications?id=eq.${source.applicationId}&status=eq.APPROVED&select=id`);
   if (invitation.length !== 1 || application.length !== 1) throw new Error('Transactional cleanup altered immutable onboarding history.');
+  if (snapshot.personnel) {
+    const archivedPersonnel = await client.rest(`personnel?id=eq.${snapshot.personnel.personnelId}&organisation_id=eq.${source.organisationId}&is_active=eq.false&archived_at=not.is.null&select=id`);
+    const baseLinks = await client.rest(`personnel_operating_locations?organisation_id=eq.${source.organisationId}&personnel_id=eq.${snapshot.personnel.personnelId}&select=id`);
+    const roleLinks = await client.rest(`personnel_operational_roles?organisation_id=eq.${source.organisationId}&personnel_id=eq.${snapshot.personnel.personnelId}&select=id`);
+    const creationAudit = await client.rest(`audit_events?id=eq.${snapshot.personnel.creationAuditId}&organisation_id=eq.${source.organisationId}&entity_id=eq.${snapshot.personnel.personnelId}&event_type=eq.personnel.create&select=id`);
+    const archiveAudit = await client.rest(`audit_events?organisation_id=eq.${source.organisationId}&entity_id=eq.${snapshot.personnel.personnelId}&event_type=eq.personnel.archive&select=id`);
+    if (archivedPersonnel.length !== 1 || baseLinks.length || roleLinks.length
+      || creationAudit.length !== 1 || archiveAudit.length !== 1
+      || result.personnelArchiveEvidence?.auditCount !== 1
+      || result.personnelArchiveEvidence?.outboxCount !== 1) {
+      throw new Error('Transactional cleanup did not preserve the exact canonical Personnel archive history.');
+    }
+  }
   const audit = await client.rest(`audit_events?organisation_id=eq.${source.organisationId}&event_type=eq.commercial_onboarding.acceptance_archived&select=id`);
   const outboxEvidence = await client.rest('rpc/ftf_verify_controlled_commercial_onboarding_evidence', {
     method: 'POST', body: JSON.stringify({ p_evidence: snapshot }),

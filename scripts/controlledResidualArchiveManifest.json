@@ -8,6 +8,7 @@
       "organisationId": "0218251e-be2d-4e5c-96ca-29eff71b3a4a",
       "operatingLocationId": "33da5953-4704-4ded-a602-e5e74d358cac",
       "evidenceSourceWorkflowRunId": "31569691340",
+      "expectedPersonnel": { "personnelId": "e6205daf-019b-4287-b0f0-d9dbc3e8af00", "baseLinkCount": 1, "roleLinkCount": 7 },
       "expectedActiveRecords": { "missions": 0, "jobs": 0, "fields": 1, "properties": 1, "clients": 1, "equipment_kits": 0, "aircraft": 0 }
     },
     {
@@ -17,6 +18,7 @@
       "organisationId": "25a9353b-ed90-468b-9ae5-31a55d8f88dc",
       "operatingLocationId": "1ed90464-3093-427c-9f22-0232fbc74c8a",
       "evidenceSourceWorkflowRunId": "31587990071",
+      "expectedPersonnel": null,
       "expectedActiveRecords": { "missions": 0, "jobs": 0, "fields": 0, "properties": 0, "clients": 0, "equipment_kits": 0, "aircraft": 0 }
     },
     {
@@ -26,6 +28,7 @@
       "organisationId": "e0f8ba14-ec34-45db-87b4-8429c2ea6288",
       "operatingLocationId": "b949b349-2d62-4de7-ad5e-b3a3187b0e6c",
       "evidenceSourceWorkflowRunId": "31591434536",
+      "expectedPersonnel": null,
       "expectedActiveRecords": { "missions": 0, "jobs": 0, "fields": 0, "properties": 0, "clients": 1, "equipment_kits": 0, "aircraft": 0 }
     },
     {
@@ -35,6 +38,7 @@
       "organisationId": "acfa5923-0edd-46ee-b81b-49d9deedc123",
       "operatingLocationId": "ca6d8ff7-eda3-4ab7-b1af-d693f0643838",
       "evidenceSourceWorkflowRunId": "31637533240",
+      "expectedPersonnel": null,
       "expectedActiveRecords": { "missions": 0, "jobs": 0, "fields": 0, "properties": 1, "clients": 1, "equipment_kits": 0, "aircraft": 0 }
     },
     {
@@ -44,6 +48,7 @@
       "organisationId": "4096dbd0-b538-4e8a-aaaa-76338125908a",
       "operatingLocationId": "cfec031b-3e6a-4552-8705-9e00d9fbfffb",
       "evidenceSourceWorkflowRunId": "31641994313",
+      "expectedPersonnel": null,
       "expectedActiveRecords": { "missions": 1, "jobs": 1, "fields": 1, "properties": 1, "clients": 1, "equipment_kits": 1, "aircraft": 1 }
     }
   ]
