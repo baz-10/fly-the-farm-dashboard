@@ -21,6 +21,8 @@ const controlledBlock = () => {
   return match[1];
 };
 
+const diagnosticSql = () => read('scripts/productionStateIntegrityDiagnostic.sql');
+
 const uuid = (value) => `00000000-0000-4000-8000-${String(value).padStart(12, '0')}`;
 const marker = (value) => `SC ACCEPTANCE — 2026-08-14T00-00-${String(value).padStart(2, '0')}-000Z ONBOARDING`;
 let seedSequence = 6000;
@@ -156,6 +158,31 @@ function runIntegrity(setupSql = '', { current = true } = {}) {
   return child;
 }
 
+function runDiagnostic(setupSql = '', { current = true } = {}) {
+  const child = spawnSync(process.execPath, ['-e', `
+    const { PGlite } = require('@electric-sql/pglite');
+    (async () => {
+      const db = new PGlite();
+      await db.exec(process.env.SCHEMA_SQL);
+      await db.exec(process.env.SEED_SQL);
+      const result = await db.query(process.env.DIAGNOSTIC_SQL);
+      process.stdout.write(JSON.stringify(result.rows));
+      await db.close();
+    })().catch((error) => { process.stderr.write(String(error?.message || error)); process.exit(1); });
+  `], {
+    cwd: root,
+    env: {
+      ...process.env,
+      SCHEMA_SQL: schemaSql,
+      SEED_SQL: `${current ? currentSql() : ''}\n${setupSql}`,
+      DIAGNOSTIC_SQL: diagnosticSql(),
+    },
+    encoding: 'utf8',
+  });
+  if (child.status !== 0) throw new Error(child.stderr);
+  return JSON.parse(child.stdout);
+}
+
 function expectIntegrityPass(setupSql = '') {
   const result = runIntegrity(setupSql);
   expect(result.stderr).toBe('');
@@ -169,6 +196,58 @@ function expectIntegrityFailure(setupSql = '', options) {
 }
 
 describe('read-only Production state integrity reconciliation', () => {
+  test('emits bounded named diagnostics without mutation or personal contact data', () => {
+    const sql = diagnosticSql();
+    for (const checkName of [
+      'current_controlled_chain',
+      'application_lifecycle',
+      'invitation_lifecycle',
+      'accepted_organisation_link',
+      'organisation_reverse_link',
+      'archived_identity_chain',
+      'unexpected_operational_links',
+      'archive_audit',
+      'archive_outbox',
+    ]) expect(sql).toContain(checkName);
+    expect(sql).toMatch(/failed_count/);
+    expect(sql).toMatch(/sample_ids/);
+    expect(sql).toMatch(/limit\s+10/i);
+    expect(sql).not.toMatch(/\b(insert|update|delete|truncate|alter|create|drop|grant|revoke)\b/i);
+    expect(sql).not.toMatch(/email|phone|submitted_payload|token_hash/i);
+  });
+
+  test('reports the governed archived fixture as clean', () => {
+    const rows = runDiagnostic();
+    expect(rows.length).toBeGreaterThanOrEqual(9);
+    expect(rows.every((row) => Number(row.failed_count) === 0)).toBe(true);
+  });
+
+  test('identifies an unexpected active accepted controlled organisation', () => {
+    const values = {
+      applicationId: uuid(901), invitationId: uuid(902), organisationId: uuid(903), authUserId: uuid(904),
+      internalUserId: uuid(905), membershipId: uuid(906), locationId: uuid(907),
+      applicationReference: 'SC-APP-DIAGNOSTIC', businessName: marker(30), archived: false,
+    };
+    const rows = runDiagnostic(seedAcceptedSql(values));
+    const archivedIdentity = rows.find((row) => row.check_name === 'archived_identity_chain');
+    expect(Number(archivedIdentity.failed_count)).toBe(1);
+    expect(archivedIdentity.sample_ids).toEqual([values.organisationId]);
+  });
+
+  test('separates missing acceptance and archive audit evidence', () => {
+    const rows = runDiagnostic(`
+      delete from audit_events
+      where organisation_id='${CURRENT.organisationId}'
+        and event_type in ('commercial_onboarding.accepted','commercial_onboarding.acceptance_archived');
+    `);
+    const invitation = rows.find((row) => row.check_name === 'invitation_lifecycle');
+    const archive = rows.find((row) => row.check_name === 'archive_audit');
+    expect(Number(invitation.failed_count)).toBe(1);
+    expect(invitation.sample_ids).toEqual([CURRENT.invitationId]);
+    expect(Number(archive.failed_count)).toBe(1);
+    expect(archive.sample_ids).toEqual([CURRENT.organisationId]);
+  });
+
   test('binds the retained controlled onboarding identity chain and migration head', () => {
     const sql = read('scripts/productionStateIntegrityReconciliation.sql');
     for (const value of [
