@@ -34,8 +34,11 @@ describe('GitHub-managed Production Beta release governance', () => {
     expect(diagnostic.if).toContain('inputs.migration_definition_reconciliation_only == true');
     expect(read('scripts/migrationDefinitionReconciliation.sql')).toMatch(/pg_catalog|information_schema/);
     expect(source).toContain('scripts/productionStateIntegrityReconciliation.sql');
+    expect(source).toContain('scripts/productionStateIntegrityDiagnostic.sql');
     expect(source).toContain('scripts/productionPrivilegeProvenance.sql');
     expect(source.indexOf('scripts/productionPrivilegeProvenance.sql'))
+      .toBeLessThan(source.indexOf('scripts/productionStateIntegrityDiagnostic.sql'));
+    expect(source.indexOf('scripts/productionStateIntegrityDiagnostic.sql'))
       .toBeLessThan(source.indexOf('scripts/productionStateIntegrityReconciliation.sql'));
     expect(source.indexOf('scripts/productionStateIntegrityReconciliation.sql'))
       .toBeLessThan(source.indexOf('scripts/migrationDefinitionReconciliation.sql'));
