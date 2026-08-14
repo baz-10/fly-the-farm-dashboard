@@ -52,7 +52,7 @@ function validateSource(source) {
   }
 }
 
-function createTrustedClient() {
+export function createTrustedClient() {
   const supabaseUrl = new URL(requiredEnvironment('SUPABASE_URL')).origin;
   const serviceKey = requiredEnvironment('SUPABASE_SERVICE_ROLE_KEY');
   const headers = { apikey: serviceKey, Authorization: `Bearer ${serviceKey}`, 'Content-Type': 'application/json' };
@@ -77,7 +77,7 @@ function exactSet(actual, expected, label) {
   if (JSON.stringify(left) !== JSON.stringify(right)) throw new Error(`Controlled onboarding ${label} did not resolve to the exact evidence set.`);
 }
 
-async function buildControlledSnapshot(source, client = createTrustedClient(), requireCompleteOperationalEvidence = false) {
+export async function buildControlledSnapshot(source, client = createTrustedClient(), requireCompleteOperationalEvidence = false) {
   validateSource(source);
   const { rest, authUser } = client;
   const one = async (path, label) => {
@@ -228,10 +228,7 @@ async function verifyControlledOnboarding(evidencePath) {
   process.stdout.write('Controlled commercial onboarding live evidence verified: one organisation identity, administrator membership, seat and Base; no Platform identity or Personnel; immutable history and atomic acceptance evidence retained.\n');
 }
 
-async function archiveControlledOnboarding(evidencePath) {
-  const source = JSON.parse(await readFile(resolve(evidencePath), 'utf8'));
-  const client = createTrustedClient();
-  const snapshot = await buildControlledSnapshot(source, client);
+export async function archiveControlledSnapshot(source, snapshot, client = createTrustedClient()) {
   const result = await client.rest('rpc/ftf_archive_controlled_commercial_onboarding', {
     method: 'POST', body: JSON.stringify({ p_evidence: snapshot }),
   });
@@ -272,10 +269,19 @@ async function archiveControlledOnboarding(evidencePath) {
     throw new Error('Transactional cleanup audit/outbox evidence is incomplete.');
   }
   process.stdout.write('Controlled commercial onboarding organisation archived transactionally; exact provenance protected genuine organisation records.\n');
+  return result;
 }
 
-const [mode, evidencePath] = process.argv.slice(2);
-if (!mode) runLocalPostgresVerification();
-else if (mode === '--verify-controlled' && evidencePath) await verifyControlledOnboarding(evidencePath);
-else if (mode === '--archive-controlled' && evidencePath) await archiveControlledOnboarding(evidencePath);
-else throw new Error('Usage: node scripts/verifyCommercialOnboardingPostgres.mjs [--verify-controlled|--archive-controlled <evidence.json>]');
+async function archiveControlledOnboarding(evidencePath) {
+  const source = JSON.parse(await readFile(resolve(evidencePath), 'utf8'));
+  const client = createTrustedClient();
+  const snapshot = await buildControlledSnapshot(source, client);
+  await archiveControlledSnapshot(source, snapshot, client);
+}
+
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  const [mode, evidencePath] = process.argv.slice(2);
+  if (!mode) runLocalPostgresVerification();
+  else if (mode === '--verify-controlled' && evidencePath) await verifyControlledOnboarding(evidencePath);
+  else if (mode === '--archive-controlled' && evidencePath) await archiveControlledOnboarding(evidencePath);
+}
