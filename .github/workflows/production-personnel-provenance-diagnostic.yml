@@ -1,0 +1,48 @@
+name: Production five-target Personnel provenance diagnostic
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: Type DIAGNOSE_EXACT_FIVE_PERSONNEL_PROVENANCE
+        required: true
+        type: string
+
+jobs:
+  diagnose-exact-five:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: production-beta-acceptance
+    permissions:
+      contents: read
+    env:
+      EXPECTED_PROJECT_REF: fzkrvglzompkuiodqllr
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+    steps:
+      - name: Check out exact reviewed source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+
+      - name: Verify exact fixed diagnostic authority
+        shell: bash
+        env:
+          CONFIRMATION: ${{ inputs.confirmation }}
+        run: |
+          set +x
+          for name in SUPABASE_URL SUPABASE_SERVICE_ROLE_KEY; do
+            value="${!name:-}"
+            [[ -n "$value" ]]
+            echo "::add-mask::$value"
+          done
+          set -euo pipefail
+          [[ "$CONFIRMATION" == "DIAGNOSE_EXACT_FIVE_PERSONNEL_PROVENANCE" ]]
+          [[ "$GITHUB_REF" == "refs/heads/main" ]]
+          [[ "$(git rev-parse HEAD)" == "$GITHUB_SHA" ]]
+          project_ref="$(node -e 'const u=new URL(process.argv[1]);const m=/^([a-z0-9]+)\.supabase\.co$/.exec(u.hostname);if(!m)process.exit(1);process.stdout.write(m[1]);' "$SUPABASE_URL")"
+          [[ "$project_ref" == "$EXPECTED_PROJECT_REF" ]]
+          printf 'Authorised diagnostic source: %s\n' "$GITHUB_SHA"
+
+      - name: Run exact five-target read-only Personnel diagnostic
+        run: node scripts/productionPersonnelProvenanceDiagnostic.mjs
