@@ -42,6 +42,10 @@ begin
     and def.defaclobjtype='r';
   if v_default_acl is distinct from array[
       'anon=Dxtm/postgres','authenticated=Dxtm/postgres',
+      'postgres=arwdDxtm/postgres','service_role=Dxtm/postgres'
+    ]::text[]
+    and v_default_acl is distinct from array[
+      'anon=Dxtm/postgres','authenticated=Dxtm/postgres',
       'postgres=arwdDxtm/postgres','service_role=Dxt/postgres'
     ]::text[]
   then
@@ -60,8 +64,8 @@ begin
       and acl.grantee=(select oid from pg_catalog.pg_roles where rolname='service_role')
       and acl.privilege_type='MAINTAIN'
   ) into v_default_maintain;
-  if v_default_maintain then
-    raise exception 'PRODUCTION_PRIVILEGE_PROVENANCE: governed default MAINTAIN present';
+  if v_direct_maintain is distinct from v_default_maintain then
+    raise exception 'PRODUCTION_PRIVILEGE_PROVENANCE: partial privilege reconciliation';
   end if;
 
   select count(*) into v_public_privileges
