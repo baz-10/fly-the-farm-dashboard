@@ -36,6 +36,10 @@ const legacyStoreAuthorityReconciliationPath = path.resolve(__dirname, `../../su
 const legacyStoreAuthorityReconciliationSql = fs.existsSync(legacyStoreAuthorityReconciliationPath) ? fs.readFileSync(legacyStoreAuthorityReconciliationPath, 'utf8') : '';
 const legacyStorePrivilegeReconciliationPath = path.resolve(__dirname, `../../supabase/migrations/${legacyStorePrivilegeReconciliationMigrationName}`);
 const legacyStorePrivilegeReconciliationSql = fs.existsSync(legacyStorePrivilegeReconciliationPath) ? fs.readFileSync(legacyStorePrivilegeReconciliationPath, 'utf8') : '';
+const productionPrivilegeProvenanceSql = fs.readFileSync(
+  path.resolve(__dirname, '../../scripts/productionPrivilegeProvenance.sql'),
+  'utf8',
+);
 
 const runPgliteInThisProcess = process.env.COMMERCIAL_ONBOARDING_PGLITE_CHILD === '1';
 const pureNodeTests = [];
@@ -59,6 +63,10 @@ const legacySentInvitationId = '90000000-0000-4000-8000-000000000012';
 let db;
 let legacyStoreRowsBeforePrivilegeReconciliation;
 let legacyStoreRowsAfterPrivilegeReconciliation;
+let defaultAclBeforePrivilegeReconciliation;
+let defaultAclAfterPrivilegeReconciliation;
+let privilegeProvenancePreCorrectionPassed = false;
+let privilegeProvenancePostCorrectionPassed = false;
 
 const validApplication = (email, suffix) => ({
   businessName: `Onboarding Air ${suffix}`,
@@ -340,10 +348,7 @@ test('removes only the residual ftf_store MAINTAIN privilege from service_role',
   expect(legacyStorePrivilegeReconciliationSql).not.toMatch(/(insert\s+into|update\s+public\.|delete\s+from|truncate\s+table)/i);
   expect(legacyStorePrivilegeReconciliationSql).not.toMatch(/create\s+(or\s+replace\s+)?function/i);
   expect(legacyStorePrivilegeReconciliationSql).not.toMatch(/grant\s+/i);
-  expect(legacyStorePrivilegeReconciliationSql).toMatch(
-    /alter\s+default\s+privileges\s+for\s+role\s+postgres\s+in\s+schema\s+public\s+revoke\s+maintain\s+on\s+tables\s+from\s+service_role/i,
-  );
-  expect(legacyStorePrivilegeReconciliationSql).not.toMatch(/alter\s+default\s+privileges[\s\S]*revoke\s+all/i);
+  expect(legacyStorePrivilegeReconciliationSql).not.toMatch(/alter\s+default\s+privileges/i);
 });
 
 if (runPgliteInThisProcess) test('atomically replaces an unexpired delivered invitation when resend is requested', async () => {
@@ -487,16 +492,24 @@ beforeAll(async () => {
     }
     if (migrationName === legacyStorePrivilegeReconciliationMigrationName) {
       await db.exec(`
-        create role unrelated_runtime;
-        create schema privilege_probe;
-        grant usage on schema privilege_probe to service_role;
         alter default privileges for role postgres in schema public
-          grant truncate,references,trigger,maintain on tables to service_role;
+          grant truncate,references,trigger,maintain on tables to anon,authenticated;
         alter default privileges for role postgres in schema public
-          grant maintain on tables to unrelated_runtime;
-        alter default privileges for role postgres in schema privilege_probe
-          grant maintain on tables to service_role;
+          grant select,insert,update,delete,truncate,references,trigger,maintain on tables to postgres;
+        alter default privileges for role postgres in schema public
+          grant truncate,references,trigger on tables to service_role;
         grant maintain on table public.ftf_store to service_role;
+      `);
+      await db.exec(productionPrivilegeProvenanceSql);
+      privilegeProvenancePreCorrectionPassed = true;
+      defaultAclBeforePrivilegeReconciliation = await db.query(`
+        select array_agg(acl::text order by acl::text) as acl
+        from pg_default_acl def
+        join pg_namespace namespace on namespace.oid=def.defaclnamespace
+        cross join lateral unnest(def.defaclacl) acl
+        where pg_get_userbyid(def.defaclrole)='postgres'
+          and namespace.nspname='public'
+          and def.defaclobjtype='r'
       `);
       legacyStoreRowsBeforePrivilegeReconciliation = await db.query(`
         select tenant_id,collection,record_id,payload,created_at,updated_at
@@ -505,6 +518,17 @@ beforeAll(async () => {
     }
     await db.exec(fs.readFileSync(path.join(migrationDirectory, migrationName), 'utf8'));
     if (migrationName === legacyStorePrivilegeReconciliationMigrationName) {
+      await db.exec(productionPrivilegeProvenanceSql);
+      privilegeProvenancePostCorrectionPassed = true;
+      defaultAclAfterPrivilegeReconciliation = await db.query(`
+        select array_agg(acl::text order by acl::text) as acl
+        from pg_default_acl def
+        join pg_namespace namespace on namespace.oid=def.defaclnamespace
+        cross join lateral unnest(def.defaclacl) acl
+        where pg_get_userbyid(def.defaclrole)='postgres'
+          and namespace.nspname='public'
+          and def.defaclobjtype='r'
+      `);
       legacyStoreRowsAfterPrivilegeReconciliation = await db.query(`
         select tenant_id,collection,record_id,payload,created_at,updated_at
         from public.ftf_store order by tenant_id,collection,record_id
@@ -600,27 +624,25 @@ test('reconciles ftf_store service-role privileges to CRUD only', async () => {
   });
 });
 
-test('removes only governed future-table MAINTAIN while preserving unrelated defaults', async () => {
+test('leaves governed default privileges unchanged', async () => {
   await db.exec(`
     create table public.post_reconciliation_default_probe(id bigint);
-    create table privilege_probe.unrelated_schema_probe(id bigint);
   `);
   const privileges = await db.query(`
     select
       has_table_privilege('service_role','public.post_reconciliation_default_probe','maintain') as governed_maintain,
-      has_table_privilege('service_role','public.post_reconciliation_default_probe','truncate,references,trigger') as governed_other_defaults,
-      has_table_privilege('unrelated_runtime','public.post_reconciliation_default_probe','maintain') as unrelated_role_maintain,
-      has_table_privilege('service_role','privilege_probe.unrelated_schema_probe','maintain') as unrelated_schema_maintain
+      has_table_privilege('service_role','public.post_reconciliation_default_probe','truncate,references,trigger') as governed_other_defaults
   `);
   expect(privileges.rows[0]).toEqual({
     governed_maintain: false,
     governed_other_defaults: true,
-    unrelated_role_maintain: true,
-    unrelated_schema_maintain: true,
   });
+  expect(defaultAclAfterPrivilegeReconciliation.rows).toEqual(
+    defaultAclBeforePrivilegeReconciliation.rows,
+  );
 });
 
-test('removes the exact governed default MAINTAIN entry and leaves other default privileges intact', async () => {
+test('retains the existing governed default ACL without MAINTAIN', async () => {
   const defaults = await db.query(`
     select acl.privilege_type
     from pg_default_acl def
@@ -635,6 +657,11 @@ test('removes the exact governed default MAINTAIN entry and leaves other default
   expect(defaults.rows.map(({ privilege_type }) => privilege_type)).toEqual([
     'REFERENCES', 'TRIGGER', 'TRUNCATE',
   ]);
+});
+
+test('accepts the exact Production pre-state and corrected post-state provenance', () => {
+  expect(privilegeProvenancePreCorrectionPassed).toBe(true);
+  expect(privilegeProvenancePostCorrectionPassed).toBe(true);
 });
 
 test('preserves ftf_store ownership and denies every non-runtime role', async () => {
