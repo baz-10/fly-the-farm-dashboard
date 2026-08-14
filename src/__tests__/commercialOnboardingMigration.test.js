@@ -509,6 +509,19 @@ beforeAll(async () => {
         alter default privileges for role postgres in schema privilege_probe
           grant maintain on tables to service_role;
         grant maintain on table public.ftf_store to service_role;
+        insert into public.organisations(id,organisation_id,name)
+        values(
+          '90000000-0000-4000-8000-000000000099',
+          '90000000-0000-4000-8000-000000000099',
+          'Privilege Reconciliation Preservation Fixture'
+        );
+        insert into public.ftf_store(tenant_id,collection,record_id,payload)
+        values(
+          '90000000-0000-4000-8000-000000000099',
+          'privilege-reconciliation',
+          'existing-row',
+          '{"preserved":true}'::jsonb
+        );
       `);
       await db.exec(productionPrivilegeProvenanceSql);
       privilegeProvenancePreCorrectionPassed = true;
@@ -679,6 +692,44 @@ test('accepts the exact Production pre-state and corrected post-state provenance
   expect(privilegeProvenancePostCorrectionPassed).toBe(true);
 });
 
+test('rejects both partially reconciled privilege states behaviorally', async () => {
+  await db.exec(`
+    alter default privileges for role postgres in schema public
+      grant maintain on tables to service_role
+  `);
+  await expect(db.exec(productionPrivilegeProvenanceSql))
+    .rejects.toThrow('partial privilege reconciliation');
+  await db.exec(`
+    alter default privileges for role postgres in schema public
+      revoke maintain on tables from service_role;
+    grant maintain on table public.ftf_store to service_role
+  `);
+  await expect(db.exec(productionPrivilegeProvenanceSql))
+    .rejects.toThrow('partial privilege reconciliation');
+  await db.exec('revoke maintain on table public.ftf_store from service_role');
+  await expect(db.exec(productionPrivilegeProvenanceSql)).resolves.toBeDefined();
+});
+
+test('preserves an unrelated grantee default in postgres public tables', async () => {
+  await db.exec(`
+    alter default privileges for role postgres in schema public
+      grant maintain on tables to unrelated_runtime;
+  `);
+  await db.exec(legacyStorePrivilegeReconciliationSql);
+  await db.exec('create table public.unrelated_grantee_default_probe(id bigint)');
+  const result = await db.query(`
+    select
+      has_table_privilege('service_role','public.unrelated_grantee_default_probe','maintain')
+        as governed_maintain,
+      has_table_privilege('unrelated_runtime','public.unrelated_grantee_default_probe','maintain')
+        as unrelated_maintain
+  `);
+  expect(result.rows[0]).toEqual({
+    governed_maintain: false,
+    unrelated_maintain: true,
+  });
+});
+
 test('preserves ftf_store ownership and denies every non-runtime role', async () => {
   const result = await db.query(`
     select
@@ -695,6 +746,12 @@ test('preserves ftf_store ownership and denies every non-runtime role', async ()
 });
 
 test('changes no ftf_store row while upgrading from migration 140000', () => {
+  expect(legacyStoreRowsBeforePrivilegeReconciliation.rows).toHaveLength(1);
+  expect(legacyStoreRowsBeforePrivilegeReconciliation.rows[0]).toMatchObject({
+    collection: 'privilege-reconciliation',
+    record_id: 'existing-row',
+    payload: { preserved: true },
+  });
   expect(legacyStoreRowsAfterPrivilegeReconciliation.rows).toEqual(
     legacyStoreRowsBeforePrivilegeReconciliation.rows,
   );
