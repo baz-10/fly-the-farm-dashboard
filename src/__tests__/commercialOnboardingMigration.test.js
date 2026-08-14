@@ -22,6 +22,7 @@ const acceptanceEvidenceMigrationName = '20260809150000_controlled_onboarding_ev
 const legacyStoreArchiveMigrationName = '20260813130000_controlled_onboarding_archive_legacy_store_scope.sql';
 const legacyStoreAuthorityReconciliationMigrationName = '20260813140000_controlled_onboarding_authority_reconciliation.sql';
 const legacyStorePrivilegeReconciliationMigrationName = '20260813150000_controlled_onboarding_ftf_store_privilege_reconciliation.sql';
+const personnelAwareArchiveMigrationName = '20260814100000_controlled_onboarding_personnel_archive.sql';
 const forwardMigrationPath = path.resolve(__dirname, `../../supabase/migrations/${forwardMigrationName}`);
 const forwardSql = fs.existsSync(forwardMigrationPath) ? fs.readFileSync(forwardMigrationPath, 'utf8') : '';
 const identityAcceptanceMigrationPath = path.resolve(__dirname, `../../supabase/migrations/${identityAcceptanceMigrationName}`);
@@ -40,6 +41,8 @@ const productionPrivilegeProvenanceSql = fs.readFileSync(
   path.resolve(__dirname, '../../scripts/productionPrivilegeProvenance.sql'),
   'utf8',
 );
+const personnelAwareArchiveMigrationPath = path.resolve(__dirname, `../../supabase/migrations/${personnelAwareArchiveMigrationName}`);
+const personnelAwareArchiveSql = fs.existsSync(personnelAwareArchiveMigrationPath) ? fs.readFileSync(personnelAwareArchiveMigrationPath, 'utf8') : '';
 
 const runPgliteInThisProcess = process.env.COMMERCIAL_ONBOARDING_PGLITE_CHILD === '1';
 const pureNodeTests = [];
@@ -264,6 +267,88 @@ async function controlledCleanupEvidence(onboarding) {
   };
 }
 
+async function addControlledPersonnel(evidence) {
+  const payload = {
+    fullName: 'SC ACCEPTANCE — Controlled Personnel', engagementStatus: 'employee', isActive: true,
+    operatingLocationIds: [evidence.operatingLocationId],
+    operationalRoles: ['pilot_in_command', 'pilot', 'observer', 'ground_crew', 'chemical_operator', 'loader', 'supervisor'],
+  };
+  const created = await db.query(
+    `select public.ftf_write_personnel($1::uuid,$2::uuid,'create',null,null,$3::jsonb) result`,
+    [evidence.organisationId, evidence.internalUserId, JSON.stringify(payload)],
+  );
+  const person = created.rows[0].result.record;
+  const topology = await db.query(`
+    select jsonb_build_object(
+      'personnelId',p.id,'rowVersion',p.row_version,'createdAt',p.created_at,
+      'createdByInternalUserId',p.created_by_internal_user_id,
+      'updatedByInternalUserId',p.updated_by_internal_user_id,
+      'engagementStatus',p.engagement_status,
+      'creationAuditId',(select a.id from public.audit_events a where a.organisation_id=p.organisation_id
+        and a.entity_type='personnel' and a.entity_id=p.id and a.event_type='personnel.create'),
+      'baseLinks',coalesce((select jsonb_agg(jsonb_build_object('id',l.id,'operatingLocationId',l.operating_location_id) order by l.id)
+        from public.personnel_operating_locations l where l.organisation_id=p.organisation_id and l.personnel_id=p.id),'[]'::jsonb),
+      'roleLinks',coalesce((select jsonb_agg(jsonb_build_object('id',r.id,'roleCode',r.role_code) order by r.id)
+        from public.personnel_operational_roles r where r.organisation_id=p.organisation_id and r.personnel_id=p.id),'[]'::jsonb)
+    ) personnel
+    from public.personnel p where p.organisation_id=$1 and p.id=$2
+  `, [evidence.organisationId, person.id]);
+  evidence.personnel = topology.rows[0].personnel;
+  return person;
+}
+
+function createPgliteRestClient() {
+  const identifier = (value) => {
+    if (!/^[a-z_][a-z0-9_]*$/.test(value)) throw new Error(`Unsafe test REST identifier: ${value}`);
+    return value;
+  };
+  return {
+    authUser: async (id) => {
+      const result = await db.query('select id,email from auth.users where id=$1', [id]);
+      return result.rows[0] ? { ...result.rows[0], email_confirmed_at: '2026-08-14T00:00:00Z' } : undefined;
+    },
+    rest: async (requestPath, init = {}) => {
+      if (requestPath === 'rpc/ftf_project_controlled_onboarding_legacy_store') {
+        const body = JSON.parse(init.body);
+        const result = await db.query('select public.ftf_project_controlled_onboarding_legacy_store($1::jsonb) result', [JSON.stringify(body.p_evidence)]);
+        return result.rows[0].result;
+      }
+      const [rawTable, rawQuery = ''] = requestPath.split('?');
+      const table = identifier(rawTable);
+      const query = new URLSearchParams(rawQuery);
+      const select = query.get('select') || '*';
+      const columns = select === '*' ? '*' : select.split(',').map(identifier).join(',');
+      const clauses = [];
+      const values = [];
+      for (const [rawColumn, filter] of query.entries()) {
+        if (['select', 'order', 'limit'].includes(rawColumn)) continue;
+        const column = identifier(rawColumn);
+        if (filter === 'is.null') clauses.push(`${column} is null`);
+        else if (filter.startsWith('eq.')) {
+          values.push(filter.slice(3));
+          clauses.push(`${column}=$${values.length}`);
+        } else throw new Error(`Unsupported test REST filter: ${rawColumn}=${filter}`);
+      }
+      let sqlText = `select ${columns} from public.${table}`;
+      if (clauses.length) sqlText += ` where ${clauses.join(' and ')}`;
+      const order = query.get('order');
+      if (order) {
+        const [column, direction = 'asc'] = order.split('.');
+        sqlText += ` order by ${identifier(column)} ${direction === 'desc' ? 'desc' : 'asc'}`;
+      }
+      if (query.get('limit')) sqlText += ` limit ${Number(query.get('limit'))}`;
+      try {
+        return (await db.query(sqlText, values)).rows;
+      } catch (error) {
+        const optionalTables = new Set(['equipment_kits', 'aircraft', 'equipment_kit_aircraft_compatibility',
+          'aircraft_equipment_kit_assignments', 'mission_versions', 'job_fields', 'field_boundary_versions']);
+        if (optionalTables.has(table) && /does not exist/.test(String(error?.message))) return [];
+        throw error;
+      }
+    },
+  };
+}
+
 test('separates application approval from invitation creation', () => {
   expect(sql).toContain('commercial_onboarding_applications');
   expect(sql).toContain('commercial_onboarding_application_events');
@@ -432,6 +517,7 @@ beforeAll(async () => {
     legacyStoreArchiveMigrationName,
     legacyStoreAuthorityReconciliationMigrationName,
     legacyStorePrivilegeReconciliationMigrationName,
+    personnelAwareArchiveMigrationName,
   ];
   for (const migrationName of migrationNames) {
     if (migrationName === acceptanceCleanupMigrationName) {
@@ -545,6 +631,15 @@ beforeAll(async () => {
   `);
 });
 
+test('defines a bounded Personnel-aware archive extension without weakening the zero-Personnel path', () => {
+  expect(personnelAwareArchiveSql).toContain('COMMERCIAL_ONBOARDING_ACCEPTANCE_PERSONNEL_MISMATCH');
+  expect(personnelAwareArchiveSql).toContain('personnel_operating_locations');
+  expect(personnelAwareArchiveSql).toContain('personnel_operational_roles');
+  expect(personnelAwareArchiveSql).toContain("ftf_write_personnel(v_organisation_id,v_internal_user_id,'archive'");
+  expect(personnelAwareArchiveSql).toContain('jsonb_array_length(v_personnel_evidence->\'roleLinks\')<>7');
+  expect(personnelAwareArchiveSql).not.toMatch(/revoke all on table|grant .* on table/i);
+});
+
 afterAll(async () => {
   if (db) await db.close();
 });
@@ -590,6 +685,7 @@ test('exposes only the controlled cleanup boundary to service_role', async () =>
       has_function_privilege('authenticated','public.ftf_project_controlled_onboarding_legacy_store(jsonb)','execute') as authenticated_projection_execute,
       has_function_privilege('anon','public.ftf_project_controlled_onboarding_legacy_store(jsonb)','execute') as anon_projection_execute,
       has_function_privilege('service_role','public.ftf_archive_controlled_commercial_onboarding_without_legacy_sto(jsonb)','execute') as old_archive_execute,
+      has_function_privilege('service_role','public.ftf_archive_controlled_onboarding_without_personnel(jsonb)','execute') as prior_wrapper_execute,
       has_function_privilege('service_role','public.ftf_archive_controlled_acceptance_rows(text,uuid,uuid,jsonb,boolean,boolean)','execute') as helper_execute,
       has_function_privilege('service_role','public.ftf_remove_controlled_acceptance_equipment_links(uuid,jsonb)','execute') as link_helper_execute
   `);
@@ -601,6 +697,7 @@ test('exposes only the controlled cleanup boundary to service_role', async () =>
     authenticated_projection_execute: false,
     anon_projection_execute: false,
     old_archive_execute: false,
+    prior_wrapper_execute: false,
     helper_execute: false,
     link_helper_execute: false,
   });
@@ -1811,6 +1908,289 @@ test('refuses a repeat archive and does not duplicate archive evidence', async (
   expect(evidenceCounts.rows[0]).toEqual({ archive_audits: 1, archive_outbox: 1 });
 });
 
+test('archives the one exact controlled Personnel topology and preserves its canonical history', async () => {
+  const onboarding = await createControlledAcceptedOnboarding(
+    'cleanup-personnel-success@example.com', 'CleanupPersonnelSuccess',
+    '96900000-0000-4000-8000-000000000001',
+  );
+  const evidence = await controlledCleanupEvidence(onboarding);
+  const person = await addControlledPersonnel(evidence);
+  const creation = await db.query(`select count(*)::integer count from public.audit_events
+    where organisation_id=$1 and entity_type='personnel' and entity_id=$2 and event_type='personnel.create'`,
+  [evidence.organisationId, person.id]);
+  expect(creation.rows[0].count).toBe(1);
+  const historyBefore = await db.query(`select
+    (select to_jsonb(a) from public.commercial_onboarding_applications a where id=$1) application,
+    (select to_jsonb(i) from public.commercial_onboarding_invitations i where id=$2) invitation,
+    (select count(*)::integer from public.commercial_onboarding_application_events where application_id=$1) application_events,
+    (select count(*)::integer from public.commercial_onboarding_invitation_events where invitation_id=$2) invitation_events,
+    (select count(*)::integer from public.audit_events where organisation_id=$3 and event_type='commercial_onboarding.accepted') acceptance_audits
+  `, [evidence.applicationId, evidence.invitationId, evidence.organisationId]);
+
+  const result = await db.query(
+    'select public.ftf_archive_controlled_commercial_onboarding($1::jsonb) result',
+    [JSON.stringify(evidence)],
+  );
+  expect(result.rows[0].result).toMatchObject({
+    archived: true,
+    personnelArchiveEvidence: { auditCount: 1, outboxCount: 1 },
+  });
+  const final = await db.query(`select
+    (select archived_at is not null and not is_active from public.personnel where id=$2) personnel_archived,
+    (select count(*)::integer from public.personnel_operating_locations where personnel_id=$2) base_links,
+    (select count(*)::integer from public.personnel_operational_roles where personnel_id=$2) role_links,
+    (select count(*)::integer from public.audit_events where organisation_id=$1 and entity_id=$2 and event_type='personnel.create') creation_audits,
+    (select count(*)::integer from public.audit_events where organisation_id=$1 and entity_id=$2 and event_type='personnel.archive') archive_audits,
+    (select count(*)::integer from public.transactional_outbox where organisation_id=$1 and aggregate_id=$2 and topic='operational.personnel.archive') archive_outbox
+  `, [evidence.organisationId, person.id]);
+  expect(final.rows[0]).toEqual({ personnel_archived: true, base_links: 0, role_links: 0, creation_audits: 1, archive_audits: 1, archive_outbox: 1 });
+  const historyAfter = await db.query(`select
+    (select to_jsonb(a) from public.commercial_onboarding_applications a where id=$1) application,
+    (select to_jsonb(i) from public.commercial_onboarding_invitations i where id=$2) invitation,
+    (select count(*)::integer from public.commercial_onboarding_application_events where application_id=$1) application_events,
+    (select count(*)::integer from public.commercial_onboarding_invitation_events where invitation_id=$2) invitation_events,
+    (select count(*)::integer from public.audit_events where organisation_id=$3 and event_type='commercial_onboarding.accepted') acceptance_audits
+  `, [evidence.applicationId, evidence.invitationId, evidence.organisationId]);
+  expect(historyAfter.rows[0]).toEqual(historyBefore.rows[0]);
+});
+
+for (const [label, mutate] of [
+  ['second Personnel', async (evidence) => { await addControlledPersonnel(evidence); }],
+  ['linked internal identity', async (evidence, person) => { await db.query('update public.personnel set internal_user_id=$1 where id=$2', [evidence.internalUserId, person.id]); }],
+  ['linked membership', async (evidence, person) => { await db.query('update public.personnel set membership_id=$1 where id=$2', [evidence.membershipId, person.id]); }],
+  ['credential', async (evidence, person) => { await db.query(`insert into public.personnel_credentials(organisation_id,personnel_id,credential_type,credential_kind,created_by_internal_user_id,updated_by_internal_user_id) values($1,$2,'TEST','other',$3,$3)`, [evidence.organisationId, person.id, evidence.internalUserId]); }],
+  ['Personnel evidence', async (evidence, person) => { await db.query(`insert into public.personnel_evidence(organisation_id,personnel_id,internal_file_id,file_version,sha256_checksum,evidence_type,access_classification,created_by_internal_user_id) values($1,$2,$3,1,$4,'test','restricted',$5)`, [evidence.organisationId, person.id, crypto.randomUUID(), 'a'.repeat(64), evidence.internalUserId]); }],
+  ['Mission assignment', async (evidence, person) => { const client=crypto.randomUUID(), property=crypto.randomUUID(), job=crypto.randomUUID(), mission=crypto.randomUUID(), revision=crypto.randomUUID(), reference=`SC-${crypto.randomUUID()}`; await db.query(`insert into public.clients(id,organisation_id,name) values($1,$2,'SC ACCEPTANCE — Assignment')`, [client,evidence.organisationId]); await db.query(`insert into public.properties(id,organisation_id,client_id,name) values($1,$2,$3,'SC ACCEPTANCE — Assignment')`, [property,evidence.organisationId,client]); await db.query(`insert into public.jobs(id,organisation_id,client_id,property_id,reference,scope) values($1,$2,$3,$4,$5,'SC ACCEPTANCE — Assignment')`, [job,evidence.organisationId,client,property,reference]); await db.query(`insert into public.missions(id,organisation_id,job_id,operating_location_id,mission_number,title) values($1,$2,$3,$4,$5,'SC ACCEPTANCE — Assignment')`, [mission,evidence.organisationId,job,evidence.operatingLocationId,reference]); await db.query(`insert into public.mission_personnel_revisions(id,organisation_id,operating_location_id,mission_id,version_number,created_by_internal_user_id) values($1,$2,$3,$4,1,$5)`, [revision,evidence.organisationId,evidence.operatingLocationId,mission,evidence.internalUserId]); await db.query(`insert into public.mission_personnel_assignments(organisation_id,operating_location_id,mission_id,revision_id,personnel_id,assignment_role,personnel_snapshot) values($1,$2,$3,$4,$5,'observer','{}')`, [evidence.organisationId,evidence.operatingLocationId,mission,revision,person.id]); }],
+  ['missing Base link', async (_evidence, person) => { await db.query('delete from public.personnel_operating_locations where personnel_id=$1', [person.id]); }],
+  ['extra Base link', async (evidence, person) => { const location = crypto.randomUUID(); await db.query(`insert into public.operating_locations(id,organisation_id,name) values($1,$2,'SC ACCEPTANCE — Extra Base')`, [location, evidence.organisationId]); await db.query(`insert into public.personnel_operating_locations(organisation_id,personnel_id,operating_location_id,created_by_internal_user_id) values($1,$2,$3,$4)`, [evidence.organisationId, person.id, location, evidence.internalUserId]); }],
+  ['missing role link', async (_evidence, person) => { await db.query('delete from public.personnel_operational_roles where id=(select id from public.personnel_operational_roles where personnel_id=$1 order by id limit 1)', [person.id]); }],
+  ['extra role link', async (evidence, person) => { await db.query(`insert into public.personnel_operational_roles(organisation_id,personnel_id,role_code,created_by_internal_user_id) values($1,$2,'maintenance_support',$3)`, [evidence.organisationId, person.id, evidence.internalUserId]); }],
+  ['substituted role link', async (_evidence, person) => { await db.query(`update public.personnel_operational_roles set role_code='maintenance_support' where id=(select id from public.personnel_operational_roles where personnel_id=$1 and role_code='supervisor')`, [person.id]); }],
+  ['wrong frozen Personnel ID', async (evidence) => { evidence.personnel.personnelId = crypto.randomUUID(); }],
+  ['non-controlled Personnel identity', async (_evidence, person) => { await db.query(`update public.personnel set full_name='Genuine Employee' where id=$1`, [person.id]); }],
+  ['Personnel chronology mismatch', async (evidence, person) => {
+    const changed = await db.query(`update public.personnel set created_at=created_at-interval '1 day' where id=$1 returning created_at`, [person.id]);
+    evidence.personnel.createdAt = changed.rows[0].created_at;
+  }],
+  ['creator and updater provenance mismatch', async (evidence, person) => {
+    const otherAuthUserId = crypto.randomUUID();
+    const otherInternalUserId = crypto.randomUUID();
+    await db.query(`insert into auth.users(id,email) values($1,$2)`, [otherAuthUserId, `personnel-provenance-${crypto.randomUUID().slice(0, 8)}@example.com`]);
+    await db.query(`insert into public.internal_users(id,organisation_id,auth_user_id,display_name) values($1,$2,$3,'SC ACCEPTANCE — Wrong Provenance')`, [otherInternalUserId, evidence.organisationId, otherAuthUserId]);
+    await db.query(`update public.personnel set created_by_internal_user_id=$1,updated_by_internal_user_id=$1 where id=$2`, [otherInternalUserId, person.id]);
+    evidence.personnel.createdByInternalUserId = otherInternalUserId;
+    evidence.personnel.updatedByInternalUserId = otherInternalUserId;
+  }],
+  ['creation-audit provenance mismatch', async (evidence) => { evidence.personnel.creationAuditId = crypto.randomUUID(); }],
+// Every generated test intentionally shares the suite-scoped isolated PostgreSQL instance.
+  // eslint-disable-next-line no-loop-func -- each test shares the suite-scoped isolated PostgreSQL instance.
+]) test(`refuses changed controlled Personnel topology: ${label}`, async () => {
+  const suffix = crypto.randomUUID().slice(0, 8);
+  const onboarding = await createControlledAcceptedOnboarding(
+    `cleanup-personnel-${suffix}@example.com`, `CleanupPersonnel${suffix}`,
+    crypto.randomUUID(),
+  );
+  const evidence = await controlledCleanupEvidence(onboarding);
+  const person = await addControlledPersonnel(evidence);
+  await mutate(evidence, person);
+  await expect(db.query(
+    'select public.ftf_archive_controlled_commercial_onboarding($1::jsonb)',
+    [JSON.stringify(evidence)],
+  )).rejects.toThrow(/COMMERCIAL_ONBOARDING_ACCEPTANCE_PERSONNEL_MISMATCH/);
+  const unchanged = await db.query(`select archived_at is null active,
+    (select count(*)::integer from public.audit_events where organisation_id=$1 and event_type='commercial_onboarding.acceptance_archived') archive_audits
+    from public.organisations where id=$1`, [evidence.organisationId]);
+  expect(unchanged.rows[0]).toEqual({ active: true, archive_audits: 0 });
+});
+
+test('refuses the zero-Personnel contract when any archived Personnel history exists', async () => {
+  const onboarding = await createControlledAcceptedOnboarding(
+    'cleanup-archived-personnel@example.com', 'CleanupArchivedPersonnel', crypto.randomUUID(),
+  );
+  const evidence = await controlledCleanupEvidence(onboarding);
+  const person = await addControlledPersonnel(evidence);
+  await db.query(`delete from public.personnel_operational_roles where personnel_id=$1`, [person.id]);
+  await db.query(`delete from public.personnel_operating_locations where personnel_id=$1`, [person.id]);
+  await db.query(`select public.ftf_write_personnel($1,$2,'archive',$3,$4,'{}'::jsonb)`,
+    [evidence.organisationId, evidence.internalUserId, person.id, person.row_version]);
+  delete evidence.personnel;
+  await expect(db.query('select public.ftf_archive_controlled_commercial_onboarding($1::jsonb)', [JSON.stringify(evidence)]))
+    .rejects.toThrow(/COMMERCIAL_ONBOARDING_ACCEPTANCE_PERSONNEL_MISMATCH/);
+});
+
+test('refuses cross-organisation Personnel Base and role evidence', async () => {
+  const first = await createControlledAcceptedOnboarding('cross-personnel-one@example.com', 'CrossPersonnelOne', crypto.randomUUID());
+  const firstEvidence = await controlledCleanupEvidence(first);
+  await addControlledPersonnel(firstEvidence);
+  const second = await createControlledAcceptedOnboarding('cross-personnel-two@example.com', 'CrossPersonnelTwo', crypto.randomUUID());
+  const secondEvidence = await controlledCleanupEvidence(second);
+  await addControlledPersonnel(secondEvidence);
+  firstEvidence.personnel.baseLinks = structuredClone(secondEvidence.personnel.baseLinks);
+  firstEvidence.personnel.roleLinks = structuredClone(secondEvidence.personnel.roleLinks);
+  await expect(db.query('select public.ftf_archive_controlled_commercial_onboarding($1::jsonb)', [JSON.stringify(firstEvidence)]))
+    .rejects.toThrow(/COMMERCIAL_ONBOARDING_ACCEPTANCE_PERSONNEL_MISMATCH/);
+});
+
+test('refuses a Personnel-aware snapshot whose exact Personnel belongs to another organisation', async () => {
+  const first = await createControlledAcceptedOnboarding('wrong-personnel-org-one@example.com', 'WrongPersonnelOrgOne', crypto.randomUUID());
+  const firstEvidence = await controlledCleanupEvidence(first);
+  await addControlledPersonnel(firstEvidence);
+  const second = await createControlledAcceptedOnboarding('wrong-personnel-org-two@example.com', 'WrongPersonnelOrgTwo', crypto.randomUUID());
+  const secondEvidence = await controlledCleanupEvidence(second);
+  await addControlledPersonnel(secondEvidence);
+  firstEvidence.personnel = structuredClone(secondEvidence.personnel);
+  await expect(db.query('select public.ftf_archive_controlled_commercial_onboarding($1::jsonb)', [JSON.stringify(firstEvidence)]))
+    .rejects.toThrow(/COMMERCIAL_ONBOARDING_ACCEPTANCE_PERSONNEL_MISMATCH/);
+  const unchanged = await db.query(`select
+    (select archived_at is null from public.organisations where id=$1) first_active,
+    (select archived_at is null from public.organisations where id=$2) second_active,
+    (select count(*)::integer from public.audit_events where organisation_id in ($1,$2) and event_type='personnel.archive') archive_audits`,
+  [firstEvidence.organisationId, secondEvidence.organisationId]);
+  expect(unchanged.rows[0]).toEqual({ first_active: true, second_active: true, archive_audits: 0 });
+});
+
+test('rolls Personnel, links, audit, outbox, and legacy state back when downstream organisation archival fails', async () => {
+  const onboarding = await createControlledAcceptedOnboarding(
+    'cleanup-personnel-rollback@example.com', 'CleanupPersonnelRollback', crypto.randomUUID(),
+  );
+  const evidence = await controlledCleanupEvidence(onboarding);
+  const person = await addControlledPersonnel(evidence);
+  evidence.expectedVersions.organisation += 1;
+  await expect(db.query('select public.ftf_archive_controlled_commercial_onboarding($1::jsonb)', [JSON.stringify(evidence)]))
+    .rejects.toThrow(/COMMERCIAL_ONBOARDING_ACCEPTANCE_VERSION_CONFLICT/);
+  const retained = await db.query(`select
+    (select archived_at is null and is_active from public.personnel where id=$2) personnel_active,
+    (select count(*)::integer from public.personnel_operating_locations where personnel_id=$2) base_links,
+    (select count(*)::integer from public.personnel_operational_roles where personnel_id=$2) role_links,
+    (select count(*)::integer from public.audit_events where organisation_id=$1 and entity_id=$2 and event_type='personnel.archive') archive_audits,
+    (select count(*)::integer from public.transactional_outbox where organisation_id=$1 and aggregate_id=$2 and topic='operational.personnel.archive') archive_outbox,
+    (select count(*)::integer from public.ftf_store where tenant_id=$1) legacy_store
+  `, [evidence.organisationId, person.id]);
+  expect(retained.rows[0]).toEqual({ personnel_active: true, base_links: 1, role_links: 7, archive_audits: 0, archive_outbox: 0, legacy_store: 1 });
+});
+
+test('refuses a repeat Personnel-aware archive without duplicating Personnel or organisation evidence', async () => {
+  const onboarding = await createControlledAcceptedOnboarding(
+    'cleanup-personnel-repeat@example.com', 'CleanupPersonnelRepeat', crypto.randomUUID(),
+  );
+  const evidence = await controlledCleanupEvidence(onboarding);
+  const person = await addControlledPersonnel(evidence);
+  await db.query('select public.ftf_archive_controlled_commercial_onboarding($1::jsonb)', [JSON.stringify(evidence)]);
+  await expect(db.query('select public.ftf_archive_controlled_commercial_onboarding($1::jsonb)', [JSON.stringify(evidence)]))
+    .rejects.toThrow();
+  const counts = await db.query(`select
+    (select count(*)::integer from public.audit_events where organisation_id=$1 and entity_id=$2 and event_type='personnel.archive') personnel_audits,
+    (select count(*)::integer from public.transactional_outbox where organisation_id=$1 and aggregate_id=$2 and topic='operational.personnel.archive') personnel_outbox,
+    (select count(*)::integer from public.audit_events where organisation_id=$1 and event_type='commercial_onboarding.acceptance_archived') organisation_audits
+  `, [evidence.organisationId, person.id]);
+  expect(counts.rows[0]).toEqual({ personnel_audits: 1, personnel_outbox: 1, organisation_audits: 1 });
+});
+
+test('Personnel-aware archive leaves unrelated Personnel and dependencies byte-for-byte unchanged', async () => {
+  const controlled = await createControlledAcceptedOnboarding(
+    'cleanup-personnel-isolated@example.com', 'CleanupPersonnelIsolated', crypto.randomUUID(),
+  );
+  const controlledEvidence = await controlledCleanupEvidence(controlled);
+  await addControlledPersonnel(controlledEvidence);
+  const unrelated = await createControlledAcceptedOnboarding(
+    'cleanup-personnel-unrelated@example.com', 'CleanupPersonnelUnrelated', crypto.randomUUID(),
+  );
+  const unrelatedEvidence = await controlledCleanupEvidence(unrelated);
+  const unrelatedPerson = await addControlledPersonnel(unrelatedEvidence);
+  const before = await db.query(`select
+    (select to_jsonb(p) from public.personnel p where id=$1) person,
+    (select jsonb_agg(to_jsonb(l) order by l.id) from public.personnel_operating_locations l where l.personnel_id=$1) bases,
+    (select jsonb_agg(to_jsonb(r) order by r.id) from public.personnel_operational_roles r where r.personnel_id=$1) roles`, [unrelatedPerson.id]);
+  await db.query('select public.ftf_archive_controlled_commercial_onboarding($1::jsonb)', [JSON.stringify(controlledEvidence)]);
+  const after = await db.query(`select
+    (select to_jsonb(p) from public.personnel p where id=$1) person,
+    (select jsonb_agg(to_jsonb(l) order by l.id) from public.personnel_operating_locations l where l.personnel_id=$1) bases,
+    (select jsonb_agg(to_jsonb(r) order by r.id) from public.personnel_operational_roles r where r.personnel_id=$1) roles`, [unrelatedPerson.id]);
+  expect(after.rows[0]).toEqual(before.rows[0]);
+});
+
+test('rehearses one Personnel-aware and four zero-Personnel controlled archives sequentially in PostgreSQL', async () => {
+  const genuineAuthUserId = crypto.randomUUID();
+  await db.query('insert into auth.users(id,email) values($1,$2)', [genuineAuthUserId, 'genuine-five-target-control@example.com']);
+  const genuine = await db.query(
+    `select public.ftf_bootstrap_production_beta_organisation(
+      $1::uuid,'Genuine Five Target Control','Genuine Control User','Genuine Control Base',null,'Australia/Brisbane'
+    ) result`,
+    [genuineAuthUserId],
+  );
+  const genuineOrganisationId = genuine.rows[0].result.organisation_id;
+  await db.query(`insert into public.ftf_store(tenant_id,collection,record_id,payload)
+    values($1,'genuine_control','baseline','{"preserve":true}'::jsonb)`, [genuineOrganisationId]);
+  const genuineBefore = await db.query(`select
+    (select to_jsonb(o) from public.organisations o where id=$1) organisation,
+    (select jsonb_agg(to_jsonb(i) order by i.id) from public.internal_users i where organisation_id=$1) internal_users,
+    (select jsonb_agg(to_jsonb(m) order by m.id) from public.memberships m where organisation_id=$1) memberships,
+    (select jsonb_agg(to_jsonb(l) order by l.id) from public.operating_locations l where organisation_id=$1) bases,
+    (select jsonb_agg(to_jsonb(s) order by s.collection,s.record_id) from public.ftf_store s where tenant_id=$1) legacy_store`,
+  [genuineOrganisationId]);
+  const rehearsals = [];
+  for (let index = 0; index < 5; index += 1) {
+    const onboarding = await createControlledAcceptedOnboarding(
+      `cleanup-five-${index}@example.com`, `CleanupFive${index}`, crypto.randomUUID(),
+    );
+    const evidence = await controlledCleanupEvidence(onboarding);
+    if (index === 0) await addControlledPersonnel(evidence);
+    rehearsals.push({ onboarding, evidence });
+  }
+  // Complete the production non-mutating REST preflight for all five before the first archive mutation.
+  const { buildControlledSnapshot } = await import('../../scripts/verifyCommercialOnboardingPostgres.mjs');
+  const restClient = createPgliteRestClient();
+  const preflighted = [];
+  for (let index = 0; index < rehearsals.length; index += 1) {
+    const source = {
+      ...rehearsals[index].evidence,
+      expectedPersonnel: index === 0 ? {
+        personnelId: rehearsals[index].evidence.personnel.personnelId,
+        baseLinkCount: 1,
+        roleLinkCount: 7,
+      } : null,
+    };
+    preflighted.push(await buildControlledSnapshot(source, restClient));
+  }
+  expect(preflighted[0].personnel.personnelId).toBe(rehearsals[0].evidence.personnel.personnelId);
+  expect(preflighted.slice(1).every((snapshot) => snapshot.personnel === undefined)).toBe(true);
+  for (const evidence of preflighted) {
+    const archived = await db.query('select public.ftf_archive_controlled_commercial_onboarding($1::jsonb) result', [JSON.stringify(evidence)]);
+    expect(archived.rows[0].result.archived).toBe(true);
+  }
+  const state = await db.query(`select
+    (select count(*)::integer from public.organisations where id=any($1::uuid[]) and archived_at is null) active_organisations,
+    (select count(*)::integer from public.commercial_onboarding_applications where id=any($2::uuid[]) and status='APPROVED') applications,
+    (select count(*)::integer from public.commercial_onboarding_invitations where id=any($3::uuid[]) and status='ACCEPTED') invitations`, [
+    rehearsals.map(({ evidence }) => evidence.organisationId),
+    rehearsals.map(({ evidence }) => evidence.applicationId),
+    rehearsals.map(({ evidence }) => evidence.invitationId),
+  ]);
+  expect(state.rows[0]).toEqual({ active_organisations: 0, applications: 5, invitations: 5 });
+  const evidenceState = await db.query(`select
+    (select count(*)::integer from public.audit_events where organisation_id=any($1::uuid[]) and event_type='commercial_onboarding.acceptance_archived') organisation_audits,
+    (select count(*)::integer from public.transactional_outbox where organisation_id=any($1::uuid[]) and topic='commercial_onboarding.acceptance_archived') organisation_outbox,
+    (select count(*)::integer from public.audit_events where organisation_id=$2 and entity_type='personnel' and event_type='personnel.archive') personnel_audits,
+    (select count(*)::integer from public.transactional_outbox where organisation_id=$2 and topic='operational.personnel.archive') personnel_outbox,
+    (select count(*)::integer from public.commercial_onboarding_application_events where application_id=any($3::uuid[])) application_history,
+    (select count(*)::integer from public.commercial_onboarding_invitation_events where invitation_id=any($4::uuid[])) invitation_history`, [
+    rehearsals.map(({ evidence }) => evidence.organisationId), rehearsals[0].evidence.organisationId,
+    rehearsals.map(({ evidence }) => evidence.applicationId), rehearsals.map(({ evidence }) => evidence.invitationId),
+  ]);
+  expect(evidenceState.rows[0]).toEqual({
+    organisation_audits: 5, organisation_outbox: 5, personnel_audits: 1, personnel_outbox: 1,
+    application_history: 15, invitation_history: 15,
+  });
+  const genuineAfter = await db.query(`select
+    (select to_jsonb(o) from public.organisations o where id=$1) organisation,
+    (select jsonb_agg(to_jsonb(i) order by i.id) from public.internal_users i where organisation_id=$1) internal_users,
+    (select jsonb_agg(to_jsonb(m) order by m.id) from public.memberships m where organisation_id=$1) memberships,
+    (select jsonb_agg(to_jsonb(l) order by l.id) from public.operating_locations l where organisation_id=$1) bases,
+    (select jsonb_agg(to_jsonb(s) order by s.collection,s.record_id) from public.ftf_store s where tenant_id=$1) legacy_store`,
+  [genuineOrganisationId]);
+  expect(genuineAfter.rows[0]).toEqual(genuineBefore.rows[0]);
+});
+
 test('fails before cleanup when the organisation is not active', async () => {
   const onboarding = await createControlledAcceptedOnboarding(
     'cleanup-inactive@example.com',
@@ -1834,13 +2214,14 @@ test('fails before cleanup when the organisation is not active', async () => {
 });
 
 test('refuses a second direct migration application without changing the installed contract', async () => {
-  await expect(db.exec(legacyStoreArchiveSql)).rejects.toThrow();
+  await expect(db.exec(personnelAwareArchiveSql)).rejects.toThrow(/CONTROLLED_PERSONNEL_ARCHIVE_BASELINE_MISMATCH|already exists/);
   const installed = await db.query(`
     select
       to_regprocedure('public.ftf_archive_controlled_commercial_onboarding(jsonb)') is not null as wrapper_present,
-      to_regprocedure('public.ftf_archive_controlled_commercial_onboarding_without_legacy_sto(jsonb)') is not null as prior_present
+      to_regprocedure('public.ftf_archive_controlled_commercial_onboarding_without_legacy_sto(jsonb)') is not null as prior_present,
+      to_regprocedure('public.ftf_archive_controlled_onboarding_without_personnel(jsonb)') is not null as personnel_prior_present
   `);
-  expect(installed.rows[0]).toEqual({ wrapper_present: true, prior_present: true });
+  expect(installed.rows[0]).toEqual({ wrapper_present: true, prior_present: true, personnel_prior_present: true });
 });
 
 test('keeps application events, invitation events, and consumed invitations immutable', async () => {
