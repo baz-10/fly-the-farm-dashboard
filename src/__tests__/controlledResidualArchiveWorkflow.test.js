@@ -27,6 +27,10 @@ describe('protected five-target residual acceptance archive', () => {
       entry.evidenceSourceWorkflowRunId,
     ])).toEqual(EXPECTED);
     expect(manifest.targets).toHaveLength(5);
+    expect(manifest.targets[0].expectedPersonnel).toEqual({
+      personnelId: 'e6205daf-019b-4287-b0f0-d9dbc3e8af00', baseLinkCount: 1, roleLinkCount: 7,
+    });
+    expect(manifest.targets.slice(1).every(({ expectedPersonnel }) => expectedPersonnel === null)).toBe(true);
     expect(new Set(manifest.targets.map(({ organisationId }) => organisationId)).size).toBe(5);
     for (const entry of manifest.targets) {
       expect(entry.operatingLocationId).toMatch(/^[0-9a-f-]{36}$/);
@@ -45,6 +49,7 @@ describe('protected five-target residual acceptance archive', () => {
       { ...manifest, targets: [manifest.targets[1], manifest.targets[0], ...manifest.targets.slice(2)] },
       { ...manifest, targets: manifest.targets.map((entry, index) => index ? entry : { ...entry, organisationId: '11111111-1111-4111-8111-111111111111' }) },
       { ...manifest, targets: manifest.targets.map((entry, index) => index ? entry : { ...entry, evidenceSourceWorkflowRunId: '1' }) },
+      { ...manifest, targets: manifest.targets.map((entry, index) => index ? entry : { ...entry, expectedPersonnel: { ...entry.expectedPersonnel, personnelId: '11111111-1111-4111-8111-111111111111' } }) },
     ];
     for (const variant of variants) expect(() => validateManifest(variant)).toThrow('exact Founder-authorised manifest');
   });
@@ -63,6 +68,9 @@ describe('protected five-target residual acceptance archive', () => {
         if (preflighted.length === 4) throw new Error('REFUSED');
         return {
           organisationId: entry.organisationId,
+          ...(entry.expectedPersonnel ? { personnel: { personnelId: entry.expectedPersonnel.personnelId,
+            baseLinks: Array(entry.expectedPersonnel.baseLinkCount).fill({ id: 'base' }),
+            roleLinks: Array(entry.expectedPersonnel.roleLinkCount).fill({ id: 'role' }) } } : {}),
           records: Object.fromEntries(Object.entries(entry.expectedActiveRecords)
             .map(([table, count]) => [table, Array(count).fill({ id: 'x' })])),
         };
@@ -83,6 +91,9 @@ describe('protected five-target residual acceptance archive', () => {
       client: {},
       buildSnapshot: async (entry) => ({
         organisationId: entry.organisationId,
+        ...(entry.expectedPersonnel ? { personnel: { personnelId: entry.expectedPersonnel.personnelId,
+          baseLinks: Array(entry.expectedPersonnel.baseLinkCount).fill({ id: 'base' }),
+          roleLinks: Array(entry.expectedPersonnel.roleLinkCount).fill({ id: 'role' }) } } : {}),
         records: Object.fromEntries(Object.entries(entry.expectedActiveRecords).map(([table, count]) => [table, Array(count).fill({ id: 'x' })])),
       }),
       archiveSnapshot: async (entry) => {
