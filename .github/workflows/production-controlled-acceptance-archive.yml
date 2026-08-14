@@ -1,0 +1,97 @@
+name: Production controlled acceptance archive
+
+on:
+  workflow_dispatch:
+    inputs:
+      expected_source_sha:
+        description: Exact reviewed archive-only source SHA
+        required: true
+        type: string
+      target_environment:
+        description: Exact target environment
+        required: true
+        type: choice
+        options: [production]
+      confirmation:
+        description: Type ARCHIVE_O1_O4_KEEP_O5
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  archive-controlled-acceptance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: production-beta-acceptance
+    permissions:
+      contents: read
+    env:
+      EXPECTED_PROJECT_REF: fzkrvglzompkuiodqllr
+      SUPABASE_CLI_VERSION: 2.113.0
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+    steps:
+      - name: Check out exact archive source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ inputs.expected_source_sha }}
+          persist-credentials: false
+
+      - name: Fail closed on identity, confirmation and secrets
+        shell: bash
+        env:
+          EXPECTED_SOURCE_SHA: ${{ inputs.expected_source_sha }}
+          TARGET_ENVIRONMENT: ${{ inputs.target_environment }}
+          CONFIRMATION: ${{ inputs.confirmation }}
+        run: |
+          set +x
+          for name in SUPABASE_ACCESS_TOKEN SUPABASE_DB_PASSWORD SUPABASE_URL SUPABASE_SERVICE_ROLE_KEY; do
+            value="${!name:-}"
+            [[ -n "$value" ]]
+            echo "::add-mask::$value"
+          done
+          set -euo pipefail
+          [[ "$TARGET_ENVIRONMENT" == production ]]
+          [[ "$CONFIRMATION" == ARCHIVE_O1_O4_KEEP_O5 ]]
+          [[ "$EXPECTED_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$(git rev-parse HEAD)" == "$EXPECTED_SOURCE_SHA" ]]
+          [[ "$GITHUB_REF_NAME" == codex/default-maintain-provenance-diagnostic ]]
+          [[ "${SUPABASE_URL%/}" == "https://$EXPECTED_PROJECT_REF.supabase.co" ]]
+
+      - name: Verify a completed Production backup exists
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +x
+          backup_json="$(curl --fail --silent --show-error \
+            -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" \
+            "https://api.supabase.com/v1/projects/$EXPECTED_PROJECT_REF/database/backups")"
+          node -e '
+            const value=JSON.parse(process.argv[1]);
+            if (value.walg_enabled !== true || !Array.isArray(value.backups)
+              || !value.backups.some((backup) => backup.status === "COMPLETED")) process.exit(1);
+          ' "$backup_json"
+          echo "Production backup gate: COMPLETED physical backup available."
+
+      - name: Install reviewed dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Prepare exact O1-O4 archive transaction after read-only preflight
+        shell: bash
+        run: node scripts/controlledArchiveBatch.mjs --prepare-archive-batch scripts/controlledAcceptanceArchiveManifest.json "$RUNNER_TEMP/archive.sql"
+
+      - name: Link exact Production project
+        shell: bash
+        run: npx --yes "supabase@$SUPABASE_CLI_VERSION" link --project-ref "$EXPECTED_PROJECT_REF"
+
+      - name: Apply one atomic archive-only transaction
+        shell: bash
+        run: npx --yes "supabase@$SUPABASE_CLI_VERSION" db query --linked --file "$RUNNER_TEMP/archive.sql"
+
+      - name: Verify bounded postconditions
+        shell: bash
+        run: node scripts/controlledArchiveBatch.mjs --verify-archive-batch scripts/controlledAcceptanceArchiveManifest.json
