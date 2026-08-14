@@ -6,13 +6,18 @@ const sql = fs.readFileSync(
   'utf8',
 );
 
-test('reports only bounded controlled-evidence counts and status sequences read-only', () => {
+test('reports the bounded record-level controlled-evidence inventory read-only', () => {
   for (const token of [
-    'archiveAuditCount', 'archiveOutboxCount', 'controlledStoreRecordCount',
-    'applicationStatuses', 'invitationStatuses', 'acceptanceAuditCount',
-    'replacementApplicationCount', 'replacementInvitationCount',
-    'replacementOrganisationCount',
+    'SC_ACCEPTANCE_INVENTORY_V1', 'applicationId', 'applicationReference',
+    'invitationId', 'resultingOrganisationId', 'acceptedByAuthUserId',
+    'resultingInternalUserId', 'resultingMembershipId',
+    'resultingOperatingLocationId', 'organisationId', 'archivedAt',
+    'internalUsers', 'memberships', 'operatingLocations', 'seatAllocations',
+    'seatAssignments', 'locationAssignments', 'auditEvents', 'outboxEvents',
+    'operationalCounts', 'payloadKeys',
   ]) expect(sql).toContain(token);
   expect(sql).not.toMatch(/(?:^|\n)\s*(insert|update|delete|truncate|alter|create|drop|grant|revoke)\b/i);
-  expect(sql).not.toMatch(/email|phone|payload/i);
+  expect(sql).not.toMatch(/intended_administrator_(?:email|phone|name)|token_hash|event_payload\s+as|submitted_payload\s+as/i);
+  expect(sql).toMatch(/jsonb_object_keys\(application\.submitted_payload\)/);
+  expect(sql).toMatch(/where application\.business_name like 'SC ACCEPTANCE — %'/);
 });
