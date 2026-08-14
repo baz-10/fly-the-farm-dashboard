@@ -33,6 +33,12 @@ describe('GitHub-managed Production Beta release governance', () => {
     expect(diagnostic.environment).toBe('production-beta-deployment');
     expect(diagnostic.if).toContain('inputs.migration_definition_reconciliation_only == true');
     expect(read('scripts/migrationDefinitionReconciliation.sql')).toMatch(/pg_catalog|information_schema/);
+    expect(source).toContain('scripts/productionStateIntegrityReconciliation.sql');
+    expect(source).toContain('scripts/productionPrivilegeProvenance.sql');
+    expect(source.indexOf('scripts/productionPrivilegeProvenance.sql'))
+      .toBeLessThan(source.indexOf('scripts/productionStateIntegrityReconciliation.sql'));
+    expect(source.indexOf('scripts/productionStateIntegrityReconciliation.sql'))
+      .toBeLessThan(source.indexOf('scripts/migrationDefinitionReconciliation.sql'));
     expect(source).not.toMatch(/db push|migration list|vercel deploy|alias set|promote|insert\b|update\b|delete\b|ftf_archive_controlled_commercial_onboarding\s*\(/i);
     expect(source).not.toMatch(/SUPABASE_ACCESS_TOKEN|VERCEL_TOKEN/);
     for (const jobName of ['validate', 'release', 'rehearsal', 'acceptance', 'release-record', 'diagnostic', 'connectivity-diagnostic', 'exact-sha-redeploy']) {
