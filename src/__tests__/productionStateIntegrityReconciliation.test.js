@@ -57,6 +57,11 @@ const schemaSql = `
     );
     create table platform_users(id uuid primary key, auth_user_id uuid, archived_at timestamptz);
     create table personnel(id uuid primary key, organisation_id uuid, archived_at timestamptz);
+    create table personnel_operating_locations(id uuid primary key default gen_random_uuid(), organisation_id uuid, personnel_id uuid);
+    create table personnel_operational_roles(id uuid primary key default gen_random_uuid(), organisation_id uuid, personnel_id uuid);
+    create table personnel_credentials(id uuid primary key default gen_random_uuid(), organisation_id uuid, personnel_id uuid);
+    create table personnel_evidence(id uuid primary key default gen_random_uuid(), organisation_id uuid, personnel_id uuid);
+    create table mission_personnel_assignments(id uuid primary key default gen_random_uuid(), organisation_id uuid, personnel_id uuid);
     create table ftf_profiles(tenant_id uuid, user_id uuid);
     create table ftf_store(tenant_id uuid, collection text, record_id text);
     create table clients(id uuid primary key, organisation_id uuid, archived_at timestamptz);
@@ -154,6 +159,35 @@ function runIntegrity(setupSql = '', { current = true } = {}) {
     encoding: 'utf8',
   });
   return child;
+}
+
+function runDiagnostic(setupSql = '', { current = true } = {}) {
+  const diagnostic = read('scripts/productionControlledIntegrityPredicateDiagnostic.sql')
+    .replace(/^\\set[^\n]*\n/, '')
+    .replace(/begin transaction read only;\s*/i, '')
+    .replace(/\s*commit;\s*$/i, '');
+  return spawnSync(process.execPath, ['-e', `
+    const { PGlite } = require('@electric-sql/pglite');
+    (async () => {
+      const db = new PGlite();
+      await db.exec(process.env.SCHEMA_SQL);
+      await db.exec(process.env.SEED_SQL);
+      const result = await db.query(process.env.DIAGNOSTIC_SQL);
+      process.stdout.write(JSON.stringify(result.rows.map(row => row.diagnostic)));
+      await db.close();
+    })().catch((error) => { process.stderr.write(String(error?.message || error)); process.exit(1); });
+  `], {
+    cwd: root,
+    env: { ...process.env, SCHEMA_SQL: schemaSql, SEED_SQL: `${current ? currentSql() : ''}\n${setupSql}`, DIAGNOSTIC_SQL: diagnostic },
+    encoding: 'utf8',
+  });
+}
+
+function diagnosticRows(setupSql = '', options) {
+  const result = runDiagnostic(setupSql, options);
+  expect(result.status).toBe(0);
+  expect(result.stderr).toBe('');
+  return JSON.parse(result.stdout);
 }
 
 function expectIntegrityPass(setupSql = '') {
@@ -338,5 +372,40 @@ describe('read-only Production state integrity reconciliation', () => {
   test('fails explicitly when controlled evidence is absent or the current governed identity is missing', async () => {
     await expectIntegrityFailure('', { current: false });
     await expectIntegrityFailure(`delete from commercial_onboarding_applications where id='${CURRENT.applicationId}';`);
+  });
+
+  test('predicate diagnostic passes the canonical fixture and isolates representative failures', () => {
+    const exact = diagnosticRows();
+    expect(exact.length).toBeGreaterThan(35);
+    expect(exact.every(({ result }) => result === 'PASS')).toBe(true);
+
+    const personnel = diagnosticRows(`insert into personnel values('${uuid(991)}','${CURRENT.organisationId}',null);`);
+    expect(personnel.filter(({ result }) => result === 'FAIL').map(({ predicate }) => predicate)).toEqual(expect.arrayContaining([
+      'personnel_residue',
+    ]));
+    expect(personnel.find(({ predicate }) => predicate === 'store_residue').result).toBe('PASS');
+
+    const store = diagnosticRows(`insert into ftf_store values('${CURRENT.organisationId}','ftf_work_packs','__value__');`);
+    expect(store.filter(({ result }) => result === 'FAIL').map(({ predicate }) => predicate)).toEqual(['store_residue']);
+
+    const audit = diagnosticRows(`delete from audit_events where organisation_id='${CURRENT.organisationId}' and event_type='commercial_onboarding.acceptance_archived';`);
+    expect(audit.filter(({ result }) => result === 'FAIL').map(({ predicate }) => predicate)).toEqual(['archive_audit_cardinality']);
+
+    const outbox = diagnosticRows(`delete from transactional_outbox where organisation_id='${CURRENT.organisationId}';`);
+    expect(outbox.filter(({ result }) => result === 'FAIL').map(({ predicate }) => predicate)).toEqual(['archive_outbox_cardinality']);
+  });
+
+  test('predicate diagnostic distinguishes active, SENT-history, and provenance failures', () => {
+    const active = diagnosticRows(`update organisations set archived_at=null where id='${CURRENT.organisationId}';`);
+    expect(active.filter(({ result }) => result === 'FAIL').map(({ predicate }) => predicate)).toEqual(expect.arrayContaining([
+      'active_controlled_organisation_count', 'governed_fixture_linkage', 'organisation_archived',
+    ]));
+
+    const sent = diagnosticRows(`${seedApplicationSql({ applicationId: uuid(981), invitationId: uuid(982), applicationReference: 'SC-APP-FAILED99', businessName: marker(19) })}
+      update commercial_onboarding_invitation_events set to_status='ACCEPTED' where invitation_id='${uuid(982)}' and to_status='SENT';`);
+    expect(sent.find(({ predicate, scopeId }) => predicate === 'sent_invitation_history' && scopeId === uuid(982)).result).toBe('FAIL');
+
+    const provenance = diagnosticRows(`update commercial_onboarding_invitations set resulting_organisation_id='${uuid(980)}' where id='${CURRENT.invitationId}';`);
+    expect(provenance.some(({ predicate, result }) => predicate === 'accepted_organisation_link' && result === 'FAIL')).toBe(true);
   });
 });

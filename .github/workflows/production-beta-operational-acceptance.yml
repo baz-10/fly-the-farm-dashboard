@@ -23,6 +23,11 @@ on:
         required: false
         type: boolean
         default: false
+      controlled_integrity_diagnostic_only:
+        description: Evaluate controlled-integrity predicates separately without mutation
+        required: false
+        type: boolean
+        default: false
       target_environment:
         description: Explicit protected target
         required: true
@@ -157,7 +162,7 @@ jobs:
 
   deployment-identity:
     name: Resolve exact deployed commit
-    if: ${{ inputs.mailbox_preflight_only != true && inputs.invitation_diagnostic_only != true && inputs.supabase_ledger_diagnostic_only != true }}
+    if: ${{ inputs.mailbox_preflight_only != true && inputs.invitation_diagnostic_only != true && inputs.supabase_ledger_diagnostic_only != true && inputs.controlled_integrity_diagnostic_only != true }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
@@ -181,7 +186,7 @@ jobs:
   authentication-acceptance:
     name: Organisation authentication-only acceptance
     needs: deployment-identity
-    if: ${{ inputs.client_to_mission_only != true && inputs.supabase_ledger_diagnostic_only != true }}
+    if: ${{ inputs.client_to_mission_only != true && inputs.supabase_ledger_diagnostic_only != true && inputs.controlled_integrity_diagnostic_only != true }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: production-beta-acceptance
@@ -234,7 +239,7 @@ jobs:
   commercial-onboarding-acceptance:
     name: Commercial onboarding acceptance
     needs: [deployment-identity, authentication-acceptance]
-    if: ${{ inputs.client_to_mission_only != true && inputs.supabase_ledger_diagnostic_only != true }}
+    if: ${{ inputs.client_to_mission_only != true && inputs.supabase_ledger_diagnostic_only != true && inputs.controlled_integrity_diagnostic_only != true }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
     environment: production-beta-acceptance
@@ -456,6 +461,39 @@ jobs:
             echo "pending_migration_count=0"
           fi
           exit "$exit_code"
+
+  controlled-integrity-predicate-diagnostic:
+    name: Controlled evidence integrity predicate diagnostic
+    if: ${{ inputs.controlled_integrity_diagnostic_only == true }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: production-beta-acceptance
+    env:
+      EXPECTED_SUPABASE_PROJECT_REF: fzkrvglzompkuiodqllr
+      SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+    steps:
+      - name: Check out exact diagnostic source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Run one bounded read-only predicate diagnostic
+        shell: bash
+        run: |
+          set +x
+          [[ -n "$SUPABASE_DB_PASSWORD" ]]
+          echo "::add-mask::$SUPABASE_DB_PASSWORD"
+          set -euo pipefail
+          [[ "${{ inputs.target_environment }}" == "production" ]]
+          export PGPASSWORD="$SUPABASE_DB_PASSWORD"
+          trap 'unset PGPASSWORD' EXIT
+          psql \
+            --host aws-0-ap-southeast-2.pooler.supabase.com \
+            --port 5432 \
+            --username "postgres.${EXPECTED_SUPABASE_PROJECT_REF}" \
+            --dbname postgres \
+            --no-password \
+            --no-psqlrc --set ON_ERROR_STOP=1 --tuples-only --no-align \
+            --file scripts/productionControlledIntegrityPredicateDiagnostic.sql
 
   operational-acceptance:
     name: Client to Mission operational acceptance
