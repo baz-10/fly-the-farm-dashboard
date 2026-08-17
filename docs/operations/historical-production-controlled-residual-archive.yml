@@ -1,3 +1,8 @@
+# HISTORICAL NON-EXECUTABLE EVIDENCE
+# Retired 2026-08-18 under Product Owner approval.
+# Superseded by the canonical evidence-bound controlled-cleanup path.
+# This file is preserved outside .github/workflows so the original one-shot
+# implementation and its provenance remain reviewable but cannot be dispatched.
 name: Production controlled residual archive
 
 on:
