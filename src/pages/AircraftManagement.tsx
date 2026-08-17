@@ -528,7 +528,7 @@ export default function AircraftManagement() {
         </Box>
       </Box>
 
-      {localError && (
+      {localError && !aircraftDialogOpen && (
         <Alert
           severity="error"
           sx={{ mb: 3 }}

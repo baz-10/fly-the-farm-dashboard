@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   Box,
   TextField,
@@ -20,6 +20,7 @@ import { useAircraft } from '../contexts/AircraftContext';
 import { useOperationalData } from '../contexts/OperationalDataContext';
 import { Aircraft, AircraftStatus } from '../types/aircraft';
 import { addMonthsToDateInput } from '../utils/aircraftMaintenance';
+import { AircraftApiError } from '../services/aircraftApi';
 // import { enAU } from 'date-fns/locale';
 
 interface AircraftFormProps {
@@ -124,7 +125,7 @@ export function reconcileNativeAircraftDates<T extends object>(form: HTMLFormEle
 
 export default function AircraftForm({ aircraftId, onSave, onCancel }: AircraftFormProps) {
   const { createAircraft, updateAircraft, getAircraftById, error } = useAircraft();
-  const { mode, operatingLocations } = useOperationalData();
+  const { mode, status: operationalStatus, operatingLocations, operatingLocationIds } = useOperationalData();
   const [formData, setFormData] = useState<FormData>(initialFormData);
   const [errors, setErrors] = useState<FormErrors>({});
   const [saving, setSaving] = useState(false);
@@ -172,10 +173,27 @@ export default function AircraftForm({ aircraftId, onSave, onCancel }: AircraftF
     }
   }, [aircraftId, getAircraftById]);
 
+  const operationalContextReady = mode !== 'remote' || operationalStatus === 'ready';
+  const authorisedOperatingLocations = useMemo(() => mode === 'remote'
+    ? operatingLocations.filter((location) => operatingLocationIds.includes(location.id))
+    : operatingLocations, [mode, operatingLocationIds, operatingLocations]);
+  const selectedOperatingLocationIsAuthorised = mode !== 'remote'
+    || authorisedOperatingLocations.some((location) => location.id === formData.operatingLocationId);
+  const operatingLocationReady = mode !== 'remote'
+    || (operationalContextReady && selectedOperatingLocationIsAuthorised);
+
   useEffect(() => {
-    if (mode !== 'remote' || aircraftId || operatingLocations.length !== 1) return;
-    setFormData((previous) => ({ ...previous, operatingLocationId: operatingLocations[0].id }));
-  }, [aircraftId, mode, operatingLocations]);
+    if (mode !== 'remote' || !operationalContextReady) return;
+    setFormData((previous) => {
+      if (authorisedOperatingLocations.some((location) => location.id === previous.operatingLocationId)) {
+        return previous;
+      }
+      return {
+        ...previous,
+        operatingLocationId: authorisedOperatingLocations.length === 1 ? authorisedOperatingLocations[0].id : '',
+      };
+    });
+  }, [authorisedOperatingLocations, mode, operationalContextReady]);
 
   const validateForm = useCallback((candidate: FormData = formData): boolean => {
     const newErrors: FormErrors = {};
@@ -355,6 +373,11 @@ export default function AircraftForm({ aircraftId, onSave, onCancel }: AircraftF
     event.preventDefault();
     setSubmitError('');
 
+    if (!operationalContextReady || !operatingLocationReady) {
+      setSubmitError('Wait for your authorised Base to finish loading before saving this aircraft.');
+      return;
+    }
+
     const submittedFormData = reconcileNativeAircraftDates(event.currentTarget as HTMLFormElement, formData);
     setFormData(submittedFormData);
 
@@ -431,7 +454,9 @@ export default function AircraftForm({ aircraftId, onSave, onCancel }: AircraftF
       onSave();
     } catch (error) {
       console.error('Failed to save aircraft:', error);
-      setSubmitError(error instanceof Error ? error.message : 'The aircraft record could not be saved.');
+      setSubmitError(error instanceof AircraftApiError
+        ? error.userMessage
+        : error instanceof Error ? error.message : 'The aircraft record could not be saved.');
     } finally {
       setSaving(false);
     }
@@ -439,15 +464,15 @@ export default function AircraftForm({ aircraftId, onSave, onCancel }: AircraftF
 
   return (
       <Box component="form" onSubmit={handleSubmit} sx={{ mt: 2 }}>
-        {submitError && (
+        {(submitError || error) && (
           <Alert severity="error" sx={{ mb: 3 }}>
-            {submitError}
+            {submitError || error}
           </Alert>
         )}
 
-        {error && (
-          <Alert severity="error" sx={{ mb: 3 }}>
-            {error}
+        {mode === 'remote' && !operationalContextReady && (
+          <Alert severity="info" sx={{ mb: 3 }}>
+            Loading authorised Bases. Aircraft details can be entered while this finishes.
           </Alert>
         )}
 
@@ -464,10 +489,11 @@ export default function AircraftForm({ aircraftId, onSave, onCancel }: AircraftF
                   <Select
                     labelId="aircraft-operating-location-label"
                     label="Operating location *"
-                    value={formData.operatingLocationId}
+                    value={selectedOperatingLocationIsAuthorised ? formData.operatingLocationId : ''}
                     onChange={handleInputChange('operatingLocationId')}
+                    disabled={!operationalContextReady}
                   >
-                    {operatingLocations.map((location) => (
+                    {authorisedOperatingLocations.map((location) => (
                       <MenuItem key={location.id} value={location.id}>{location.name}</MenuItem>
                     ))}
                   </Select>
@@ -883,7 +909,7 @@ export default function AircraftForm({ aircraftId, onSave, onCancel }: AircraftF
           <Button
             type="submit"
             variant="contained"
-            disabled={saving}
+            disabled={saving || !operationalContextReady || !operatingLocationReady}
           >
             {saving ? 'Saving...' : aircraftId ? 'Update Aircraft' : 'Create Aircraft'}
           </Button>
