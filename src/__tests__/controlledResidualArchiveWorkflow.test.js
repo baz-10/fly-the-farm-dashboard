@@ -15,7 +15,7 @@ const EXPECTED = [
 
 const loadModule = async () => require('../../scripts/controlledResidualArchiveCore.cjs');
 
-describe('protected five-target residual acceptance archive', () => {
+describe('historical five-target residual acceptance archive evidence', () => {
   test('hard-binds exactly the five Founder-authorised provenance tuples in reviewed order', () => {
     const manifest = JSON.parse(read('scripts/controlledResidualArchiveManifest.json'));
 
@@ -121,8 +121,8 @@ describe('protected five-target residual acceptance archive', () => {
     })).not.toThrow();
   });
 
-  test('defines one workflow-dispatch-only protected job with no target input or alternate execution path', () => {
-    const source = read('.github/workflows/production-controlled-residual-archive.yml');
+  test('preserves the retired one-shot definition with no target input or alternate execution path', () => {
+    const source = read('docs/operations/historical-production-controlled-residual-archive.yml');
     const definition = yaml.load(source);
     const dispatch = definition.on.workflow_dispatch;
     const jobs = Object.values(definition.jobs);
@@ -139,7 +139,7 @@ describe('protected five-target residual acceptance archive', () => {
   });
 
   test('orders backup, all-target preflight, baseline freeze, sequential archive, and final verification', () => {
-    const definition = yaml.load(read('.github/workflows/production-controlled-residual-archive.yml'));
+    const definition = yaml.load(read('docs/operations/historical-production-controlled-residual-archive.yml'));
     const steps = Object.values(definition.jobs)[0].steps;
     const names = steps.map(({ name }) => name);
     const expected = [
@@ -155,7 +155,7 @@ describe('protected five-target residual acceptance archive', () => {
   });
 
   test('contains no retry, onboarding, client-to-mission, migration, deployment, alias, or fixture path', () => {
-    const source = read('.github/workflows/production-controlled-residual-archive.yml');
+    const source = read('docs/operations/historical-production-controlled-residual-archive.yml');
     const normalised = source.replace(/controlledResidualArchiveManifest|controlledResidualArchive/g, 'bounded-archive');
 
     expect(normalised).not.toMatch(/\bretry\b|commercial-onboarding\.spec|client-to-mission|migration\s+(?:up|repair|list)|db\s+push|vercel|alias\s+set|playwright|create\s+(?:fixture|organisation)|rerun/i);
