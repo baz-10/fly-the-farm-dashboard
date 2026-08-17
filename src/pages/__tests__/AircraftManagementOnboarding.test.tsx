@@ -3,6 +3,7 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import AircraftManagement from '../AircraftManagement';
 
 let mockQuery = new URLSearchParams();
+let mockAircraftError: string | null = null;
 const mockNavigate = jest.fn();
 
 jest.mock('react-router-dom', () => ({
@@ -11,7 +12,7 @@ jest.mock('react-router-dom', () => ({
 }), { virtual: true });
 jest.mock('../../contexts/AircraftContext', () => ({
   useAircraft: () => ({
-    aircraft: [], equipmentKits: [], isLoading: false, error: null,
+    aircraft: [], equipmentKits: [], isLoading: false, error: mockAircraftError,
     deleteAircraft: jest.fn(), deleteEquipmentKit: jest.fn(), getAircraftById: jest.fn(),
     getEquipmentKitById: jest.fn(), clearError: jest.fn(),
   }),
@@ -19,7 +20,7 @@ jest.mock('../../contexts/AircraftContext', () => ({
 jest.mock('../../components/AircraftForm', () => (props: any) => <button type="button" onClick={props.onSave}>Complete aircraft save</button>);
 jest.mock('../../components/EquipmentKitForm', () => (props: any) => <button type="button" onClick={props.onSave}>Complete equipment save</button>);
 
-beforeEach(() => { mockNavigate.mockReset(); mockQuery = new URLSearchParams(); });
+beforeEach(() => { mockNavigate.mockReset(); mockQuery = new URLSearchParams(); mockAircraftError = null; });
 
 test.each([
   ['aircraft', 'Add New Aircraft', 'Complete aircraft save'],
@@ -32,4 +33,13 @@ test.each([
   fireEvent.click(screen.getByRole('button', { name: saveName }));
   fireEvent.click(await screen.findByRole('button', { name: 'Return to Getting Started' }));
   expect(mockNavigate).toHaveBeenCalledWith('/getting-started');
+});
+
+test('does not duplicate the Aircraft context error behind the form-owned dialog error', async () => {
+  mockAircraftError = 'Aircraft request failed.';
+  mockQuery = new URLSearchParams('onboarding=aircraft');
+  render(<AircraftManagement />);
+
+  expect(await screen.findByRole('dialog', { name: 'Add New Aircraft' })).toBeVisible();
+  expect(screen.queryByText('Aircraft request failed.')).not.toBeInTheDocument();
 });

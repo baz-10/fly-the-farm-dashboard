@@ -35,4 +35,41 @@ describe('Aircraft API gateway', () => {
     const malformedFetch = jest.fn().mockResolvedValue({ ok: true, status: 200, json: async () => ({ data: { id: record.id } }) });
     await expect(createAircraftApiGateway(malformedFetch as unknown as typeof fetch).list()).rejects.toBeInstanceOf(AircraftApiError);
   });
+
+  test('retains safe API diagnostics without exposing response payloads', async () => {
+    const fetcher = jest.fn().mockResolvedValue({
+      ok: false,
+      status: 422,
+      headers: { get: (name: string) => name.toLowerCase() === 'x-request-id' ? 'request-safe-123' : null },
+      json: async () => ({ error: { code: 'AIRCRAFT_INVALID', message: 'Review the aircraft details.' } }),
+    });
+
+    await expect(createAircraftApiGateway(fetcher as unknown as typeof fetch).create(record)).rejects.toMatchObject({
+      code: 'AIRCRAFT_INVALID',
+      message: 'Review the aircraft details.',
+      correlationId: 'request-safe-123',
+    });
+  });
+
+  test.each([
+    [{ code: 'bad code\nSECRET', message: 'password=do-not-display' }, 'unsafe-reference\nvalue'],
+    [{ code: 'A'.repeat(100), message: 'x'.repeat(500) }, 'r'.repeat(500)],
+    [{ code: { nested: true }, message: { private: true } }, 'valid-reference'],
+    [{ code: 'UPSTREAM_ERROR', message: 'Provider returned sk-proj-AbCdEf1234567890' }, 'safe-reference'],
+    [{ code: 'UPSTREAM_ERROR', message: 'Provider request failed.' }, 'sk-ant-api03-AbCdEf1234567890'],
+    [{ code: 'UPSTREAM_ERROR', message: 'Provider returned eyJhbGciOi.payload123.signature123' }, 'safe-reference'],
+  ])('fails closed for unsafe or unbounded diagnostics', async (error, requestId) => {
+    const fetcher = jest.fn().mockResolvedValue({
+      ok: false,
+      status: 500,
+      headers: { get: () => requestId },
+      json: async () => ({ error }),
+    });
+
+    await expect(createAircraftApiGateway(fetcher as unknown as typeof fetch).create(record)).rejects.toMatchObject({
+      code: 'AIRCRAFT_API_ERROR',
+      message: 'Aircraft request failed.',
+      correlationId: undefined,
+    });
+  });
 });

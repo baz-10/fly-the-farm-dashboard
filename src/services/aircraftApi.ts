@@ -9,14 +9,42 @@ export class AircraftApiError extends Error {
     readonly code: string,
     message: string,
     readonly currentVersion?: number,
+    readonly correlationId?: string,
   ) {
     super(message);
     this.name = 'AircraftApiError';
+  }
+
+  get userMessage(): string {
+    const code = this.code ? ` Code: ${this.code}.` : '';
+    const reference = this.correlationId ? ` Reference: ${this.correlationId}.` : '';
+    return `${this.message}${code}${reference}`;
   }
 }
 
 function malformed(field: string): never {
   throw new AircraftApiError(0, 'MALFORMED_RESPONSE', `The Aircraft API returned an invalid ${field}.`);
+}
+
+const SAFE_ERROR_CODE = /^[A-Z][A-Z0-9_]{0,63}$/;
+const SAFE_CORRELATION_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+const PROTECTED_DIAGNOSTIC = /(?:authorization|bearer|password|secret|service[_ -]?role|access[_ -]?token|refresh[_ -]?token|connection[_ -]?string)/i;
+const CREDENTIAL_VALUE = /(?:\bsk-[A-Za-z0-9_-]{8,}\b|\bgh[pousr]_[A-Za-z0-9_]{8,}\b|\bya29\.[A-Za-z0-9_-]{8,}\b|\bAKIA[A-Z0-9]{12,}\b|\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\b)/;
+
+function safePublicMessage(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const message = value.trim();
+  if (!message || message.length > 240 || /[\r\n\t\0]/.test(message)
+    || PROTECTED_DIAGNOSTIC.test(message) || CREDENTIAL_VALUE.test(message)) return undefined;
+  return message;
+}
+
+function safeCode(value: unknown): string | undefined {
+  return typeof value === 'string' && SAFE_ERROR_CODE.test(value) ? value : undefined;
+}
+
+function safeCorrelationId(value: unknown): string | undefined {
+  return typeof value === 'string' && SAFE_CORRELATION_ID.test(value) && !CREDENTIAL_VALUE.test(value) ? value : undefined;
 }
 
 function text(record: ApiRecord, field: string, allowEmpty = false): string {
@@ -98,7 +126,24 @@ async function request(fetcher: typeof fetch, path: string, init: RequestInit = 
   const body = await response.json().catch(() => ({}));
   if (!response.ok) {
     const error = body?.error || {};
-    throw new AircraftApiError(response.status, error.code || 'AIRCRAFT_API_ERROR', error.message || 'Aircraft request failed.', error.meta?.currentVersion);
+    const rawCorrelationId = error.meta?.correlationId
+      || error.correlationId
+      || response.headers?.get?.('x-request-id')
+      || response.headers?.get?.('x-correlation-id')
+      || undefined;
+    const message = safePublicMessage(error.message);
+    const code = safeCode(error.code);
+    const correlationId = safeCorrelationId(rawCorrelationId);
+    const diagnosticsAreSafe = (!error.message || Boolean(message))
+      && (!error.code || Boolean(code))
+      && (!rawCorrelationId || Boolean(correlationId));
+    throw new AircraftApiError(
+      response.status,
+      diagnosticsAreSafe && code ? code : 'AIRCRAFT_API_ERROR',
+      diagnosticsAreSafe && message ? message : 'Aircraft request failed.',
+      error.meta?.currentVersion,
+      diagnosticsAreSafe ? correlationId : undefined,
+    );
   }
   return body?.data;
 }
