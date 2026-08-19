@@ -36,6 +36,7 @@ function createDefaultHandlers() {
     missions: createOperationalHandler('missions'),
     'mission-setup-drafts': createMissionSetupDraftsHandler(),
     aircraft: createOperationalHandler('aircraft'),
+    'fleet-assets': createOperationalHandler('fleet-assets'),
     'equipment-kits': createOperationalHandler('equipment-kits'),
     'operating-locations': createOperationalHandler('operating_locations'),
     'field-boundary-versions': createFieldBoundaryVersionHandler(),

@@ -89,6 +89,7 @@ jest.mock('./contexts/UserLicenseContext', () => ({ UserLicenseProvider: ({ chil
 jest.mock('./contexts/AircraftContext', () => ({ AircraftProvider: ({ children }: { children: React.ReactNode }) => <>{children}</> }));
 jest.mock('./contexts/MissionContext', () => ({ MissionProvider: ({ children }: { children: React.ReactNode }) => <>{children}</> }));
 jest.mock('./contexts/WorkPackContext', () => ({ WorkPackProvider: ({ children }: { children: React.ReactNode }) => <>{children}</> }));
+jest.mock('./contexts/FleetAssetContext', () => ({ FleetAssetProvider: ({ children }: { children: React.ReactNode }) => <>{children}</> }));
 jest.mock('./pages/JobHistory', () => () => <div>Legacy browser job history</div>);
 jest.mock('./pages/ReocComplianceWorkspace', () => () => <div>Dedicated ReOC workspace</div>);
 jest.mock('./pages/OperationsManualWorkspace', () => () => <div>Dedicated Operations Manual workspace</div>);

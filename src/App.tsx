@@ -48,6 +48,7 @@ import { UserLicenseProvider } from './contexts/UserLicenseContext';
 import { AircraftProvider } from './contexts/AircraftContext';
 import { MissionProvider } from './contexts/MissionContext';
 import { WorkPackProvider } from './contexts/WorkPackContext';
+import { FleetAssetProvider } from './contexts/FleetAssetContext';
 import FleetWorkPacks from './pages/FleetWorkPacks';
 import { useAuth, UserRole } from './contexts/AuthContext';
 import OperationalFeatureGate from './components/OperationalFeatureGate';
@@ -76,9 +77,11 @@ function WorkflowProviders({ children }: { children: React.ReactNode }) {
   return (
     <UserLicenseProvider>
       <AircraftProvider>
-        <WorkPackProvider>
-          <MissionProvider>{children}</MissionProvider>
-        </WorkPackProvider>
+        <FleetAssetProvider>
+          <WorkPackProvider>
+            <MissionProvider>{children}</MissionProvider>
+          </WorkPackProvider>
+        </FleetAssetProvider>
       </AircraftProvider>
     </UserLicenseProvider>
   );

@@ -1,5 +1,6 @@
 import { Client, Field, LatLng, Property } from '../types/fieldManagement';
 import { ALL_STATES, AustralianState } from '../types/chemical';
+import { FleetAsset, FleetAssetCreateInput, FleetAssetUpdateInput } from '../types/fleetAsset';
 
 type ApiRecord = Record<string, unknown>;
 
@@ -400,6 +401,26 @@ export interface OperationalApi {
     create(input: FieldBoundaryVersionCreateInput): Promise<OperationalFieldBoundaryVersion>;
   };
   missions: ResourceAdapter<OperationalMission, OperationalMissionCreateInput, OperationalMissionUpdateInput>;
+  fleetAssets: ResourceAdapter<FleetAsset, FleetAssetCreateInput, FleetAssetUpdateInput>;
+}
+
+export function mapApiFleetAsset(record: ApiRecord): FleetAsset {
+  const assetType = requiredText(record, 'assetType', 'asset_type');
+  const status = requiredText(record, 'status');
+  if (!['truck', 'trailer', 'generator', 'crane', 'pump', 'compressor', 'other'].includes(assetType)) return malformed('assetType');
+  if (!['available', 'assigned', 'maintenance', 'retired'].includes(status)) return malformed('status');
+  const rawYear = value(record, 'manufactureYear', 'manufacture_year');
+  if (rawYear !== undefined && rawYear !== null && (!Number.isInteger(Number(rawYear)) || Number(rawYear) < 1900 || Number(rawYear) > 2200)) return malformed('manufactureYear');
+  return {
+    id: requiredText(record, 'id'), operatingLocationId: requiredText(record, 'operatingLocationId', 'operating_location_id'),
+    assetType: assetType as FleetAsset['assetType'], assetIdentifier: requiredText(record, 'assetIdentifier', 'asset_identifier'),
+    registration: optionalText(record, 'registration') || undefined, vin: optionalText(record, 'vin') || undefined,
+    serialNumber: optionalText(record, 'serialNumber', 'serial_number') || undefined,
+    manufacturer: optionalText(record, 'manufacturer') || undefined, model: optionalText(record, 'model') || undefined,
+    manufactureYear: rawYear === undefined || rawYear === null ? undefined : Number(rawYear),
+    status: status as FleetAsset['status'], notes: optionalText(record, 'notes'), rowVersion: versionValue(record),
+    createdAt: timestamp(record, 'createdAt', 'created_at'), updatedAt: timestamp(record, 'updatedAt', 'updated_at'),
+  };
 }
 
 interface ApiOptions { timeoutMs?: number; }
@@ -561,6 +582,19 @@ export function createOperationalApi(options: ApiOptions = {}): OperationalApi {
       ...(input.equipmentKitIds !== undefined ? { equipmentKitIds: input.equipmentKitIds } : {}),
     };
   };
+  const fleetAssetWritable = (input: FleetAssetCreateInput | FleetAssetUpdateInput): ApiRecord => ({
+    operatingLocationId: input.operatingLocationId,
+    assetType: input.assetType,
+    assetIdentifier: input.assetIdentifier,
+    ...(input.registration !== undefined ? { registration: input.registration } : {}),
+    ...(input.vin !== undefined ? { vin: input.vin } : {}),
+    ...(input.serialNumber !== undefined ? { serialNumber: input.serialNumber } : {}),
+    ...(input.manufacturer !== undefined ? { manufacturer: input.manufacturer } : {}),
+    ...(input.model !== undefined ? { model: input.model } : {}),
+    ...(input.manufactureYear !== undefined ? { manufactureYear: input.manufactureYear } : {}),
+    status: input.status,
+    notes: input.notes,
+  });
 
   return {
     async session() {
@@ -619,6 +653,7 @@ export function createOperationalApi(options: ApiOptions = {}): OperationalApi {
       };
     })(),
     missions: resource('missions', mapApiMission, missionWritable),
+    fleetAssets: resource('fleet-assets', mapApiFleetAsset, fleetAssetWritable),
   };
 }
 
