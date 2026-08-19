@@ -36,3 +36,21 @@ test('authoritative Fleet form hydrates its Base and creates a generator without
   expect(payload).toMatchObject({ operatingLocationId: baseId, assetType: 'generator', assetIdentifier: 'GEN-BROWSER-001' });
   expect(payload.registration).toBeUndefined();
 });
+
+test('asset workspace preserves context and route-addressable progressive disclosure', async ({ page }) => {
+  const assetId='44444444-4444-4444-8444-444444444444';
+  const permissions=['fleet_assets.read','asset_meters.read'];
+  await page.route('**/api/store*',(route)=>route.fulfill({status:200,contentType:'application/json',body:'{}'}));
+  await page.route('**/api/auth',(route)=>route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({user:{id:userId,email:'fleet@example.test',name:'Fleet Operator',role:'admin',identityPlane:'organisation',entitlements:[],permissions}})}));
+  await page.route('**/api/v1/session',(route)=>route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({data:{user:{id:userId,email:'fleet@example.test',name:'Fleet Operator'},organisation:{id:organisationId,name:'Fleet Test'},roles:['organisation_admin'],permissions,operatingLocationIds:[baseId]}})}));
+  await page.route('**/api/v1/fleet-assets*',(route)=>route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({data:[{id:assetId,operatingLocationId:baseId,assetType:'generator',assetIdentifier:'GEN-BROWSER-001',serialNumber:'SER-BROWSER-001',status:'available',notes:'',rowVersion:1,createdAt:now,updatedAt:now}],pagination:{page:1,pageSize:100}})}));
+  await page.route('**/api/v1/aircraft*',(route)=>route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({data:[],pagination:{page:1,pageSize:100}})}));
+  await page.route('**/api/v1/equipment-kits*',(route)=>route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({data:[],pagination:{page:1,pageSize:100}})}));
+  await page.goto(`/assets/fleet-asset/${assetId}/overview`);
+  await expect(page.getByRole('heading',{name:'GEN-BROWSER-001'})).toBeVisible();
+  await expect(page.getByRole('navigation',{name:'Asset workspace sections'})).toBeVisible();
+  await page.getByRole('button',{name:'Components'}).click();
+  await expect(page).toHaveURL(new RegExp(`/assets/fleet-asset/${assetId}/components$`));
+  await expect(page.getByRole('heading',{name:'Components'})).toBeVisible();
+  await expect(page.getByText(/Component tracking is optional/)).toBeVisible();
+});

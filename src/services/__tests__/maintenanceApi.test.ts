@@ -1,0 +1,8 @@
+import { maintenanceApi, MaintenanceApiError } from '../maintenanceApi';
+
+const response=(status:number,body:unknown)=>({ok:status>=200&&status<300,status,json:async()=>body,headers:{get:()=> 'corr-safe-123'}} as any);
+describe('maintenanceApi',()=>{beforeEach(()=>{global.fetch=jest.fn();});
+  test('uses same-origin governed attachment command',async()=>{(fetch as jest.Mock).mockResolvedValue(response(201,{data:{id:'period-1'}}));await maintenanceApi.attach({parentAssetId:'parent',childAssetId:'child',positionLabel:'Generator bay',attachedAt:'2026-08-19T00:00:00.000Z'});expect(fetch).toHaveBeenCalledWith('/api/v1/asset-maintenance?action=attach',expect.objectContaining({method:'POST',credentials:'same-origin'}));});
+  test('retains safe code and correlation on command failure',async()=>{(fetch as jest.Mock).mockResolvedValue(response(409,{error:{code:'RELATIONSHIP_CONFLICT',message:'The relationship is unavailable.'}}));await expect(maintenanceApi.detach('id',1,'2026-08-19T00:00:00.000Z')).rejects.toEqual(expect.objectContaining<Partial<MaintenanceApiError>>({status:409,code:'RELATIONSHIP_CONFLICT',correlationId:'corr-safe-123'}));});
+  test('sends an idempotent source identity for Mission-derived readings',async()=>{(fetch as jest.Mock).mockResolvedValue(response(201,{data:{id:'reading'}}));await maintenanceApi.recordReading({meterDefinitionId:'meter',recordedAt:'2026-08-19T00:00:00.000Z',value:1,source:'MISSION',sourceSystem:'mission-closeout',sourceRecordId:'mission-1:flight-hours'});expect(JSON.parse((fetch as jest.Mock).mock.calls[0][1].body)).toEqual(expect.objectContaining({sourceSystem:'mission-closeout',sourceRecordId:'mission-1:flight-hours'}));});
+});
