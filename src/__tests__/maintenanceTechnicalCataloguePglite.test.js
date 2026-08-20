@@ -32,12 +32,15 @@ const ids = {
   auth1: '11111111-1111-4111-8111-111111110001',
   auth2: '22222222-2222-4222-8222-222222220001',
   location1: '11111111-1111-4111-8111-111111111001',
+  location1b: '11111111-1111-4111-8111-111111111002',
   location2: '22222222-2222-4222-8222-222222222001',
   asset1: '11111111-1111-4111-8111-111111112001',
   asset1b: '11111111-1111-4111-8111-111111112002',
+  asset1c: '11111111-1111-4111-8111-111111112003',
   asset2: '22222222-2222-4222-8222-222222222001',
   fleet1: '11111111-1111-4111-8111-111111113001',
   fleet1b: '11111111-1111-4111-8111-111111113002',
+  fleet1c: '11111111-1111-4111-8111-111111113003',
   fleet2: '22222222-2222-4222-8222-222222223001',
   system1: '11111111-1111-4111-8111-111111114001',
   system1b: '11111111-1111-4111-8111-111111114002',
@@ -83,7 +86,12 @@ if (runPgliteInThisProcess) describe('maintenance technical catalogue PostgreSQL
       create function public.ftf_write_operational_resource(uuid,uuid,text,text,uuid,integer,jsonb) returns jsonb language sql as $$select '{}'::jsonb$$;
       create function public.ftf_actor_has_permission(p_org uuid,p_actor uuid,p_code text) returns boolean language sql stable as $$select exists(select 1 from public.internal_users where organisation_id=p_org and id=p_actor and is_active and archived_at is null)$$;
       create function public.ftf_actor_has_active_beta_seat(p_org uuid,p_actor uuid) returns boolean language sql stable as $$select exists(select 1 from public.internal_users where organisation_id=p_org and id=p_actor and is_active and archived_at is null)$$;
-      create function public.ftf_operational_location_allowed(p_org uuid,p_actor uuid,p_location uuid) returns boolean language sql stable as $$select public.ftf_actor_has_active_beta_seat(p_org,p_actor)$$;
+      create function public.ftf_operational_location_allowed(p_org uuid,p_actor uuid,p_location uuid) returns boolean language sql stable as $$
+        select public.ftf_actor_has_active_beta_seat(p_org,p_actor) and (
+          (p_org='${ids.org1}' and p_actor='${ids.actor1}' and p_location='${ids.location1}') or
+          (p_org='${ids.org2}' and p_actor='${ids.actor2}' and p_location='${ids.location2}')
+        )
+      $$;
       create function public.ftf_lock_active_organisation(uuid) returns void language plpgsql as $$begin return; end$$;
       insert into public.platform_roles(code,name) values('PLATFORM_SUPER_ADMIN','Platform Super Administrator');
     `);
@@ -99,7 +107,8 @@ if (runPgliteInThisProcess) describe('maintenance technical catalogue PostgreSQL
       insert into public.organisations(id,organisation_id,name) values
         ('${ids.org1}','${ids.org1}','One'),('${ids.org2}','${ids.org2}','Two');
       insert into public.operating_locations(id,organisation_id,name) values
-        ('${ids.location1}','${ids.org1}','One Base'),('${ids.location2}','${ids.org2}','Two Base');
+        ('${ids.location1}','${ids.org1}','One Base'),('${ids.location1b}','${ids.org1}','Restricted Base'),
+        ('${ids.location2}','${ids.org2}','Two Base');
       insert into public.internal_users(id,organisation_id,auth_user_id,display_name) values
         ('${ids.actor1}','${ids.org1}','${ids.auth1}','One Admin'),('${ids.actor2}','${ids.org2}','${ids.auth2}','Two Admin');
       insert into public.platform_users(id,auth_user_id,email,display_name) values
@@ -110,11 +119,17 @@ if (runPgliteInThisProcess) describe('maintenance technical catalogue PostgreSQL
       insert into public.fleet_assets(id,organisation_id,operating_location_id,asset_type,asset_identifier,manufacturer,model,created_by_internal_user_id,updated_by_internal_user_id) values
         ('${ids.fleet1}','${ids.org1}','${ids.location1}','other','FTF-11','Isuzu','FSS550','${ids.actor1}','${ids.actor1}'),
         ('${ids.fleet1b}','${ids.org1}','${ids.location1}','other','FTF-12','Hino','FSS550','${ids.actor1}','${ids.actor1}'),
+        ('${ids.fleet1c}','${ids.org1}','${ids.location1b}','other','RESTRICTED-13','Isuzu','FSS550','${ids.actor1}','${ids.actor1}'),
         ('${ids.fleet2}','${ids.org2}','${ids.location2}','other','OTHER-11','Isuzu','FSS550','${ids.actor2}','${ids.actor2}');
       insert into public.maintainable_asset_registry(id,organisation_id,fleet_asset_id,created_by_internal_user_id,updated_by_internal_user_id) values
         ('${ids.asset1}','${ids.org1}','${ids.fleet1}','${ids.actor1}','${ids.actor1}'),
         ('${ids.asset1b}','${ids.org1}','${ids.fleet1b}','${ids.actor1}','${ids.actor1}'),
+        ('${ids.asset1c}','${ids.org1}','${ids.fleet1c}','${ids.actor1}','${ids.actor1}'),
         ('${ids.asset2}','${ids.org2}','${ids.fleet2}','${ids.actor2}','${ids.actor2}');
+      insert into public.asset_attachment_periods(organisation_id,parent_asset_id,child_asset_id,position_label,attached_at,attached_by_internal_user_id)
+        values
+          ('${ids.org1}','${ids.asset1}','${ids.asset1b}','Attached generator','2025-01-01','${ids.actor1}'),
+          ('${ids.org1}','${ids.asset1}','${ids.asset1c}','Restricted attached asset','2025-01-01','${ids.actor1}');
       insert into public.asset_systems(id,organisation_id,maintainable_asset_id,system_code,name,created_by_internal_user_id) values
         ('${ids.system1}','${ids.org1}','${ids.asset1}','ENGINE','Engine','${ids.actor1}'),
         ('${ids.system1b}','${ids.org1}','${ids.asset1b}','ENGINE','Engine','${ids.actor1}'),
@@ -190,6 +205,61 @@ if (runPgliteInThisProcess) describe('maintenance technical catalogue PostgreSQL
     const otherTenant = await db.query(`select public.ftf_read_asset_technical_catalogue('${ids.org2}','${ids.actor2}','${ids.asset2}','2025-06-01') result`);
     expect(JSON.stringify(otherTenant.rows[0].result)).toContain('GLOBAL_FILTER');
     expect(JSON.stringify(otherTenant.rows[0].result)).not.toContain('HISTORICAL_FILTER');
+  });
+
+  test('resolves workspace route identities only inside the trusted tenant and Base', async () => {
+    const allowed = await db.query(`select public.ftf_resolve_maintainable_asset_route('${ids.org1}','${ids.actor1}','fleet-asset','${ids.fleet1}') result`);
+    expect(allowed.rows[0].result).toEqual({
+      registryId: ids.asset1,
+      source: 'fleet-asset',
+      sourceRecordId: ids.fleet1,
+      identity: 'FTF-11',
+    });
+
+    const crossTenant = await db.query(`select public.ftf_resolve_maintainable_asset_route('${ids.org1}','${ids.actor2}','fleet-asset','${ids.fleet1}') result`);
+    expect(crossTenant.rows[0].result).toEqual({ not_found: true });
+    const foreignRecord = await db.query(`select public.ftf_resolve_maintainable_asset_route('${ids.org2}','${ids.actor2}','fleet-asset','${ids.fleet1}') result`);
+    expect(foreignRecord.rows[0].result).toEqual({ not_found: true });
+    const deniedBase = await db.query(`select public.ftf_resolve_maintainable_asset_route('${ids.org1}','${ids.actor1}','fleet-asset','${ids.fleet1c}') result`);
+    expect(deniedBase.rows[0].result).toEqual({ not_found: true });
+  });
+
+  test('returns authoritative attached links and factual part/fluid grouping identities', async () => {
+    const fluid = 'd2000000-0000-4000-8000-000000000001';
+    const fluidVersion = 'd2100000-0000-4000-8000-000000000001';
+    await db.exec(`
+      insert into public.technical_fluid_specifications(id,specification_code,display_name)
+        values('${fluid}','ENGINE-OIL','Engine oil');
+      insert into public.technical_fluid_specification_versions(id,technical_fluid_specification_id,version_number,fluid_type,viscosity_or_grade,authority_type,lifecycle_state,evidence,approved_by_platform_user_id,approved_at,effective_from)
+        values('${fluidVersion}','${fluid}',1,'ENGINE_OIL','15W-40','MANUFACTURER','EFFECTIVE','{"source":"manual"}','${ids.platformUser}','2025-01-01','2025-01-01');
+      insert into public.asset_fluid_requirements(organisation_id,fluid_specification_version_id,maintainable_asset_id,system_id,component_position_id,service_point,capacity_semantics,quantity,unit_code,authority_type,lifecycle_state,evidence,effective_from,approved_by_internal_user_id,approved_at)
+        values('${ids.org1}','${fluidVersion}','${ids.asset1}','${ids.system1}','${ids.position1}','Engine sump','SERVICE_FILL',12,'L','ORGANISATION_STANDARD','EFFECTIVE','{"source":"org-standard"}','2025-01-01','${ids.actor1}','2025-01-01');
+      insert into public.technical_part_applicability(technical_part_version_id,manufacturer_scope,model_scope,application_code,quantity,unit_code,authority_type,lifecycle_state,evidence,effective_from,approved_by_platform_user_id,approved_at)
+        values('${ids.versionGlobal}','Isuzu','FSS550','MODEL_LEVEL_FILTER',1,'EA','MANUFACTURER','EFFECTIVE','{"source":"manual"}','2025-01-01','${ids.platformUser}','2025-01-01');
+    `);
+
+    const lookup = await db.query(`select public.ftf_read_asset_technical_catalogue('${ids.org1}','${ids.actor1}','${ids.asset1}','2025-06-01') result`);
+    const catalogue = lookup.rows[0].result;
+    expect(catalogue.attachedAssets).toEqual([{
+      registryId: ids.asset1b,
+      source: 'fleet-asset',
+      sourceRecordId: ids.fleet1b,
+      identity: 'FTF-12',
+    }]);
+    expect(catalogue.parts.find((row) => row.applicationCode === 'HISTORICAL_FILTER')).toMatchObject({
+      systemId: ids.system1, systemCode: 'ENGINE', systemName: 'Engine',
+      componentPositionId: null, componentPositionCode: null, componentPositionName: null,
+    });
+    expect(catalogue.parts.find((row) => row.applicationCode === 'GLOBAL_FILTER')).toMatchObject({
+      systemId: ids.system1, systemCode: 'ENGINE', systemName: 'Engine',
+    });
+    expect(catalogue.parts.find((row) => row.applicationCode === 'MODEL_LEVEL_FILTER')).toMatchObject({
+      systemId: null, systemCode: 'MODEL_LEVEL', systemName: 'Model-level applicability',
+    });
+    expect(catalogue.fluids.find((row) => row.servicePoint === 'Engine sump')).toMatchObject({
+      systemId: ids.system1, systemCode: 'ENGINE', systemName: 'Engine',
+      componentPositionId: ids.position1, componentPositionCode: 'FILTER', componentPositionName: 'Filter',
+    });
   });
 
   test('keeps global publication on Platform authority with optimistic and atomic evidence', async () => {

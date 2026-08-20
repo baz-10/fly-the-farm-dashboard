@@ -4,8 +4,25 @@ export type TechnicalEntityType = 'PART' | 'FLUID';
 export type TechnicalProposalType = 'PART' | 'PART_EQUIVALENCE' | 'PART_APPLICABILITY' | 'FLUID_SPECIFICATION' | 'FLUID_APPLICABILITY' | 'SERVICE_TEMPLATE';
 export type TechnicalProposalSource = 'HUMAN' | 'AI_EXTRACTION' | 'MANUAL_EXTRACTION' | 'IMPORT';
 export type TechnicalProposalDecision = 'REVIEW' | 'APPROVE' | 'REJECT';
+export type AssetSource = 'aircraft' | 'equipment-kit' | 'fleet-asset';
 
-export interface TechnicalPartCatalogueItem {
+export interface ResolvedAssetRoute {
+  registryId: string;
+  source: AssetSource;
+  sourceRecordId: string;
+  identity: string;
+}
+
+export type TechnicalGroupingIdentity = {
+  systemId: string | null;
+  systemCode: string;
+  systemName: string;
+  componentPositionId: string | null;
+  componentPositionCode: string | null;
+  componentPositionName: string | null;
+};
+
+export interface TechnicalPartCatalogueItem extends TechnicalGroupingIdentity {
   requirementId?: string;
   applicabilityId?: string;
   applicationCode: string;
@@ -15,7 +32,7 @@ export interface TechnicalPartCatalogueItem {
   part: Record<string, unknown>;
 }
 
-export interface TechnicalFluidCatalogueItem {
+export interface TechnicalFluidCatalogueItem extends TechnicalGroupingIdentity {
   requirementId?: string;
   applicabilityId?: string;
   servicePoint: string;
@@ -83,7 +100,7 @@ export interface AssetTechnicalCatalogue {
   parts: TechnicalPartCatalogueItem[];
   fluids: TechnicalFluidCatalogueItem[];
   serviceTemplates: ApplicableServiceTemplateVersion[];
-  attachedAssets: string[];
+  attachedAssets: ResolvedAssetRoute[];
 }
 
 export interface OrganisationPartPreference extends Record<string, unknown> {
@@ -180,6 +197,10 @@ function post<T>(action: string, body: unknown) {
 }
 
 export const technicalCatalogueApi = {
+  resolveAssetRoute(source: AssetSource, sourceRecordId: string) {
+    return get<ResolvedAssetRoute>('resolve-asset', { source, sourceRecordId });
+  },
+
   lookupAsset(assetId: string, asOf: string) {
     return get<AssetTechnicalCatalogue>('lookup', { assetId, asOf });
   },

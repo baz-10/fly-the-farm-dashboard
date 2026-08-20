@@ -1400,10 +1400,53 @@ begin
   return jsonb_build_object('record',to_jsonb(template_version));
 end; $$;
 
+create function public.ftf_resolve_maintainable_asset_route(
+  p_organisation_id uuid, p_actor_internal_user_id uuid, p_source text, p_source_record_id text
+) returns jsonb language plpgsql stable security definer set search_path=public,pg_temp as $$
+declare resolved jsonb;
+begin
+  if p_source not in ('aircraft','equipment-kit','fleet-asset') or nullif(btrim(p_source_record_id),'') is null or
+     not public.ftf_actor_has_active_beta_seat(p_organisation_id,p_actor_internal_user_id) or
+     not public.ftf_actor_has_permission(p_organisation_id,p_actor_internal_user_id,'technical_catalogue.read') then
+    return jsonb_build_object('not_found',true);
+  end if;
+
+  if p_source='aircraft' then
+    select jsonb_build_object(
+      'registryId',registry.id,'source','aircraft','sourceRecordId',source.id::text,'identity',source.registration
+    ) into resolved
+    from public.maintainable_asset_registry registry
+    join public.aircraft source on source.organisation_id=registry.organisation_id and source.id=registry.aircraft_id
+    where registry.organisation_id=p_organisation_id and registry.tracking_state='ACTIVE'
+      and source.id::text=btrim(p_source_record_id) and source.archived_at is null
+      and public.ftf_operational_location_allowed(p_organisation_id,p_actor_internal_user_id,source.operating_location_id);
+  elsif p_source='equipment-kit' then
+    select jsonb_build_object(
+      'registryId',registry.id,'source','equipment-kit','sourceRecordId',source.id::text,'identity',source.name
+    ) into resolved
+    from public.maintainable_asset_registry registry
+    join public.equipment_kits source on source.organisation_id=registry.organisation_id and source.id=registry.equipment_kit_id
+    where registry.organisation_id=p_organisation_id and registry.tracking_state='ACTIVE'
+      and source.id::text=btrim(p_source_record_id) and source.archived_at is null
+      and public.ftf_operational_location_allowed(p_organisation_id,p_actor_internal_user_id,source.operating_location_id);
+  else
+    select jsonb_build_object(
+      'registryId',registry.id,'source','fleet-asset','sourceRecordId',source.id::text,'identity',source.asset_identifier
+    ) into resolved
+    from public.maintainable_asset_registry registry
+    join public.fleet_assets source on source.organisation_id=registry.organisation_id and source.id=registry.fleet_asset_id
+    where registry.organisation_id=p_organisation_id and registry.tracking_state='ACTIVE'
+      and source.id::text=btrim(p_source_record_id) and source.archived_at is null
+      and public.ftf_operational_location_allowed(p_organisation_id,p_actor_internal_user_id,source.operating_location_id);
+  end if;
+
+  return coalesce(resolved,jsonb_build_object('not_found',true));
+end; $$;
+
 create function public.ftf_read_asset_technical_catalogue(
   p_organisation_id uuid, p_actor_internal_user_id uuid, p_maintainable_asset_id uuid, p_as_of timestamptz
 ) returns jsonb language plpgsql stable security definer set search_path=public,pg_temp as $$
-declare system_ids uuid[]; position_ids uuid[]; v_manufacturer_scope text; v_model_scope text; attached_ids uuid[];
+declare system_ids uuid[]; position_ids uuid[]; v_manufacturer_scope text; v_model_scope text; attached_assets jsonb;
 begin
   if not public.ftf_actor_has_active_beta_seat(p_organisation_id,p_actor_internal_user_id) or
      not public.ftf_actor_has_permission(p_organisation_id,p_actor_internal_user_id,'technical_catalogue.read') or
@@ -1421,25 +1464,65 @@ begin
   left join public.equipment_kits equipment on equipment.organisation_id=registry.organisation_id and equipment.id=registry.equipment_kit_id
   left join public.aircraft aircraft on aircraft.organisation_id=registry.organisation_id and aircraft.id=registry.aircraft_id
   where registry.organisation_id=p_organisation_id and registry.id=p_maintainable_asset_id;
-  select coalesce(array_agg(period.child_asset_id),array[]::uuid[]) into attached_ids from public.asset_attachment_periods period
-    where period.organisation_id=p_organisation_id and period.parent_asset_id=p_maintainable_asset_id
-      and period.attached_at<=p_as_of and (period.detached_at is null or period.detached_at>p_as_of);
+  select coalesce(jsonb_agg(jsonb_build_object(
+    'registryId',child_registry.id,
+    'source',case when child_aircraft.id is not null then 'aircraft' when child_equipment.id is not null then 'equipment-kit' else 'fleet-asset' end,
+    'sourceRecordId',coalesce(child_aircraft.id,child_equipment.id,child_fleet.id)::text,
+    'identity',coalesce(child_aircraft.registration,child_equipment.name,child_fleet.asset_identifier)
+  ) order by child_registry.id),'[]'::jsonb) into attached_assets
+  from public.asset_attachment_periods period
+  join public.maintainable_asset_registry child_registry
+    on child_registry.organisation_id=period.organisation_id and child_registry.id=period.child_asset_id and child_registry.tracking_state='ACTIVE'
+  left join public.aircraft child_aircraft
+    on child_aircraft.organisation_id=child_registry.organisation_id and child_aircraft.id=child_registry.aircraft_id and child_aircraft.archived_at is null
+  left join public.equipment_kits child_equipment
+    on child_equipment.organisation_id=child_registry.organisation_id and child_equipment.id=child_registry.equipment_kit_id and child_equipment.archived_at is null
+  left join public.fleet_assets child_fleet
+    on child_fleet.organisation_id=child_registry.organisation_id and child_fleet.id=child_registry.fleet_asset_id and child_fleet.archived_at is null
+  where period.organisation_id=p_organisation_id and period.parent_asset_id=p_maintainable_asset_id
+    and period.attached_at<=p_as_of and (period.detached_at is null or period.detached_at>p_as_of)
+    and public.ftf_maintenance_asset_location_allowed(p_organisation_id,p_actor_internal_user_id,child_registry.id)
+    and num_nonnulls(child_aircraft.id,child_equipment.id,child_fleet.id)=1;
   return jsonb_build_object(
     'systems',(select coalesce(jsonb_agg(jsonb_build_object('id',system.id,'code',system.system_code,'name',system.name)),'[]'::jsonb) from public.asset_systems system where system.id=any(system_ids)),
     'positions',(select coalesce(jsonb_agg(jsonb_build_object('id',position.id,'code',position.position_code,'name',position.name)),'[]'::jsonb) from public.component_positions position where position.id=any(position_ids)),
     'parts',(select coalesce(jsonb_agg(part_result.data),'[]'::jsonb) from (
-      select jsonb_build_object('requirementId',requirement.id,'applicationCode',requirement.application_code,'quantity',requirement.quantity,'unitCode',requirement.unit_code,'partVersion',to_jsonb(version),'part',to_jsonb(part)) data
+      select jsonb_build_object(
+        'requirementId',requirement.id,'applicationCode',requirement.application_code,'quantity',requirement.quantity,'unitCode',requirement.unit_code,
+        'systemId',requirement_system.id,'systemCode',coalesce(requirement_system.system_code,'ASSET_LEVEL'),
+        'systemName',coalesce(requirement_system.name,'Asset-level requirement'),
+        'componentPositionId',requirement_position.id,'componentPositionCode',requirement_position.position_code,
+        'componentPositionName',requirement_position.name,'partVersion',to_jsonb(version),'part',to_jsonb(part)
+      ) data
       from public.asset_part_requirements requirement join public.technical_part_versions version on version.id=requirement.technical_part_version_id
       join public.technical_parts part on part.id=version.technical_part_id
+      left join public.asset_systems requirement_system on requirement_system.organisation_id=requirement.organisation_id and requirement_system.id=requirement.system_id
+      left join public.component_positions requirement_position on requirement_position.organisation_id=requirement.organisation_id and requirement_position.id=requirement.component_position_id
       where requirement.organisation_id=p_organisation_id and requirement.lifecycle_state in ('EFFECTIVE','SUPERSEDED')
         and public.ftf_version_historically_effective_at(version.lifecycle_state,version.effective_from,version.effective_to,p_as_of)
         and (requirement.effective_from is null or requirement.effective_from<=p_as_of)
         and (requirement.effective_to is null or requirement.effective_to>p_as_of)
         and public.ftf_asset_technical_scope_matches(p_maintainable_asset_id,system_ids,position_ids,requirement.maintainable_asset_id,requirement.system_id,requirement.component_position_id)
       union all
-      select jsonb_build_object('applicabilityId',applicability.id,'applicationCode',applicability.application_code,'quantity',applicability.quantity,'unitCode',applicability.unit_code,'partVersion',to_jsonb(version),'part',to_jsonb(part)) data
+      select jsonb_build_object(
+        'applicabilityId',applicability.id,'applicationCode',applicability.application_code,'quantity',applicability.quantity,'unitCode',applicability.unit_code,
+        'systemId',applicable_system.id,'systemCode',coalesce(applicable_system.system_code,'MODEL_LEVEL'),
+        'systemName',coalesce(applicable_system.name,'Model-level applicability'),
+        'componentPositionId',applicable_position.id,'componentPositionCode',applicable_position.position_code,
+        'componentPositionName',applicable_position.name,'partVersion',to_jsonb(version),'part',to_jsonb(part)
+      ) data
       from public.technical_part_applicability applicability join public.technical_part_versions version on version.id=applicability.technical_part_version_id
       join public.technical_parts part on part.id=version.technical_part_id
+      left join public.asset_systems applicable_system on applicable_system.id=(
+        select scoped_system.id from public.asset_systems scoped_system
+        where scoped_system.id=any(system_ids) and scoped_system.archived_at is null
+          and public.ftf_normalise_technical_scope(scoped_system.system_code)=public.ftf_normalise_technical_scope(applicability.system_code)
+        order by scoped_system.id limit 1)
+      left join public.component_positions applicable_position on applicable_position.id=(
+        select scoped_position.id from public.component_positions scoped_position
+        where scoped_position.id=any(position_ids) and scoped_position.system_id=applicable_system.id and scoped_position.archived_at is null
+          and public.ftf_normalise_technical_scope(scoped_position.position_code)=public.ftf_normalise_technical_scope(applicability.component_position_code)
+        order by scoped_position.id limit 1)
       where applicability.lifecycle_state in ('EFFECTIVE','SUPERSEDED')
         and public.ftf_version_historically_effective_at(version.lifecycle_state,version.effective_from,version.effective_to,p_as_of)
         and (applicability.effective_from is null or applicability.effective_from<=p_as_of)
@@ -1448,18 +1531,44 @@ begin
         and public.ftf_asset_text_scope_matches(system_ids,position_ids,applicability.system_code,applicability.component_position_code)
     ) part_result),
     'fluids',(select coalesce(jsonb_agg(fluid_result.data),'[]'::jsonb) from (
-      select jsonb_build_object('requirementId',requirement.id,'servicePoint',requirement.service_point,'capacitySemantics',requirement.capacity_semantics,'quantity',requirement.quantity,'unitCode',requirement.unit_code,'approximate',requirement.is_approximate,'tolerance',requirement.manufacturer_tolerance,'specificationVersion',to_jsonb(version),'specification',to_jsonb(specification)) data
+      select jsonb_build_object(
+        'requirementId',requirement.id,'servicePoint',requirement.service_point,'capacitySemantics',requirement.capacity_semantics,
+        'quantity',requirement.quantity,'unitCode',requirement.unit_code,'approximate',requirement.is_approximate,'tolerance',requirement.manufacturer_tolerance,
+        'systemId',requirement_system.id,'systemCode',coalesce(requirement_system.system_code,'ASSET_LEVEL'),
+        'systemName',coalesce(requirement_system.name,'Asset-level requirement'),
+        'componentPositionId',requirement_position.id,'componentPositionCode',requirement_position.position_code,
+        'componentPositionName',requirement_position.name,'specificationVersion',to_jsonb(version),'specification',to_jsonb(specification)
+      ) data
       from public.asset_fluid_requirements requirement join public.technical_fluid_specification_versions version on version.id=requirement.fluid_specification_version_id
       join public.technical_fluid_specifications specification on specification.id=version.technical_fluid_specification_id
+      left join public.asset_systems requirement_system on requirement_system.organisation_id=requirement.organisation_id and requirement_system.id=requirement.system_id
+      left join public.component_positions requirement_position on requirement_position.organisation_id=requirement.organisation_id and requirement_position.id=requirement.component_position_id
       where requirement.organisation_id=p_organisation_id and requirement.lifecycle_state in ('EFFECTIVE','SUPERSEDED')
         and public.ftf_version_historically_effective_at(version.lifecycle_state,version.effective_from,version.effective_to,p_as_of)
         and (requirement.effective_from is null or requirement.effective_from<=p_as_of)
         and (requirement.effective_to is null or requirement.effective_to>p_as_of)
         and public.ftf_asset_technical_scope_matches(p_maintainable_asset_id,system_ids,position_ids,requirement.maintainable_asset_id,requirement.system_id,requirement.component_position_id)
       union all
-      select jsonb_build_object('applicabilityId',applicability.id,'servicePoint',applicability.service_point,'capacitySemantics',applicability.capacity_semantics,'quantity',applicability.quantity,'unitCode',applicability.unit_code,'approximate',applicability.is_approximate,'tolerance',applicability.manufacturer_tolerance,'specificationVersion',to_jsonb(version),'specification',to_jsonb(specification)) data
+      select jsonb_build_object(
+        'applicabilityId',applicability.id,'servicePoint',applicability.service_point,'capacitySemantics',applicability.capacity_semantics,
+        'quantity',applicability.quantity,'unitCode',applicability.unit_code,'approximate',applicability.is_approximate,'tolerance',applicability.manufacturer_tolerance,
+        'systemId',applicable_system.id,'systemCode',coalesce(applicable_system.system_code,'MODEL_LEVEL'),
+        'systemName',coalesce(applicable_system.name,'Model-level applicability'),
+        'componentPositionId',applicable_position.id,'componentPositionCode',applicable_position.position_code,
+        'componentPositionName',applicable_position.name,'specificationVersion',to_jsonb(version),'specification',to_jsonb(specification)
+      ) data
       from public.technical_fluid_applicability applicability join public.technical_fluid_specification_versions version on version.id=applicability.fluid_specification_version_id
       join public.technical_fluid_specifications specification on specification.id=version.technical_fluid_specification_id
+      left join public.asset_systems applicable_system on applicable_system.id=(
+        select scoped_system.id from public.asset_systems scoped_system
+        where scoped_system.id=any(system_ids) and scoped_system.archived_at is null
+          and public.ftf_normalise_technical_scope(scoped_system.system_code)=public.ftf_normalise_technical_scope(applicability.system_code)
+        order by scoped_system.id limit 1)
+      left join public.component_positions applicable_position on applicable_position.id=(
+        select scoped_position.id from public.component_positions scoped_position
+        where scoped_position.id=any(position_ids) and scoped_position.system_id=applicable_system.id and scoped_position.archived_at is null
+          and public.ftf_normalise_technical_scope(scoped_position.position_code)=public.ftf_normalise_technical_scope(applicability.component_position_code)
+        order by scoped_position.id limit 1)
       where applicability.lifecycle_state in ('EFFECTIVE','SUPERSEDED')
         and public.ftf_version_historically_effective_at(version.lifecycle_state,version.effective_from,version.effective_to,p_as_of)
         and (applicability.effective_from is null or applicability.effective_from<=p_as_of)
@@ -1479,7 +1588,7 @@ begin
             and public.ftf_normalise_technical_scope(applicability.manufacturer_scope)=public.ftf_normalise_technical_scope(v_manufacturer_scope)
             and public.ftf_normalise_technical_scope(applicability.model_scope)=public.ftf_normalise_technical_scope(v_model_scope)
             and public.ftf_asset_text_scope_matches(system_ids,position_ids,applicability.system_code,applicability.component_position_code)))),
-    'attachedAssets',to_jsonb(attached_ids)
+    'attachedAssets',attached_assets
   );
 end; $$;
 
@@ -1681,6 +1790,8 @@ revoke all on function public.ftf_publish_service_template_version(uuid,uuid,uui
 grant execute on function public.ftf_publish_service_template_version(uuid,uuid,uuid,integer,timestamptz) to service_role;
 revoke all on function public.ftf_publish_platform_service_template_version(uuid,uuid,integer,timestamptz) from public,anon,authenticated;
 grant execute on function public.ftf_publish_platform_service_template_version(uuid,uuid,integer,timestamptz) to service_role;
+revoke all on function public.ftf_resolve_maintainable_asset_route(uuid,uuid,text,text) from public,anon,authenticated;
+grant execute on function public.ftf_resolve_maintainable_asset_route(uuid,uuid,text,text) to service_role;
 revoke all on function public.ftf_read_asset_technical_catalogue(uuid,uuid,uuid,timestamptz) from public,anon,authenticated;
 grant execute on function public.ftf_read_asset_technical_catalogue(uuid,uuid,uuid,timestamptz) to service_role;
 revoke all on function public.ftf_read_applicable_service_template_version(uuid,uuid,uuid,uuid,timestamptz) from public,anon,authenticated;

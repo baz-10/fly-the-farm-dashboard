@@ -60,6 +60,13 @@ function requiredUuid(value, field) {
   return String(value);
 }
 
+function requiredAssetSource(value) {
+  if (typeof value !== 'string' || !['aircraft', 'equipment-kit', 'fleet-asset'].includes(value)) {
+    throw apiError(400, 'VALIDATION_ERROR', 'source is invalid.');
+  }
+  return value;
+}
+
 function requiredVersion(value) {
   const version = Number(value);
   if (!Number.isInteger(version) || version < 1) throw apiError(400, 'VALIDATION_ERROR', 'expectedVersion must be a positive integer.');
@@ -180,6 +187,15 @@ function createTechnicalCatalogueHandler(dependencies = {}) {
       const action = String(req.query?.action || '');
       if (req.method === 'GET') {
         const context = await getContext(req, res);
+        if (action === 'resolve-asset') {
+          requirePermission(context, 'technical_catalogue.read');
+          const resolved = checkedResult(await repository.resolveAssetRoute(
+            context,
+            requiredAssetSource(req.query?.source),
+            requiredUuid(req.query?.sourceRecordId, 'sourceRecordId')
+          ), 'Asset was not found.');
+          return res.status(200).json({ data: resolved });
+        }
         if (action === 'lookup') {
           requirePermission(context, 'technical_catalogue.read');
           const result = checkedResult(await repository.readAssetCatalogue(

@@ -18,6 +18,15 @@ class TechnicalCatalogueRepository {
     }, 'Technical catalogue could not be loaded.');
   }
 
+  resolveAssetRoute(context, source, sourceRecordId) {
+    return rpc('ftf_resolve_maintainable_asset_route', {
+      p_organisation_id: context.organisation.id,
+      p_actor_internal_user_id: context.internalUser.id,
+      p_source: source,
+      p_source_record_id: sourceRecordId,
+    }, 'Asset route could not be resolved.');
+  }
+
   readPreferences(context) {
     return rpc('ftf_read_organisation_technical_preferences', {
       p_organisation_id: context.organisation.id,

@@ -24,6 +24,37 @@ describe('technicalCatalogueApi', () => {
     expect((fetch as jest.Mock).mock.calls[0][0]).not.toContain('preferences');
   });
 
+  test('resolves an Asset Workspace source record without sending tenant or registry identity', async () => {
+    (fetch as jest.Mock).mockResolvedValue(response(200, { data: {
+      registryId: 'registry-1', source: 'fleet-asset', sourceRecordId: 'fleet-1', identity: 'FTF-11',
+    } }));
+
+    const resolved = await technicalCatalogueApi.resolveAssetRoute('fleet-asset', 'fleet-1');
+
+    expect(fetch).toHaveBeenCalledWith(
+      '/api/v1/technical-catalogue?action=resolve-asset&source=fleet-asset&sourceRecordId=fleet-1',
+      { method: 'GET', credentials: 'same-origin' }
+    );
+    expect((fetch as jest.Mock).mock.calls[0][0]).not.toMatch(/organisationId|registryId/);
+    expect(resolved).toEqual({ registryId: 'registry-1', source: 'fleet-asset', sourceRecordId: 'fleet-1', identity: 'FTF-11' });
+  });
+
+  test('exposes authoritative attached links and factual grouping keys from catalogue rows', async () => {
+    (fetch as jest.Mock).mockResolvedValue(response(200, { data: {
+      systems: [{ id: 'system-1', code: 'ENGINE', name: 'Engine' }], positions: [],
+      parts: [{ applicationCode: 'FILTER', quantity: 1, unitCode: 'EA', partVersion: {}, part: {},
+        systemId: 'system-1', systemCode: 'ENGINE', systemName: 'Engine',
+        componentPositionId: null, componentPositionCode: null, componentPositionName: null }],
+      fluids: [], serviceTemplates: [],
+      attachedAssets: [{ registryId: 'registry-2', source: 'equipment-kit', sourceRecordId: 'kit-2', identity: 'Generator kit' }],
+    } }));
+
+    const catalogue = await technicalCatalogueApi.lookupAsset('registry-1', '2026-08-20T00:00:00.000Z');
+
+    expect(catalogue.attachedAssets[0]).toEqual({ registryId: 'registry-2', source: 'equipment-kit', sourceRecordId: 'kit-2', identity: 'Generator kit' });
+    expect(catalogue.parts[0]).toMatchObject({ systemId: 'system-1', systemCode: 'ENGINE', systemName: 'Engine' });
+  });
+
   test('loads tenant preferences through their dedicated endpoint', async () => {
     (fetch as jest.Mock).mockResolvedValue(response(200, { data: { parts: [], fluids: [] } }));
 

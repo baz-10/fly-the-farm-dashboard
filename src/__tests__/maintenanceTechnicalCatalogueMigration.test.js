@@ -169,6 +169,32 @@ describe('authoritative maintenance technical catalogue migration', () => {
     expect(sql).not.toMatch(/create table public\.tracked_components/i);
   });
 
+  test('resolves workspace route source records through a tenant and Base scoped authority RPC', () => {
+    const sql = migrationSql();
+    const resolver = sql.match(/create function public\.ftf_resolve_maintainable_asset_route([\s\S]*?)create function public\.ftf_read_asset_technical_catalogue/i)?.[1] || '';
+    expect(resolver).toMatch(/p_organisation_id uuid[\s\S]*p_actor_internal_user_id uuid[\s\S]*p_source text[\s\S]*p_source_record_id text/i);
+    expect(resolver).toMatch(/technical_catalogue\.read/i);
+    expect(resolver).toMatch(/ftf_operational_location_allowed/i);
+    expect(resolver).toMatch(/tracking_state='ACTIVE'/i);
+    expect(resolver).toMatch(/source\.archived_at is null/i);
+    expect(resolver).toMatch(/public\.aircraft/i);
+    expect(resolver).toMatch(/public\.equipment_kits/i);
+    expect(resolver).toMatch(/public\.fleet_assets/i);
+  });
+
+  test('returns authoritative attached links and factual system grouping identities', () => {
+    const sql = migrationSql();
+    const lookup = sql.match(/create function public\.ftf_read_asset_technical_catalogue([\s\S]*?)create function public\.ftf_read_applicable_service_template_version/i)?.[1] || '';
+    expect(lookup).toMatch(/'attachedAssets'/i);
+    expect(lookup).toMatch(/'registryId'[\s\S]*'sourceRecordId'[\s\S]*'identity'/i);
+    expect(lookup).toMatch(/child_registry\.tracking_state='ACTIVE'/i);
+    expect(lookup).toMatch(/child_(?:aircraft|equipment|fleet)\.archived_at is null/i);
+    for (const key of ['systemId', 'systemCode', 'systemName', 'componentPositionId', 'componentPositionCode', 'componentPositionName']) {
+      expect(lookup).toMatch(new RegExp(`'${key}'`, 'i'));
+    }
+    expect(lookup).toMatch(/'MODEL_LEVEL'/i);
+  });
+
   test('creates optional versioned platform and organisation service templates with distinct authority', () => {
     const sql = migrationSql();
     expect(sql).toMatch(/create table public\.service_templates/i);

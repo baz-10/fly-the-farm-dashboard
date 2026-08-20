@@ -13,6 +13,7 @@ const ASSET_ID = '33333333-3333-4333-8333-333333333333';
 const ENTITY_ID = '44444444-4444-4444-8444-444444444444';
 const TEMPLATE_VERSION_ID = '55555555-5555-4555-8555-555555555555';
 const PLATFORM_USER_ID = '66666666-6666-4666-8666-666666666666';
+const SOURCE_RECORD_ID = '77777777-7777-4777-8777-777777777777';
 const AS_OF = '2026-08-20T00:00:00.000Z';
 
 function organisationContext(permissions = [
@@ -81,6 +82,14 @@ describe('TechnicalCatalogueRepository authority contract', () => {
       p_actor_internal_user_id: ACTOR_ID,
       p_maintainable_asset_id: ASSET_ID,
       p_as_of: AS_OF,
+    });
+
+    await repository.resolveAssetRoute(context, 'fleet-asset', SOURCE_RECORD_ID);
+    rpcCall('ftf_resolve_maintainable_asset_route', {
+      p_organisation_id: ORGANISATION_ID,
+      p_actor_internal_user_id: ACTOR_ID,
+      p_source: 'fleet-asset',
+      p_source_record_id: SOURCE_RECORD_ID,
     });
 
     await repository.readPreferences(context);
@@ -209,6 +218,7 @@ describe('technical catalogue trusted API', () => {
   beforeEach(() => {
     repository = {
       readAssetCatalogue: jest.fn(),
+      resolveAssetRoute: jest.fn(),
       readApplicableServiceTemplateVersion: jest.fn(),
       readPreferences: jest.fn(),
       createOrganisationProposal: jest.fn(),
@@ -244,6 +254,31 @@ describe('technical catalogue trusted API', () => {
     expect(repository.readAssetCatalogue).toHaveBeenCalledWith(expect.objectContaining({ organisation: { id: ORGANISATION_ID, name: 'Farm A' } }), ASSET_ID, AS_OF);
     expect(repository.readPreferences).not.toHaveBeenCalled();
     expect(res.body.data.parts).toEqual([{ requirementId: 'part-requirement' }]);
+  });
+
+  test('resolves a workspace source record without trusting browser tenant or registry identities', async () => {
+    repository.resolveAssetRoute.mockResolvedValue({
+      registryId: ASSET_ID,
+      source: 'fleet-asset',
+      sourceRecordId: SOURCE_RECORD_ID,
+      identity: 'FTF-11',
+    });
+    const res = response();
+
+    await handler()(request('GET', 'resolve-asset', {}, {
+      source: 'fleet-asset',
+      sourceRecordId: SOURCE_RECORD_ID,
+      organisationId: 'browser-supplied-tenant',
+      registryId: 'browser-supplied-registry',
+    }), res);
+
+    expect(res.statusCode).toBe(200);
+    expect(repository.resolveAssetRoute).toHaveBeenCalledWith(
+      expect.objectContaining({ organisation: { id: ORGANISATION_ID, name: 'Farm A' }, internalUser: { id: ACTOR_ID, name: 'Maintainer' } }),
+      'fleet-asset',
+      SOURCE_RECORD_ID
+    );
+    expect(res.body.data).toEqual({ registryId: ASSET_ID, source: 'fleet-asset', sourceRecordId: SOURCE_RECORD_ID, identity: 'FTF-11' });
   });
 
   test('reads tenant-private preferences separately and never resolves a Platform curator', async () => {
