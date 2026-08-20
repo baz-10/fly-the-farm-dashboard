@@ -163,15 +163,26 @@ create table public.technical_data_proposals (
   evidence jsonb not null default '{}'::jsonb check (jsonb_typeof(evidence) = 'object'),
   proposed_by_type text not null check (proposed_by_type in ('HUMAN', 'AI_EXTRACTION', 'MANUAL_EXTRACTION', 'IMPORT')),
   proposed_by_internal_user_id uuid,
+  proposed_by_platform_user_id uuid references public.platform_users(id),
   reviewed_by_internal_user_id uuid,
+  reviewed_by_platform_user_id uuid references public.platform_users(id),
   reviewed_at timestamptz,
+  review_notes text,
   published_entity_type text,
   published_entity_id uuid,
   has_technical_authority boolean generated always as (false) stored,
   row_version integer not null default 1 check (row_version > 0),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
+  foreign key (organisation_id,proposed_by_internal_user_id) references public.internal_users(organisation_id,id),
+  foreign key (organisation_id,reviewed_by_internal_user_id) references public.internal_users(organisation_id,id),
   check (not has_technical_authority),
+  constraint technical_data_proposals_PROPOSAL_ACTOR_SCOPE_MISMATCH check (
+    (organisation_id is null and proposed_by_platform_user_id is not null and proposed_by_internal_user_id is null and reviewed_by_internal_user_id is null)
+    or (organisation_id is not null and proposed_by_internal_user_id is not null and proposed_by_platform_user_id is null and reviewed_by_platform_user_id is null)
+  ),
+  check ((proposal_state='PROPOSED' and reviewed_at is null and num_nonnulls(reviewed_by_internal_user_id,reviewed_by_platform_user_id)=0)
+    or (proposal_state<>'PROPOSED' and reviewed_at is not null and num_nonnulls(reviewed_by_internal_user_id,reviewed_by_platform_user_id)=1)),
   check ((published_entity_type is null) = (published_entity_id is null))
 );
 create function public.ftf_guard_technical_data_proposal() returns trigger
@@ -956,6 +967,8 @@ begin
   if new.code <> 'admin' then return new; end if;
   insert into public.permissions(organisation_id,code,description) select new.organisation_id,* from (values
     ('technical_catalogue.read','View effective technical catalogue'),
+    ('technical_proposals.create','Create non-authoritative technical proposals'),
+    ('technical_proposals.review','Review non-authoritative technical proposals'),
     ('technical_preferences.read','View organisation technical preferences'),
     ('technical_preferences.manage','Manage organisation technical preferences'),
     ('service_templates.read','View applicable service templates'),
@@ -966,6 +979,7 @@ begin
   select new.organisation_id,new.id,permission.id from public.permissions permission
   where permission.organisation_id=new.organisation_id and permission.code in (
     'technical_catalogue.read',
+    'technical_proposals.create','technical_proposals.review',
     'technical_preferences.read','technical_preferences.manage','service_templates.read',
     'service_templates.manage','service_templates.publish') on conflict do nothing;
   return new;
@@ -976,6 +990,8 @@ for each row execute function public.ftf_provision_technical_catalogue_permissio
 insert into public.permissions(organisation_id,code,description)
 select organisation.id, permission.code, permission.description from public.organisations organisation cross join (values
   ('technical_catalogue.read','View effective technical catalogue'),
+  ('technical_proposals.create','Create non-authoritative technical proposals'),
+  ('technical_proposals.review','Review non-authoritative technical proposals'),
   ('technical_preferences.read','View organisation technical preferences'),
   ('technical_preferences.manage','Manage organisation technical preferences'),
   ('service_templates.read','View applicable service templates'),
@@ -987,8 +1003,143 @@ select role.organisation_id,role.id,permission.id from public.roles role
 join public.permissions permission on permission.organisation_id=role.organisation_id
 where role.code='admin' and role.archived_at is null and permission.code in (
   'technical_catalogue.read',
+  'technical_proposals.create','technical_proposals.review',
   'technical_preferences.read','technical_preferences.manage','service_templates.read',
   'service_templates.manage','service_templates.publish') on conflict do nothing;
+
+create function public.ftf_create_organisation_technical_proposal(
+  p_organisation_id uuid, p_actor_internal_user_id uuid, p_proposal_type text,
+  p_proposed_data jsonb, p_evidence jsonb default '{}'::jsonb, p_proposed_by_type text default 'HUMAN'
+) returns jsonb language plpgsql security definer set search_path=public,pg_temp as $$
+declare proposal public.technical_data_proposals%rowtype;
+begin
+  perform public.ftf_lock_active_organisation(p_organisation_id);
+  if not public.ftf_actor_has_active_beta_seat(p_organisation_id,p_actor_internal_user_id)
+    or not public.ftf_actor_has_permission(p_organisation_id,p_actor_internal_user_id,'technical_proposals.create') then
+    return jsonb_build_object('forbidden',true);
+  end if;
+  if p_proposal_type not in ('PART','PART_EQUIVALENCE','PART_APPLICABILITY','FLUID_SPECIFICATION','FLUID_APPLICABILITY','SERVICE_TEMPLATE')
+    or p_proposed_data is null or jsonb_typeof(p_proposed_data)<>'object' or p_proposed_data='{}'::jsonb
+    or p_evidence is null or jsonb_typeof(p_evidence)<>'object'
+    or p_proposed_by_type not in ('HUMAN','AI_EXTRACTION','MANUAL_EXTRACTION','IMPORT') then
+    raise exception 'TECHNICAL_PROPOSAL_INVALID' using errcode='22023';
+  end if;
+  insert into public.technical_data_proposals(
+    organisation_id,proposal_type,proposed_data,evidence,proposed_by_type,proposed_by_internal_user_id
+  ) values(
+    p_organisation_id,p_proposal_type,p_proposed_data,p_evidence,p_proposed_by_type,p_actor_internal_user_id
+  ) returning * into proposal;
+  insert into public.audit_events(organisation_id,actor_internal_user_id,event_type,entity_type,entity_id,event_payload)
+  values(p_organisation_id,p_actor_internal_user_id,'technical_proposal.created','technical_data_proposal',proposal.id,
+    jsonb_build_object('proposalType',proposal.proposal_type,'proposedByType',proposal.proposed_by_type));
+  insert into public.transactional_outbox(organisation_id,topic,aggregate_type,aggregate_id,payload)
+  values(p_organisation_id,'operational.technical_proposal.created','technical_data_proposal',proposal.id,
+    jsonb_build_object('proposalType',proposal.proposal_type));
+  return jsonb_build_object('record',to_jsonb(proposal));
+end; $$;
+
+create function public.ftf_review_organisation_technical_proposal(
+  p_organisation_id uuid, p_actor_internal_user_id uuid, p_proposal_id uuid,
+  p_expected_version integer, p_decision text, p_review_evidence jsonb, p_review_notes text default null
+) returns jsonb language plpgsql security definer set search_path=public,pg_temp as $$
+declare proposal public.technical_data_proposals%rowtype; next_state text;
+begin
+  perform public.ftf_lock_active_organisation(p_organisation_id);
+  if not public.ftf_actor_has_active_beta_seat(p_organisation_id,p_actor_internal_user_id)
+    or not public.ftf_actor_has_permission(p_organisation_id,p_actor_internal_user_id,'technical_proposals.review') then
+    return jsonb_build_object('forbidden',true);
+  end if;
+  if p_review_evidence is null or jsonb_typeof(p_review_evidence)<>'object' or p_review_evidence='{}'::jsonb then
+    raise exception 'PROPOSAL_REVIEW_EVIDENCE_REQUIRED' using errcode='22023';
+  end if;
+  select * into proposal from public.technical_data_proposals
+    where id=p_proposal_id and organisation_id=p_organisation_id for update;
+  if not found then return jsonb_build_object('not_found',true); end if;
+  if proposal.row_version<>p_expected_version then return jsonb_build_object('conflict',true,'current_version',proposal.row_version); end if;
+  next_state:=case upper(p_decision)
+    when 'REVIEW' then case when proposal.proposal_state='PROPOSED' then 'REVIEWED' end
+    when 'APPROVE' then case when proposal.proposal_state='REVIEWED' then 'APPROVED' end
+    when 'REJECT' then case when proposal.proposal_state in ('PROPOSED','REVIEWED') then 'REJECTED' end
+    else null end;
+  if next_state is null then raise exception 'PROPOSAL_REVIEW_TRANSITION_INVALID' using errcode='22023'; end if;
+  update public.technical_data_proposals set proposal_state=next_state,
+    evidence=jsonb_set(evidence,'{review}',p_review_evidence,true),reviewed_by_internal_user_id=p_actor_internal_user_id,
+    reviewed_at=now(),review_notes=nullif(btrim(p_review_notes),''),row_version=row_version+1,updated_at=now()
+  where id=proposal.id returning * into proposal;
+  insert into public.audit_events(organisation_id,actor_internal_user_id,event_type,entity_type,entity_id,event_payload)
+  values(p_organisation_id,p_actor_internal_user_id,'technical_proposal.reviewed','technical_data_proposal',proposal.id,
+    jsonb_build_object('decision',upper(p_decision),'proposalState',proposal.proposal_state,'rowVersion',proposal.row_version));
+  insert into public.transactional_outbox(organisation_id,topic,aggregate_type,aggregate_id,payload)
+  values(p_organisation_id,'operational.technical_proposal.reviewed','technical_data_proposal',proposal.id,
+    jsonb_build_object('proposalState',proposal.proposal_state));
+  return jsonb_build_object('record',to_jsonb(proposal));
+end; $$;
+
+create function public.ftf_create_platform_technical_proposal(
+  p_platform_user_id uuid, p_proposal_type text, p_proposed_data jsonb,
+  p_evidence jsonb default '{}'::jsonb, p_proposed_by_type text default 'HUMAN'
+) returns jsonb language plpgsql security definer set search_path=public,pg_temp as $$
+declare proposal public.technical_data_proposals%rowtype;
+begin
+  if not public.ftf_platform_actor_has_permission(p_platform_user_id,'platform.technical_catalogue.publish') then
+    return jsonb_build_object('forbidden',true);
+  end if;
+  if p_proposal_type not in ('PART','PART_EQUIVALENCE','PART_APPLICABILITY','FLUID_SPECIFICATION','FLUID_APPLICABILITY','SERVICE_TEMPLATE')
+    or p_proposed_data is null or jsonb_typeof(p_proposed_data)<>'object' or p_proposed_data='{}'::jsonb
+    or p_evidence is null or jsonb_typeof(p_evidence)<>'object'
+    or p_proposed_by_type not in ('HUMAN','AI_EXTRACTION','MANUAL_EXTRACTION','IMPORT') then
+    raise exception 'TECHNICAL_PROPOSAL_INVALID' using errcode='22023';
+  end if;
+  insert into public.technical_data_proposals(
+    proposal_type,proposed_data,evidence,proposed_by_type,proposed_by_platform_user_id
+  ) values(
+    p_proposal_type,p_proposed_data,p_evidence,p_proposed_by_type,p_platform_user_id
+  ) returning * into proposal;
+  insert into public.platform_audit_events(actor_auth_user_id,event_type,entity_type,entity_id,event_payload)
+  select actor.auth_user_id,'platform.technical_proposal.created','technical_data_proposal',proposal.id,
+    jsonb_build_object('proposalType',proposal.proposal_type,'proposedByType',proposal.proposed_by_type)
+  from public.platform_users actor where actor.id=p_platform_user_id;
+  insert into public.platform_transactional_outbox(topic,aggregate_type,aggregate_id,payload)
+  values('platform.technical_proposal.created','technical_data_proposal',proposal.id,
+    jsonb_build_object('proposalType',proposal.proposal_type));
+  return jsonb_build_object('record',to_jsonb(proposal));
+end; $$;
+
+create function public.ftf_review_platform_technical_proposal(
+  p_platform_user_id uuid, p_proposal_id uuid, p_expected_version integer,
+  p_decision text, p_review_evidence jsonb, p_review_notes text default null
+) returns jsonb language plpgsql security definer set search_path=public,pg_temp as $$
+declare proposal public.technical_data_proposals%rowtype; next_state text;
+begin
+  if not public.ftf_platform_actor_has_permission(p_platform_user_id,'platform.technical_catalogue.publish') then
+    return jsonb_build_object('forbidden',true);
+  end if;
+  if p_review_evidence is null or jsonb_typeof(p_review_evidence)<>'object' or p_review_evidence='{}'::jsonb then
+    raise exception 'PROPOSAL_REVIEW_EVIDENCE_REQUIRED' using errcode='22023';
+  end if;
+  select * into proposal from public.technical_data_proposals
+    where id=p_proposal_id and organisation_id is null for update;
+  if not found then return jsonb_build_object('not_found',true); end if;
+  if proposal.row_version<>p_expected_version then return jsonb_build_object('conflict',true,'current_version',proposal.row_version); end if;
+  next_state:=case upper(p_decision)
+    when 'REVIEW' then case when proposal.proposal_state='PROPOSED' then 'REVIEWED' end
+    when 'APPROVE' then case when proposal.proposal_state='REVIEWED' then 'APPROVED' end
+    when 'REJECT' then case when proposal.proposal_state in ('PROPOSED','REVIEWED') then 'REJECTED' end
+    else null end;
+  if next_state is null then raise exception 'PROPOSAL_REVIEW_TRANSITION_INVALID' using errcode='22023'; end if;
+  update public.technical_data_proposals set proposal_state=next_state,
+    evidence=jsonb_set(evidence,'{review}',p_review_evidence,true),reviewed_by_platform_user_id=p_platform_user_id,
+    reviewed_at=now(),review_notes=nullif(btrim(p_review_notes),''),row_version=row_version+1,updated_at=now()
+  where id=proposal.id returning * into proposal;
+  insert into public.platform_audit_events(actor_auth_user_id,event_type,entity_type,entity_id,event_payload)
+  select actor.auth_user_id,'platform.technical_proposal.reviewed','technical_data_proposal',proposal.id,
+    jsonb_build_object('decision',upper(p_decision),'proposalState',proposal.proposal_state,'rowVersion',proposal.row_version)
+  from public.platform_users actor where actor.id=p_platform_user_id;
+  insert into public.platform_transactional_outbox(topic,aggregate_type,aggregate_id,payload)
+  values('platform.technical_proposal.reviewed','technical_data_proposal',proposal.id,
+    jsonb_build_object('proposalState',proposal.proposal_state));
+  return jsonb_build_object('record',to_jsonb(proposal));
+end; $$;
 
 create function public.ftf_publish_technical_version(
   p_platform_user_id uuid, p_entity_type text,
@@ -1332,6 +1483,154 @@ begin
   );
 end; $$;
 
+create function public.ftf_read_applicable_service_template_version(
+  p_organisation_id uuid, p_actor_internal_user_id uuid, p_maintainable_asset_id uuid,
+  p_service_template_version_id uuid, p_as_of timestamptz
+) returns jsonb language plpgsql stable security definer set search_path=public,pg_temp as $$
+declare
+  template public.service_templates%rowtype;
+  version public.service_template_versions%rowtype;
+  system_ids uuid[];
+  position_ids uuid[];
+  v_manufacturer_scope text;
+  v_model_scope text;
+begin
+  if p_as_of is null then raise exception 'AS_OF_REQUIRED' using errcode='22023'; end if;
+  if not public.ftf_actor_has_active_beta_seat(p_organisation_id,p_actor_internal_user_id)
+    or not public.ftf_actor_has_permission(p_organisation_id,p_actor_internal_user_id,'service_templates.read')
+    or not public.ftf_maintenance_asset_location_allowed(p_organisation_id,p_actor_internal_user_id,p_maintainable_asset_id) then
+    return jsonb_build_object('not_found',true);
+  end if;
+  select * into version from public.service_template_versions candidate
+  where candidate.id=p_service_template_version_id
+    and public.ftf_version_historically_effective_at(candidate.lifecycle_state,candidate.effective_from,candidate.effective_to,p_as_of);
+  if not found then return jsonb_build_object('not_found',true); end if;
+  select * into template from public.service_templates stable
+    where stable.id=version.service_template_id and stable.archived_at is null;
+  if not found then return jsonb_build_object('not_found',true); end if;
+  select coalesce(array_agg(system.id),array[]::uuid[]) into system_ids from public.asset_systems system
+    where system.organisation_id=p_organisation_id and system.maintainable_asset_id=p_maintainable_asset_id and system.archived_at is null;
+  select coalesce(array_agg(position.id),array[]::uuid[]) into position_ids from public.component_positions position
+    where position.organisation_id=p_organisation_id and position.system_id=any(system_ids) and position.archived_at is null;
+  select coalesce(fleet.manufacturer,equipment.specifications->>'manufacturer',aircraft.manufacturer),
+    coalesce(fleet.model,equipment.specifications->>'model',aircraft.model) into v_manufacturer_scope,v_model_scope
+  from public.maintainable_asset_registry registry
+  left join public.fleet_assets fleet on fleet.organisation_id=registry.organisation_id and fleet.id=registry.fleet_asset_id
+  left join public.equipment_kits equipment on equipment.organisation_id=registry.organisation_id and equipment.id=registry.equipment_kit_id
+  left join public.aircraft aircraft on aircraft.organisation_id=registry.organisation_id and aircraft.id=registry.aircraft_id
+  where registry.organisation_id=p_organisation_id and registry.id=p_maintainable_asset_id;
+  if not exists(
+    select 1 from public.service_template_applicability applicability
+    where applicability.service_template_version_id=version.id
+      and (applicability.effective_from is null or applicability.effective_from<=p_as_of)
+      and (applicability.effective_to is null or applicability.effective_to>p_as_of)
+      and ((template.owner_scope='ORGANISATION' and template.organisation_id=p_organisation_id
+        and public.ftf_asset_technical_scope_matches(p_maintainable_asset_id,system_ids,position_ids,applicability.maintainable_asset_id,applicability.system_id,applicability.component_position_id))
+        or (template.owner_scope='PLATFORM'
+          and public.ftf_normalise_technical_scope(applicability.manufacturer_scope)=public.ftf_normalise_technical_scope(v_manufacturer_scope)
+          and public.ftf_normalise_technical_scope(applicability.model_scope)=public.ftf_normalise_technical_scope(v_model_scope)
+          and public.ftf_asset_text_scope_matches(system_ids,position_ids,applicability.system_code,applicability.component_position_code)))
+  ) then return jsonb_build_object('not_found',true); end if;
+  return jsonb_build_object(
+    'template',jsonb_build_object(
+      'id',template.id,'code',template.template_code,'name',template.template_name,
+      'ownerScope',template.owner_scope,'sourceTemplateId',template.source_template_id,'rowVersion',template.row_version
+    ),
+    'version',jsonb_build_object(
+      'id',version.id,'serviceTemplateId',version.service_template_id,'versionNumber',version.version_number,
+      'description',version.description,'authorityType',version.authority_type,'lifecycleState',version.lifecycle_state,
+      'evidence',version.evidence,'conditionSchemaVersion',version.condition_schema_version,
+      'effectiveFrom',version.effective_from,'effectiveTo',version.effective_to,
+      'approvedByInternalUserId',version.approved_by_internal_user_id,'approvedByPlatformUserId',version.approved_by_platform_user_id,
+      'approvedAt',version.approved_at,'supersedesVersionId',version.supersedes_version_id,'rowVersion',version.row_version
+    ),
+    'applicability',(select coalesce(jsonb_agg(jsonb_build_object(
+      'id',applicability.id,'organisationId',applicability.organisation_id,'maintainableAssetId',applicability.maintainable_asset_id,
+      'systemId',applicability.system_id,'componentPositionId',applicability.component_position_id,
+      'manufacturerScope',applicability.manufacturer_scope,'modelScope',applicability.model_scope,
+      'systemCode',applicability.system_code,'componentPositionCode',applicability.component_position_code,
+      'notes',applicability.applicability_notes,'evidence',applicability.evidence,
+      'effectiveFrom',applicability.effective_from,'effectiveTo',applicability.effective_to,'rowVersion',applicability.row_version
+    ) order by applicability.id),'[]'::jsonb)
+    from public.service_template_applicability applicability
+    where applicability.service_template_version_id=version.id
+      and (applicability.effective_from is null or applicability.effective_from<=p_as_of)
+      and (applicability.effective_to is null or applicability.effective_to>p_as_of)
+      and ((template.owner_scope='ORGANISATION' and template.organisation_id=p_organisation_id
+        and public.ftf_asset_technical_scope_matches(p_maintainable_asset_id,system_ids,position_ids,applicability.maintainable_asset_id,applicability.system_id,applicability.component_position_id))
+        or (template.owner_scope='PLATFORM'
+          and public.ftf_normalise_technical_scope(applicability.manufacturer_scope)=public.ftf_normalise_technical_scope(v_manufacturer_scope)
+          and public.ftf_normalise_technical_scope(applicability.model_scope)=public.ftf_normalise_technical_scope(v_model_scope)
+          and public.ftf_asset_text_scope_matches(system_ids,position_ids,applicability.system_code,applicability.component_position_code)))),
+    'actions',(select coalesce(jsonb_agg(jsonb_build_object(
+      'id',action.id,'sequenceNumber',action.sequence_number,'actionType',action.action_type,
+      'disposition',action.disposition,'description',action.action_description,
+      'targetSystemCode',action.target_system_code,'targetPositionCode',action.target_position_code,
+      'condition',action.condition_data,'conditionSchemaVersion',action.condition_schema_version,
+      'expectedEvidence',action.expected_evidence,'rowVersion',action.row_version
+    ) order by action.sequence_number,action.id),'[]'::jsonb)
+    from public.service_template_actions action where action.service_template_version_id=version.id),
+    'partLines',(select coalesce(jsonb_agg(jsonb_build_object(
+      'id',line.id,'actionId',line.action_id,'technicalPartVersionId',line.technical_part_version_id,
+      'quantity',line.quantity,'unitCode',line.unit_code,'disposition',line.disposition,
+      'condition',line.condition_data,'conditionSchemaVersion',line.condition_schema_version,
+      'notes',line.line_notes,'rowVersion',line.row_version,
+      'partVersion',jsonb_build_object('id',part_version.id,'technicalPartId',part_version.technical_part_id,
+        'versionNumber',part_version.version_number,'manufacturer',part_version.manufacturer,
+        'manufacturerPartNumber',part_version.manufacturer_part_number,'description',part_version.technical_description,
+        'category',part_version.part_category,'authorityType',part_version.authority_type,'evidence',part_version.evidence),
+      'part',jsonb_build_object('id',part.id,'manufacturer',part.manufacturer,'manufacturerPartNumber',part.manufacturer_part_number)
+    ) order by line.id),'[]'::jsonb)
+    from public.service_template_part_lines line
+    join public.technical_part_versions part_version on part_version.id=line.technical_part_version_id
+    join public.technical_parts part on part.id=part_version.technical_part_id
+    where line.service_template_version_id=version.id),
+    'fluidLines',(select coalesce(jsonb_agg(jsonb_build_object(
+      'id',line.id,'actionId',line.action_id,'fluidSpecificationVersionId',line.fluid_specification_version_id,
+      'quantity',line.quantity,'unitCode',line.unit_code,'disposition',line.disposition,
+      'condition',line.condition_data,'conditionSchemaVersion',line.condition_schema_version,
+      'notes',line.line_notes,'rowVersion',line.row_version,
+      'specificationVersion',jsonb_build_object('id',fluid_version.id,'technicalFluidSpecificationId',fluid_version.technical_fluid_specification_id,
+        'versionNumber',fluid_version.version_number,'fluidType',fluid_version.fluid_type,'viscosityOrGrade',fluid_version.viscosity_or_grade,
+        'technicalStandards',fluid_version.technical_standards,'compatibilityConstraints',fluid_version.compatibility_constraints,
+        'authorityType',fluid_version.authority_type,'evidence',fluid_version.evidence),
+      'specification',jsonb_build_object('id',specification.id,'code',specification.specification_code,'name',specification.display_name)
+    ) order by line.id),'[]'::jsonb)
+    from public.service_template_fluid_lines line
+    join public.technical_fluid_specification_versions fluid_version on fluid_version.id=line.fluid_specification_version_id
+    join public.technical_fluid_specifications specification on specification.id=fluid_version.technical_fluid_specification_id
+    where line.service_template_version_id=version.id),
+    'inspections',(select coalesce(jsonb_agg(jsonb_build_object(
+      'id',inspection.id,'actionId',inspection.action_id,'description',inspection.inspection_description,
+      'targetSystemCode',inspection.target_system_code,'targetPositionCode',inspection.target_position_code,
+      'disposition',inspection.disposition,'condition',inspection.condition_data,
+      'conditionSchemaVersion',inspection.condition_schema_version,'expectedEvidence',inspection.expected_evidence,
+      'rowVersion',inspection.row_version
+    ) order by inspection.id),'[]'::jsonb)
+    from public.service_template_inspections inspection where inspection.service_template_version_id=version.id),
+    'replacements',(select coalesce(jsonb_agg(jsonb_build_object(
+      'id',replacement.id,'actionId',replacement.action_id,'replacementPartVersionId',replacement.replacement_part_version_id,
+      'replacementComponentType',replacement.replacement_component_type,'expectation',replacement.replacement_expectation,
+      'authorityType',replacement.authority_type,'disposition',replacement.disposition,
+      'condition',replacement.condition_data,'conditionSchemaVersion',replacement.condition_schema_version,
+      'evidence',replacement.evidence,'rowVersion',replacement.row_version,
+      'replacementPartVersion',case when part_version.id is null then null else jsonb_build_object(
+        'id',part_version.id,'technicalPartId',part_version.technical_part_id,'versionNumber',part_version.version_number,
+        'manufacturer',part_version.manufacturer,'manufacturerPartNumber',part_version.manufacturer_part_number,
+        'description',part_version.technical_description,'authorityType',part_version.authority_type,'evidence',part_version.evidence) end
+    ) order by replacement.id),'[]'::jsonb)
+    from public.service_template_replacement_actions replacement
+    left join public.technical_part_versions part_version on part_version.id=replacement.replacement_part_version_id
+    where replacement.service_template_version_id=version.id),
+    'requirementLinks',(select coalesce(jsonb_agg(jsonb_build_object(
+      'id',link.id,'maintenanceRequirementVersionId',link.maintenance_requirement_version_id,
+      'requirementSchemaVersion',link.requirement_schema_version,'disposition',link.disposition,
+      'condition',link.condition_data,'conditionSchemaVersion',link.condition_schema_version,'rowVersion',link.row_version
+    ) order by link.id),'[]'::jsonb)
+    from public.service_template_requirement_links link where link.service_template_version_id=version.id)
+  );
+end; $$;
+
 revoke all on function public.ftf_guard_technical_part_version_mutation() from public,anon,authenticated,service_role;
 revoke all on function public.ftf_guard_technical_part_version_identity() from public,anon,authenticated,service_role;
 revoke all on function public.ftf_guard_technical_fluid_version_mutation() from public,anon,authenticated,service_role;
@@ -1360,6 +1659,14 @@ revoke all on function public.ftf_guard_service_template_aggregate_mutation() fr
 revoke all on function public.ftf_platform_actor_has_permission(uuid,text) from public,anon,authenticated;
 grant execute on function public.ftf_platform_actor_has_permission(uuid,text) to service_role;
 revoke all on function public.ftf_provision_technical_catalogue_permissions() from public,anon,authenticated,service_role;
+revoke all on function public.ftf_create_organisation_technical_proposal(uuid,uuid,text,jsonb,jsonb,text) from public,anon,authenticated;
+grant execute on function public.ftf_create_organisation_technical_proposal(uuid,uuid,text,jsonb,jsonb,text) to service_role;
+revoke all on function public.ftf_review_organisation_technical_proposal(uuid,uuid,uuid,integer,text,jsonb,text) from public,anon,authenticated;
+grant execute on function public.ftf_review_organisation_technical_proposal(uuid,uuid,uuid,integer,text,jsonb,text) to service_role;
+revoke all on function public.ftf_create_platform_technical_proposal(uuid,text,jsonb,jsonb,text) from public,anon,authenticated;
+grant execute on function public.ftf_create_platform_technical_proposal(uuid,text,jsonb,jsonb,text) to service_role;
+revoke all on function public.ftf_review_platform_technical_proposal(uuid,uuid,integer,text,jsonb,text) from public,anon,authenticated;
+grant execute on function public.ftf_review_platform_technical_proposal(uuid,uuid,integer,text,jsonb,text) to service_role;
 revoke all on function public.ftf_publish_technical_version(uuid,text,uuid,integer,timestamptz) from public,anon,authenticated;
 grant execute on function public.ftf_publish_technical_version(uuid,text,uuid,integer,timestamptz) to service_role;
 revoke all on function public.ftf_publish_part_equivalence(uuid,uuid,integer,timestamptz) from public,anon,authenticated;
@@ -1376,3 +1683,5 @@ revoke all on function public.ftf_publish_platform_service_template_version(uuid
 grant execute on function public.ftf_publish_platform_service_template_version(uuid,uuid,integer,timestamptz) to service_role;
 revoke all on function public.ftf_read_asset_technical_catalogue(uuid,uuid,uuid,timestamptz) from public,anon,authenticated;
 grant execute on function public.ftf_read_asset_technical_catalogue(uuid,uuid,uuid,timestamptz) to service_role;
+revoke all on function public.ftf_read_applicable_service_template_version(uuid,uuid,uuid,uuid,timestamptz) from public,anon,authenticated;
+grant execute on function public.ftf_read_applicable_service_template_version(uuid,uuid,uuid,uuid,timestamptz) to service_role;

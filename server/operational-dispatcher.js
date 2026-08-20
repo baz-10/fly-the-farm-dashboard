@@ -27,6 +27,7 @@ const { createOperationsBriefHandler } = require('./operations-brief-api');
 const { createCommercialOnboardingHandler } = require('./commercial-onboarding-api');
 const { createGettingStartedHandler } = require('./getting-started-api');
 const { createFleetMaintenanceHandler } = require('./fleet-maintenance-api');
+const { createTechnicalCatalogueHandler } = require('./technical-catalogue-api');
 
 function createDefaultHandlers() {
   return Object.freeze({
@@ -65,6 +66,7 @@ function createDefaultHandlers() {
     'commercial-onboarding': createCommercialOnboardingHandler(),
     'getting-started': createGettingStartedHandler(),
     'asset-maintenance': createFleetMaintenanceHandler(),
+    'technical-catalogue': createTechnicalCatalogueHandler(),
   });
 }
 

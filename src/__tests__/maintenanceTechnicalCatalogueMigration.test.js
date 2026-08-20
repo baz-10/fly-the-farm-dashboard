@@ -32,6 +32,38 @@ describe('authoritative maintenance technical catalogue migration', () => {
     expect(sql).toMatch(/PROPOSAL_HAS_NO_TECHNICAL_AUTHORITY/i);
   });
 
+  test('exposes narrow tenant and Platform proposal review commands without publication authority', () => {
+    const sql = migrationSql();
+    const proposals = sql.match(/create table public\.technical_data_proposals \(([\s\S]*?)\n\);/i)?.[1] || '';
+    expect(proposals).toMatch(/proposed_by_platform_user_id uuid references public\.platform_users/i);
+    expect(proposals).toMatch(/reviewed_by_platform_user_id uuid references public\.platform_users/i);
+    expect(proposals).toMatch(/PROPOSAL_ACTOR_SCOPE_MISMATCH/i);
+    for (const command of [
+      'ftf_create_organisation_technical_proposal',
+      'ftf_review_organisation_technical_proposal',
+      'ftf_create_platform_technical_proposal',
+      'ftf_review_platform_technical_proposal',
+    ]) {
+      expect(sql).toMatch(new RegExp(`create function public\\.${command}`, 'i'));
+      expect(sql).toMatch(new RegExp(`grant execute on function public\\.${command}[\\s\\S]*to service_role`, 'i'));
+    }
+    expect(sql).toContain("'technical_proposals.create'");
+    expect(sql).toContain("'technical_proposals.review'");
+    const reviewCommands = sql.slice(
+      sql.indexOf('create function public.ftf_review_organisation_technical_proposal'),
+      sql.indexOf('create function public.ftf_publish_technical_version')
+    );
+    expect(reviewCommands).toMatch(/p_expected_version integer/i);
+    expect(reviewCommands).toMatch(/p_review_evidence jsonb/i);
+    expect(reviewCommands).toMatch(/p_review_evidence='\{\}'::jsonb/i);
+    expect(reviewCommands).toMatch(/proposal\.row_version<>p_expected_version/i);
+    expect(reviewCommands).toMatch(/when 'APPROVE'[\s\S]*then 'APPROVED'/i);
+    expect(reviewCommands).toMatch(/insert into public\.(?:platform_)?audit_events/i);
+    expect(reviewCommands).toMatch(/insert into public\.(?:platform_)?transactional_outbox/i);
+    expect(reviewCommands).not.toMatch(/proposal_state='PUBLISHED'|insert into public\.(?:technical_parts|technical_part_equivalences|technical_part_applicability|technical_fluid_applicability|service_templates)/i);
+    expect(sql).not.toMatch(/grant (?:insert|update|delete|all)[^;]*on table public\.technical_data_proposals[^;]*to service_role/i);
+  });
+
   test('publishes equivalence only for exact effective versions with human approval and evidence', () => {
     const sql = migrationSql();
     expect(sql).toMatch(/create table public\.technical_part_equivalences/i);
@@ -184,6 +216,26 @@ describe('authoritative maintenance technical catalogue migration', () => {
     const lookup = sql.slice(sql.indexOf('create function public.ftf_read_asset_technical_catalogue'));
     expect(lookup).toMatch(/ftf_normalise_technical_scope\(applicability\.manufacturer_scope\)=public\.ftf_normalise_technical_scope\(v_manufacturer_scope\)/i);
     expect(lookup).toMatch(/ftf_normalise_technical_scope\(applicability\.model_scope\)=public\.ftf_normalise_technical_scope\(v_model_scope\)/i);
+  });
+
+  test('reads one exact applicable Service Template aggregate through a tenant and Base scoped RPC', () => {
+    const sql = migrationSql();
+    const reader = sql.match(/create function public\.ftf_read_applicable_service_template_version([\s\S]*?)revoke all on function public\.ftf_guard_technical_part_version_mutation/i)?.[1] || '';
+    expect(reader).toMatch(/p_organisation_id uuid[\s\S]*p_actor_internal_user_id uuid[\s\S]*p_maintainable_asset_id uuid[\s\S]*p_service_template_version_id uuid[\s\S]*p_as_of timestamptz/i);
+    expect(reader).toMatch(/ftf_actor_has_active_beta_seat/i);
+    expect(reader).toMatch(/'service_templates\.read'/i);
+    expect(reader).toMatch(/ftf_maintenance_asset_location_allowed/i);
+    expect(reader).toMatch(/candidate\.id=p_service_template_version_id/i);
+    expect(reader).toMatch(/ftf_version_historically_effective_at\([^)]*p_as_of\)/i);
+    for (const child of [
+      'service_template_applicability', 'service_template_actions', 'service_template_part_lines',
+      'service_template_fluid_lines', 'service_template_inspections',
+      'service_template_replacement_actions', 'service_template_requirement_links',
+    ]) expect(reader).toMatch(new RegExp(`public\\.${child}`, 'i'));
+    expect(reader).toMatch(/technical_part_versions/i);
+    expect(reader).toMatch(/technical_fluid_specification_versions/i);
+    expect(reader).not.toMatch(/organisation_part_preferences|organisation_fluid_preferences/i);
+    expect(sql).toMatch(/grant execute on function public\.ftf_read_applicable_service_template_version[\s\S]*to service_role/i);
   });
 
   test('reserves deterministic exact maintenance-requirement version links without due-state inference', () => {

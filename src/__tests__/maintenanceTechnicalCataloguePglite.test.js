@@ -209,6 +209,68 @@ if (runPgliteInThisProcess) describe('maintenance technical catalogue PostgreSQL
     expect(after.rows[0]).toEqual({ audits: before.rows[0].audits + 1, outbox: before.rows[0].outbox + 1 });
   });
 
+  test('keeps tenant proposals non-authoritative through evidenced human review', async () => {
+    const before = await db.query(`select
+      (select count(*)::int from public.technical_part_equivalences) equivalences,
+      (select count(*)::int from public.technical_part_applicability) applicability,
+      (select count(*)::int from public.audit_events) audits,
+      (select count(*)::int from public.transactional_outbox) outbox`);
+    const created = await db.query(`select public.ftf_create_organisation_technical_proposal(
+      '${ids.org1}','${ids.actor1}','PART_EQUIVALENCE',$1::jsonb,$2::jsonb,'AI_EXTRACTION') result`, [
+      { leftPartVersionId: ids.versionA, rightPartVersionId: ids.versionB },
+      { source: 'manual extraction' },
+    ]);
+    const proposal = created.rows[0].result.record;
+    expect(proposal).toMatchObject({ organisation_id: ids.org1, proposal_state: 'PROPOSED', proposed_by_type: 'AI_EXTRACTION', has_technical_authority: false, row_version: 1 });
+    expect(proposal.published_entity_id).toBeNull();
+
+    const emptyEvidence = await expect(db.query(`select public.ftf_review_organisation_technical_proposal(
+      '${ids.org1}','${ids.actor1}','${proposal.id}',1,'REVIEW','{}'::jsonb,'Checked') result`));
+    await emptyEvidence.rejects.toThrow(/PROPOSAL_REVIEW_EVIDENCE_REQUIRED/);
+    const reviewed = await db.query(`select public.ftf_review_organisation_technical_proposal(
+      '${ids.org1}','${ids.actor1}','${proposal.id}',1,'REVIEW','{"document":"cross-reference"}'::jsonb,'Checked') result`);
+    expect(reviewed.rows[0].result.record).toMatchObject({ proposal_state: 'REVIEWED', reviewed_by_internal_user_id: ids.actor1, has_technical_authority: false, row_version: 2 });
+    const conflict = await db.query(`select public.ftf_review_organisation_technical_proposal(
+      '${ids.org1}','${ids.actor1}','${proposal.id}',1,'APPROVE','{"document":"cross-reference"}'::jsonb,'Approved') result`);
+    expect(conflict.rows[0].result).toMatchObject({ conflict: true, current_version: 2 });
+    const approved = await db.query(`select public.ftf_review_organisation_technical_proposal(
+      '${ids.org1}','${ids.actor1}','${proposal.id}',2,'APPROVE','{"document":"cross-reference","verified":true}'::jsonb,'Approved') result`);
+    expect(approved.rows[0].result.record).toMatchObject({ proposal_state: 'APPROVED', has_technical_authority: false, row_version: 3 });
+    expect(approved.rows[0].result.record.published_entity_id).toBeNull();
+
+    const after = await db.query(`select
+      (select count(*)::int from public.technical_part_equivalences) equivalences,
+      (select count(*)::int from public.technical_part_applicability) applicability,
+      (select count(*)::int from public.audit_events) audits,
+      (select count(*)::int from public.transactional_outbox) outbox`);
+    expect(after.rows[0]).toEqual({
+      equivalences: before.rows[0].equivalences,
+      applicability: before.rows[0].applicability,
+      audits: before.rows[0].audits + 3,
+      outbox: before.rows[0].outbox + 3,
+    });
+  });
+
+  test('keeps Platform proposals on qualified human authority without publishing them', async () => {
+    const created = await db.query(`select public.ftf_create_platform_technical_proposal(
+      '${ids.platformUser}','FLUID_SPECIFICATION',$1::jsonb,$2::jsonb,'IMPORT') result`, [
+      { specificationCode: 'ISO-TEST' }, { source: 'import batch' },
+    ]);
+    const proposal = created.rows[0].result.record;
+    expect(proposal).toMatchObject({ organisation_id: null, proposed_by_platform_user_id: ids.platformUser, proposal_state: 'PROPOSED', has_technical_authority: false });
+    await db.exec(`delete from public.platform_user_roles where platform_user_id='${ids.platformUser}'`);
+    const denied = await db.query(`select public.ftf_review_platform_technical_proposal(
+      '${ids.platformUser}','${proposal.id}',1,'REVIEW','{"source":"human-check"}'::jsonb,'Checked') result`);
+    expect(denied.rows[0].result).toEqual({ forbidden: true });
+    await db.exec(`insert into public.platform_user_roles(platform_user_id,role_id) select '${ids.platformUser}',id from public.platform_roles where code='PLATFORM_SUPER_ADMIN'`);
+    const reviewed = await db.query(`select public.ftf_review_platform_technical_proposal(
+      '${ids.platformUser}','${proposal.id}',1,'REVIEW','{"source":"human-check"}'::jsonb,'Checked') result`);
+    expect(reviewed.rows[0].result.record).toMatchObject({ proposal_state: 'REVIEWED', reviewed_by_platform_user_id: ids.platformUser, has_technical_authority: false, row_version: 2 });
+    const crossPlane = await db.query(`select public.ftf_review_organisation_technical_proposal(
+      '${ids.org1}','${ids.actor1}','${proposal.id}',2,'APPROVE','{"source":"wrong-plane"}'::jsonb,'No') result`);
+    expect(crossPlane.rows[0].result).toEqual({ not_found: true });
+  });
+
   test('keeps manufacturer applicability publication on Platform authority', async () => {
     const applicability = 'd2000000-0000-4000-8000-000000000001';
     await db.exec(`insert into public.technical_part_applicability(id,technical_part_version_id,manufacturer_scope,model_scope,application_code,quantity,unit_code,authority_type,lifecycle_state,evidence) values('${applicability}','${ids.versionA}','Isuzu','FSS550','PLATFORM_ONLY',1,'EA','MANUFACTURER','REVIEWED','{"source":"manual"}')`);
@@ -277,6 +339,68 @@ if (runPgliteInThisProcess) describe('maintenance technical catalogue PostgreSQL
     const hino = await db.query(`select public.ftf_read_asset_technical_catalogue('${ids.org1}','${ids.actor1}','${ids.asset1b}','2025-06-01') result`);
     expect(JSON.stringify(isuzu.rows[0].result)).toContain('Isuzu FSS550 Service');
     expect(JSON.stringify(hino.rows[0].result)).not.toContain('Isuzu FSS550 Service');
+  });
+
+  test('reads one exact applicable Service Template aggregate without preferences or unrelated templates', async () => {
+    const template = 'f5000000-0000-4000-8000-000000000001';
+    const version = 'f5100000-0000-4000-8000-000000000001';
+    const applicability = 'f5200000-0000-4000-8000-000000000001';
+    const action = 'f5300000-0000-4000-8000-000000000001';
+    const fluid = 'f5400000-0000-4000-8000-000000000001';
+    const fluidVersion = 'f5500000-0000-4000-8000-000000000001';
+    const requirementVersion = 'f5600000-0000-4000-8000-000000000001';
+    await db.exec(`
+      insert into public.technical_fluid_specifications(id,specification_code,display_name) values('${fluid}','ISO-FLUID','Test fluid');
+      insert into public.technical_fluid_specification_versions(id,technical_fluid_specification_id,version_number,fluid_type,viscosity_or_grade,authority_type,lifecycle_state,evidence,approved_by_platform_user_id,approved_at,effective_from)
+        values('${fluidVersion}','${fluid}',1,'HYDRAULIC','ISO 46','MANUFACTURER','EFFECTIVE','{"source":"manual"}','${ids.platformUser}','2025-01-01','2025-01-01');
+      insert into public.service_templates(id,owner_scope,organisation_id,template_code,template_name,created_by_internal_user_id,updated_by_internal_user_id)
+        values('${template}','ORGANISATION','${ids.org1}','ORG-AGGREGATE','Organisation Aggregate','${ids.actor1}','${ids.actor1}');
+      insert into public.service_template_versions(id,service_template_id,version_number,description,authority_type,lifecycle_state,evidence)
+        values('${version}','${template}',1,'Exact aggregate read','ORGANISATION_STANDARD','REVIEWED','{"source":"org-manual"}');
+      insert into public.service_template_applicability(id,service_template_version_id,organisation_id,maintainable_asset_id,system_id,evidence)
+        values('${applicability}','${version}','${ids.org1}','${ids.asset1}','${ids.system1}','{"source":"asset-scope"}');
+      insert into public.service_template_actions(id,service_template_version_id,sequence_number,action_type,disposition,action_description,expected_evidence)
+        values('${action}','${version}',1,'SERVICE','REQUIRED','Service exact asset','{"photo":true}');
+      insert into public.service_template_part_lines(service_template_version_id,action_id,technical_part_version_id,quantity,unit_code,disposition,line_notes)
+        values('${version}','${action}','${ids.versionA}',2,'EA','REQUIRED','Exact part');
+      insert into public.service_template_fluid_lines(service_template_version_id,action_id,fluid_specification_version_id,quantity,unit_code,disposition,line_notes)
+        values('${version}','${action}','${fluidVersion}',4.5,'L','REQUIRED','Exact fluid');
+      insert into public.service_template_inspections(service_template_version_id,action_id,inspection_description,disposition,expected_evidence)
+        values('${version}','${action}','Inspect seals','REQUIRED','{"photo":true}');
+      insert into public.service_template_replacement_actions(service_template_version_id,action_id,replacement_part_version_id,replacement_expectation,authority_type,disposition,evidence)
+        values('${version}','${action}','${ids.versionB}','Replace if worn','ORGANISATION_STANDARD','REQUIRED','{"source":"org"}');
+      insert into public.service_template_requirement_links(service_template_version_id,maintenance_requirement_version_id,disposition)
+        values('${version}','${requirementVersion}','OPTIONAL');
+    `);
+    await db.query(`select public.ftf_publish_service_template_version('${ids.org1}','${ids.actor1}','${version}',1,'2025-01-01')`);
+
+    await db.exec(`create or replace function public.ftf_actor_has_permission(p_org uuid,p_actor uuid,p_code text) returns boolean language sql stable as $$select p_code='service_templates.read' and exists(select 1 from public.internal_users where organisation_id=p_org and id=p_actor and is_active and archived_at is null)$$`);
+    let allowed;
+    try {
+      allowed = await db.query(`select public.ftf_read_applicable_service_template_version(
+        '${ids.org1}','${ids.actor1}','${ids.asset1}','${version}','2025-06-01') result`);
+    } finally {
+      await db.exec(`create or replace function public.ftf_actor_has_permission(p_org uuid,p_actor uuid,p_code text) returns boolean language sql stable as $$select exists(select 1 from public.internal_users where organisation_id=p_org and id=p_actor and is_active and archived_at is null)$$`);
+    }
+    const aggregate = allowed.rows[0].result;
+    expect(aggregate.template).toMatchObject({ id: template, ownerScope: 'ORGANISATION', name: 'Organisation Aggregate' });
+    expect(aggregate.version).toMatchObject({ id: version, authorityType: 'ORGANISATION_STANDARD', evidence: { source: 'org-manual' } });
+    expect(aggregate.applicability).toHaveLength(1);
+    expect(aggregate.actions).toHaveLength(1);
+    expect(aggregate.partLines[0]).toMatchObject({ technicalPartVersionId: ids.versionA, quantity: 2 });
+    expect(aggregate.fluidLines[0]).toMatchObject({ fluidSpecificationVersionId: fluidVersion, quantity: 4.5 });
+    expect(aggregate.inspections).toHaveLength(1);
+    expect(aggregate.replacements[0]).toMatchObject({ replacementPartVersionId: ids.versionB });
+    expect(aggregate.requirementLinks[0]).toMatchObject({ maintenanceRequirementVersionId: requirementVersion });
+    expect(JSON.stringify(aggregate)).not.toContain('Tenant One Supplier');
+    expect(JSON.stringify(aggregate)).not.toContain('PRIVATE-ONE');
+
+    const wrongAsset = await db.query(`select public.ftf_read_applicable_service_template_version(
+      '${ids.org1}','${ids.actor1}','${ids.asset1b}','${version}','2025-06-01') result`);
+    expect(wrongAsset.rows[0].result).toEqual({ not_found: true });
+    const crossTenant = await db.query(`select public.ftf_read_applicable_service_template_version(
+      '${ids.org1}','${ids.actor2}','${ids.asset1}','${version}','2025-06-01') result`);
+    expect(crossTenant.rows[0].result).toEqual({ not_found: true });
   });
 
   test('freezes Service Template children after publication boundary', async () => {
