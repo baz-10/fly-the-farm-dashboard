@@ -3,15 +3,35 @@ import { Alert, Box, Card, CardContent, CircularProgress, Typography } from '@mu
 import { Navigate, useParams } from 'react-router-dom';
 import { useFleetAssets } from '../contexts/FleetAssetContext';
 import { useAircraft } from '../contexts/AircraftContext';
+import { useAuth } from '../contexts/AuthContext';
 import { AssetContextBar } from '../components/maintenance/AssetContextBar';
 import { ASSET_WORKSPACE_SECTIONS, AssetWorkspaceNavigation } from '../components/maintenance/AssetWorkspaceNavigation';
 import { AttachedAssetsSummary } from '../components/maintenance/AttachedAssetsSummary';
+import { PartsFluidsWorkspace } from '../components/maintenance/PartsFluidsWorkspace';
+import { technicalCatalogueApi } from '../services/technicalCatalogueApi';
+import type { AssetSource } from '../services/technicalCatalogueApi';
+
+const ASSET_SOURCES: readonly AssetSource[] = ['aircraft', 'equipment-kit', 'fleet-asset'];
+const isAssetSource = (source: string | undefined): source is AssetSource => Boolean(source && ASSET_SOURCES.includes(source as AssetSource));
 
 export default function AssetWorkspace() {
   const { source, id, section = 'overview' } = useParams();
+  if (!isAssetSource(source)) return <Alert severity="error">Unsupported asset source. No asset or technical data was loaded.</Alert>;
+  if (!id) return <Alert severity="error">This asset route is incomplete.</Alert>;
+  return <AuthoritativeAssetWorkspace source={source} id={id} section={section} />;
+}
+
+function AuthoritativeAssetWorkspace({ source, id, section }: { source: AssetSource; id: string; section: string }) {
   const fleet = useFleetAssets();
   const aircraft = useAircraft();
+  const { user } = useAuth();
   const validSection = ASSET_WORKSPACE_SECTIONS.some(([key]) => key === section);
+  const asOfScope = `${source}:${id}:${user?.id || 'anonymous'}:${user?.tenantId || ''}:${user?.delegatedSupport?.organisationId || ''}:${user?.delegatedSupport?.sessionId || ''}`;
+  const technicalAsOfRef = React.useRef<{ scope: string; value: string } | null>(null);
+  if (!technicalAsOfRef.current || technicalAsOfRef.current.scope !== asOfScope) {
+    technicalAsOfRef.current = { scope: asOfScope, value: new Date().toISOString() };
+  }
+  const technicalAsOf = technicalAsOfRef.current.value;
   if (!validSection) return <Navigate to={`/assets/${source}/${id}/overview`} replace />;
 
   const loading = fleet.loading || aircraft.isLoading;
@@ -49,6 +69,14 @@ export default function AssetWorkspace() {
         </Box>
       ) : section === 'components' ? (
         <Card sx={{ mt: 2 }}><CardContent><Typography variant="h5">Components</Typography><Typography color="text.secondary" sx={{ mt: 1 }}>Component tracking is optional. Systems and positions can be configured without assuming a fixed asset geometry.</Typography></CardContent></Card>
+      ) : (section === 'parts-fluids' || section === 'service-kits') && source && id ? (
+        <PartsFluidsWorkspace
+          assetSource={source}
+          sourceRecordId={id}
+          asOf={technicalAsOf}
+          api={technicalCatalogueApi}
+          view={section}
+        />
       ) : (
         <Card sx={{ mt: 2 }}><CardContent><Typography variant="h5">{futureTitle}</Typography><Typography color="text.secondary" sx={{ mt: 1 }}>This supported Beta workspace is being introduced progressively. Existing authoritative workflows remain available.</Typography></CardContent></Card>
       )}
