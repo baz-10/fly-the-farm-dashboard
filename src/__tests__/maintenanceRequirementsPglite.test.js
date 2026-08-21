@@ -151,6 +151,23 @@ if (child) describe('maintenance requirements PostgreSQL behavior', () => {
     expect((await db.query(`select public.ftf_read_asset_maintenance_due_state('${ids.org1}','${ids.actor1}','${ids.asset1}',now()) result`)).rows[0].result.attachedAssetSummaries).toEqual([]);
   });
 
+  test('fails closed before projecting an eligible attached child with an alias timezone or archived Base', async () => {
+    const restoreLocationAuthority = `create or replace function public.ftf_operational_location_allowed(p_org uuid,p_actor uuid,p_location uuid) returns boolean language sql stable as $$select (p_org='${ids.org1}' and p_actor='${ids.actor1}' and p_location='${ids.location1}') or (p_org='${ids.org2}' and p_actor='${ids.actor2}' and p_location='${ids.location2}')$$`;
+    await db.exec(`update public.operating_locations set timezone='EST' where id='${ids.location1b}'`);
+    try {
+      const denied = (await db.query(`select public.ftf_read_asset_maintenance_due_state('${ids.org1}','${ids.actor1}','${ids.asset1}','2026-09-04 12:00+00') result`)).rows[0].result;
+      expect(denied.attachedAssetSummaries).toEqual([]);
+      await db.exec(`create or replace function public.ftf_operational_location_allowed(p_org uuid,p_actor uuid,p_location uuid) returns boolean language sql stable as $$select (p_org='${ids.org1}' and p_actor='${ids.actor1}' and p_location in ('${ids.location1}','${ids.location1b}')) or (p_org='${ids.org2}' and p_actor='${ids.actor2}' and p_location='${ids.location2}')$$`);
+      await expect(db.query(`select public.ftf_read_asset_maintenance_due_state('${ids.org1}','${ids.actor1}','${ids.asset1}','2026-09-04 12:00+00')`))
+        .rejects.toThrow(/MAINTENANCE_REQUIREMENT_IANA_TIMEZONE_REQUIRED/);
+      await db.exec(`update public.operating_locations set timezone='Australia/Brisbane',archived_at='2026-09-01 00:00+00' where id='${ids.location1b}'`);
+      await expect(db.query(`select public.ftf_read_asset_maintenance_due_state('${ids.org1}','${ids.actor1}','${ids.asset1}','2026-09-04 12:00+00')`))
+        .rejects.toThrow(/MAINTENANCE_REQUIREMENT_IANA_TIMEZONE_REQUIRED/);
+    } finally {
+      await db.exec(`update public.operating_locations set timezone='Australia/Brisbane',archived_at=null where id='${ids.location1b}'; ${restoreLocationAuthority};`);
+    }
+  });
+
   test('does not expose the actorless projection helper to the trusted server role', async () => {
     await db.exec('set role service_role');
     try {
@@ -170,6 +187,59 @@ if (child) describe('maintenance requirements PostgreSQL behavior', () => {
     await db.exec(`insert into public.asset_systems(id,organisation_id,maintainable_asset_id,system_code,name,created_by_internal_user_id) values('${foreignSystem}','${ids.org1}','${ids.asset1b}','ENGINE','Engine','${ids.actor1}')`);
     await expect(propose('BAD-SCOPE', [{ thresholdType: 'METER', meterType: 'odometer', intervalValue: 100, unitCode: 'km' }], { scopeType: 'SYSTEM', maintainableAssetId: ids.asset1, systemId: foreignSystem }))
       .rejects.toThrow(/MAINTENANCE_REQUIREMENT_SCOPE_CONTRADICTION/);
+  });
+
+  test('applies SYSTEM scope only while the exact referenced system belongs to the asset at asOf', async () => {
+    const systemId = '11111111-1111-4111-8111-111111116101';
+    await db.exec(`insert into public.asset_systems(id,organisation_id,maintainable_asset_id,system_code,name,created_by_internal_user_id) values('${systemId}','${ids.org1}','${ids.asset1}','SYS-LIVE','System live','${ids.actor1}')`);
+    const proposed = (await propose('SYS-LIVE', [{ thresholdType: 'METER', meterType: 'odometer', meterDefinitionId: ids.meter1, intervalValue: 100, unitCode: 'km' }], {
+      scopeType: 'SYSTEM', maintainableAssetId: ids.asset1, systemId,
+    })).rows[0].result.record;
+    await db.exec(`update public.maintenance_requirement_versions set lifecycle_state='EFFECTIVE',approved_by_internal_user_id='${ids.actor1}',approved_at='2025-01-01',effective_from='2025-01-01' where id='${proposed.version.id}'`);
+    const codesAt = async (asOf) => (await db.query(`select public.ftf_read_asset_maintenance_due_state('${ids.org1}','${ids.actor1}','${ids.asset1}','${asOf}') result`)).rows[0].result.requirements.map((row) => row.requirementCode);
+    try {
+      expect(await codesAt('2026-12-31 00:00+00')).toContain('SYS-LIVE');
+      await db.exec(`update public.asset_systems set maintainable_asset_id='${ids.asset1b}' where id='${systemId}'`);
+      const rejectedBaseline = (await db.query(`select public.ftf_record_asset_maintenance_requirement_baseline('${ids.org1}','${ids.actor1}','${ids.asset1}','${proposed.thresholds[0].id}','METER',0,null,'{"source":"system evidence"}') result`)).rows[0].result;
+      expect(rejectedBaseline).toEqual({ not_found: true });
+      expect(await codesAt('2026-12-31 00:00+00')).not.toContain('SYS-LIVE');
+      await db.exec(`update public.asset_systems set maintainable_asset_id='${ids.asset1}',archived_at='2027-01-01 00:00+00' where id='${systemId}'`);
+      expect(await codesAt('2026-12-31 23:59:59+00')).toContain('SYS-LIVE');
+      expect(await codesAt('2027-01-01 00:00:01+00')).not.toContain('SYS-LIVE');
+    } finally {
+      await db.exec(`delete from public.asset_maintenance_requirement_baselines where maintenance_requirement_threshold_id='${proposed.thresholds[0].id}'; update public.asset_systems set maintainable_asset_id='${ids.asset1}',archived_at=null where id='${systemId}'`);
+    }
+  });
+
+  test('applies COMPONENT_POSITION scope only through its exact live system and position at asOf', async () => {
+    const systemId = '11111111-1111-4111-8111-111111116201';
+    const alternateSystemId = '11111111-1111-4111-8111-111111116202';
+    const positionId = '11111111-1111-4111-8111-111111116203';
+    await db.exec(`
+      insert into public.asset_systems(id,organisation_id,maintainable_asset_id,system_code,name,created_by_internal_user_id) values
+        ('${systemId}','${ids.org1}','${ids.asset1}','POS-SYS','Position system','${ids.actor1}'),
+        ('${alternateSystemId}','${ids.org1}','${ids.asset1}','ALT-SYS','Alternate system','${ids.actor1}');
+      insert into public.component_positions(id,organisation_id,system_id,position_code,name,created_by_internal_user_id) values('${positionId}','${ids.org1}','${systemId}','FILTER','Filter','${ids.actor1}');
+    `);
+    const proposed = (await propose('POS-LIVE', [{ thresholdType: 'METER', meterType: 'odometer', meterDefinitionId: ids.meter1, intervalValue: 100, unitCode: 'km' }], {
+      scopeType: 'COMPONENT_POSITION', maintainableAssetId: ids.asset1, systemId, componentPositionId: positionId,
+    })).rows[0].result.record;
+    await db.exec(`update public.maintenance_requirement_versions set lifecycle_state='EFFECTIVE',approved_by_internal_user_id='${ids.actor1}',approved_at='2025-01-01',effective_from='2025-01-01' where id='${proposed.version.id}'`);
+    const codesAt = async (asOf) => (await db.query(`select public.ftf_read_asset_maintenance_due_state('${ids.org1}','${ids.actor1}','${ids.asset1}','${asOf}') result`)).rows[0].result.requirements.map((row) => row.requirementCode);
+    try {
+      expect(await codesAt('2026-12-31 00:00+00')).toContain('POS-LIVE');
+      await db.exec(`update public.component_positions set system_id='${alternateSystemId}' where id='${positionId}'`);
+      const rejectedBaseline = (await db.query(`select public.ftf_record_asset_maintenance_requirement_baseline('${ids.org1}','${ids.actor1}','${ids.asset1}','${proposed.thresholds[0].id}','METER',0,null,'{"source":"position evidence"}') result`)).rows[0].result;
+      expect(rejectedBaseline).toEqual({ not_found: true });
+      expect(await codesAt('2026-12-31 00:00+00')).not.toContain('POS-LIVE');
+      await db.exec(`update public.component_positions set system_id='${systemId}',archived_at='2027-01-01 00:00+00' where id='${positionId}'`);
+      expect(await codesAt('2026-12-31 23:59:59+00')).toContain('POS-LIVE');
+      expect(await codesAt('2027-01-01 00:00:01+00')).not.toContain('POS-LIVE');
+      await db.exec(`update public.component_positions set archived_at=null where id='${positionId}'; update public.asset_systems set archived_at='2027-01-01 00:00+00' where id='${systemId}'`);
+      expect(await codesAt('2027-01-01 00:00:01+00')).not.toContain('POS-LIVE');
+    } finally {
+      await db.exec(`delete from public.asset_maintenance_requirement_baselines where maintenance_requirement_threshold_id='${proposed.thresholds[0].id}'; update public.component_positions set system_id='${systemId}',archived_at=null where id='${positionId}'; update public.asset_systems set archived_at=null where id='${systemId}'`);
+    }
   });
 
   test('links an exact Service Kit version and supersedes immutable requirement history', async () => {

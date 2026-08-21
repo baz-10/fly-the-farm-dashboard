@@ -388,7 +388,16 @@ begin
       and ((version.scope_type='ASSET' and version.maintainable_asset_id=p_maintainable_asset_id)
         or (version.scope_type='MODEL' and upper(btrim(version.manufacturer_scope))=upper(btrim(coalesce(fleet.manufacturer,aircraft.manufacturer,equipment.specifications->>'manufacturer')))
           and upper(btrim(version.model_scope))=upper(btrim(coalesce(fleet.model,aircraft.model,equipment.specifications->>'model'))))
-        or (version.scope_type in ('SYSTEM','COMPONENT_POSITION') and version.maintainable_asset_id=p_maintainable_asset_id));
+        or (version.scope_type='SYSTEM' and version.maintainable_asset_id=p_maintainable_asset_id and exists(
+          select 1 from public.asset_systems scoped_system
+          where scoped_system.organisation_id=p_organisation_id and scoped_system.id=version.system_id
+            and scoped_system.maintainable_asset_id=p_maintainable_asset_id and scoped_system.archived_at is null))
+        or (version.scope_type='COMPONENT_POSITION' and version.maintainable_asset_id=p_maintainable_asset_id and exists(
+          select 1 from public.asset_systems scoped_system join public.component_positions scoped_position
+            on scoped_position.organisation_id=scoped_system.organisation_id and scoped_position.system_id=scoped_system.id
+          where scoped_system.organisation_id=p_organisation_id and scoped_system.id=version.system_id
+            and scoped_system.maintainable_asset_id=p_maintainable_asset_id and scoped_system.archived_at is null
+            and scoped_position.id=version.component_position_id and scoped_position.archived_at is null)));
   if not found then return jsonb_build_object('not_found',true); end if;
   if p_evidence is null or jsonb_typeof(p_evidence)<>'object' or p_evidence='{}'::jsonb or num_nonnulls(p_baseline_value,p_baseline_date)<>1
     or (threshold.threshold_type='CALENDAR' and p_baseline_date is null) or (threshold.threshold_type='METER' and p_baseline_value is null) then raise exception 'MAINTENANCE_REQUIREMENT_BASELINE_INVALID' using errcode='22023'; end if;
@@ -417,7 +426,19 @@ with asset_identity as (
     and (stable.owner_scope='PLATFORM' or stable.organisation_id=p_organisation_id)
     and ((version.scope_type='ASSET' and version.maintainable_asset_id=p_maintainable_asset_id)
       or (version.scope_type='MODEL' and upper(btrim(version.manufacturer_scope))=upper(btrim(asset.manufacturer)) and upper(btrim(version.model_scope))=upper(btrim(asset.model)))
-      or (version.scope_type in ('SYSTEM','COMPONENT_POSITION') and version.maintainable_asset_id=p_maintainable_asset_id))
+      or (version.scope_type='SYSTEM' and version.maintainable_asset_id=p_maintainable_asset_id and exists(
+        select 1 from public.asset_systems scoped_system
+        where scoped_system.organisation_id=p_organisation_id and scoped_system.id=version.system_id
+          and scoped_system.maintainable_asset_id=p_maintainable_asset_id and scoped_system.created_at<=p_as_of
+          and (scoped_system.archived_at is null or scoped_system.archived_at>p_as_of)))
+      or (version.scope_type='COMPONENT_POSITION' and version.maintainable_asset_id=p_maintainable_asset_id and exists(
+        select 1 from public.asset_systems scoped_system join public.component_positions scoped_position
+          on scoped_position.organisation_id=scoped_system.organisation_id and scoped_position.system_id=scoped_system.id
+        where scoped_system.organisation_id=p_organisation_id and scoped_system.id=version.system_id
+          and scoped_system.maintainable_asset_id=p_maintainable_asset_id and scoped_system.created_at<=p_as_of
+          and (scoped_system.archived_at is null or scoped_system.archived_at>p_as_of)
+          and scoped_position.id=version.component_position_id and scoped_position.created_at<=p_as_of
+          and (scoped_position.archived_at is null or scoped_position.archived_at>p_as_of))))
 ), threshold_calculation as (
   select version.id version_id,threshold.id threshold_id,threshold.sequence_number,threshold.threshold_type,threshold.meter_type,threshold.unit_code,
     threshold.interval_value,threshold.due_soon_value,baseline.baseline_value,baseline.baseline_date,baseline.baseline_type,baseline.evidence baseline_evidence,
@@ -498,14 +519,30 @@ begin
   -- Calendar arithmetic below is independent of browser, server and runner timezone settings.
   perform timezone(v_timezone,p_as_of);
   result:=public.ftf_project_asset_maintenance_due_state(p_organisation_id,p_maintainable_asset_id,p_as_of,v_timezone);
+  if exists(
+    select 1
+    from public.asset_attachment_periods period join public.maintainable_asset_registry child on child.organisation_id=period.organisation_id and child.id=period.child_asset_id and child.tracking_state='ACTIVE'
+      left join public.aircraft child_aircraft on child_aircraft.organisation_id=child.organisation_id and child_aircraft.id=child.aircraft_id and child_aircraft.archived_at is null
+      left join public.equipment_kits child_equipment on child_equipment.organisation_id=child.organisation_id and child_equipment.id=child.equipment_kit_id and child_equipment.archived_at is null
+      left join public.fleet_assets child_fleet on child_fleet.organisation_id=child.organisation_id and child_fleet.id=child.fleet_asset_id and child_fleet.archived_at is null
+      join public.operating_locations child_location on child_location.organisation_id=child.organisation_id and child_location.id=coalesce(child_aircraft.operating_location_id,child_equipment.operating_location_id,child_fleet.operating_location_id)
+    where period.organisation_id=p_organisation_id and period.parent_asset_id=p_maintainable_asset_id and period.attached_at<=p_as_of and (period.detached_at is null or period.detached_at>p_as_of)
+      and public.ftf_maintenance_asset_location_allowed(p_organisation_id,p_actor_internal_user_id,child.id)
+      and (child_location.archived_at is not null or not (child_location.timezone='UTC' or child_location.timezone like '%/%')
+        or not exists(select 1 from pg_timezone_names zone where zone.name=child_location.timezone))
+  ) then
+    raise exception 'MAINTENANCE_REQUIREMENT_IANA_TIMEZONE_REQUIRED' using errcode='22023';
+  end if;
   select coalesce(jsonb_agg(jsonb_build_object('registryId',period.child_asset_id,'dueState',public.ftf_project_asset_maintenance_due_state(p_organisation_id,period.child_asset_id,p_as_of,child_location.timezone)) order by period.position_label,period.child_asset_id),'[]'::jsonb) into attached
   from public.asset_attachment_periods period join public.maintainable_asset_registry child on child.organisation_id=period.organisation_id and child.id=period.child_asset_id and child.tracking_state='ACTIVE'
-    left join public.aircraft child_aircraft on child_aircraft.organisation_id=child.organisation_id and child_aircraft.id=child.aircraft_id
-    left join public.equipment_kits child_equipment on child_equipment.organisation_id=child.organisation_id and child_equipment.id=child.equipment_kit_id
-    left join public.fleet_assets child_fleet on child_fleet.organisation_id=child.organisation_id and child_fleet.id=child.fleet_asset_id
+    left join public.aircraft child_aircraft on child_aircraft.organisation_id=child.organisation_id and child_aircraft.id=child.aircraft_id and child_aircraft.archived_at is null
+    left join public.equipment_kits child_equipment on child_equipment.organisation_id=child.organisation_id and child_equipment.id=child.equipment_kit_id and child_equipment.archived_at is null
+    left join public.fleet_assets child_fleet on child_fleet.organisation_id=child.organisation_id and child_fleet.id=child.fleet_asset_id and child_fleet.archived_at is null
     join public.operating_locations child_location on child_location.organisation_id=child.organisation_id and child_location.id=coalesce(child_aircraft.operating_location_id,child_equipment.operating_location_id,child_fleet.operating_location_id)
   where period.organisation_id=p_organisation_id and period.parent_asset_id=p_maintainable_asset_id and period.attached_at<=p_as_of and (period.detached_at is null or period.detached_at>p_as_of)
-    and public.ftf_maintenance_asset_location_allowed(p_organisation_id,p_actor_internal_user_id,child.id);
+    and public.ftf_maintenance_asset_location_allowed(p_organisation_id,p_actor_internal_user_id,child.id)
+    and child_location.archived_at is null and (child_location.timezone='UTC' or child_location.timezone like '%/%')
+    and exists(select 1 from pg_timezone_names zone where zone.name=child_location.timezone);
   return result || jsonb_build_object('attachedAssetSummaries',attached);
 end; $$;
 
