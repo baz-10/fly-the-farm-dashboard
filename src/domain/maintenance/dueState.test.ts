@@ -151,6 +151,7 @@ describe('authoritative maintenance due-state contract', () => {
 
   test('preserves the authoritative corrected meter projection and separate baseline evidence', () => {
     const result = normalizeMaintenanceDueResult(projection({
+      asOf: '2026-08-21T02:00:00.000Z',
       requirements: [requirement({ thresholds: [threshold({
         currentValue: 8600,
         currentRecordedAt: '2026-08-21T02:00:00.000Z',
@@ -351,6 +352,40 @@ describe('authoritative maintenance due-state contract', () => {
     expect(result.requirements[0]).toMatchObject({
       state: 'INSUFFICIENT_DATA',
       controllingThresholdId: 'threshold-meter',
+    });
+  });
+
+  test.each([
+    [
+      projection({ requirements: [requirement({ thresholds: [threshold({
+        currentAuthoritySource: 'AIRCRAFT_COMPATIBILITY',
+      })] })] }),
+      /currentAuthoritySource/i,
+    ],
+    [
+      projection({ requirements: [requirement({ thresholds: [threshold({
+        currentRecordedAt: '2026-08-21T01:30:00.001Z',
+      })] })] }),
+      /currentRecordedAt/i,
+    ],
+  ])('rejects current-meter metadata the SQL projection cannot produce', (payload, message) => {
+    expect(() => normalizeMaintenanceDueResult(payload)).toThrow(message);
+  });
+
+  test('accepts flight-hour compatibility evidence recorded exactly at projection asOf', () => {
+    const result = normalizeMaintenanceDueResult(projection({
+      requirements: [requirement({ thresholds: [threshold({
+        meterType: 'flight_hours',
+        unitCode: 'h',
+        currentRecordedAt: '2026-08-21T01:30:00.000Z',
+        currentAuthoritySource: 'AIRCRAFT_COMPATIBILITY',
+      })] })],
+    }));
+
+    expect(result.requirements[0].thresholds[0]).toMatchObject({
+      meterType: 'flight_hours',
+      currentRecordedAt: result.asOf,
+      currentAuthoritySource: 'AIRCRAFT_COMPATIBILITY',
     });
   });
 

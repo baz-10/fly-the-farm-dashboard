@@ -21,6 +21,8 @@ Review fix round 1 added malicious partial and contradictory projections before 
 
 Review fix round 2 added complete malicious cross-type tuples and invalid domains before production changes. RED reproduced eight remaining gaps: meter thresholds carrying calendar due dates, one-time thresholds carrying current-meter or numeric due evidence, zero/negative intervals, negative or interval-sized meter warning windows, and incompatible meter units. The CALENDAR malicious meter tuple was already rejected and is now retained as explicit regression coverage. GREEN rejects every SQL-impossible tuple without calculating maintenance state.
 
+Review fix round 3 added forged current-meter metadata before production changes. RED reproduced both remaining coherence gaps: `AIRCRAFT_COMPATIBILITY` was accepted for a non-flight-hours meter, and a current reading later than the projection `asOf` was accepted. GREEN now rejects both impossible projections and retains an exact-boundary regression proving flight-hour compatibility evidence recorded exactly at `asOf` remains valid.
+
 ## Implemented contract
 
 - `MaintenanceDueResult` and exact nested projection types for requirements, thresholds, baseline/current/due evidence, Service Kit version links, and attached assets.
@@ -32,6 +34,7 @@ Review fix round 2 added complete malicious cross-type tuples and invalid domain
 - Manufacturer requirements must retain Platform authority; organisation standards must retain organisation authority. Requirement and baseline evidence objects must be non-empty when present.
 - Missing meter/calendar/one-time evidence stays `INSUFFICIENT_DATA`. `CONDITION` and future `COMPONENT` thresholds stay insufficient because Slice 4 has no authoritative evidence source for them.
 - Corrected authoritative readings and aircraft compatibility sources are preserved as server evidence; TypeScript performs no meter selection or correction arithmetic.
+- Aircraft compatibility evidence is accepted only for `flight_hours`, and current-meter evidence cannot postdate the projection `asOf`. These are metadata-coherence checks against the SQL result, not client-side scheduling calculations.
 - Controlling thresholds are resolved by the exact server-returned ID. Presentation helpers never re-run the SQL threshold-selection algorithm.
 - Runtime validation checks that the controller matches the SQL projection's `remaining ASC NULLS LAST, sequenceNumber` ordering and that requirement state matches its `OVERDUE`, `DUE`, `INSUFFICIENT_DATA`, `DUE_SOON`, `CURRENT` precedence. This validates returned metadata only; it does not calculate due state from dates or meters.
 - Baseline values require baseline type and evidence. Complete meter/calendar evidence requires the corresponding projected due and remaining fields; incomplete evidence cannot carry those fields or claim a sufficient state.
@@ -47,7 +50,7 @@ Focused Task 2 suite:
 ```text
 PASS src/domain/maintenance/dueState.test.ts
 Test Suites: 1 passed, 1 total
-Tests: 52 passed, 52 total
+Tests: 55 passed, 55 total
 ```
 
 Focused SQL-adjacent gate:
@@ -57,7 +60,7 @@ PASS src/__tests__/maintenanceRequirementsPglite.test.js
 PASS src/domain/maintenance/dueState.test.ts
 PASS src/__tests__/maintenanceRequirementsMigration.test.js
 Test Suites: 3 passed, 3 total
-Tests: 58 passed, 58 total
+Tests: 61 passed, 61 total
 ```
 
 Task-file TypeScript compilation passed with the repository's ES5 target constraints:

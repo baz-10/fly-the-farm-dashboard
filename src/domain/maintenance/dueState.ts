@@ -269,7 +269,7 @@ function validateMeterUnit(meterType: MaintenanceMeterType, unitCode: string, pa
   if (!compatible) throw new MaintenanceDueContractError(`${path}.unitCode`, 'unit is not compatible with the projected meter type');
 }
 
-function parseThreshold(value: unknown, path: string): MaintenanceThresholdResult {
+function parseThreshold(value: unknown, path: string, asOf: string): MaintenanceThresholdResult {
   const source = record(value, path);
   allowKeys(source, THRESHOLD_KEYS, path);
   const parsed: MaintenanceThresholdResult = {
@@ -317,6 +317,12 @@ function parseThreshold(value: unknown, path: string): MaintenanceThresholdResul
       : parsed.currentRecordedAt === null ? 'currentRecordedAt' : 'currentAuthoritySource';
     throw new MaintenanceDueContractError(`${path}.${missingField}`, 'authoritative current-meter evidence must be complete');
   }
+  if (parsed.currentAuthoritySource === 'AIRCRAFT_COMPATIBILITY' && parsed.meterType !== 'flight_hours') {
+    throw new MaintenanceDueContractError(`${path}.currentAuthoritySource`, 'aircraft compatibility evidence is only authoritative for flight hours');
+  }
+  if (parsed.currentRecordedAt !== null && Date.parse(parsed.currentRecordedAt) > Date.parse(asOf)) {
+    throw new MaintenanceDueContractError(`${path}.currentRecordedAt`, 'current-meter evidence cannot be later than the projection asOf');
+  }
   if (parsed.thresholdType === 'METER') {
     if (parsed.meterType === null) throw new MaintenanceDueContractError(`${path}.meterType`, 'meter thresholds require a meter type');
     if (parsed.unitCode === null) throw new MaintenanceDueContractError(`${path}.unitCode`, 'meter thresholds require a unit');
@@ -357,13 +363,13 @@ function parseThreshold(value: unknown, path: string): MaintenanceThresholdResul
   return parsed;
 }
 
-function parseRequirement(value: unknown, path: string): MaintenanceRequirementDueResult {
+function parseRequirement(value: unknown, path: string, asOf: string): MaintenanceRequirementDueResult {
   const source = record(value, path);
   allowKeys(source, REQUIREMENT_KEYS, path);
   if (!Array.isArray(source.thresholds) || source.thresholds.length === 0) {
     throw new MaintenanceDueContractError(`${path}.thresholds`, 'expected at least one projected threshold');
   }
-  const thresholds = source.thresholds.map((item, index) => parseThreshold(item, `${path}.thresholds[${index}]`));
+  const thresholds = source.thresholds.map((item, index) => parseThreshold(item, `${path}.thresholds[${index}]`, asOf));
   const thresholdIds = new Set(thresholds.map((item) => item.thresholdId));
   if (thresholdIds.size !== thresholds.length) {
     throw new MaintenanceDueContractError(`${path}.thresholds.thresholdId`, 'projected threshold IDs must be unique');
@@ -426,7 +432,7 @@ function parseProjection(value: unknown, path: string): MaintenanceDueProjection
   allowKeys(source, PROJECTION_KEYS, path);
   if (!Array.isArray(source.requirements)) throw new MaintenanceDueContractError(`${path}.requirements`, 'expected an array');
   const asOf = timestamp(source.asOf, `${path}.asOf`);
-  const requirements = source.requirements.map((item, index) => parseRequirement(item, `${path}.requirements[${index}]`));
+  const requirements = source.requirements.map((item, index) => parseRequirement(item, `${path}.requirements[${index}]`, asOf));
   const asOfTime = Date.parse(asOf);
   requirements.forEach((requirement, index) => {
     if (Date.parse(requirement.effectiveFrom) > asOfTime
