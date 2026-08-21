@@ -31,6 +31,7 @@ type RouteReader = Pick<typeof technicalCatalogueApi, 'resolveAssetRoute'>;
 type DueReader = Pick<typeof maintenanceApi, 'readDueState'>;
 
 export interface MaintenanceWorkspaceProps {
+  authorityScopeKey?: string;
   assetSource: AssetSource;
   sourceRecordId: string;
   asOf: string;
@@ -287,6 +288,7 @@ function AttachedMaintenance({ result }: { result: MaintenanceDueResult }) {
 }
 
 export function MaintenanceWorkspace({
+  authorityScopeKey = '',
   assetSource,
   sourceRecordId,
   asOf,
@@ -300,9 +302,12 @@ export function MaintenanceWorkspace({
   const [expandedGroup, setExpandedGroup] = React.useState<GroupKey>();
   const [expandedRequirement, setExpandedRequirement] = React.useState<string>();
   const generationRef = React.useRef(0);
+  const requestScope = React.useMemo(() => ({}), [api, asOf, assetSource, authorityScopeKey, retry, routeApi, sourceRecordId]);
+  const [stateScope, setStateScope] = React.useState(requestScope);
 
   React.useEffect(() => {
     const generation = ++generationRef.current;
+    setStateScope(requestScope);
     setResult(undefined);
     setLoading(true);
     setError('');
@@ -322,27 +327,32 @@ export function MaintenanceWorkspace({
       }
     })();
     return () => { if (generationRef.current === generation) generationRef.current += 1; };
-  }, [api, asOf, assetSource, retry, routeApi, sourceRecordId]);
+  }, [api, asOf, assetSource, requestScope, retry, routeApi, sourceRecordId]);
 
-  if (loading) return (
+  const scopeMatches = stateScope === requestScope;
+  const visibleResult = scopeMatches ? result : undefined;
+  const visibleLoading = !scopeMatches || loading;
+  const visibleError = scopeMatches ? error : '';
+
+  if (visibleLoading) return (
     <Box role="status" aria-live="polite" sx={{ mt: 2, p: 3, display: 'flex', alignItems: 'center', gap: 1.5 }}>
       <CircularProgress size={22} />Loading authoritative maintenance…
     </Box>
   );
-  if (error || !result) return (
+  if (visibleError || !visibleResult) return (
     <Alert severity="error" sx={{ mt: 2 }} action={<Button color="inherit" onClick={() => setRetry((value) => value + 1)}>Try again</Button>}>
-      {error || 'Maintenance projection could not be loaded.'}
+      {visibleError || 'Maintenance projection could not be loaded.'}
     </Alert>
   );
 
-  const ranked = rankMaintenanceRequirements(result.requirements);
-  const empty = ranked.length === 0 && result.attachedAssetSummaries.length === 0;
+  const ranked = rankMaintenanceRequirements(visibleResult.requirements);
+  const empty = ranked.length === 0 && visibleResult.attachedAssetSummaries.length === 0;
   return (
     <Box component="section" aria-labelledby="maintenance-workspace-title" sx={{ mt: 2 }}>
       <Stack direction={{ xs: 'column', sm: 'row' }} gap={1} alignItems={{ sm: 'end' }} justifyContent="space-between" sx={{ mb: 2 }}>
         <Box>
           <Typography id="maintenance-workspace-title" component="h2" variant="h5" sx={{ color: '#0b3217', fontWeight: 900 }}>Maintenance</Typography>
-          <Typography variant="body2" color="text.secondary">Authoritative requirements at {result.asOf} · {result.timezone}</Typography>
+          <Typography variant="body2" color="text.secondary">Authoritative requirements at {visibleResult.asOf} · {visibleResult.timezone}</Typography>
         </Box>
         <Chip label="Read-only due state" size="small" variant="outlined" sx={{ alignSelf: { xs: 'flex-start', sm: 'center' } }} />
       </Stack>
@@ -392,7 +402,7 @@ export function MaintenanceWorkspace({
           })}
         </Stack>
       )}
-      <AttachedMaintenance result={result} />
+      <AttachedMaintenance result={visibleResult} />
     </Box>
   );
 }

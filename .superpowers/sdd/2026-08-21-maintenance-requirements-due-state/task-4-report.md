@@ -1,7 +1,7 @@
 # Task 4 report — Compact Maintenance and Fleet summary UI
 
 Date: 2026-08-22
-Status: Complete
+Status: Complete (review fix round 1 applied)
 
 ## Outcome
 
@@ -63,7 +63,7 @@ GREEN component/integration coverage includes progressive disclosure, exact stat
 
 ## Verification
 
-- Focused and adjacent Jest: **7 suites, 106 tests passed**.
+- Focused and adjacent Jest: **7 suites, 111 tests passed**.
   - `MaintenanceWorkspace.test.tsx`
   - `FleetMaintenanceSummary.test.tsx`
   - `AssetWorkspace.test.tsx`
@@ -101,3 +101,30 @@ GREEN component/integration coverage includes progressive disclosure, exact stat
 - The product maturity entry remains `BETA`; private-beta operational evidence is still required.
 
 No Production migration, seed, deployment, push, or browser-local authority was performed.
+
+## Review fix round 1 — synchronous scope ownership
+
+Reviewer finding: generation guards stopped late network responses, but already-resolved Maintenance results and Fleet rows remained unscoped React state. On an asset, `asOf`, authenticated-session, or filter change, React could commit one paint containing the previous scope before the passive loading effect cleared it.
+
+Observed RED with React commit-phase profiler probes:
+
+- Resolved FTF-11 child attention committed once under the new T100/new-`asOf` Maintenance scope.
+- Resolved FTF-11 Fleet rows committed once under a new `asOf` scope.
+- Resolved FTF-11 Fleet rows committed once after the Maintenance status control already selected `DUE_SOON` and before the filtered page resolved.
+- Same-route/same-instant authenticated authority-scope changes reproduced the leak independently in both Maintenance and Fleet surfaces.
+
+Fix:
+
+- Each Maintenance and Fleet request now owns a memoized exact render-scope identity covering its API authority, explicit `asOf`, route or exact filters, retry generation, and authenticated authority scope.
+- Result/rows, page cursor, loading, loading-more, and error presentation is synchronously gated by that identity. A mismatched render immediately shows the scoped loading state without waiting for `useEffect`.
+- Asset Workspace and Fleet Work Packs pass their complete user/organisation/delegated-session scope keys, covering a session change even if its newly captured timestamp happens to equal the prior millisecond.
+- Existing asynchronous generation guards remain in place.
+
+Round-1 verification:
+
+- RED: 5 commit-phase scope regressions failed for the expected stale-content assertions before the fix.
+- GREEN: component scope suite **2 suites, 20 tests passed**.
+- Focused/adjacent suite **7 suites, 111 tests passed**.
+- Playwright **6/6 passed** across Chromium/WebKit at phone, tablet, and desktop widths.
+- Production build passed with only existing repository warnings.
+- Product maturity verifier passed with **0 customer-facing Legacy violations**.

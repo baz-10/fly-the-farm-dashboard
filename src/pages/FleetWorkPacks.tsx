@@ -95,6 +95,7 @@ export default function FleetWorkPacks() {
             </Box>}
           {canReadMaintenance && (
             <FleetMaintenanceSummary
+              authorityScopeKey={maintenanceScope}
               asOf={maintenanceAsOfRef.current.value}
               bases={operatingLocations.map((base) => ({ id: base.id, name: base.name }))}
             />

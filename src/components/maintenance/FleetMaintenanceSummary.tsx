@@ -25,6 +25,7 @@ import type { MaintenanceDueState } from '../../types/fleetMaintenance';
 type FleetReader = Pick<typeof maintenanceApi, 'readFleetDueSummary'>;
 
 export interface FleetMaintenanceSummaryProps {
+  authorityScopeKey?: string;
   asOf: string;
   bases: Array<{ id: string; name: string }>;
   api?: FleetReader;
@@ -85,7 +86,7 @@ function FleetRow({ row }: { row: FleetMaintenanceDueRow }) {
   );
 }
 
-export function FleetMaintenanceSummary({ asOf, bases, api = maintenanceApi, pageSize = 8 }: FleetMaintenanceSummaryProps) {
+export function FleetMaintenanceSummary({ authorityScopeKey = '', asOf, bases, api = maintenanceApi, pageSize = 8 }: FleetMaintenanceSummaryProps) {
   const [baseId, setBaseId] = React.useState('');
   const [assetType, setAssetType] = React.useState<MaintenanceAssetSource | ''>('');
   const [state, setState] = React.useState<MaintenanceDueState | ''>('');
@@ -103,9 +104,12 @@ export function FleetMaintenanceSummary({ asOf, bases, api = maintenanceApi, pag
     ...(state ? { state } : {}),
     pageSize,
   }), [assetType, baseId, pageSize, state]);
+  const requestScope = React.useMemo(() => ({}), [api, asOf, authorityScopeKey, filters, retry]);
+  const [stateScope, setStateScope] = React.useState(requestScope);
 
   React.useEffect(() => {
     const generation = ++generationRef.current;
+    setStateScope(requestScope);
     setRows([]);
     setPage(undefined);
     setLoading(true);
@@ -122,15 +126,22 @@ export function FleetMaintenanceSummary({ asOf, bases, api = maintenanceApi, pag
       if (generationRef.current === generation) setLoading(false);
     });
     return () => { if (generationRef.current === generation) generationRef.current += 1; };
-  }, [api, asOf, filters, retry]);
+  }, [api, asOf, filters, requestScope, retry]);
+
+  const scopeMatches = stateScope === requestScope;
+  const visibleRows = scopeMatches ? rows : [];
+  const visiblePage = scopeMatches ? page : undefined;
+  const visibleLoading = !scopeMatches || loading;
+  const visibleLoadingMore = scopeMatches && loadingMore;
+  const visibleError = scopeMatches ? error : '';
 
   const loadMore = async () => {
-    if (!page?.nextCursor || loadingMore) return;
+    if (!visiblePage?.nextCursor || visibleLoadingMore) return;
     const generation = generationRef.current;
     setLoadingMore(true);
     setError('');
     try {
-      const summary = await api.readFleetDueSummary(asOf, { ...filters, cursor: page.nextCursor });
+      const summary = await api.readFleetDueSummary(asOf, { ...filters, cursor: visiblePage.nextCursor });
       if (generationRef.current !== generation) return;
       setRows((current) => {
         const existing = new Set(current.map((row) => row.registryId));
@@ -152,7 +163,7 @@ export function FleetMaintenanceSummary({ asOf, bases, api = maintenanceApi, pag
           <Typography id="fleet-maintenance-title" component="h2" variant="h5" sx={{ color: '#0b3217', fontWeight: 900 }}>Fleet maintenance</Typography>
           <Typography variant="body2" color="text.secondary">Compact due-state attention. Open an asset for evidence and full explanation.</Typography>
         </Box>
-        <Chip label={`${rows.length} loaded`} size="small" variant="outlined" sx={{ alignSelf: { xs: 'flex-start', md: 'center' } }} />
+        <Chip label={`${visibleRows.length} loaded`} size="small" variant="outlined" sx={{ alignSelf: { xs: 'flex-start', md: 'center' } }} />
       </Stack>
 
       <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: 'repeat(3, minmax(0, 1fr))' }, gap: 1.25, mb: 2 }}>
@@ -176,21 +187,21 @@ export function FleetMaintenanceSummary({ asOf, bases, api = maintenanceApi, pag
         </TextField>
       </Box>
 
-      {loading ? (
+      {visibleLoading ? (
         <Box role="status" aria-live="polite" sx={{ p: 2, display: 'flex', gap: 1.5, alignItems: 'center' }}><CircularProgress size={22} />Loading Fleet maintenance…</Box>
-      ) : error && rows.length === 0 ? (
-        <Alert severity="error" action={<Button color="inherit" onClick={() => setRetry((value) => value + 1)}>Try again</Button>}>{error}</Alert>
-      ) : rows.length === 0 ? (
+      ) : visibleError && visibleRows.length === 0 ? (
+        <Alert severity="error" action={<Button color="inherit" onClick={() => setRetry((value) => value + 1)}>Try again</Button>}>{visibleError}</Alert>
+      ) : visibleRows.length === 0 ? (
         <Alert severity="info">No assets match these maintenance filters.</Alert>
       ) : (
         <>
-          {error && <Alert severity="error" sx={{ mb: 1.5 }}>{error}</Alert>}
+          {visibleError && <Alert severity="error" sx={{ mb: 1.5 }}>{visibleError}</Alert>}
           <Stack component="ul" role="list" aria-label="Fleet maintenance results" spacing={1} sx={{ p: 0, m: 0 }}>
-            {rows.map((row) => <FleetRow key={row.registryId} row={row} />)}
+            {visibleRows.map((row) => <FleetRow key={row.registryId} row={row} />)}
           </Stack>
-          {page?.hasMore && page.nextCursor && (
-            <Button sx={{ mt: 1.5 }} variant="outlined" disabled={loadingMore} onClick={() => void loadMore()}>
-              {loadingMore ? 'Loading more…' : 'Load more assets'}
+          {visiblePage?.hasMore && visiblePage.nextCursor && (
+            <Button sx={{ mt: 1.5 }} variant="outlined" disabled={visibleLoadingMore} onClick={() => void loadMore()}>
+              {visibleLoadingMore ? 'Loading more…' : 'Load more assets'}
             </Button>
           )}
         </>

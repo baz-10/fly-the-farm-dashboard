@@ -177,4 +177,58 @@ describe('MaintenanceWorkspace', () => {
     await waitFor(() => expect(screen.queryByText('Pump calibration')).not.toBeInTheDocument());
     expect(screen.queryByRole('button', { name: /ground|serviceability|availability|mission ready/i })).not.toBeInTheDocument();
   });
+
+  test('never commits a resolved asset under a new asset and asOf scope before the next projection resolves', async () => {
+    const next = deferred<typeof t100DueState>();
+    const api = client();
+    api.resolveAssetRoute.mockImplementation((_source: string, sourceRecordId: string) => Promise.resolve(maintenanceFixtureRoutes[sourceRecordId]));
+    api.readDueState.mockImplementation((registryId: string) => registryId === FTF11_REGISTRY_ID
+      ? Promise.resolve(ftf11DueState)
+      : next.promise);
+    const commits: string[] = [];
+    const view = render(
+      <React.Profiler id="maintenance-scope" onRender={() => { commits.push(document.body.textContent || ''); }}>
+        <MaintenanceWorkspace assetSource="fleet-asset" sourceRecordId="source-ftf-11" asOf={MAINTENANCE_FIXTURE_AS_OF} routeApi={api} api={api} />
+      </React.Profiler>,
+    );
+    expect(await screen.findByText('GEN-003 500 h service')).toBeVisible();
+
+    commits.length = 0;
+    view.rerender(
+      <React.Profiler id="maintenance-scope" onRender={() => { commits.push(document.body.textContent || ''); }}>
+        <MaintenanceWorkspace assetSource="aircraft" sourceRecordId="source-t100-002" asOf="2026-08-21T01:31:00.000Z" routeApi={api} api={api} />
+      </React.Profiler>,
+    );
+
+    expect(commits.some((text) => text.includes('GEN-003 500 h service'))).toBe(false);
+    expect(screen.queryByText('GEN-003 500 h service')).not.toBeInTheDocument();
+    expect(screen.getByRole('status')).toHaveTextContent('Loading authoritative maintenance');
+    next.resolve(t100DueState);
+    expect(await screen.findByRole('button', { name: /Due soon · 1 requirement/ })).toBeVisible();
+  });
+
+  test('never commits resolved data under a new authenticated authority scope at the same route instant', async () => {
+    const next = deferred<typeof ftf11DueState>();
+    const api = client();
+    api.readDueState.mockResolvedValueOnce(ftf11DueState).mockImplementation(() => next.promise);
+    const commits: string[] = [];
+    const view = render(
+      <React.Profiler id="maintenance-session-scope" onRender={() => { commits.push(document.body.textContent || ''); }}>
+        <MaintenanceWorkspace authorityScopeKey="session-a" assetSource="fleet-asset" sourceRecordId="source-ftf-11" asOf={MAINTENANCE_FIXTURE_AS_OF} routeApi={api} api={api} />
+      </React.Profiler>,
+    );
+    expect(await screen.findByText('GEN-003 500 h service')).toBeVisible();
+
+    commits.length = 0;
+    view.rerender(
+      <React.Profiler id="maintenance-session-scope" onRender={() => { commits.push(document.body.textContent || ''); }}>
+        <MaintenanceWorkspace authorityScopeKey="session-b" assetSource="fleet-asset" sourceRecordId="source-ftf-11" asOf={MAINTENANCE_FIXTURE_AS_OF} routeApi={api} api={api} />
+      </React.Profiler>,
+    );
+
+    expect(commits.some((text) => text.includes('GEN-003 500 h service'))).toBe(false);
+    expect(screen.getByRole('status')).toHaveTextContent('Loading authoritative maintenance');
+    next.resolve(ftf11DueState);
+    expect(await screen.findByText('GEN-003 500 h service')).toBeVisible();
+  });
 });

@@ -69,7 +69,7 @@ function AuthoritativeAssetWorkspace({ source, id, section }: { source: AssetSou
           <Box><AttachedAssetsSummary /></Box>
         </Box>
       ) : section === 'maintenance' ? (
-        <MaintenanceWorkspace assetSource={source} sourceRecordId={id} asOf={workspaceAsOf} />
+        <MaintenanceWorkspace authorityScopeKey={asOfScope} assetSource={source} sourceRecordId={id} asOf={workspaceAsOf} />
       ) : section === 'components' ? (
         <Card sx={{ mt: 2 }}><CardContent><Typography variant="h5">Components</Typography><Typography color="text.secondary" sx={{ mt: 1 }}>Component tracking is optional. Systems and positions can be configured without assuming a fixed asset geometry.</Typography></CardContent></Card>
       ) : (section === 'parts-fluids' || section === 'service-kits') && source && id ? (

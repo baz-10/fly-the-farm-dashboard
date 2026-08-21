@@ -136,4 +136,92 @@ describe('FleetMaintenanceSummary', () => {
     stale.resolve(fleetMaintenancePageOne);
     await waitFor(() => expect(screen.queryByText('FTF-11')).not.toBeInTheDocument());
   });
+
+  test('never commits resolved rows under a new asOf scope before its page resolves', async () => {
+    const next = deferred<typeof fleetMaintenancePageTwo>();
+    const api = client();
+    api.readFleetDueSummary.mockImplementation((asOf) => asOf === MAINTENANCE_FIXTURE_AS_OF
+      ? Promise.resolve(fleetMaintenancePageOne)
+      : next.promise);
+    const commits: string[] = [];
+    const view = render(
+      <React.Profiler id="fleet-as-of-scope" onRender={() => { commits.push(document.body.textContent || ''); }}>
+        <FleetMaintenanceSummary asOf={MAINTENANCE_FIXTURE_AS_OF} bases={bases} api={api} pageSize={2} />
+      </React.Profiler>,
+    );
+    expect(await screen.findByText('FTF-11')).toBeVisible();
+
+    commits.length = 0;
+    view.rerender(
+      <React.Profiler id="fleet-as-of-scope" onRender={() => { commits.push(document.body.textContent || ''); }}>
+        <FleetMaintenanceSummary asOf="2026-08-21T02:30:00.000Z" bases={bases} api={api} pageSize={2} />
+      </React.Profiler>,
+    );
+
+    expect(commits.some((text) => text.includes('FTF-11'))).toBe(false);
+    expect(screen.queryByText('FTF-11')).not.toBeInTheDocument();
+    expect(screen.getByRole('status')).toHaveTextContent('Loading Fleet maintenance');
+    next.resolve(fleetMaintenancePageTwo);
+    expect(await screen.findByText('T100-002')).toBeVisible();
+  });
+
+  test('never commits resolved rows under a new authenticated authority scope at the same instant', async () => {
+    const next = deferred<typeof fleetMaintenancePageTwo>();
+    const api = client();
+    api.readFleetDueSummary.mockResolvedValueOnce(fleetMaintenancePageOne).mockImplementation(() => next.promise);
+    const commits: string[] = [];
+    const view = render(
+      <React.Profiler id="fleet-session-scope" onRender={() => { commits.push(document.body.textContent || ''); }}>
+        <FleetMaintenanceSummary authorityScopeKey="session-a" asOf={MAINTENANCE_FIXTURE_AS_OF} bases={bases} api={api} pageSize={2} />
+      </React.Profiler>,
+    );
+    expect(await screen.findByText('FTF-11')).toBeVisible();
+
+    commits.length = 0;
+    view.rerender(
+      <React.Profiler id="fleet-session-scope" onRender={() => { commits.push(document.body.textContent || ''); }}>
+        <FleetMaintenanceSummary authorityScopeKey="session-b" asOf={MAINTENANCE_FIXTURE_AS_OF} bases={bases} api={api} pageSize={2} />
+      </React.Profiler>,
+    );
+
+    expect(commits.some((text) => text.includes('FTF-11'))).toBe(false);
+    expect(screen.getByRole('status')).toHaveTextContent('Loading Fleet maintenance');
+    next.resolve(fleetMaintenancePageTwo);
+    expect(await screen.findByText('T100-002')).toBeVisible();
+  });
+
+  test('never commits resolved rows under a newly selected filter before its page resolves', async () => {
+    const filtered = deferred<typeof fleetMaintenancePageTwo>();
+    const api = client();
+    api.readFleetDueSummary.mockImplementation((_asOf, filters) => filters.state === 'DUE_SOON'
+      ? filtered.promise
+      : Promise.resolve(fleetMaintenancePageOne));
+    const commits: Array<{ filter: string; text: string }> = [];
+    const user = userEvent.setup();
+    render(
+      <React.Profiler id="fleet-filter-scope" onRender={() => {
+        const label = Array.from(document.querySelectorAll('label'))
+          .find((candidate) => candidate.textContent === 'Maintenance status');
+        commits.push({
+          filter: label instanceof HTMLLabelElement
+            ? document.getElementById(label.htmlFor)?.textContent || ''
+            : '',
+          text: document.body.textContent || '',
+        });
+      }}>
+        <FleetMaintenanceSummary asOf={MAINTENANCE_FIXTURE_AS_OF} bases={bases} api={api} pageSize={2} />
+      </React.Profiler>,
+    );
+    expect(await screen.findByText('FTF-11')).toBeVisible();
+    await user.click(screen.getByLabelText('Maintenance status'));
+
+    commits.length = 0;
+    await user.click(screen.getByRole('option', { name: 'Due soon' }));
+
+    expect(commits.some(({ filter, text }) => filter.includes('Due soon') && text.includes('FTF-11'))).toBe(false);
+    expect(screen.queryByText('FTF-11')).not.toBeInTheDocument();
+    expect(screen.getByRole('status')).toHaveTextContent('Loading Fleet maintenance');
+    filtered.resolve(fleetMaintenancePageTwo);
+    expect(await screen.findByText('T100-002')).toBeVisible();
+  });
 });
