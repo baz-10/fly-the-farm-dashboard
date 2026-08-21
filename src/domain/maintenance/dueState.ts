@@ -258,6 +258,17 @@ function projectedControllingThreshold(thresholds: readonly MaintenanceThreshold
   })[0];
 }
 
+function validateMeterUnit(meterType: MaintenanceMeterType, unitCode: string, path: string): void {
+  const unit = unitCode.toLowerCase();
+  const compatible = (meterType === 'odometer' && ['km', 'mi'].includes(unit))
+    || (['engine_hours', 'flight_hours'].includes(meterType) && ['h', 'hr', 'hours'].includes(unit))
+    || (meterType === 'cycles' && ['cycle', 'cycles'].includes(unit))
+    || (meterType === 'missions' && ['mission', 'missions'].includes(unit))
+    || (meterType === 'area' && ['ha', 'acre', 'acres', 'm2', 'km2'].includes(unit))
+    || meterType === 'custom';
+  if (!compatible) throw new MaintenanceDueContractError(`${path}.unitCode`, 'unit is not compatible with the projected meter type');
+}
+
 function parseThreshold(value: unknown, path: string): MaintenanceThresholdResult {
   const source = record(value, path);
   allowKeys(source, THRESHOLD_KEYS, path);
@@ -282,6 +293,13 @@ function parseThreshold(value: unknown, path: string): MaintenanceThresholdResul
     baselineEvidence: nullableEvidence(source.baselineEvidence, `${path}.baselineEvidence`),
   };
 
+  if (parsed.intervalValue !== null && parsed.intervalValue <= 0) {
+    throw new MaintenanceDueContractError(`${path}.intervalValue`, 'projected intervals must be positive');
+  }
+  if (parsed.dueSoonValue !== null && parsed.dueSoonValue < 0) {
+    throw new MaintenanceDueContractError(`${path}.dueSoonValue`, 'projected warning windows must be nonnegative');
+  }
+
   const meterEvidenceMissing = parsed.thresholdType === 'METER' && (parsed.baselineValue === null || parsed.currentValue === null);
   const calendarEvidenceMissing = parsed.thresholdType === 'CALENDAR' && parsed.baselineDate === null;
   const oneTimeEvidenceMissing = parsed.thresholdType === 'ONE_TIME' && parsed.baselineDate === null;
@@ -304,15 +322,29 @@ function parseThreshold(value: unknown, path: string): MaintenanceThresholdResul
     if (parsed.unitCode === null) throw new MaintenanceDueContractError(`${path}.unitCode`, 'meter thresholds require a unit');
     if (parsed.intervalValue === null) throw new MaintenanceDueContractError(`${path}.intervalValue`, 'meter thresholds require an interval');
     if (parsed.baselineDate !== null) throw new MaintenanceDueContractError(`${path}.baselineDate`, 'meter thresholds use numeric baselines');
+    if (parsed.dueDate !== null) throw new MaintenanceDueContractError(`${path}.dueDate`, 'meter thresholds cannot carry calendar due evidence');
+    if (parsed.dueSoonValue !== null && parsed.dueSoonValue >= parsed.intervalValue) {
+      throw new MaintenanceDueContractError(`${path}.dueSoonValue`, 'meter warning windows must be smaller than the interval');
+    }
+    validateMeterUnit(parsed.meterType, parsed.unitCode, path);
   } else if (parsed.thresholdType === 'CALENDAR') {
     if (parsed.meterType !== null) throw new MaintenanceDueContractError(`${path}.meterType`, 'calendar thresholds do not use a meter');
     if (!['DAY', 'WEEK', 'MONTH', 'YEAR'].includes(parsed.unitCode ?? '')) throw new MaintenanceDueContractError(`${path}.unitCode`, 'calendar thresholds require a governed interval unit');
     if (parsed.intervalValue === null) throw new MaintenanceDueContractError(`${path}.intervalValue`, 'calendar thresholds require an interval');
-    if (parsed.baselineValue !== null || parsed.currentValue !== null || parsed.dueValue !== null) throw new MaintenanceDueContractError(`${path}.baselineValue`, 'calendar thresholds use date evidence');
+    if (parsed.baselineValue !== null) throw new MaintenanceDueContractError(`${path}.baselineValue`, 'calendar thresholds use date baselines');
+    if (parsed.currentValue !== null) throw new MaintenanceDueContractError(`${path}.currentValue`, 'calendar thresholds cannot carry current meter evidence');
+    if (parsed.currentRecordedAt !== null) throw new MaintenanceDueContractError(`${path}.currentRecordedAt`, 'calendar thresholds cannot carry current meter evidence');
+    if (parsed.currentAuthoritySource !== null) throw new MaintenanceDueContractError(`${path}.currentAuthoritySource`, 'calendar thresholds cannot carry current meter evidence');
+    if (parsed.dueValue !== null) throw new MaintenanceDueContractError(`${path}.dueValue`, 'calendar thresholds cannot carry meter due evidence');
   } else if (parsed.thresholdType === 'ONE_TIME') {
     if (parsed.meterType !== null) throw new MaintenanceDueContractError(`${path}.meterType`, 'one-time thresholds do not use a meter');
     if (parsed.unitCode !== null) throw new MaintenanceDueContractError(`${path}.unitCode`, 'one-time thresholds do not have a recurrence unit');
     if (parsed.intervalValue !== null || parsed.dueSoonValue !== null) throw new MaintenanceDueContractError(`${path}.intervalValue`, 'one-time thresholds do not recur');
+    if (parsed.baselineValue !== null) throw new MaintenanceDueContractError(`${path}.baselineValue`, 'one-time thresholds use date baselines');
+    if (parsed.currentValue !== null) throw new MaintenanceDueContractError(`${path}.currentValue`, 'one-time thresholds cannot carry current meter evidence');
+    if (parsed.currentRecordedAt !== null) throw new MaintenanceDueContractError(`${path}.currentRecordedAt`, 'one-time thresholds cannot carry current meter evidence');
+    if (parsed.currentAuthoritySource !== null) throw new MaintenanceDueContractError(`${path}.currentAuthoritySource`, 'one-time thresholds cannot carry current meter evidence');
+    if (parsed.dueValue !== null) throw new MaintenanceDueContractError(`${path}.dueValue`, 'one-time thresholds cannot carry meter due evidence');
   } else if (parsed.thresholdType === 'CONDITION') {
     if (parsed.meterType !== null || parsed.unitCode !== null || parsed.intervalValue !== null || parsed.dueSoonValue !== null) {
       throw new MaintenanceDueContractError(`${path}.meterType`, 'condition thresholds require later authoritative condition evidence');

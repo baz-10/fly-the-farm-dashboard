@@ -19,6 +19,8 @@ A second RED cycle was observed after comparing presentation evidence with the e
 
 Review fix round 1 added malicious partial and contradictory projections before changing production code. RED reproduced six acceptance gaps: meter baseline values without baseline authority/evidence, complete meter evidence without due or remaining values, calendar baseline evidence without due date/remaining days, a `CURRENT` requirement containing an `OVERDUE` threshold, and a controller that contradicted the SQL order. GREEN now rejects those payloads while retaining the valid SQL case where `INSUFFICIENT_DATA` controls aggregate requirement state but a different threshold with known remaining evidence controls the threshold ID.
 
+Review fix round 2 added complete malicious cross-type tuples and invalid domains before production changes. RED reproduced eight remaining gaps: meter thresholds carrying calendar due dates, one-time thresholds carrying current-meter or numeric due evidence, zero/negative intervals, negative or interval-sized meter warning windows, and incompatible meter units. The CALENDAR malicious meter tuple was already rejected and is now retained as explicit regression coverage. GREEN rejects every SQL-impossible tuple without calculating maintenance state.
+
 ## Implemented contract
 
 - `MaintenanceDueResult` and exact nested projection types for requirements, thresholds, baseline/current/due evidence, Service Kit version links, and attached assets.
@@ -33,6 +35,7 @@ Review fix round 1 added malicious partial and contradictory projections before 
 - Controlling thresholds are resolved by the exact server-returned ID. Presentation helpers never re-run the SQL threshold-selection algorithm.
 - Runtime validation checks that the controller matches the SQL projection's `remaining ASC NULLS LAST, sequenceNumber` ordering and that requirement state matches its `OVERDUE`, `DUE`, `INSUFFICIENT_DATA`, `DUE_SOON`, `CURRENT` precedence. This validates returned metadata only; it does not calculate due state from dates or meters.
 - Baseline values require baseline type and evidence. Complete meter/calendar evidence requires the corresponding projected due and remaining fields; incomplete evidence cannot carry those fields or claim a sufficient state.
+- Threshold shapes reject calendar fields on meter rows and numeric/current-meter fields on calendar or one-time rows. Present intervals are positive, warning windows are nonnegative, meter warning windows remain smaller than their interval, and governed meter types retain SQL-compatible units.
 - Calendar and one-time remaining/warning values are explained as days while their recurrence interval retains its stored unit.
 - Attached child projections must match their registry identity and the parent `asOf`; summaries remain separate and do not change parent requirement state.
 - Requirement ranking is a non-mutating presentation sort only.
@@ -44,7 +47,7 @@ Focused Task 2 suite:
 ```text
 PASS src/domain/maintenance/dueState.test.ts
 Test Suites: 1 passed, 1 total
-Tests: 43 passed, 43 total
+Tests: 52 passed, 52 total
 ```
 
 Focused SQL-adjacent gate:
@@ -54,7 +57,7 @@ PASS src/__tests__/maintenanceRequirementsPglite.test.js
 PASS src/domain/maintenance/dueState.test.ts
 PASS src/__tests__/maintenanceRequirementsMigration.test.js
 Test Suites: 3 passed, 3 total
-Tests: 49 passed, 49 total
+Tests: 58 passed, 58 total
 ```
 
 Task-file TypeScript compilation passed with the repository's ES5 target constraints:

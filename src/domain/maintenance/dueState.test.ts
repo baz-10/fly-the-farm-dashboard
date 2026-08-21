@@ -269,6 +269,47 @@ describe('authoritative maintenance due-state contract', () => {
     }))).toThrow(message);
   });
 
+  test.each([
+    [threshold({ dueDate: '2026-10-12' }), 'DUE_SOON', /dueDate/i],
+    [threshold({
+      thresholdType: 'ONE_TIME', meterType: null, unitCode: null, intervalValue: null, dueSoonValue: null,
+      baselineType: 'ONE_TIME', baselineValue: null, baselineDate: '2026-10-02',
+      currentValue: 10, currentRecordedAt: '2026-08-21T01:30:00.000Z', currentAuthoritySource: 'AUTHORITATIVE_METER',
+      dueValue: 20, dueDate: '2026-10-02', remaining: 42, state: 'CURRENT',
+      baselineEvidence: { source: 'approved one-time directive' },
+    }), 'CURRENT', /currentValue/i],
+    [threshold({
+      thresholdType: 'ONE_TIME', meterType: null, unitCode: null, intervalValue: null, dueSoonValue: null,
+      baselineType: 'ONE_TIME', baselineValue: null, baselineDate: '2026-10-02',
+      currentValue: null, currentRecordedAt: null, currentAuthoritySource: null,
+      dueValue: 20, dueDate: '2026-10-02', remaining: 42, state: 'CURRENT',
+      baselineEvidence: { source: 'approved one-time directive' },
+    }), 'CURRENT', /dueValue/i],
+    [threshold({
+      thresholdType: 'CALENDAR', meterType: 'odometer', unitCode: 'YEAR', intervalValue: 1,
+      dueSoonValue: 30, baselineType: 'COMMISSIONING', baselineValue: null, baselineDate: '2024-02-29',
+      currentValue: 10, currentRecordedAt: '2026-08-21T01:30:00.000Z', currentAuthoritySource: 'AUTHORITATIVE_METER',
+      dueValue: 20, dueDate: '2027-02-28', remaining: 191, state: 'CURRENT',
+      baselineEvidence: { source: 'commissioning certificate' },
+    }), 'CURRENT', /meterType/i],
+  ])('rejects SQL-impossible cross-type threshold fields', (impossibleThreshold, requirementState, message) => {
+    expect(() => normalizeMaintenanceDueResult(projection({
+      requirements: [requirement({ state: requirementState, thresholds: [impossibleThreshold] })],
+    }))).toThrow(message);
+  });
+
+  test.each([
+    [threshold({ intervalValue: 0 }), /intervalValue/i],
+    [threshold({ intervalValue: -1 }), /intervalValue/i],
+    [threshold({ dueSoonValue: -0.1 }), /dueSoonValue/i],
+    [threshold({ dueSoonValue: 10000 }), /dueSoonValue/i],
+    [threshold({ meterType: 'flight_hours', unitCode: 'km' }), /unitCode/i],
+  ])('rejects SQL-impossible numeric threshold domains', (impossibleThreshold, message) => {
+    expect(() => normalizeMaintenanceDueResult(projection({
+      requirements: [requirement({ thresholds: [impossibleThreshold] })],
+    }))).toThrow(message);
+  });
+
   test('rejects a CURRENT requirement that contains an OVERDUE threshold', () => {
     expect(() => normalizeMaintenanceDueResult(projection({
       requirements: [requirement({
