@@ -19,6 +19,31 @@ const validateIdentity = (script, payload, expectedReleaseSha) => spawnSync(
 );
 
 describe('GitHub-managed Production Beta release governance', () => {
+  test('runs Fleet backfill assessment as a mutually exclusive SELECT-only protected diagnostic', () => {
+    const definition = releaseWorkflow();
+    const diagnostic = definition.jobs['fleet-backfill-assessment'];
+    const source = JSON.stringify(diagnostic);
+
+    expect(definition.on.workflow_dispatch.inputs.fleet_backfill_assessment_only).toEqual({
+      description: 'Assess current Work Pack Fleet backfill sources without mutation',
+      required: false,
+      default: false,
+      type: 'boolean',
+    });
+    expect(diagnostic.environment).toBe('production-beta-deployment');
+    expect(diagnostic.if).toContain('inputs.fleet_backfill_assessment_only == true');
+    expect(source).toContain('scripts/fleetBackfillAssessment.sql');
+    expect(source).toContain('default_transaction_read_only=on');
+    expect(source).toContain('SUPABASE_DB_PASSWORD');
+    expect(source).not.toMatch(/SUPABASE_ACCESS_TOKEN|VERCEL_TOKEN|SUPABASE_SERVICE_ROLE_KEY/);
+    expect(source).not.toMatch(/db push|migration list|vercel deploy|alias set|promote|workflow dispatch|ftf_backfill_fleet_assets_from_work_pack/i);
+    expect(read('scripts/fleetBackfillAssessment.sql')).toMatch(/^\s*(?:--[^\n]*\n\s*)*with\b/i);
+    expect(read('scripts/fleetBackfillAssessment.sql')).not.toMatch(/\b(insert|update|delete|merge|truncate|alter|create|drop|grant|revoke|comment|copy|call|do)\b/i);
+    for (const [jobName, job] of Object.entries(definition.jobs)) {
+      if (['mode-guard', 'fleet-backfill-assessment'].includes(jobName)) continue;
+      if (job.if) expect(job.if).toContain('inputs.fleet_backfill_assessment_only != true');
+    }
+  });
   test('reconciles migration definitions through a mutually exclusive catalogue-only diagnostic', () => {
     const definition = releaseWorkflow();
     const diagnostic = definition.jobs['migration-definition-reconciliation'];
@@ -152,7 +177,7 @@ describe('GitHub-managed Production Beta release governance', () => {
     expect(diagnostic.steps[0].run).toContain("printf 'MATCH\\n'");
     expect(diagnostic.steps[0].run).toContain("printf 'MISMATCH\\n'");
     expect(diagnostic.steps[0].run).not.toMatch(/sha(?:256)?|digest|length|set -x|migration\s+list|db\s+push|vercel\s+deploy|alias\s+set|promote/i);
-    expect(definition.jobs.validate.if).toBe('inputs.secret_propagation_only != true && inputs.connectivity_diagnostic_only != true && inputs.migration_definition_reconciliation_only != true');
+    expect(definition.jobs.validate.if).toBe('inputs.secret_propagation_only != true && inputs.connectivity_diagnostic_only != true && inputs.migration_definition_reconciliation_only != true && inputs.fleet_backfill_assessment_only != true');
     expect(definition.jobs.release.if).toContain('inputs.secret_propagation_only != true');
     expect(definition.jobs.rehearsal.if).toContain('inputs.secret_propagation_only != true');
     expect(definition.jobs.acceptance.if).toContain('inputs.secret_propagation_only != true');
@@ -232,12 +257,12 @@ describe('GitHub-managed Production Beta release governance', () => {
       default: false,
       type: 'boolean',
     });
-    expect(definition.jobs.release.if).toBe("inputs.rehearsal_only != true && inputs.secret_propagation_only != true && inputs.connectivity_diagnostic_only != true && inputs.migration_definition_reconciliation_only != true && inputs.exact_sha_redeploy_only != true");
-    expect(definition.jobs.acceptance.if).toBe("inputs.rehearsal_only != true && inputs.secret_propagation_only != true && inputs.connectivity_diagnostic_only != true && inputs.migration_definition_reconciliation_only != true && inputs.exact_sha_redeploy_only != true");
+    expect(definition.jobs.release.if).toBe("inputs.rehearsal_only != true && inputs.secret_propagation_only != true && inputs.connectivity_diagnostic_only != true && inputs.migration_definition_reconciliation_only != true && inputs.exact_sha_redeploy_only != true && inputs.fleet_backfill_assessment_only != true");
+    expect(definition.jobs.acceptance.if).toBe("inputs.rehearsal_only != true && inputs.secret_propagation_only != true && inputs.connectivity_diagnostic_only != true && inputs.migration_definition_reconciliation_only != true && inputs.exact_sha_redeploy_only != true && inputs.fleet_backfill_assessment_only != true");
     expect(definition.jobs['release-record'].if)
       .toContain("inputs.rehearsal_only != true");
     expect(rehearsal.needs).toBe('validate');
-    expect(rehearsal.if).toBe("inputs.rehearsal_only == true && inputs.secret_propagation_only != true && inputs.connectivity_diagnostic_only != true && inputs.migration_definition_reconciliation_only != true && inputs.exact_sha_redeploy_only != true");
+    expect(rehearsal.if).toBe("inputs.rehearsal_only == true && inputs.secret_propagation_only != true && inputs.connectivity_diagnostic_only != true && inputs.migration_definition_reconciliation_only != true && inputs.exact_sha_redeploy_only != true && inputs.fleet_backfill_assessment_only != true");
     expect(rehearsal.environment).toBe('production-beta-deployment');
 
     const names = rehearsal.steps.map(({ name }) => name);
@@ -448,7 +473,7 @@ describe('GitHub-managed Production Beta release governance', () => {
       'deployment-metadata-outcome', 'runtime-verification-outcome', 'canonical-alias-outcome',
     ]) expect(release.outputs[output]).toContain('.outcome');
     expect(record.needs).toEqual(['release', 'acceptance']);
-    expect(record.if).toBe("inputs.rehearsal_only != true && inputs.secret_propagation_only != true && inputs.connectivity_diagnostic_only != true && inputs.migration_definition_reconciliation_only != true && inputs.exact_sha_redeploy_only != true && always() && needs.release.outputs.migration-boundary-crossed == 'true'");
+    expect(record.if).toBe("inputs.rehearsal_only != true && inputs.secret_propagation_only != true && inputs.connectivity_diagnostic_only != true && inputs.migration_definition_reconciliation_only != true && inputs.exact_sha_redeploy_only != true && inputs.fleet_backfill_assessment_only != true && always() && needs.release.outputs.migration-boundary-crossed == 'true'");
     expect(step(record, 'Check out immutable release')).toBeUndefined();
 
     const writeRecord = step(record, 'Write canonical release record');
