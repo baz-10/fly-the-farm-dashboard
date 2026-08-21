@@ -7,6 +7,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { AssetContextBar } from '../components/maintenance/AssetContextBar';
 import { ASSET_WORKSPACE_SECTIONS, AssetWorkspaceNavigation } from '../components/maintenance/AssetWorkspaceNavigation';
 import { AttachedAssetsSummary } from '../components/maintenance/AttachedAssetsSummary';
+import { MaintenanceWorkspace } from '../components/maintenance/MaintenanceWorkspace';
 import { PartsFluidsWorkspace } from '../components/maintenance/PartsFluidsWorkspace';
 import { technicalCatalogueApi } from '../services/technicalCatalogueApi';
 import type { AssetSource } from '../services/technicalCatalogueApi';
@@ -27,11 +28,11 @@ function AuthoritativeAssetWorkspace({ source, id, section }: { source: AssetSou
   const { user } = useAuth();
   const validSection = ASSET_WORKSPACE_SECTIONS.some(([key]) => key === section);
   const asOfScope = `${source}:${id}:${user?.id || 'anonymous'}:${user?.tenantId || ''}:${user?.delegatedSupport?.organisationId || ''}:${user?.delegatedSupport?.sessionId || ''}`;
-  const technicalAsOfRef = React.useRef<{ scope: string; value: string } | null>(null);
-  if (!technicalAsOfRef.current || technicalAsOfRef.current.scope !== asOfScope) {
-    technicalAsOfRef.current = { scope: asOfScope, value: new Date().toISOString() };
+  const workspaceAsOfRef = React.useRef<{ scope: string; value: string } | null>(null);
+  if (!workspaceAsOfRef.current || workspaceAsOfRef.current.scope !== asOfScope) {
+    workspaceAsOfRef.current = { scope: asOfScope, value: new Date().toISOString() };
   }
-  const technicalAsOf = technicalAsOfRef.current.value;
+  const workspaceAsOf = workspaceAsOfRef.current.value;
   if (!validSection) return <Navigate to={`/assets/${source}/${id}/overview`} replace />;
 
   const loading = fleet.loading || aircraft.isLoading;
@@ -67,13 +68,15 @@ function AuthoritativeAssetWorkspace({ source, id, section }: { source: AssetSou
           </Box>
           <Box><AttachedAssetsSummary /></Box>
         </Box>
+      ) : section === 'maintenance' ? (
+        <MaintenanceWorkspace assetSource={source} sourceRecordId={id} asOf={workspaceAsOf} />
       ) : section === 'components' ? (
         <Card sx={{ mt: 2 }}><CardContent><Typography variant="h5">Components</Typography><Typography color="text.secondary" sx={{ mt: 1 }}>Component tracking is optional. Systems and positions can be configured without assuming a fixed asset geometry.</Typography></CardContent></Card>
       ) : (section === 'parts-fluids' || section === 'service-kits') && source && id ? (
         <PartsFluidsWorkspace
           assetSource={source}
           sourceRecordId={id}
-          asOf={technicalAsOf}
+          asOf={workspaceAsOf}
           api={technicalCatalogueApi}
           view={section}
         />

@@ -17,6 +17,7 @@ jest.mock('../contexts/FleetAssetContext',()=>({useFleetAssets:()=>mockUseFleetA
 jest.mock('../contexts/AircraftContext',()=>({useAircraft:()=>mockUseAircraft()}));
 jest.mock('../contexts/AuthContext',()=>({useAuth:()=>({user:mockUser})}));
 jest.mock('../components/maintenance/PartsFluidsWorkspace',()=>({PartsFluidsWorkspace:({assetSource,sourceRecordId,view,asOf}:{assetSource:string;sourceRecordId:string;view:string;asOf:string})=><div data-testid="technical-workspace" data-as-of={asOf}>{assetSource}:{sourceRecordId}:{view}</div>}));
+jest.mock('../components/maintenance/MaintenanceWorkspace',()=>({MaintenanceWorkspace:({assetSource,sourceRecordId,asOf}:{assetSource:string;sourceRecordId:string;asOf:string})=><div data-testid="maintenance-workspace" data-as-of={asOf}>{assetSource}:{sourceRecordId}:maintenance</div>}));
 
 describe('Asset Workspace composition',()=>{
  beforeEach(()=>{
@@ -33,6 +34,7 @@ describe('Asset Workspace composition',()=>{
  test('attached asset links open the child workspace',()=>{render(<AttachedAssetsSummary assets={[{id:'child',source:'equipment-kit',identity:'Spray kit 1',position:'Rear mount'}]}/>);screen.getByRole('button',{name:/Spray kit 1/}).click();expect(mockNavigate).toHaveBeenCalledWith('/assets/equipment-kit/child/overview');});
  test('empty attachments remain an honest valid state',()=>{render(<AttachedAssetsSummary/>);expect(screen.getByText(/No maintainable assets/)).toBeVisible();});
  test.each([['parts-fluids','parts-fluids'],['service-kits','service-kits']])('connects the %s route through authoritative source identity resolution',section=>{mockParams={source:'fleet-asset',id:'source-ftf-11',section};render(<AssetWorkspace/>);expect(screen.getByTestId('technical-workspace')).toHaveTextContent(`fleet-asset:source-ftf-11:${section}`);});
+ test('connects Maintenance to the same authoritative asset route and scoped instant',()=>{mockParams={source:'fleet-asset',id:'source-ftf-11',section:'maintenance'};render(<AssetWorkspace/>);expect(screen.getByTestId('maintenance-workspace')).toHaveTextContent('fleet-asset:source-ftf-11:maintenance');expect(screen.getByTestId('maintenance-workspace')).toHaveAttribute('data-as-of',expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/));});
  test('keeps one catalogue instant across rerenders and Parts/Service Kit routes, then resets for asset or organisation scope',()=>{
   jest.useFakeTimers();
   try{
@@ -46,6 +48,9 @@ describe('Asset Workspace composition',()=>{
    mockParams={...mockParams,section:'service-kits'};
    view.rerender(<AssetWorkspace/>);
    expect(screen.getByTestId('technical-workspace')).toHaveAttribute('data-as-of','2026-08-20T01:00:00.000Z');
+   mockParams={...mockParams,section:'maintenance'};
+   view.rerender(<AssetWorkspace/>);
+   expect(screen.getByTestId('maintenance-workspace')).toHaveAttribute('data-as-of','2026-08-20T01:00:00.000Z');
    jest.setSystemTime(new Date('2026-08-20T03:00:00.000Z'));
    mockParams={source:'fleet-asset',id:'source-ftf-12',section:'parts-fluids'};
    view.rerender(<AssetWorkspace/>);

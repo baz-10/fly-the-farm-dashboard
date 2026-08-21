@@ -10,6 +10,7 @@ import EditIcon from '@mui/icons-material/Edit';
 import LocalShippingIcon from '@mui/icons-material/LocalShipping';
 import Inventory2Icon from '@mui/icons-material/Inventory2';
 import FleetAssetForm from '../components/FleetAssetForm';
+import { FleetMaintenanceSummary } from '../components/maintenance/FleetMaintenanceSummary';
 import WorkPackTemplateForm from '../components/WorkPackTemplateForm';
 import { useAircraft } from '../contexts/AircraftContext';
 import { useAuth } from '../contexts/AuthContext';
@@ -35,11 +36,17 @@ export default function FleetWorkPacks() {
   const currentAssets = React.useMemo(() => assets.map(fleetAssetToDeploymentAsset), [assets]);
   const activeTemplates = templates.filter((template) => template.status !== 'archived');
   const permissions = new Set(user?.permissions || []);
+  const maintenanceScope = `${user?.id || 'anonymous'}:${user?.tenantId || ''}:${user?.delegatedSupport?.organisationId || ''}:${user?.delegatedSupport?.sessionId || ''}`;
+  const maintenanceAsOfRef = React.useRef<{ scope: string; value: string } | null>(null);
+  if (!maintenanceAsOfRef.current || maintenanceAsOfRef.current.scope !== maintenanceScope) {
+    maintenanceAsOfRef.current = { scope: maintenanceScope, value: new Date().toISOString() };
+  }
   const has = (action: string) => permissions.has('*') || permissions.has('fleet_assets.*') || permissions.has(`fleet_assets.${action}`);
   const canCreate = has('create');
   const canUpdate = has('update');
   const canArchive = has('archive');
   const canManageWorkPacks = user?.role === 'admin';
+  const canReadMaintenance = permissions.has('*') || permissions.has('maintenance_requirements.*') || permissions.has('maintenance_requirements.read');
 
   const saveAsset = async (input: FleetAssetCreateInput) => {
     if (editingAsset) await updateAsset(editingAsset, input); else await createAsset(input);
@@ -86,6 +93,12 @@ export default function FleetWorkPacks() {
                 <Stack direction="row" spacing={3} mt={2}><Typography variant="body2"><b>Maker:</b> {asset.manufacturer || '—'} {asset.model || ''}</Typography><Typography variant="body2"><b>Version:</b> {asset.rowVersion}</Typography></Stack>
               </Paper>)}
             </Box>}
+          {canReadMaintenance && (
+            <FleetMaintenanceSummary
+              asOf={maintenanceAsOfRef.current.value}
+              bases={operatingLocations.map((base) => ({ id: base.id, name: base.name }))}
+            />
+          )}
         </> : <>
           <Stack direction="row" justifyContent="space-between" mb={2.5}><Box><Typography variant="h5" fontWeight={850}>Reusable Work Packs</Typography><Typography variant="body2" color="text.secondary">Current templates reference canonical Fleet IDs; historical snapshots remain unchanged.</Typography></Box>
             {canManageWorkPacks && <Button startIcon={<AddIcon />} variant="contained" onClick={() => { setEditingTemplate(undefined); setTemplateDialog(true); }}>New Work Pack</Button>}</Stack>
