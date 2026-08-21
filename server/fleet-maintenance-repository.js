@@ -14,12 +14,34 @@ const SOURCES = Object.freeze({
   'fleet-asset': { table: 'fleet_assets', registryKey: 'fleet_asset_id', select: 'id,asset_identifier,asset_type,operating_location_id', identity: (row) => row.asset_identifier },
 });
 
-function scopedSourcePath(context, source, baseIds) {
+const FLEET_DUE_RPC_CONCURRENCY = 4;
+
+function scopedSourcePath(context, source, baseIds, sourceIds) {
   const config = SOURCES[source];
   const location = baseIds.length === 1
     ? `operating_location_id=eq.${encodeURIComponent(baseIds[0])}`
     : `operating_location_id=in.(${baseIds.map(encodeURIComponent).join(',')})`;
-  return `rest/v1/${config.table}?organisation_id=eq.${encodeURIComponent(context.organisation.id)}&archived_at=is.null&${location}&select=${config.select}&order=id.asc`;
+  const identifiers = sourceIds.map(encodeURIComponent).join(',');
+  return `rest/v1/${config.table}?organisation_id=eq.${encodeURIComponent(context.organisation.id)}&archived_at=is.null&${location}&id=in.(${identifiers})&select=${config.select}&order=id.asc&limit=${sourceIds.length + 1}`;
+}
+
+function registryPagePath(context, page, pageSize) {
+  const offset = (page - 1) * pageSize;
+  return `rest/v1/maintainable_asset_registry?organisation_id=eq.${encodeURIComponent(context.organisation.id)}&tracking_state=eq.ACTIVE&select=id,aircraft_id,equipment_kit_id,fleet_asset_id&order=id.asc&offset=${offset}&limit=${pageSize + 1}`;
+}
+
+async function mapWithConcurrency(values, concurrency, mapper) {
+  const results = new Array(values.length);
+  let nextIndex = 0;
+  async function worker() {
+    while (nextIndex < values.length) {
+      const index = nextIndex;
+      nextIndex += 1;
+      results[index] = await mapper(values[index], index);
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(concurrency, values.length) }, worker));
+  return results;
 }
 
 class FleetMaintenanceRepository {
@@ -42,41 +64,57 @@ class FleetMaintenanceRepository {
   async readFleetDueSummary(context, asOf, filters = {}) {
     const assignedBases = Array.isArray(context.operatingLocationIds) ? context.operatingLocationIds.filter(Boolean) : [];
     const baseIds = filters.baseId ? [filters.baseId] : assignedBases;
-    if (baseIds.length === 0) return [];
+    if (baseIds.length === 0) return { candidates: [], hasMore: false, scannedCount: 0 };
+    const page = filters.page;
+    const pageSize = filters.pageSize;
     const sourceNames = filters.assetType ? [filters.assetType] : Object.keys(SOURCES);
-    const sourceGroups = await Promise.all(sourceNames.map(async (source) => ({
-      source,
-      records: await supabaseRequest(scopedSourcePath(context, source, baseIds), {
-        publicMessage: 'Scoped Fleet assets could not be loaded.',
-      }),
-    })));
-    const candidates = [];
-    for (const group of sourceGroups) {
-      const config = SOURCES[group.source];
-      const records = Array.isArray(group.records) ? group.records : [];
-      if (records.length === 0) continue;
-      const sourceIds = records.map((record) => record.id).filter(Boolean);
-      const registryRows = await supabaseRequest(
-        `rest/v1/maintainable_asset_registry?organisation_id=eq.${encodeURIComponent(context.organisation.id)}&tracking_state=eq.ACTIVE&${config.registryKey}=in.(${sourceIds.map(encodeURIComponent).join(',')})&select=id,aircraft_id,equipment_kit_id,fleet_asset_id&order=id.asc`,
-        { publicMessage: 'Scoped maintainable assets could not be loaded.' }
-      );
-      for (const registry of Array.isArray(registryRows) ? registryRows : []) {
-        const sourceRecord = records.find((record) => record.id === registry[config.registryKey]);
-        if (!sourceRecord) continue;
-        candidates.push({
-          registryId: registry.id,
-          source: group.source,
-          sourceRecordId: sourceRecord.id,
-          identity: String(config.identity(sourceRecord) || sourceRecord.id),
-          operatingLocationId: sourceRecord.operating_location_id,
-        });
-      }
+    const rawRegistryRows = await supabaseRequest(registryPagePath(context, page, pageSize), {
+      publicMessage: 'Scoped maintainable assets could not be loaded.',
+    });
+    if (!Array.isArray(rawRegistryRows) || rawRegistryRows.length > pageSize + 1) {
+      throw new Error('Scoped maintainable asset page exceeded its requested bound.');
     }
-    const projected = await Promise.all(candidates.map(async (candidate) => ({
+    const hasMore = rawRegistryRows.length > pageSize;
+    const registryRows = rawRegistryRows.slice(0, pageSize);
+    const sourceGroups = await Promise.all(sourceNames.map(async (source) => {
+      const config = SOURCES[source];
+      const sourceIds = registryRows.map((row) => row[config.registryKey]).filter(Boolean);
+      if (sourceIds.length === 0) return { source, records: [] };
+      const records = await supabaseRequest(scopedSourcePath(context, source, baseIds, sourceIds), {
+        publicMessage: 'Scoped Fleet assets could not be loaded.',
+      });
+      if (!Array.isArray(records) || records.length > sourceIds.length) {
+        throw new Error('Scoped Fleet source page exceeded its requested bound.');
+      }
+      return { source, records };
+    }));
+    const recordsBySource = new Map(sourceGroups.map((group) => [
+      group.source,
+      new Map(group.records.map((record) => [record.id, record])),
+    ]));
+    const candidates = registryRows.flatMap((registry) => {
+      const source = sourceNames.find((name) => registry[SOURCES[name].registryKey]);
+      if (!source) return [];
+      const config = SOURCES[source];
+      const sourceRecord = recordsBySource.get(source)?.get(registry[config.registryKey]);
+      if (!sourceRecord) return [];
+      return [{
+        registryId: registry.id,
+        source,
+        sourceRecordId: sourceRecord.id,
+        identity: String(config.identity(sourceRecord) || sourceRecord.id),
+        operatingLocationId: sourceRecord.operating_location_id,
+      }];
+    });
+    const projected = await mapWithConcurrency(candidates, FLEET_DUE_RPC_CONCURRENCY, async (candidate) => ({
       ...candidate,
       dueState: await this.readDueState(context, candidate.registryId, asOf),
-    })));
-    return projected.filter((candidate) => candidate.dueState && !candidate.dueState.not_found && !candidate.dueState.forbidden);
+    }));
+    return {
+      candidates: projected.filter((candidate) => candidate.dueState && !candidate.dueState.not_found && !candidate.dueState.forbidden),
+      hasMore,
+      scannedCount: registryRows.length,
+    };
   }
 }
 module.exports={FleetMaintenanceRepository};

@@ -81,19 +81,29 @@ describe('maintenance due-state repository authority contract', () => {
     ]));
   });
 
-  test('builds Fleet candidates only from trusted tenant, assigned Base and active sources, then reuses one asOf', async () => {
+  test('builds a bounded deterministic Fleet page from trusted tenant, assigned Base and active sources, then reuses one asOf', async () => {
     supabaseRequest.mockImplementation(async (path) => {
-      if (path.startsWith('rest/v1/aircraft?')) return [{ id: 'aircraft-1', registration: 'T100-002', operating_location_id: BASE }];
-      if (path.startsWith('rest/v1/equipment_kits?')) return [];
-      if (path.startsWith('rest/v1/fleet_assets?')) return [];
       if (path.startsWith('rest/v1/maintainable_asset_registry?')) return [{ id: ASSET, aircraft_id: 'aircraft-1', equipment_kit_id: null, fleet_asset_id: null }];
+      if (path.startsWith('rest/v1/aircraft?')) return [{ id: 'aircraft-1', registration: 'T100-002', operating_location_id: BASE }];
       if (path === 'rest/v1/rpc/ftf_read_asset_maintenance_due_state') return dueResult();
       throw new Error(`unexpected path ${path}`);
     });
 
-    const rows = await new FleetMaintenanceRepository().readFleetDueSummary(context(), AS_OF, { baseId: BASE, assetType: 'aircraft' });
+    const result = await new FleetMaintenanceRepository().readFleetDueSummary(context(), AS_OF, {
+      baseId: BASE, assetType: 'aircraft', page: 1, pageSize: 5,
+    });
 
-    expect(rows).toEqual([expect.objectContaining({ registryId: ASSET, source: 'aircraft', identity: 'T100-002', dueState: expect.objectContaining({ asOf: AS_OF }) })]);
+    expect(result).toEqual({
+      candidates: [expect.objectContaining({ registryId: ASSET, source: 'aircraft', identity: 'T100-002', dueState: expect.objectContaining({ asOf: AS_OF }) })],
+      hasMore: false,
+      scannedCount: 1,
+    });
+    const registryPath = supabaseRequest.mock.calls.map(([path]) => path).find((path) => path.startsWith('rest/v1/maintainable_asset_registry?'));
+    expect(registryPath).toContain(`organisation_id=eq.${ORG}`);
+    expect(registryPath).toContain('tracking_state=eq.ACTIVE');
+    expect(registryPath).toContain('order=id.asc');
+    expect(registryPath).toContain('offset=0');
+    expect(registryPath).toContain('limit=6');
     const sourcePaths = supabaseRequest.mock.calls.map(([path]) => path).filter((path) => /^rest\/v1\/(aircraft|equipment_kits|fleet_assets)\?/.test(path));
     sourcePaths.forEach((path) => {
       expect(path).toContain(`organisation_id=eq.${ORG}`);
@@ -103,6 +113,50 @@ describe('maintenance due-state repository authority contract', () => {
     expect(supabaseRequest).toHaveBeenLastCalledWith('rest/v1/rpc/ftf_read_asset_maintenance_due_state', expect.objectContaining({
       body: expect.stringContaining(`"p_as_of":"${AS_OF}"`),
     }));
+  });
+
+  test('uses a sentinel beyond page size without truncating the page, bounding source URLs and checked-RPC concurrency', async () => {
+    const registryRows = Array.from({ length: 6 }, (_, index) => ({
+      id: `registry-${index + 1}`,
+      aircraft_id: `aircraft-${index + 1}`,
+      equipment_kit_id: null,
+      fleet_asset_id: null,
+    }));
+    let active = 0;
+    let maximumActive = 0;
+    supabaseRequest.mockImplementation(async (path, options = {}) => {
+      if (path.startsWith('rest/v1/maintainable_asset_registry?')) return registryRows;
+      if (path.startsWith('rest/v1/aircraft?')) {
+        return registryRows.slice(0, 5).map((_, index) => ({
+          id: `aircraft-${index + 1}`,
+          registration: `T100-${index + 1}`,
+          operating_location_id: BASE,
+        }));
+      }
+      if (path === 'rest/v1/rpc/ftf_read_asset_maintenance_due_state') {
+        active += 1;
+        maximumActive = Math.max(maximumActive, active);
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        active -= 1;
+        const assetId = JSON.parse(options.body).p_maintainable_asset_id;
+        return dueResult(assetId);
+      }
+      throw new Error(`unexpected path ${path}`);
+    });
+
+    const result = await new FleetMaintenanceRepository().readFleetDueSummary(context(), AS_OF, {
+      baseId: BASE, assetType: 'aircraft', page: 1, pageSize: 5,
+    });
+
+    expect(result).toMatchObject({ hasMore: true, scannedCount: 5 });
+    expect(result.candidates).toHaveLength(5);
+    expect(maximumActive).toBeLessThanOrEqual(4);
+    expect(supabaseRequest.mock.calls.filter(([path]) => path === 'rest/v1/rpc/ftf_read_asset_maintenance_due_state')).toHaveLength(5);
+    const sourcePath = supabaseRequest.mock.calls.map(([path]) => path).find((path) => path.startsWith('rest/v1/aircraft?'));
+    expect(sourcePath).toContain('order=id.asc');
+    expect(sourcePath).toContain('limit=6');
+    expect((sourcePath.match(/aircraft-/g) || [])).toHaveLength(5);
+    expect(sourcePath.length).toBeLessThan(2048);
   });
 });
 
@@ -160,18 +214,37 @@ describe('maintenance due-state trusted API', () => {
   test('returns compact Fleet counts and rows without mixing attached-child state into the parent', async () => {
     const childDueState = dueResult('child', 'OVERDUE');
     delete childDueState.attachedAssetSummaries;
-    repository.readFleetDueSummary.mockResolvedValue([
-      { registryId: ASSET, source: 'fleet-asset', sourceRecordId: 'fleet-1', identity: 'FTF-11', operatingLocationId: BASE, dueState: dueResult(ASSET, 'DUE_SOON', [{ registryId: 'child', dueState: childDueState }]) },
-      { registryId: '55555555-5555-4555-8555-555555555555', source: 'aircraft', sourceRecordId: 'aircraft-1', identity: 'T100-002', operatingLocationId: BASE, dueState: dueResult('55555555-5555-4555-8555-555555555555', 'OVERDUE') },
-    ]);
+    repository.readFleetDueSummary.mockResolvedValue({
+      candidates: [
+        { registryId: ASSET, source: 'fleet-asset', sourceRecordId: 'fleet-1', identity: 'FTF-11', operatingLocationId: BASE, dueState: dueResult(ASSET, 'DUE_SOON', [{ registryId: 'child', dueState: childDueState }]) },
+        { registryId: '55555555-5555-4555-8555-555555555555', source: 'aircraft', sourceRecordId: 'aircraft-1', identity: 'T100-002', operatingLocationId: BASE, dueState: dueResult('55555555-5555-4555-8555-555555555555', 'OVERDUE') },
+      ],
+      hasMore: true,
+      scannedCount: 2,
+    });
     const res = response();
 
-    await handler()(request('fleet-due-summary', { asOf: AS_OF, baseId: BASE, assetType: 'fleet-asset', state: 'DUE_SOON' }), res);
+    await handler()(request('fleet-due-summary', { asOf: AS_OF, baseId: BASE, assetType: 'fleet-asset', state: 'DUE_SOON', page: '2', pageSize: '5' }), res);
 
-    expect(repository.readFleetDueSummary).toHaveBeenCalledWith(expect.any(Object), AS_OF, { baseId: BASE, assetType: 'fleet-asset' });
+    expect(repository.readFleetDueSummary).toHaveBeenCalledWith(expect.any(Object), AS_OF, { baseId: BASE, assetType: 'fleet-asset', page: 2, pageSize: 5 });
     expect(res.body.data.counts).toMatchObject({ DUE_SOON: 1, OVERDUE: 1 });
     expect(res.body.data.rows).toHaveLength(1);
     expect(res.body.data.rows[0]).toMatchObject({ registryId: ASSET, highestState: 'DUE_SOON', attachedAssetCount: 1 });
+    expect(res.body.data.rows[0]).not.toHaveProperty('dueState');
+    expect(res.body.data.rows[0]).not.toHaveProperty('requirements');
+    expect(res.body.data.page).toEqual({ number: 2, pageSize: 5, hasMore: true, scannedCount: 2, returnedCount: 1 });
+  });
+
+  test.each([
+    { page: '0', pageSize: '5' },
+    { page: '1.5', pageSize: '5' },
+    { page: '1', pageSize: '0' },
+    { page: '1', pageSize: '26' },
+  ])('rejects invalid or oversized Fleet pagination before repository access: %j', async (pagination) => {
+    const res = response();
+    await handler()(request('fleet-due-summary', { asOf: AS_OF, ...pagination }), res);
+    expect(res.statusCode).toBe(400);
+    expect(repository.readFleetDueSummary).not.toHaveBeenCalled();
   });
 
   test('denies Fleet summary for an unassigned Base and requires maintenance read permission', async () => {

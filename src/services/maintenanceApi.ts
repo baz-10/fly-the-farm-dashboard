@@ -19,15 +19,16 @@ export interface FleetMaintenanceDueRow {
   requirementCount: number;
   attachedAssetCount: number;
   stateCounts: FleetDueStateCounts;
-  dueState: MaintenanceDueResult;
 }
+export interface FleetMaintenanceDuePage { number:number; pageSize:number; hasMore:boolean; scannedCount:number; returnedCount:number; }
 export interface FleetMaintenanceDueSummary {
   asOf: string;
   filters: { baseId: string | null; assetType: MaintenanceAssetSource | null; state: MaintenanceDueState | null };
   counts: FleetDueStateCounts;
+  page: FleetMaintenanceDuePage;
   rows: FleetMaintenanceDueRow[];
 }
-export interface FleetMaintenanceDueFilters { baseId?: string; assetType?: MaintenanceAssetSource; state?: MaintenanceDueState; }
+export interface FleetMaintenanceDueFilters { baseId?: string; assetType?: MaintenanceAssetSource; state?: MaintenanceDueState; page?:number; pageSize?:number; }
 
 export class MaintenanceApiError extends Error {
   constructor(readonly status:number,readonly code:string,message:string,readonly correlationId?:string){
@@ -92,6 +93,11 @@ function nonnegativeInteger(value: unknown): number {
   return value;
 }
 
+function booleanValue(value: unknown): boolean {
+  if (typeof value !== 'boolean') return malformed();
+  return value;
+}
+
 const DUE_STATES: MaintenanceDueState[] = ['CURRENT', 'DUE_SOON', 'DUE', 'OVERDUE', 'INSUFFICIENT_DATA'];
 const ASSET_SOURCES: MaintenanceAssetSource[] = ['aircraft', 'equipment-kit', 'fleet-asset'];
 const STATE_RANK: Record<MaintenanceDueState, number> = { OVERDUE:0, DUE:1, DUE_SOON:2, INSUFFICIENT_DATA:3, CURRENT:4 };
@@ -124,9 +130,9 @@ function normalizeDue(value: unknown, requestedAssetId: string, requestedAsOf: s
   }
 }
 
-function normalizeFleetSummary(value: unknown, requestedAsOf: string, requestedFilters: FleetMaintenanceDueFilters): FleetMaintenanceDueSummary {
+function normalizeFleetSummary(value: unknown, requestedAsOf: string, requestedFilters: FleetMaintenanceDueFilters, requestedPage: number, requestedPageSize: number): FleetMaintenanceDueSummary {
   const source = object(value);
-  exactKeys(source, ['asOf', 'filters', 'counts', 'rows']);
+  exactKeys(source, ['asOf', 'filters', 'counts', 'page', 'rows']);
   const asOf = nonEmptyString(source.asOf);
   if (Date.parse(asOf) !== Date.parse(requestedAsOf) || !Array.isArray(source.rows)) return malformed();
   const rawFilters = object(source.filters);
@@ -141,19 +147,16 @@ function normalizeFleetSummary(value: unknown, requestedAsOf: string, requestedF
     || filters.state !== (requestedFilters.state || null)) return malformed();
   const rows = source.rows.map((value): FleetMaintenanceDueRow => {
     const row = object(value);
-    exactKeys(row, ['registryId', 'source', 'sourceRecordId', 'identity', 'operatingLocationId', 'highestState', 'requirementCount', 'attachedAssetCount', 'stateCounts', 'dueState']);
+    exactKeys(row, ['registryId', 'source', 'sourceRecordId', 'identity', 'operatingLocationId', 'highestState', 'requirementCount', 'attachedAssetCount', 'stateCounts']);
     const registryId = nonEmptyString(row.registryId);
-    const dueState = normalizeDue(row.dueState, registryId, requestedAsOf);
     const requirementCount = nonnegativeInteger(row.requirementCount);
     const attachedAssetCount = nonnegativeInteger(row.attachedAssetCount);
     const stateCounts = counts(row.stateCounts);
     const highestState = enumValue(row.highestState, DUE_STATES);
-    const projectedCounts: FleetDueStateCounts = { CURRENT:0, DUE_SOON:0, DUE:0, OVERDUE:0, INSUFFICIENT_DATA:0 };
-    dueState.requirements.forEach((requirement) => { projectedCounts[requirement.state] += 1; });
-    const projectedHighest = [...DUE_STATES].filter((state) => projectedCounts[state] > 0)
+    const countedRequirements = DUE_STATES.reduce((sum, state) => sum + stateCounts[state], 0);
+    const projectedHighest = [...DUE_STATES].filter((state) => stateCounts[state] > 0)
       .sort((left, right) => STATE_RANK[left] - STATE_RANK[right])[0] || 'CURRENT';
-    if (requirementCount !== dueState.requirements.length || attachedAssetCount !== dueState.attachedAssetSummaries.length
-      || highestState !== projectedHighest || DUE_STATES.some((state) => stateCounts[state] !== projectedCounts[state])) return malformed();
+    if (requirementCount !== countedRequirements || highestState !== projectedHighest) return malformed();
     return {
       registryId,
       source: enumValue(row.source, ASSET_SOURCES),
@@ -164,7 +167,6 @@ function normalizeFleetSummary(value: unknown, requestedAsOf: string, requestedF
       requirementCount,
       attachedAssetCount,
       stateCounts,
-      dueState,
     };
   });
   const summaryCounts = counts(source.counts);
@@ -173,7 +175,20 @@ function normalizeFleetSummary(value: unknown, requestedAsOf: string, requestedF
     rows.forEach((row) => { projectedSummaryCounts[row.highestState] += 1; });
     if (DUE_STATES.some((state) => summaryCounts[state] !== projectedSummaryCounts[state])) return malformed();
   } else if (rows.some((row) => row.highestState !== filters.state) || summaryCounts[filters.state] < rows.length) return malformed();
-  return { asOf, filters, counts: summaryCounts, rows };
+  const rawPage = object(source.page);
+  exactKeys(rawPage, ['number', 'pageSize', 'hasMore', 'scannedCount', 'returnedCount']);
+  const page = {
+    number: nonnegativeInteger(rawPage.number),
+    pageSize: nonnegativeInteger(rawPage.pageSize),
+    hasMore: booleanValue(rawPage.hasMore),
+    scannedCount: nonnegativeInteger(rawPage.scannedCount),
+    returnedCount: nonnegativeInteger(rawPage.returnedCount),
+  };
+  const totalCount = DUE_STATES.reduce((sum, state) => sum + summaryCounts[state], 0);
+  if (page.number !== requestedPage || page.pageSize !== requestedPageSize
+    || page.number < 1 || page.pageSize < 1 || page.pageSize > 25 || page.scannedCount > page.pageSize
+    || page.returnedCount !== rows.length || rows.length > page.scannedCount || totalCount > page.scannedCount) return malformed();
+  return { asOf, filters, counts: summaryCounts, page, rows };
 }
 
 export const maintenanceApi={
@@ -186,11 +201,13 @@ export const maintenanceApi={
     return normalizeDue(value, assetId, asOf);
   },
   async readFleetDueSummary(asOf: string, filters: FleetMaintenanceDueFilters = {}): Promise<FleetMaintenanceDueSummary> {
-    const query: Record<string, string> = { asOf };
+    const page = filters.page ?? 1;
+    const pageSize = filters.pageSize ?? 25;
+    const query: Record<string, string> = { asOf, page:String(page), pageSize:String(pageSize) };
     if (filters.baseId) query.baseId = filters.baseId;
     if (filters.assetType) query.assetType = filters.assetType;
     if (filters.state) query.state = filters.state;
     const value = await get('fleet-due-summary', query);
-    return normalizeFleetSummary(value, asOf, filters);
+    return normalizeFleetSummary(value, asOf, filters, page, pageSize);
   },
 };

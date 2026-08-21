@@ -7,6 +7,10 @@ const INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\
 const DUE_STATES = ['CURRENT', 'DUE_SOON', 'DUE', 'OVERDUE', 'INSUFFICIENT_DATA'];
 const ASSET_TYPES = ['aircraft', 'equipment-kit', 'fleet-asset'];
 const STATE_RANK = { OVERDUE: 0, DUE: 1, DUE_SOON: 2, INSUFFICIENT_DATA: 3, CURRENT: 4 };
+const DEFAULT_FLEET_PAGE = 1;
+const DEFAULT_FLEET_PAGE_SIZE = 25;
+const MAX_FLEET_PAGE = 10000;
+const MAX_FLEET_PAGE_SIZE = 25;
 
 function fail(status, code, message) {
   const error = new Error(message);
@@ -44,6 +48,16 @@ function optionalEnum(value, allowed, name) {
   if (value == null || value === '') return null;
   if (typeof value !== 'string' || !allowed.includes(value)) fail(400, 'VALIDATION_ERROR', `${name} is invalid.`);
   return value;
+}
+
+function boundedPositiveInteger(value, name, fallback, maximum) {
+  if (value == null || value === '') return fallback;
+  if (!/^\d+$/.test(String(value))) fail(400, 'VALIDATION_ERROR', `${name} must be a positive integer.`);
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < 1 || parsed > maximum) {
+    fail(400, 'VALIDATION_ERROR', `${name} is outside the supported range.`);
+  }
+  return parsed;
 }
 
 function object(value) {
@@ -105,7 +119,6 @@ function summarizeFleetRow(candidate, asOf) {
     requirementCount: dueState.requirements.length,
     attachedAssetCount: dueState.attachedAssetSummaries.length,
     stateCounts,
-    dueState,
   };
 }
 
@@ -135,16 +148,31 @@ function createFleetMaintenanceHandler(deps = {}) {
           if (baseId && !(context.operatingLocationIds || []).includes(baseId)) fail(403, 'LOCATION_FORBIDDEN', 'This Base is outside the assigned scope.');
           const assetType = optionalEnum(req.query?.assetType, ASSET_TYPES, 'assetType');
           const state = optionalEnum(req.query?.state, DUE_STATES, 'state');
-          const candidates = await repository.readFleetDueSummary(context, asOf, { baseId, assetType });
-          const allRows = (Array.isArray(candidates) ? candidates : []).map((candidate) => summarizeFleetRow(candidate, asOf));
+          const page = boundedPositiveInteger(req.query?.page, 'page', DEFAULT_FLEET_PAGE, MAX_FLEET_PAGE);
+          const pageSize = boundedPositiveInteger(req.query?.pageSize, 'pageSize', DEFAULT_FLEET_PAGE_SIZE, MAX_FLEET_PAGE_SIZE);
+          const result = await repository.readFleetDueSummary(context, asOf, { baseId, assetType, page, pageSize });
+          if (!object(result) || !Array.isArray(result.candidates) || typeof result.hasMore !== 'boolean'
+            || !Number.isInteger(result.scannedCount) || result.scannedCount < 0 || result.scannedCount > pageSize
+            || result.candidates.length > result.scannedCount) {
+            fail(502, 'MAINTENANCE_DUE_RESPONSE_INVALID', 'Maintenance due-state response was invalid.');
+          }
+          const allRows = result.candidates.map((candidate) => summarizeFleetRow(candidate, asOf));
           const counts = emptyCounts();
           allRows.forEach((row) => { counts[row.highestState] += 1; });
+          const rows = state ? allRows.filter((row) => row.highestState === state) : allRows;
           return res.status(200).json({
             data: {
               asOf,
               filters: { baseId, assetType, state },
               counts,
-              rows: state ? allRows.filter((row) => row.highestState === state) : allRows,
+              page: {
+                number: page,
+                pageSize,
+                hasMore: result.hasMore,
+                scannedCount: result.scannedCount,
+                returnedCount: rows.length,
+              },
+              rows,
             },
           });
         }
