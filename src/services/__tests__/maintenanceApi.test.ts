@@ -34,26 +34,31 @@ describe('maintenanceApi',()=>{beforeEach(()=>{global.fetch=jest.fn();});
     await expect(maintenanceApi.readDueState('33333333-3333-4333-8333-333333333333','2026-08-21T01:30:00.000Z')).rejects.toMatchObject({code:'MALFORMED_RESPONSE'});
   });
 
-  test('normalizes a bounded compact Fleet page and preserves server counts and filters',async()=>{
+  test('normalizes a bounded compact Fleet cursor page and preserves page-local counts and filters',async()=>{
     (fetch as jest.Mock).mockResolvedValue(response(200,{data:{
       asOf:'2026-08-21T01:30:00.000Z',filters:{baseId:'44444444-4444-4444-8444-444444444444',assetType:'fleet-asset',state:'DUE_SOON'},
-      counts:{CURRENT:0,DUE_SOON:1,DUE:0,OVERDUE:0,INSUFFICIENT_DATA:0},
-      page:{number:2,pageSize:5,hasMore:true,scannedCount:5,returnedCount:1},
+      pageCounts:{CURRENT:2,DUE_SOON:1,DUE:0,OVERDUE:0,INSUFFICIENT_DATA:0},
+      page:{pageSize:5,hasMore:true,nextCursor:'eyJ2IjoxfQ',scannedCount:5,returnedCount:1},
       rows:[{registryId:'33333333-3333-4333-8333-333333333333',source:'fleet-asset',sourceRecordId:'fleet-1',identity:'FTF-11',operatingLocationId:'44444444-4444-4444-8444-444444444444',highestState:'DUE_SOON',requirementCount:1,attachedAssetCount:0,stateCounts:{CURRENT:0,DUE_SOON:1,DUE:0,OVERDUE:0,INSUFFICIENT_DATA:0}}],
     }}));
-    const summary=await maintenanceApi.readFleetDueSummary('2026-08-21T01:30:00.000Z',{baseId:'44444444-4444-4444-8444-444444444444',assetType:'fleet-asset',state:'DUE_SOON',page:2,pageSize:5});
-    expect(fetch).toHaveBeenCalledWith(expect.stringContaining('action=fleet-due-summary&asOf=2026-08-21T01%3A30%3A00.000Z&page=2&pageSize=5&baseId=44444444-4444-4444-8444-444444444444&assetType=fleet-asset&state=DUE_SOON'),expect.objectContaining({method:'GET'}));
-    expect(summary.page).toEqual({number:2,pageSize:5,hasMore:true,scannedCount:5,returnedCount:1});
+    const summary=await maintenanceApi.readFleetDueSummary('2026-08-21T01:30:00.000Z',{baseId:'44444444-4444-4444-8444-444444444444',assetType:'fleet-asset',state:'DUE_SOON',cursor:'opaque_previous',pageSize:5});
+    expect(fetch).toHaveBeenCalledWith(expect.stringContaining('action=fleet-due-summary&asOf=2026-08-21T01%3A30%3A00.000Z&pageSize=5&cursor=opaque_previous&baseId=44444444-4444-4444-8444-444444444444&assetType=fleet-asset&state=DUE_SOON'),expect.objectContaining({method:'GET'}));
+    expect(summary.pageCounts).toEqual({CURRENT:2,DUE_SOON:1,DUE:0,OVERDUE:0,INSUFFICIENT_DATA:0});
+    expect(summary.page).toEqual({pageSize:5,hasMore:true,nextCursor:'eyJ2IjoxfQ',scannedCount:5,returnedCount:1});
     expect(summary.rows[0]).not.toHaveProperty('dueState');
   });
 
   test('fails the whole Fleet response if it over-returns a full projection or evidence',async()=>{
-    (fetch as jest.Mock).mockResolvedValue(response(200,{data:{asOf:'2026-08-21T01:30:00.000Z',filters:{baseId:null,assetType:null,state:null},counts:{CURRENT:1,DUE_SOON:0,DUE:0,OVERDUE:0,INSUFFICIENT_DATA:0},page:{number:1,pageSize:25,hasMore:false,scannedCount:1,returnedCount:1},rows:[{registryId:'33333333-3333-4333-8333-333333333333',source:'fleet-asset',sourceRecordId:'fleet-1',identity:'FTF-11',operatingLocationId:'44444444-4444-4444-8444-444444444444',highestState:'CURRENT',requirementCount:1,attachedAssetCount:0,stateCounts:{CURRENT:1,DUE_SOON:0,DUE:0,OVERDUE:0,INSUFFICIENT_DATA:0},dueState:dueResult()}]}}));
+    (fetch as jest.Mock).mockResolvedValue(response(200,{data:{asOf:'2026-08-21T01:30:00.000Z',filters:{baseId:null,assetType:null,state:null},pageCounts:{CURRENT:1,DUE_SOON:0,DUE:0,OVERDUE:0,INSUFFICIENT_DATA:0},page:{pageSize:25,hasMore:false,nextCursor:null,scannedCount:1,returnedCount:1},rows:[{registryId:'33333333-3333-4333-8333-333333333333',source:'fleet-asset',sourceRecordId:'fleet-1',identity:'FTF-11',operatingLocationId:'44444444-4444-4444-8444-444444444444',highestState:'CURRENT',requirementCount:1,attachedAssetCount:0,stateCounts:{CURRENT:1,DUE_SOON:0,DUE:0,OVERDUE:0,INSUFFICIENT_DATA:0},dueState:dueResult()}]}}));
     await expect(maintenanceApi.readFleetDueSummary('2026-08-21T01:30:00.000Z')).rejects.toMatchObject({code:'MALFORMED_RESPONSE'});
   });
 
-  test('fails the whole Fleet response when compact counts or page metadata are contradictory',async()=>{
-    (fetch as jest.Mock).mockResolvedValue(response(200,{data:{asOf:'2026-08-21T01:30:00.000Z',filters:{baseId:null,assetType:null,state:null},counts:{CURRENT:1,DUE_SOON:0,DUE:0,OVERDUE:0,INSUFFICIENT_DATA:0},page:{number:1,pageSize:25,hasMore:false,scannedCount:1,returnedCount:2},rows:[{registryId:'33333333-3333-4333-8333-333333333333',source:'fleet-asset',sourceRecordId:'fleet-1',identity:'FTF-11',operatingLocationId:'44444444-4444-4444-8444-444444444444',highestState:'CURRENT',requirementCount:99,attachedAssetCount:0,stateCounts:{CURRENT:1,DUE_SOON:0,DUE:0,OVERDUE:0,INSUFFICIENT_DATA:0}}]}}));
+  test.each([
+    {pageSize:25,hasMore:false,nextCursor:null,scannedCount:1,returnedCount:2},
+    {pageSize:25,hasMore:true,nextCursor:null,scannedCount:1,returnedCount:1},
+    {pageSize:25,hasMore:false,nextCursor:'eyJ2IjoxfQ',scannedCount:1,returnedCount:1},
+  ])('fails the whole Fleet response when compact counts or cursor metadata are contradictory',async(page)=>{
+    (fetch as jest.Mock).mockResolvedValue(response(200,{data:{asOf:'2026-08-21T01:30:00.000Z',filters:{baseId:null,assetType:null,state:null},pageCounts:{CURRENT:1,DUE_SOON:0,DUE:0,OVERDUE:0,INSUFFICIENT_DATA:0},page,rows:[{registryId:'33333333-3333-4333-8333-333333333333',source:'fleet-asset',sourceRecordId:'fleet-1',identity:'FTF-11',operatingLocationId:'44444444-4444-4444-8444-444444444444',highestState:'CURRENT',requirementCount:1,attachedAssetCount:0,stateCounts:{CURRENT:1,DUE_SOON:0,DUE:0,OVERDUE:0,INSUFFICIENT_DATA:0}}]}}));
     await expect(maintenanceApi.readFleetDueSummary('2026-08-21T01:30:00.000Z')).rejects.toMatchObject({code:'MALFORMED_RESPONSE'});
   });
 

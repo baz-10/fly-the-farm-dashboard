@@ -2,7 +2,7 @@
 
 ## Status
 
-Complete, including review fix round 1. Task 3 exposes individual and bounded Fleet due-state reads through the same-origin trusted API, preserves one explicit `asOf` end to end, and treats the checked Task 1 RPC as the only scheduling authority. No Production, migration, backfill, read audit, availability mutation, or due-state recalculation was performed.
+Complete, including review fixes through round 2. Task 3 exposes individual and bounded Fleet due-state reads through the same-origin trusted API, preserves one explicit `asOf` end to end, and treats the checked Task 1 RPC as the only scheduling authority. No Production, migration, backfill, read audit, availability mutation, or due-state recalculation was performed.
 
 ## TDD evidence
 
@@ -46,6 +46,21 @@ MaintenanceApiError: The maintenance API returned an invalid response.
 Tests: 1 failed, 10 passed, 11 total
 ```
 
+Review fix round 2 replaced offset paging and was also test-first. The server RED run failed fourteen cases because the existing endpoint accepted offset/mismatched cursors, embedded all assigned Bases in source URLs, stopped sparse filters after one batch, lacked a hard scan continuation, and still exposed ambiguous `counts`:
+
+```text
+FAIL server/__tests__/maintenance-due-read-model.test.js
+Tests: 14 failed, 13 passed, 27 total
+```
+
+The browser RED run failed the new opaque-cursor and `pageCounts` contract because its old exact boundary still required numeric page metadata and `counts`:
+
+```text
+FAIL src/services/__tests__/maintenanceApi.test.ts
+MaintenanceApiError: The maintenance API returned an invalid response.
+Tests: 1 failed, 12 passed, 13 total
+```
+
 ## Implemented contract
 
 - `FleetMaintenanceRepository.readDueState` calls only `ftf_read_asset_maintenance_due_state` with the trusted context organisation, internal actor, registry ID, and caller's exact offset-bearing `asOf`.
@@ -54,15 +69,17 @@ Tests: 1 failed, 10 passed, 11 total
 - Missing, date-only, offset-free, and invalid `asOf` inputs are rejected before repository access.
 - Checked-RPC `forbidden` and `not_found` responses do not expose tenant, Base, ownership, or archived-asset details.
 - Server response checks bind projection asset identity and `asOf` instant to the request, reject availability/serviceability authority fields recursively, validate requirement state domains, and keep attached child projections separate.
-- `GET action=fleet-due-summary` supports Base, source asset type (`aircraft`, `equipment-kit`, `fleet-asset`), due-state, `page`, and `pageSize` filters. Page defaults are `1`/`25`; page size has a hard maximum of 25 and page number has a hard maximum of 10,000.
-- Fleet enumeration starts from a deterministic active tenant-registry page ordered by registry ID with explicit offset and `pageSize + 1` sentinel limit. The sentinel proves `hasMore` without projecting or returning an asset beyond the requested page.
-- Only source IDs present in that bounded page are hydrated. Source reads retain trusted organisation, assigned-Base, and unarchived filters; use deterministic ID ordering and an explicit limit; and keep every generated URL below the tested 2,048-byte bound at maximum page size.
+- `GET action=fleet-due-summary` supports Base, source asset type (`aircraft`, `equipment-kit`, `fleet-asset`), due-state, opaque `cursor`, and `pageSize` filters. Page size defaults to 25 and has a hard maximum of 25; legacy offset `page` input is rejected.
+- Fleet enumeration uses active tenant-registry keyset reads ordered by registry ID. Continuations query `id > lastRegistryId` with an explicit remaining-page `+ 1` sentinel, so insertion of a lower registry ID between requests neither repeats nor skips registry rows that already existed after the cursor.
+- The base64url cursor has a strict versioned shape and binds the last registry ID to the exact `asOf`, Base, asset type, due-state filter, and page size. Malformed, non-canonical, oversized, or request-mismatched cursors fail before repository access.
+- Registry scans repeat until the filtered row page fills, the ordered registry is exhausted, or 100 registry rows have been inspected. Reaching the scan cap with more rows returns `hasMore: true` and a continuation after the last scanned registry ID rather than implying exhaustion.
+- Only source IDs present in a bounded registry batch are hydrated. Each source read is a fixed-size organisation/id/unarchived request with `limit=2`; assigned Base membership is checked from trusted server context after hydration, so even 120 assigned 36-character Base UUIDs do not expand URLs. Hydration and checked due-state RPCs both use at most four concurrent workers.
 - Each returned Fleet candidate is projected through the same checked Task 1 RPC with the same `asOf`. A four-worker pool bounds checked-RPC concurrency, and the repository never invokes the private helper or performs broad writes.
-- Fleet counts aggregate authoritative returned states only. No threshold, meter, corrected-reading, baseline, calendar, timezone, controlling-threshold, serviceability, or availability calculation exists in server/client code.
+- `pageCounts` aggregates authoritative projected candidates inspected for the current cursor page/scan window only. It is explicitly not a whole-fleet total. No threshold, meter, corrected-reading, baseline, calendar, timezone, controlling-threshold, serviceability, or availability calculation exists in server/client code.
 - Parent Fleet row state/counts use parent requirements only. Attached child attention is represented only by `attachedAssetCount`; a child cannot contaminate parent state.
 - Fleet HTTP rows are compact identity/count records and never contain `dueState`, thresholds, evidence, requirements, or attached projections. Full explainability remains available only from the per-asset endpoint.
 - The browser imports Task 2's actual exported `normalizeMaintenanceDueResult` under the explicit boundary alias `normalizeMaintenanceDueProjection` and applies it to the full individual response only.
-- Browser Fleet validation accepts only exact compact row keys, binds filters/`asOf`/page metadata to the request, verifies count/highest-state coherence, rejects over-returned projection/evidence keys, and fails the entire response on any malformed row or metadata.
+- Browser Fleet validation accepts only exact compact row keys, treats cursors as opaque base64url tokens, binds filters/`asOf`/page size to the request, verifies `pageCounts`/highest-state coherence and `hasMore`/`nextCursor` consistency, rejects over-returned projection/evidence keys, and fails the entire response on any malformed row or metadata.
 - Server and browser errors both use the existing shared bounded public-diagnostics validators. Unsafe code/message/correlation tuples collapse to generic maintenance diagnostics.
 - Existing attachment, detachment, reading, correction, and legacy workspace behavior remains available on its previous action/permission paths.
 - `asset-maintenance` remains explicitly registered in the versioned dispatcher.
@@ -76,7 +93,7 @@ PASS server/__tests__/maintenance-due-read-model.test.js
 PASS server/__tests__/technical-catalogue-authority.test.js
 PASS server/__tests__/public-diagnostics.test.js
 Test Suites: 3 passed, 3 total
-Tests: 58 passed, 58 total
+Tests: 67 passed, 67 total
 ```
 
 Browser service, Task 2 contract, diagnostics, and SQL-adjacent gates:
@@ -88,7 +105,7 @@ PASS src/domain/maintenance/dueState.test.ts
 PASS src/__tests__/maintenanceRequirementsMigration.test.js
 PASS src/services/__tests__/publicDiagnostics.test.ts
 Test Suites: 5 passed, 5 total
-Tests: 87 passed, 87 total
+Tests: 89 passed, 89 total
 ```
 
 `npm run build` completed successfully after its first run identified a TypeScript-only `unknown` inference for `page.hasMore`; that field now crosses an explicit boolean validator. The successful build retained existing repository lint, bundle-size, and stale Browserslist-data warnings; no warning references a Task 3 file.
@@ -107,7 +124,8 @@ Tests: 87 passed, 87 total
 
 ## Concerns and explicit boundaries
 
-- Fleet pages are ordered over the active tenant registry. Base, source-type, archived-source, and due-state filtering can make a page sparse because excluded registry rows are never replaced by later rows; clients should advance while `page.hasMore` is true. This preserves a strictly bounded request without introducing a new SQL enumeration authority.
-- Fleet counts describe the authoritative candidates projected in the current registry page, not an unbounded whole-fleet total. A future whole-fleet count needs a separate scoped aggregate SQL RPC rather than client/server enumeration.
+- A page can contain fewer than `pageSize` rows when the 100-row scan cap is reached under a sparse filter. `hasMore: true` plus `nextCursor` is the precise instruction to continue; `hasMore: false` always emits `nextCursor: null` and means the scanned registry is exhausted at that instant.
+- Keyset semantics intentionally do not revisit rows inserted at or below a previously consumed registry ID. Rows that existed beyond the cursor are not skipped or repeated. This avoids offset drift but is not snapshot isolation across separate HTTP requests.
+- `pageCounts` describes authoritative projected candidates within the current bounded scan window, including other states inspected while filling a state-filtered page. A future whole-fleet total needs a separate scoped aggregate SQL RPC rather than client/server enumeration.
 - Full Task 2 fail-whole normalization remains mandatory for per-asset explainability. Compact Fleet rows intentionally validate only identity, paging, state/count coherence, and absence of over-returned fields; they do not reconstruct or recalculate due state.
 - Production remains unchanged. No read creates audit/outbox events or mutates operational state.

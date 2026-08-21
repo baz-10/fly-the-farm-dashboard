@@ -7,10 +7,11 @@ const INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\
 const DUE_STATES = ['CURRENT', 'DUE_SOON', 'DUE', 'OVERDUE', 'INSUFFICIENT_DATA'];
 const ASSET_TYPES = ['aircraft', 'equipment-kit', 'fleet-asset'];
 const STATE_RANK = { OVERDUE: 0, DUE: 1, DUE_SOON: 2, INSUFFICIENT_DATA: 3, CURRENT: 4 };
-const DEFAULT_FLEET_PAGE = 1;
 const DEFAULT_FLEET_PAGE_SIZE = 25;
-const MAX_FLEET_PAGE = 10000;
 const MAX_FLEET_PAGE_SIZE = 25;
+const MAX_FLEET_SCAN_SIZE = 100;
+const MAX_CURSOR_LENGTH = 2048;
+const CURSOR_KEYS = ['v', 'lastRegistryId', 'asOf', 'baseId', 'assetType', 'state', 'pageSize'];
 
 function fail(status, code, message) {
   const error = new Error(message);
@@ -62,6 +63,41 @@ function boundedPositiveInteger(value, name, fallback, maximum) {
 
 function object(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function fleetCursorBinding(asOf, baseId, assetType, state, pageSize) {
+  return { asOf, baseId, assetType, state, pageSize };
+}
+
+function decodeFleetCursor(value, binding) {
+  if (value == null || value === '') return null;
+  const cursor = String(value);
+  if (cursor.length > MAX_CURSOR_LENGTH || !/^[A-Za-z0-9_-]+$/.test(cursor)) {
+    fail(400, 'VALIDATION_ERROR', 'cursor is malformed.');
+  }
+  try {
+    const decoded = Buffer.from(cursor, 'base64url');
+    if (decoded.toString('base64url') !== cursor) fail(400, 'VALIDATION_ERROR', 'cursor is malformed.');
+    const payload = JSON.parse(decoded.toString('utf8'));
+    if (!object(payload) || Object.keys(payload).length !== CURSOR_KEYS.length
+      || CURSOR_KEYS.some((key) => !Object.hasOwn(payload, key)) || payload.v !== 1
+      || !UUID.test(String(payload.lastRegistryId || ''))) {
+      fail(400, 'VALIDATION_ERROR', 'cursor is malformed.');
+    }
+    if (payload.asOf !== binding.asOf || payload.baseId !== binding.baseId
+      || payload.assetType !== binding.assetType || payload.state !== binding.state
+      || payload.pageSize !== binding.pageSize) {
+      fail(400, 'CURSOR_MISMATCH', 'cursor does not match this Fleet request.');
+    }
+    return payload.lastRegistryId;
+  } catch (error) {
+    if (error?.status) throw error;
+    fail(400, 'VALIDATION_ERROR', 'cursor is malformed.');
+  }
+}
+
+function encodeFleetCursor(lastRegistryId, binding) {
+  return Buffer.from(JSON.stringify({ v: 1, lastRegistryId, ...binding })).toString('base64url');
 }
 
 function rejectAvailabilityAuthority(value) {
@@ -148,27 +184,37 @@ function createFleetMaintenanceHandler(deps = {}) {
           if (baseId && !(context.operatingLocationIds || []).includes(baseId)) fail(403, 'LOCATION_FORBIDDEN', 'This Base is outside the assigned scope.');
           const assetType = optionalEnum(req.query?.assetType, ASSET_TYPES, 'assetType');
           const state = optionalEnum(req.query?.state, DUE_STATES, 'state');
-          const page = boundedPositiveInteger(req.query?.page, 'page', DEFAULT_FLEET_PAGE, MAX_FLEET_PAGE);
+          if (req.query?.page != null && req.query.page !== '') fail(400, 'VALIDATION_ERROR', 'Offset pagination is not supported.');
           const pageSize = boundedPositiveInteger(req.query?.pageSize, 'pageSize', DEFAULT_FLEET_PAGE_SIZE, MAX_FLEET_PAGE_SIZE);
-          const result = await repository.readFleetDueSummary(context, asOf, { baseId, assetType, page, pageSize });
+          const binding = fleetCursorBinding(asOf, baseId, assetType, state, pageSize);
+          const afterRegistryId = decodeFleetCursor(req.query?.cursor, binding);
+          const result = await repository.readFleetDueSummary(context, asOf, { baseId, assetType, state, afterRegistryId, pageSize });
           if (!object(result) || !Array.isArray(result.candidates) || typeof result.hasMore !== 'boolean'
-            || !Number.isInteger(result.scannedCount) || result.scannedCount < 0 || result.scannedCount > pageSize
-            || result.candidates.length > result.scannedCount) {
+            || !Array.isArray(result.rowRegistryIds) || result.rowRegistryIds.length > pageSize
+            || !Number.isInteger(result.scannedCount) || result.scannedCount < 0 || result.scannedCount > MAX_FLEET_SCAN_SIZE
+            || result.candidates.length > result.scannedCount
+            || (result.hasMore && !UUID.test(String(result.lastScannedRegistryId || '')))) {
             fail(502, 'MAINTENANCE_DUE_RESPONSE_INVALID', 'Maintenance due-state response was invalid.');
           }
           const allRows = result.candidates.map((candidate) => summarizeFleetRow(candidate, asOf));
-          const counts = emptyCounts();
-          allRows.forEach((row) => { counts[row.highestState] += 1; });
-          const rows = state ? allRows.filter((row) => row.highestState === state) : allRows;
+          const rowsById = new Map(allRows.map((row) => [row.registryId, row]));
+          const rows = result.rowRegistryIds.map((registryId) => rowsById.get(registryId));
+          if (rows.some((row) => !row) || rows.some((row) => state && row.highestState !== state)
+            || (!state && rows.length !== allRows.length)) {
+            fail(502, 'MAINTENANCE_DUE_RESPONSE_INVALID', 'Maintenance due-state response was invalid.');
+          }
+          const pageCounts = emptyCounts();
+          allRows.forEach((row) => { pageCounts[row.highestState] += 1; });
+          const nextCursor = result.hasMore ? encodeFleetCursor(result.lastScannedRegistryId, binding) : null;
           return res.status(200).json({
             data: {
               asOf,
               filters: { baseId, assetType, state },
-              counts,
+              pageCounts,
               page: {
-                number: page,
                 pageSize,
                 hasMore: result.hasMore,
+                nextCursor,
                 scannedCount: result.scannedCount,
                 returnedCount: rows.length,
               },
