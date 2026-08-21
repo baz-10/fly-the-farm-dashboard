@@ -126,7 +126,7 @@ describe('authoritative maintenance due-state contract', () => {
       state: 'CURRENT',
     });
     const byMeter = normalizeMaintenanceDueResult(projection({
-      requirements: [requirement({ thresholds: [threshold(), calendar] })],
+      requirements: [requirement({ thresholds: [threshold({ remaining: 20 }), calendar] })],
     }));
     const byCalendar = normalizeMaintenanceDueResult(projection({
       requirements: [requirement({ controllingThresholdId: 'threshold-calendar', thresholds: [threshold({ remaining: 120 }), calendar] })],
@@ -250,6 +250,67 @@ describe('authoritative maintenance due-state contract', () => {
 
     expect(rankMaintenanceRequirements(result.requirements).map((row) => row.requirementCode)).toEqual(['OVERDUE', 'DUE', 'CURRENT']);
     expect(result.requirements.map((row) => row.requirementCode)).toEqual(['CURRENT', 'OVERDUE', 'DUE']);
+  });
+
+  test.each([
+    [threshold({ baselineType: null, baselineEvidence: null }), /baselineType/i],
+    [threshold({ dueValue: null }), /dueValue/i],
+    [threshold({ remaining: null }), /remaining/i],
+    [threshold({
+      thresholdType: 'CALENDAR', meterType: null, unitCode: 'YEAR',
+      intervalValue: 1, dueSoonValue: 30, baselineType: 'COMMISSIONING', baselineValue: null,
+      baselineDate: '2024-02-29', currentValue: null, currentRecordedAt: null,
+      currentAuthoritySource: null, dueValue: null, dueDate: null, remaining: null,
+      state: 'CURRENT', baselineEvidence: { source: 'commissioning certificate' },
+    }), /dueDate/i],
+  ])('rejects partial authoritative threshold evidence', (partialThreshold, message) => {
+    expect(() => normalizeMaintenanceDueResult(projection({
+      requirements: [requirement({ thresholds: [partialThreshold] })],
+    }))).toThrow(message);
+  });
+
+  test('rejects a CURRENT requirement that contains an OVERDUE threshold', () => {
+    expect(() => normalizeMaintenanceDueResult(projection({
+      requirements: [requirement({
+        state: 'CURRENT',
+        thresholds: [threshold({ state: 'OVERDUE', remaining: -1 })],
+      })],
+    }))).toThrow(/state/i);
+  });
+
+  test('rejects a controller that differs from the SQL remaining and sequence order', () => {
+    expect(() => normalizeMaintenanceDueResult(projection({
+      requirements: [requirement({
+        state: 'OVERDUE',
+        controllingThresholdId: 'threshold-current',
+        thresholds: [
+          threshold({ thresholdId: 'threshold-current', sequenceNumber: 1, state: 'CURRENT', remaining: 100 }),
+          threshold({ thresholdId: 'threshold-overdue', sequenceNumber: 2, state: 'OVERDUE', remaining: -1 }),
+        ],
+      })],
+    }))).toThrow(/controllingThresholdId/i);
+  });
+
+  test('accepts SQL precedence where insufficient data controls state but a known remainder controls threshold', () => {
+    const result = normalizeMaintenanceDueResult(projection({
+      requirements: [requirement({
+        state: 'INSUFFICIENT_DATA',
+        controllingThresholdId: 'threshold-meter',
+        thresholds: [
+          threshold({ state: 'DUE_SOON', remaining: 1420 }),
+          threshold({
+            thresholdId: 'threshold-unknown', sequenceNumber: 2, baselineType: null,
+            baselineValue: null, baselineEvidence: null, dueValue: null, remaining: null,
+            state: 'INSUFFICIENT_DATA',
+          }),
+        ],
+      })],
+    }));
+
+    expect(result.requirements[0]).toMatchObject({
+      state: 'INSUFFICIENT_DATA',
+      controllingThresholdId: 'threshold-meter',
+    });
   });
 
   test.each([

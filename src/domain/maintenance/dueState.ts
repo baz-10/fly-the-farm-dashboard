@@ -175,6 +175,89 @@ function dueState(value: unknown, path: string): MaintenanceDueState {
   return enumValue(value, DUE_STATES, path);
 }
 
+function requireBaselineMetadata(threshold: MaintenanceThresholdResult, path: string): void {
+  if (threshold.baselineType === null) {
+    throw new MaintenanceDueContractError(`${path}.baselineType`, 'projected baseline values require an authoritative baseline type');
+  }
+  if (threshold.baselineEvidence === null) {
+    throw new MaintenanceDueContractError(`${path}.baselineEvidence`, 'projected baseline values require authoritative evidence');
+  }
+}
+
+function rejectBaselineMetadataWithoutValue(threshold: MaintenanceThresholdResult, path: string, valueField: 'baselineValue' | 'baselineDate'): void {
+  if (threshold.baselineType !== null || threshold.baselineEvidence !== null) {
+    throw new MaintenanceDueContractError(`${path}.${valueField}`, 'baseline metadata cannot exist without its projected value');
+  }
+}
+
+function validateThresholdEvidenceConsistency(threshold: MaintenanceThresholdResult, path: string): void {
+  if (threshold.thresholdType === 'METER') {
+    const hasBaseline = threshold.baselineValue !== null;
+    const hasCurrent = threshold.currentValue !== null;
+    if (hasBaseline) requireBaselineMetadata(threshold, path);
+    else rejectBaselineMetadataWithoutValue(threshold, path, 'baselineValue');
+
+    if (hasBaseline && hasCurrent) {
+      if (threshold.dueValue === null) throw new MaintenanceDueContractError(`${path}.dueValue`, 'complete meter evidence requires the projected due value');
+      if (threshold.remaining === null) throw new MaintenanceDueContractError(`${path}.remaining`, 'complete meter evidence requires the projected remaining value');
+      if (threshold.state === 'INSUFFICIENT_DATA') throw new MaintenanceDueContractError(`${path}.state`, 'complete meter evidence cannot be insufficient');
+    } else {
+      if (threshold.dueValue !== null) throw new MaintenanceDueContractError(`${path}.dueValue`, 'incomplete meter evidence cannot have a projected due value');
+      if (threshold.remaining !== null) throw new MaintenanceDueContractError(`${path}.remaining`, 'incomplete meter evidence cannot have a projected remaining value');
+      if (threshold.state !== 'INSUFFICIENT_DATA') throw new MaintenanceDueContractError(`${path}.state`, 'incomplete meter evidence must be insufficient');
+    }
+    return;
+  }
+
+  if (threshold.thresholdType === 'CALENDAR' || threshold.thresholdType === 'ONE_TIME') {
+    const hasBaseline = threshold.baselineDate !== null;
+    if (hasBaseline) {
+      requireBaselineMetadata(threshold, path);
+      if (threshold.dueDate === null) throw new MaintenanceDueContractError(`${path}.dueDate`, 'calendar baseline evidence requires the projected due date');
+      if (threshold.remaining === null) throw new MaintenanceDueContractError(`${path}.remaining`, 'calendar baseline evidence requires the projected remaining days');
+      if (threshold.state === 'INSUFFICIENT_DATA') throw new MaintenanceDueContractError(`${path}.state`, 'complete calendar evidence cannot be insufficient');
+    } else {
+      rejectBaselineMetadataWithoutValue(threshold, path, 'baselineDate');
+      if (threshold.dueDate !== null) throw new MaintenanceDueContractError(`${path}.dueDate`, 'missing calendar baseline evidence cannot have a projected due date');
+      if (threshold.remaining !== null) throw new MaintenanceDueContractError(`${path}.remaining`, 'missing calendar baseline evidence cannot have projected remaining days');
+      if (threshold.state !== 'INSUFFICIENT_DATA') throw new MaintenanceDueContractError(`${path}.state`, 'missing calendar baseline evidence must be insufficient');
+    }
+    return;
+  }
+
+  const laterEvidenceFields: Array<[keyof MaintenanceThresholdResult, unknown]> = [
+    ['baselineType', threshold.baselineType],
+    ['baselineValue', threshold.baselineValue],
+    ['baselineDate', threshold.baselineDate],
+    ['baselineEvidence', threshold.baselineEvidence],
+    ['currentValue', threshold.currentValue],
+    ['currentRecordedAt', threshold.currentRecordedAt],
+    ['currentAuthoritySource', threshold.currentAuthoritySource],
+    ['dueValue', threshold.dueValue],
+    ['dueDate', threshold.dueDate],
+    ['remaining', threshold.remaining],
+  ];
+  const unexpected = laterEvidenceFields.find(([, value]) => value !== null);
+  if (unexpected) throw new MaintenanceDueContractError(`${path}.${unexpected[0]}`, 'later-slice evidence cannot appear in this projection');
+}
+
+function projectedRequirementState(thresholds: readonly MaintenanceThresholdResult[]): MaintenanceDueState {
+  if (thresholds.some((threshold) => threshold.state === 'OVERDUE')) return 'OVERDUE';
+  if (thresholds.some((threshold) => threshold.state === 'DUE')) return 'DUE';
+  if (thresholds.some((threshold) => threshold.state === 'INSUFFICIENT_DATA')) return 'INSUFFICIENT_DATA';
+  if (thresholds.some((threshold) => threshold.state === 'DUE_SOON')) return 'DUE_SOON';
+  return 'CURRENT';
+}
+
+function projectedControllingThreshold(thresholds: readonly MaintenanceThresholdResult[]): MaintenanceThresholdResult {
+  return [...thresholds].sort((left, right) => {
+    if (left.remaining === null && right.remaining !== null) return 1;
+    if (left.remaining !== null && right.remaining === null) return -1;
+    if (left.remaining !== null && right.remaining !== null && left.remaining !== right.remaining) return left.remaining - right.remaining;
+    return left.sequenceNumber - right.sequenceNumber;
+  })[0];
+}
+
 function parseThreshold(value: unknown, path: string): MaintenanceThresholdResult {
   const source = record(value, path);
   allowKeys(source, THRESHOLD_KEYS, path);
@@ -238,6 +321,7 @@ function parseThreshold(value: unknown, path: string): MaintenanceThresholdResul
     if (parsed.meterType !== null) throw new MaintenanceDueContractError(`${path}.meterType`, 'component thresholds do not use an asset meter yet');
     if (parsed.unitCode === null || parsed.intervalValue === null) throw new MaintenanceDueContractError(`${path}.intervalValue`, 'component threshold foundation requires an interval and unit');
   }
+  validateThresholdEvidenceConsistency(parsed, path);
   return parsed;
 }
 
@@ -262,6 +346,15 @@ function parseRequirement(value: unknown, path: string): MaintenanceRequirementD
   }
   if (source.thresholdPolicy !== 'ANY') {
     throw new MaintenanceDueContractError(`${path}.thresholdPolicy`, 'only explicit ANY is governed');
+  }
+  const state = dueState(source.state, `${path}.state`);
+  const expectedState = projectedRequirementState(thresholds);
+  if (state !== expectedState) {
+    throw new MaintenanceDueContractError(`${path}.state`, `does not match the authoritative ANY threshold state ${expectedState}`);
+  }
+  const expectedController = projectedControllingThreshold(thresholds);
+  if (controllingThresholdId !== expectedController.thresholdId) {
+    throw new MaintenanceDueContractError(`${path}.controllingThresholdId`, 'does not match the authoritative threshold ordering');
   }
   const lifecycleState = enumValue(source.lifecycleState, LIFECYCLE_STATES, `${path}.lifecycleState`) as ApplicableMaintenanceLifecycleState;
   const effectiveTo = nullableTimestamp(source.effectiveTo, `${path}.effectiveTo`);
@@ -288,7 +381,7 @@ function parseRequirement(value: unknown, path: string): MaintenanceRequirementD
     effectiveFrom: timestamp(source.effectiveFrom, `${path}.effectiveFrom`),
     effectiveTo,
     thresholdPolicy: 'ANY',
-    state: dueState(source.state, `${path}.state`),
+    state,
     controllingThresholdId,
     thresholds,
     evidence: evidence(source.evidence, `${path}.evidence`),

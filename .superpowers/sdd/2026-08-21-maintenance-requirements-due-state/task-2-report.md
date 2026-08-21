@@ -17,6 +17,8 @@ Tests: 0 total
 
 A second RED cycle was observed after comparing presentation evidence with the exact SQL projection. Six tests failed for the intended missing behavior: calendar remaining/warning units were incorrectly reported as recurrence units, and authority-plane mismatch, empty evidence, out-of-interval historical rows, incomplete current-meter evidence, and attached `asOf` drift were not yet rejected. A final RED contract cycle proved that arbitrary meter/baseline/source values, invalid threshold shapes and dates, and duplicate threshold identities were still accepted. The minimal hardening implementation made the suite GREEN at 36/36.
 
+Review fix round 1 added malicious partial and contradictory projections before changing production code. RED reproduced six acceptance gaps: meter baseline values without baseline authority/evidence, complete meter evidence without due or remaining values, calendar baseline evidence without due date/remaining days, a `CURRENT` requirement containing an `OVERDUE` threshold, and a controller that contradicted the SQL order. GREEN now rejects those payloads while retaining the valid SQL case where `INSUFFICIENT_DATA` controls aggregate requirement state but a different threshold with known remaining evidence controls the threshold ID.
+
 ## Implemented contract
 
 - `MaintenanceDueResult` and exact nested projection types for requirements, thresholds, baseline/current/due evidence, Service Kit version links, and attached assets.
@@ -29,6 +31,8 @@ A second RED cycle was observed after comparing presentation evidence with the e
 - Missing meter/calendar/one-time evidence stays `INSUFFICIENT_DATA`. `CONDITION` and future `COMPONENT` thresholds stay insufficient because Slice 4 has no authoritative evidence source for them.
 - Corrected authoritative readings and aircraft compatibility sources are preserved as server evidence; TypeScript performs no meter selection or correction arithmetic.
 - Controlling thresholds are resolved by the exact server-returned ID. Presentation helpers never re-run the SQL threshold-selection algorithm.
+- Runtime validation checks that the controller matches the SQL projection's `remaining ASC NULLS LAST, sequenceNumber` ordering and that requirement state matches its `OVERDUE`, `DUE`, `INSUFFICIENT_DATA`, `DUE_SOON`, `CURRENT` precedence. This validates returned metadata only; it does not calculate due state from dates or meters.
+- Baseline values require baseline type and evidence. Complete meter/calendar evidence requires the corresponding projected due and remaining fields; incomplete evidence cannot carry those fields or claim a sufficient state.
 - Calendar and one-time remaining/warning values are explained as days while their recurrence interval retains its stored unit.
 - Attached child projections must match their registry identity and the parent `asOf`; summaries remain separate and do not change parent requirement state.
 - Requirement ranking is a non-mutating presentation sort only.
@@ -40,7 +44,7 @@ Focused Task 2 suite:
 ```text
 PASS src/domain/maintenance/dueState.test.ts
 Test Suites: 1 passed, 1 total
-Tests: 36 passed, 36 total
+Tests: 43 passed, 43 total
 ```
 
 Focused SQL-adjacent gate:
@@ -50,7 +54,7 @@ PASS src/__tests__/maintenanceRequirementsPglite.test.js
 PASS src/domain/maintenance/dueState.test.ts
 PASS src/__tests__/maintenanceRequirementsMigration.test.js
 Test Suites: 3 passed, 3 total
-Tests: 42 passed, 42 total
+Tests: 49 passed, 49 total
 ```
 
 Task-file TypeScript compilation passed with the repository's ES5 target constraints:
