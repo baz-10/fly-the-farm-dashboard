@@ -28,6 +28,7 @@ const { createCommercialOnboardingHandler } = require('./commercial-onboarding-a
 const { createGettingStartedHandler } = require('./getting-started-api');
 const { createFleetMaintenanceHandler } = require('./fleet-maintenance-api');
 const { createTechnicalCatalogueHandler } = require('./technical-catalogue-api');
+const ASSET_MAINTENANCE_RESOURCE = 'asset-maintenance';
 
 function createDefaultHandlers() {
   return Object.freeze({
@@ -65,7 +66,7 @@ function createDefaultHandlers() {
     'operations-brief': createOperationsBriefHandler(),
     'commercial-onboarding': createCommercialOnboardingHandler(),
     'getting-started': createGettingStartedHandler(),
-    'asset-maintenance': createFleetMaintenanceHandler(),
+    [ASSET_MAINTENANCE_RESOURCE]: createFleetMaintenanceHandler(),
     'technical-catalogue': createTechnicalCatalogueHandler(),
   });
 }
@@ -90,4 +91,4 @@ function createVersionedApiDispatcher(handlerMap = createDefaultHandlers()) {
   };
 }
 
-module.exports = { createDefaultHandlers, createVersionedApiDispatcher };
+module.exports = { ASSET_MAINTENANCE_RESOURCE, createDefaultHandlers, createVersionedApiDispatcher };
