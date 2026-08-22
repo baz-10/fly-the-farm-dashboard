@@ -26,6 +26,7 @@ const { createChecklistsHandler } = require('./checklists-api');
 const { createOperationsBriefHandler } = require('./operations-brief-api');
 const { createCommercialOnboardingHandler } = require('./commercial-onboarding-api');
 const { createGettingStartedHandler } = require('./getting-started-api');
+const { createFinancialActualsHandler } = require('./financial-actuals-api');
 
 function createDefaultHandlers() {
   return Object.freeze({
@@ -62,6 +63,7 @@ function createDefaultHandlers() {
     'operations-brief': createOperationsBriefHandler(),
     'commercial-onboarding': createCommercialOnboardingHandler(),
     'getting-started': createGettingStartedHandler(),
+    'financial-actuals': createFinancialActualsHandler(),
   });
 }
 
