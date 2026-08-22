@@ -18,6 +18,7 @@ class FinancialActualsRepository {
   revisionHistory(context,{actualId,beforeRevisionNumber=null,pageSize=25}) { return this.rpc('ftf_read_financial_actual_revision_history',{...this.trusted(context),p_financial_actual_id:actualId,p_before_revision_number:beforeRevisionNumber,p_page_size:pageSize},'Financial Actual revision history could not be loaded.'); }
   historicalRevision(context,{actualId,revisionId}) { return this.rpc('ftf_read_financial_actual_historical_revision',{...this.trusted(context),p_financial_actual_id:actualId,p_revision_id:revisionId},'Historical Financial Actual revision could not be loaded.'); }
   archive(context,{actualId,expectedAggregateVersion,archiveReason}) { return this.rpc('ftf_archive_financial_actual',{...this.trusted(context),p_financial_actual_id:actualId,p_expected_aggregate_version:expectedAggregateVersion,p_archive_reason:archiveReason},'Financial Actual could not be archived.'); }
+  recordExportEvidence(context,{actualId,revisionId,revisionNumber,inputDigest,formulaVersion,reportVersion,generatedAt}) { return this.rpc('ftf_record_financial_actual_export_evidence',{...this.trusted(context),p_financial_actual_id:actualId,p_revision_id:revisionId,p_revision_number:revisionNumber,p_input_digest:inputDigest,p_formula_version:formulaVersion,p_report_version:reportVersion,p_generated_at:generatedAt},'Financial Actual export evidence could not be recorded.'); }
 }
 
 module.exports={FinancialActualsRepository};

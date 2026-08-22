@@ -46,6 +46,7 @@ export default function ActualDetail() {
   const [correctionReason, setCorrectionReason] = useState('');
   const [archiveOpenScope, setArchiveOpenScope] = useState<string | null>(null);
   const [archiveReason, setArchiveReason] = useState('');
+  const [exportBusyScope, setExportBusyScope] = useState<string | null>(null);
   scopeRef.current = scopeKey;
 
   const detail = resolved?.scope === scopeKey ? resolved.value : null;
@@ -61,6 +62,7 @@ export default function ActualDetail() {
   const privilegedRole = ['admin', 'organisation_admin'].includes(String((user as any)?.role || '').toLowerCase());
   const canUpdate = privilegedRole || permissions.has('*') || permissions.has('financial_actuals.update');
   const canArchive = privilegedRole || permissions.has('*') || permissions.has('financial_actuals.archive');
+  const canExport = permissions.has('*') || (permissions.has('financial_actuals.read') && permissions.has('financial_actuals.export'));
 
   const load = useCallback(async (requestScope = scopeKey) => {
     const active = ++generation.current;
@@ -143,6 +145,19 @@ export default function ActualDetail() {
     }
   };
 
+  const exportRevision = async (revisionId: string) => {
+    const requestScope = `${scopeKey}:${revisionId}`;
+    setExportBusyScope(requestScope); setErrorState(null);
+    try {
+      const output = await api.exportFinal({ actualId, revisionId });
+      if (scopeRef.current !== scopeKey) return;
+      const url = URL.createObjectURL(output.blob), anchor = document.createElement('a');
+      try { anchor.href = url; anchor.download = output.filename; anchor.click(); } finally { URL.revokeObjectURL(url); }
+    } catch (caught) {
+      if (scopeRef.current === scopeKey) setErrorState({ scope: scopeKey, message: caught instanceof Error ? caught.message : 'Financial Actual export failed.' });
+    } finally { if (scopeRef.current === scopeKey) setExportBusyScope(null); }
+  };
+
   if (!detail && loading) return <CircularProgress aria-label="Loading Financial Actual" />;
   if (error && !detail) return <Alert severity="error">{error}</Alert>;
   if (!detail) return <CircularProgress aria-label="Loading Financial Actual" />;
@@ -158,14 +173,14 @@ export default function ActualDetail() {
     {conflict && <Alert severity="warning" sx={{ mb: 2 }} action={<Button onClick={() => load(scopeKey)}>Reload authoritative Draft</Button>}>This Financial Actual changed in another session. Your changes were not written.</Alert>}
     {detail.record.archivedAt && <Alert severity="info" sx={{ mb: 2 }}>Archived Financial Actual. Immutable revision evidence remains available below.</Alert>}
 
-    {draft && detail.final && <><Alert severity="info" sx={{ mb: 2 }}>A correction Draft is in progress. The existing FINAL remains authoritative until the correction finalises successfully.</Alert><Final detail={detail} /></>}
+    {draft && detail.final && <><Alert severity="info" sx={{ mb: 2 }}>A correction Draft is in progress. The existing FINAL remains authoritative until the correction finalises successfully.</Alert><Final detail={detail} />{canExport&&<Button sx={{mt:2}} variant="outlined" disabled={exportBusyScope===`${scopeKey}:${detail.final.id}`} onClick={()=>exportRevision(detail.final!.id)}>Export current FINAL</Button>}</>}
     {draft && <Box sx={{ mt: detail.final ? 2 : 0 }}><Card variant="outlined" sx={{ mb: 2 }}><CardContent><Typography variant="h6">Correction Draft</Typography><Typography variant="body2" color="text.secondary">Revision {draft.revisionNumber} · version {draft.rowVersion}</Typography><Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} mt={2}><TextField type="date" label="Start date" value={draft.startDate} InputLabelProps={{ shrink: true }} disabled fullWidth /><TextField type="date" label="End date" value={draft.endDate} InputLabelProps={{ shrink: true }} disabled fullWidth /></Stack><Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} mt={2}><Button variant="outlined" disabled={busy || !detail.record.missionId} onClick={async () => { const requestScope = scopeKey; setErrorState(null); try { const value = await api.prefill(detail.record.id); if (scopeRef.current === requestScope) setPrefillState({ scope: requestScope, value }); } catch (caught) { if (scopeRef.current === requestScope) setErrorState({ scope: requestScope, message: caught instanceof Error ? caught.message : 'Operational prefill unavailable.' }); } }}>Review operational prefill</Button><Button color="success" variant="contained" disabled={busy || !calculation} onClick={() => command(() => api.finalise({ actualId: detail.record.id, revisionId: draft.id, expectedAggregateVersion: detail.record.rowVersion, expectedRevisionVersion: draft.rowVersion }))}>Finalise correction</Button></Stack></CardContent></Card><FinancialDraftEditor draft={draft} busy={busy} onSave={payload => command(() => api.updateDraft({ actualId: detail.record.id, revisionId: draft.id, expectedVersion: draft.rowVersion, payload }))} />{prefill && <FinancialPrefillReview prefill={prefill} busy={busy} onSubmit={payload => command(() => api.acceptPrefill({ actualId: detail.record.id, revisionId: draft.id, expectedVersion: draft.rowVersion, payload }))} />}<Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: '1fr 1fr' }, gap: 2 }}>{['Revenue', 'Labour', 'Products', 'Aircraft & Equipment', 'Travel', 'Other Costs'].map(section => <Box key={section}><Accordion variant="outlined"><AccordionSummary expandIcon={<ExpandMoreIcon />}><Typography fontWeight={700}>{section}</Typography></AccordionSummary><AccordionDetails><Typography color="text.secondary">Authoritative entries are retained in this Draft.</Typography></AccordionDetails></Accordion></Box>)}</Box>{calculation && <Card variant="outlined" sx={{ mt: 2, borderTop: 4, borderTopColor: 'primary.main' }}><CardContent><Typography variant="h6">Calculation Preview</Typography><Alert severity="info" sx={{ my: 1 }}>Preview uses TypeScript FINANCIAL_ACTUAL_V1. PostgreSQL becomes authoritative only when finalised.</Alert><Metrics calculation={calculation} /></CardContent></Card>}</Box>}
-    {!draft && detail.final && <Final detail={detail} />}
+    {!draft && detail.final && <><Final detail={detail} />{canExport&&<Button sx={{mt:2}} variant="outlined" disabled={exportBusyScope===`${scopeKey}:${detail.final.id}`} onClick={()=>exportRevision(detail.final!.id)}>Export current FINAL</Button>}</>}
 
     {!detail.record.archivedAt && detail.final && <Card variant="outlined" sx={{ mt: 2 }}><CardContent><Typography variant="h6">Governed actions</Typography>{!draft && canUpdate && <>{correctionOpenScope !== scopeKey ? <Button variant="outlined" onClick={() => setCorrectionOpenScope(scopeKey)}>Correct Financial Actual</Button> : <Stack spacing={1.5} mt={1}><Alert severity="info">This creates a numbered correction Draft. The current FINAL remains authoritative until successful finalisation.</Alert><TextField label="Correction reason" value={correctionReason} onChange={event => setCorrectionReason(event.target.value)} multiline minRows={2} inputProps={{ maxLength: 1000 }} /><Stack direction="row" gap={1}><Button variant="contained" disabled={busy || !reasonValid(correctionReason)} onClick={() => command(() => api.createCorrection({ actualId, expectedAggregateVersion: detail.record.rowVersion, expectedFinalRevisionId: detail.final!.id, expectedFinalRevisionVersion: detail.final!.rowVersion, correctionReason: correctionReason.trim() }))}>Create correction Draft</Button><Button onClick={() => { setCorrectionOpenScope(null); setCorrectionReason(''); }}>Cancel</Button></Stack></Stack>}</>}{draft && <Alert severity="warning" sx={{ mt: 1 }}>Archive unavailable while correction Draft exists.</Alert>}{!draft && canArchive && <Box sx={{ mt: 2 }}>{archiveOpenScope !== scopeKey ? <Button color="warning" variant="outlined" onClick={() => setArchiveOpenScope(scopeKey)}>Archive Financial Actual</Button> : <Stack spacing={1.5}><TextField label="Archive reason" value={archiveReason} onChange={event => setArchiveReason(event.target.value)} multiline minRows={2} inputProps={{ maxLength: 500 }} /><Stack direction="row" gap={1}><Button color="warning" variant="contained" disabled={busy || !reasonValid(archiveReason, 500)} onClick={() => command(() => api.archive({ actualId, expectedAggregateVersion: detail.record.rowVersion, archiveReason: archiveReason.trim() }))}>Confirm archive</Button><Button onClick={() => { setArchiveOpenScope(null); setArchiveReason(''); }}>Cancel</Button></Stack></Stack>}</Box>}</CardContent></Card>}
 
     {history && <Box sx={{ mt: 2 }}><RevisionHistory history={history} selectedRevisionId={historical?.revision.id || null} onSelect={selectRevision} onLoadMore={loadOlderRevisions} loadingMore={historyBusy} /></Box>}
-    {historical && <Card variant="outlined" sx={{ mt: 2, borderTop: 4, borderTopColor: historical.current ? 'success.main' : 'grey.500' }}><CardContent><Typography variant="h5">Historical frozen authority</Typography><Typography color="text.secondary">Revision {historical.revision.revisionNumber} · {historical.current ? 'Current FINAL' : 'Superseded FINAL'} · {historical.revision.correctionReason || 'Original'}</Typography><Alert severity="info" sx={{ my: 2 }}>Rendered from the immutable frozen snapshot. It is not recalculated using current code.</Alert><Metrics calculation={historical.revision.calculation} /></CardContent></Card>}
+    {historical && <Card variant="outlined" sx={{ mt: 2, borderTop: 4, borderTopColor: historical.current ? 'success.main' : 'grey.500' }}><CardContent><Typography variant="h5">Historical frozen authority</Typography><Typography color="text.secondary">Revision {historical.revision.revisionNumber} · {historical.current ? 'Current FINAL' : 'Superseded FINAL'} · {historical.revision.correctionReason || 'Original'}</Typography><Alert severity="info" sx={{ my: 2 }}>Rendered from the immutable frozen snapshot. It is not recalculated using current code.</Alert><Metrics calculation={historical.revision.calculation} />{canExport&&<Button sx={{mt:2}} variant="outlined" disabled={exportBusyScope===`${scopeKey}:${historical.revision.id}`} onClick={()=>exportRevision(historical.revision.id)}>Export revision {historical.revision.revisionNumber}</Button>}</CardContent></Card>}
   </Box>;
 }
 

@@ -15,7 +15,7 @@ Object.defineProperty(global, 'crypto', { configurable: true, value: { getRandom
 
 jest.mock('react-router-dom', () => ({ useParams: () => ({ actualId }), useNavigate: () => jest.fn() }), { virtual: true });
 jest.mock('../../contexts/AuthContext', () => ({
-  useAuth: () => ({ user: { id: actualId, role: 'admin', tenantId: actualId, permissions: ['financial_actuals.read', 'financial_actuals.update', 'financial_actuals.archive'] } }),
+  useAuth: () => ({ user: { id: actualId, role: 'admin', tenantId: actualId, permissions: ['financial_actuals.read', 'financial_actuals.export', 'financial_actuals.update', 'financial_actuals.archive'] } }),
 }));
 jest.mock('../../services/financialActualsApi', () => ({
   createFinancialActualsApi: () => ({
@@ -24,7 +24,7 @@ jest.mock('../../services/financialActualsApi', () => ({
     historicalRevision: (...args: unknown[]) => mockHistorical(...args),
     createCorrection: (...args: unknown[]) => mockCorrection(...args),
     archive: (...args: unknown[]) => mockArchive(...args),
-    prefill: jest.fn(), updateDraft: jest.fn(), acceptPrefill: jest.fn(), finalise: jest.fn(),
+    prefill: jest.fn(), updateDraft: jest.fn(), acceptPrefill: jest.fn(), finalise: jest.fn(), exportFinal: jest.fn(),
   }),
   FinancialActualApiError: class extends Error { code = 'TEST'; },
 }));
@@ -56,6 +56,7 @@ test('shows archive blocked by a correction Draft and preserves historical FINAL
   render(<ActualDetail />);
   expect(await screen.findByText('Archive unavailable while correction Draft exists.')).toBeVisible();
   expect(screen.getByRole('heading', { name: 'Frozen FINAL result' })).toBeVisible();
+  expect(screen.getByRole('button', { name: 'Export current FINAL' })).toBeVisible();
   await userEvent.click(screen.getByRole('button', { name: 'Revision 1' }));
   await waitFor(() => expect(mockHistorical).toHaveBeenCalledWith({ actualId, revisionId: finalId }));
   expect(await screen.findByText('Historical frozen authority')).toBeVisible();
