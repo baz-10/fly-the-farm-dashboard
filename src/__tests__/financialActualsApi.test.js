@@ -15,6 +15,10 @@ const repository = () => ({
   create: jest.fn().mockResolvedValue({ record:{ id:UUID } }), updateDraft: jest.fn().mockResolvedValue({}),
   readPrefill: jest.fn().mockResolvedValue({}), acceptPrefill: jest.fn().mockResolvedValue({}),
   readSourceDrift: jest.fn().mockResolvedValue({ status:'UNCHANGED' }), finalise: jest.fn().mockResolvedValue({}),
+  createCorrection:jest.fn().mockResolvedValue({schemaVersion:'FINANCIAL_ACTUAL_CORRECTION_V1'}),
+  revisionHistory:jest.fn().mockResolvedValue({schemaVersion:'FINANCIAL_ACTUAL_REVISION_HISTORY_V1',rows:[]}),
+  historicalRevision:jest.fn().mockResolvedValue({schemaVersion:'FINANCIAL_ACTUAL_HISTORICAL_REVISION_V1'}),
+  archive:jest.fn().mockResolvedValue({schemaVersion:'FINANCIAL_ACTUAL_ARCHIVE_V1'}),
 });
 
 test('registers the exact financial-actuals route and permits only bounded checked list/read actions', async () => {
@@ -69,3 +73,18 @@ test('maps finalisation to the exact reviewed PostgreSQL parameter names',async(
   await repo.finalise(context(['financial_actuals.finalise']),{actualId:UUID,revisionId:UUID,expectedAggregateVersion:2,expectedRevisionVersion:3});
   expect(JSON.parse(requestRpc.mock.calls[0][1].body)).toEqual({p_organisation_id:UUID,p_actor_internal_user_id:'20000000-0000-4000-8000-000000000001',p_financial_actual_id:UUID,p_revision_id:UUID,p_expected_aggregate_version:2,p_expected_draft_version:3});
 });
+
+test('allows only the four checked Slice 5 actions with exact permissions',async()=>{
+  const repo=repository(),handler=createFinancialActualsHandler({repository:repo,resolveContext:async()=>context(['financial_actuals.read','financial_actuals.update','financial_actuals.archive'])});
+  const history=response();await handler(request('GET','revision-history',{}, {actualId:UUID,pageSize:'25'}),history);expect(history.statusCode).toBe(200);expect(repo.revisionHistory).toHaveBeenCalledWith(expect.anything(),{actualId:UUID,beforeRevisionNumber:null,pageSize:25});
+  const historical=response();await handler(request('GET','historical-revision',{}, {actualId:UUID,revisionId:UUID}),historical);expect(historical.statusCode).toBe(200);expect(repo.historicalRevision).toHaveBeenCalledWith(expect.anything(),{actualId:UUID,revisionId:UUID});
+  const correction=response();await handler(request('POST','create-correction',{actualId:UUID,expectedAggregateVersion:3,expectedFinalRevisionId:UUID,expectedFinalRevisionVersion:4,correctionReason:'Correct product cost.'}),correction);expect(correction.statusCode).toBe(201);expect(repo.createCorrection).toHaveBeenCalledTimes(1);
+  const archive=response();await handler(request('POST','archive',{actualId:UUID,expectedAggregateVersion:4,archiveReason:'No longer operational'}),archive);expect(archive.statusCode).toBe(200);expect(repo.archive).toHaveBeenCalledTimes(1);
+  const tooLong=response();await handler(request('POST','archive',{actualId:UUID,expectedAggregateVersion:4,archiveReason:'x'.repeat(501)}),tooLong);expect(tooLong.statusCode).toBe(400);expect(repo.archive).toHaveBeenCalledTimes(1);
+});
+
+test('maps active Draft archive/correction conflicts explicitly and makes no second command',async()=>{
+  const repo=repository();repo.archive.mockResolvedValue({active_draft_conflict:true,code:'ACTIVE_DRAFT_CONFLICT',revision_id:UUID});const handler=createFinancialActualsHandler({repository:repo,resolveContext:async()=>context(['financial_actuals.archive'])}),res=response();await handler(request('POST','archive',{actualId:UUID,expectedAggregateVersion:4,archiveReason:'Archive'}),res);expect(res.statusCode).toBe(409);expect(res.body).toEqual({error:{code:'ACTIVE_DRAFT_CONFLICT',message:'Resolve the active Financial Actual Draft before archiving.'}});expect(repo.archive).toHaveBeenCalledTimes(1);
+});
+
+test('maps Slice 5 repository calls to exact checked RPC parameters',async()=>{const requestRpc=jest.fn().mockResolvedValue({}),repo=new FinancialActualsRepository(requestRpc),ctx=context(['*']);await repo.createCorrection(ctx,{actualId:UUID,expectedAggregateVersion:2,expectedFinalRevisionId:UUID,expectedFinalRevisionVersion:3,correctionReason:'Reason'});await repo.revisionHistory(ctx,{actualId:UUID,beforeRevisionNumber:null,pageSize:25});await repo.historicalRevision(ctx,{actualId:UUID,revisionId:UUID});await repo.archive(ctx,{actualId:UUID,expectedAggregateVersion:4,archiveReason:'Archive'});expect(requestRpc.mock.calls.map(call=>call[0])).toEqual(['rest/v1/rpc/ftf_create_financial_actual_correction','rest/v1/rpc/ftf_read_financial_actual_revision_history','rest/v1/rpc/ftf_read_financial_actual_historical_revision','rest/v1/rpc/ftf_archive_financial_actual']);expect(JSON.parse(requestRpc.mock.calls[0][1].body)).toMatchObject({p_expected_final_revision_id:UUID,p_expected_final_revision_version:3,p_correction_reason:'Reason'});});
