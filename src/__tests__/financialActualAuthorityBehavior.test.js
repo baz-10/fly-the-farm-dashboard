@@ -68,14 +68,14 @@ if (runChild) {
       id: ids.provenanceCostA,
       fieldPath: `costLines/${ids.costA}/amount`,
       provenanceClass: 'MANUAL_FINANCIAL_INPUT',
-      originalValue: '25.00',
-      effectiveValue: '25.00',
+      originalValue: '1.0000',
+      effectiveValue: '1.0000',
       unitCode: 'AUD',
     }],
     workEntries: [{ id: ids.workA, workDate: '2026-08-20', actualWorkHours: '8.5000', provenanceId: ids.provenanceA }],
     costLines: [{
       id: ids.costA, category: 'OTHER', subtype: 'MISCELLANEOUS', description: 'Landing fee',
-      quantity: '1.000000', unitCode: 'EA', unitCost: '25.0000', amount: '25.00', provenanceId: ids.provenanceCostA,
+      quantity: '3.000000', unitCode: 'EA', unitCost: '0.333333', amount: '1.0000', provenanceId: ids.provenanceCostA,
     }],
   });
 
@@ -126,6 +126,10 @@ if (runChild) {
     expect(created.record.current_final_revision_id).toBeNull();
     const counts = await db.query(`select (select count(*)::integer from public.financial_actual_work_entries) work,(select count(*)::integer from public.financial_actual_cost_lines) cost,(select count(*)::integer from public.financial_actual_value_provenance) provenance,(select count(*)::integer from public.audit_events where event_type='financial_actual.created') audit,(select count(*)::integer from public.transactional_outbox where topic='financial.actual.created') outbox`);
     expect(counts.rows[0]).toEqual({ work:1,cost:1,provenance:2,audit:1,outbox:1 });
+    const storedRate = await scalar(db, `select unit_cost::text as value from public.financial_actual_cost_lines where id=$1`, [ids.costA]);
+    expect(storedRate).toBe('0.333333');
+    const storedAmount = await scalar(db, `select amount::text as value from public.financial_actual_cost_lines where id=$1`, [ids.costA]);
+    expect(storedAmount).toBe('1.0000');
     global.created = created;
   });
 

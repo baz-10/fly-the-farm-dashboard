@@ -37,7 +37,8 @@ test('defines bounded work, cost and provenance domains without Quote or Fleet a
   for (const provenance of ['AUTHORITATIVE_OPERATIONAL_INPUT','SYSTEM_DERIVED','MANUAL_FINANCIAL_INPUT','MANUAL_OVERRIDE','QUOTE_DERIVED']) expect(sql).toContain(`'${provenance}'`);
   expect(sql).toMatch(/actual_work_hours numeric\(10,4\)/i);
   expect(sql).toMatch(/quantity numeric\(18,6\)/i);
-  expect(sql).toMatch(/unit_cost numeric\(19,4\)/i);
+  expect(sql).toMatch(/unit_cost numeric\(19,6\)/i);
+  expect(sql).toMatch(/amount numeric\(19,4\)/i);
   expect(sql).not.toMatch(/references public\.(quotes|fleet_assets)/i);
   expect(sql).not.toMatch(/ftf_actuals|localstorage/i);
 });

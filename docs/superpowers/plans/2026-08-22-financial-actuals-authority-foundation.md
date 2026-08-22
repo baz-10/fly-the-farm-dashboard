@@ -16,6 +16,7 @@
 - Do not import or trust browser-local Financial Actuals or Quotes.
 - Do not depend on PR #23 or unreleased Fleet Maintenance authority.
 - Use canonical decimal strings and PostgreSQL `numeric`; JavaScript `number` is not financial authority.
+- Persist money and monetary results as `numeric(19,4)`, rates and unit costs as `numeric(19,6)`, quantities/areas as `numeric(18,6)`, and hours as `numeric(10,4)`.
 - Use `ROUND_HALF_AWAY_FROM_ZERO` at the exact stages defined by `FINANCIAL_ACTUAL_V1`.
 - Keep FINAL revisions and child evidence immutable; corrections create a new DRAFT revision.
 - Keep the current FINAL pointer unchanged until correction finalisation succeeds.

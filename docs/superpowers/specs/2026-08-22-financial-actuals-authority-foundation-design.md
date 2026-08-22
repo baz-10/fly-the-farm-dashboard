@@ -215,7 +215,8 @@ Archiving removes the aggregate from normal operational lists but preserves ever
 ### 6.1 Numeric domains
 
 - Financial inputs and results use PostgreSQL `numeric`; binary floating point is never authoritative.
-- Money/rates use bounded decimal strings at API boundaries and `numeric(19,4)` internally.
+- Money and monetary results use bounded decimal strings at API boundaries and `numeric(19,4)` internally.
+- Rates and unit costs use bounded decimal strings at API boundaries and `numeric(19,6)` internally; a rate is not rounded to currency precision before extension.
 - Quantities and areas use `numeric(18,6)`; area unit is hectare in V1.
 - Hours use `numeric(10,4)`.
 - Currency metadata uses supported ISO 4217 codes. AUD uses two minor-unit decimal places.
