@@ -336,6 +336,15 @@ declare
   v_current_templates jsonb;
   v_current_template_mutations integer;
   v_archived_templates_observed integer;
+  v_asset_type text;
+  v_asset_identifier text;
+  v_registration text;
+  v_vin text;
+  v_serial_number text;
+  v_manufacturer text;
+  v_model text;
+  v_status text;
+  v_manufacture_year integer;
 begin
   if not public.ftf_actor_has_permission(p_organisation_id, p_actor_internal_user_id, 'fleet_assets.create') then
     return jsonb_build_object('forbidden', true);
@@ -362,7 +371,57 @@ begin
       from jsonb_array_elements(v_payload->'trucks') item
     ) else '[]'::jsonb end;
   v_source_count := jsonb_array_length(v_assets);
+  for v_asset in select value from jsonb_array_elements(v_assets) loop
+    if jsonb_typeof(v_asset) <> 'object' or nullif(btrim(v_asset->>'id'), '') is null then
+      raise exception 'FLEET_ASSET_BACKFILL_SOURCE_INVALID' using errcode = '22023';
+    end if;
+    v_asset_type := lower(btrim(coalesce(v_asset->>'assetType', 'truck')));
+    v_asset_identifier := coalesce(nullif(btrim(v_asset->>'name'), ''), nullif(btrim(v_asset->>'registration'), ''), nullif(btrim(v_asset->>'id'), ''));
+    v_registration := nullif(btrim(v_asset->>'registration'), '');
+    v_vin := nullif(btrim(v_asset->>'vin'), '');
+    v_serial_number := nullif(btrim(v_asset->>'serialNumber'), '');
+    v_manufacturer := nullif(btrim(v_asset->>'manufacturer'), '');
+    v_model := nullif(btrim(v_asset->>'model'), '');
+    v_status := lower(btrim(coalesce(v_asset->>'status', 'available')));
+    v_manufacture_year := null;
+    if nullif(btrim(v_asset->>'year'), '') is not null then
+      if btrim(v_asset->>'year') !~ '^[0-9]{4}$' then
+        raise exception 'FLEET_ASSET_BACKFILL_SOURCE_INVALID' using errcode = '22023';
+      end if;
+      v_manufacture_year := btrim(v_asset->>'year')::integer;
+    end if;
+    if v_asset_type not in ('truck', 'trailer', 'generator', 'crane', 'pump', 'compressor', 'other')
+      or v_asset_identifier is null or length(v_asset_identifier) not between 1 and 120
+      or (v_asset_type in ('truck', 'trailer') and v_registration is null)
+      or (v_registration is not null and length(v_registration) not between 1 and 40)
+      or (v_vin is not null and length(v_vin) not between 1 and 80)
+      or (v_serial_number is not null and length(v_serial_number) not between 1 and 120)
+      or (v_manufacturer is not null and length(v_manufacturer) not between 1 and 120)
+      or (v_model is not null and length(v_model) not between 1 and 120)
+      or v_status not in ('available', 'assigned', 'maintenance', 'retired')
+      or (v_manufacture_year is not null and v_manufacture_year not between 1900 and 2200) then
+      raise exception 'FLEET_ASSET_BACKFILL_SOURCE_INVALID' using errcode = '22023';
+    end if;
+    if not exists (
+      select 1 from public.fleet_assets existing
+      where existing.organisation_id = p_organisation_id
+        and existing.source_system = 'ftf_work_packs' and existing.source_record_id = v_asset->>'id'
+    ) and exists (
+      select 1 from public.fleet_assets existing
+      where existing.organisation_id = p_organisation_id and existing.archived_at is null and (
+        upper(btrim(existing.asset_identifier)) = upper(btrim(v_asset_identifier))
+        or (v_registration is not null and existing.normalised_registration = upper(regexp_replace(v_registration, '[^A-Z0-9]', '', 'g')))
+        or (v_vin is not null and existing.normalised_vin = upper(regexp_replace(v_vin, '[^A-Z0-9]', '', 'g')))
+        or (v_serial_number is not null and existing.normalised_serial_number = upper(regexp_replace(v_serial_number, '[^A-Z0-9]', '', 'g')))
+      )
+    ) then
+      raise exception 'AMBIGUOUS_FLEET_ASSET_MATCH' using errcode = '22023';
+    end if;
+  end loop;
   select count(*) into v_ambiguity_count from (
+    select upper(btrim(coalesce(nullif(btrim(item->>'name'), ''), nullif(btrim(item->>'registration'), ''), item->>'id'))) identity_value
+    from jsonb_array_elements(v_assets) item group by 1 having count(*) > 1
+    union all
     select upper(regexp_replace(btrim(item->>'registration'), '[^A-Z0-9]', '', 'g')) identity_value
     from jsonb_array_elements(v_assets) item
     where nullif(btrim(item->>'registration'), '') is not null group by 1 having count(*) > 1
@@ -370,6 +429,13 @@ begin
     select upper(regexp_replace(btrim(item->>'vin'), '[^A-Z0-9]', '', 'g'))
     from jsonb_array_elements(v_assets) item
     where nullif(btrim(item->>'vin'), '') is not null group by 1 having count(*) > 1
+    union all
+    select upper(regexp_replace(btrim(item->>'serialNumber'), '[^A-Z0-9]', '', 'g'))
+    from jsonb_array_elements(v_assets) item
+    where nullif(btrim(item->>'serialNumber'), '') is not null group by 1 having count(*) > 1
+    union all
+    select btrim(item->>'id')
+    from jsonb_array_elements(v_assets) item group by 1 having count(*) > 1
   ) ambiguity;
   if v_ambiguity_count > 0 then
     raise exception 'AMBIGUOUS_FLEET_ASSET_SOURCE' using errcode = '22023';

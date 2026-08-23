@@ -206,6 +206,34 @@ if (runPgliteInThisProcess) describe('maintenance technical catalogue PostgreSQL
     expect(after.rows[0].current).toMatchObject({ assetIds: [canonical], truckId: canonical });
   });
 
+  test('rejects every source population in dry-run that apply cannot persist', async () => {
+    const replaceSources = async (assets) => db.query(`update public.ftf_store set payload=jsonb_build_object('assets',$2::jsonb,'templates','[]'::jsonb,'snapshots','[]'::jsonb)
+      where tenant_id=$1 and collection='ftf_work_packs' and record_id='__value__'`, [ids.org1, JSON.stringify(assets)]);
+    const dryRun = () => db.query(`select public.ftf_backfill_fleet_assets_from_work_pack($1,$2,$3,null,false)`, [ids.org1, ids.actor1, ids.location1]);
+    let fixtureNumber = 0;
+    const valid = (overrides = {}) => {
+      fixtureNumber += 1;
+      return { id: `source-${fixtureNumber}`, assetType: 'generator', name: 'Generator proof', serialNumber: `SERIAL-${fixtureNumber}`, status: 'available', year: 2025, ...overrides };
+    };
+
+    await replaceSources([valid({ id: 'serial-a', serialNumber: 'DUPLICATE-SERIAL' }), valid({ id: 'serial-b', serialNumber: 'duplicate serial' })]);
+    await expect(dryRun()).rejects.toThrow(/AMBIGUOUS_FLEET_ASSET_SOURCE/);
+
+    for (const invalid of [
+      valid({ id: 'bad-type', assetType: 'spaceship' }),
+      valid({ id: 'bad-status', status: 'flying' }),
+      valid({ id: 'truck-no-registration', assetType: 'truck', registration: '' }),
+      valid({ id: 'bad-year', year: 1899 }),
+      valid({ id: 'bad-identifier', name: 'x'.repeat(121) }),
+    ]) {
+      await replaceSources([invalid]);
+      await expect(dryRun()).rejects.toThrow(/FLEET_ASSET_BACKFILL_SOURCE_INVALID/);
+    }
+
+    await replaceSources([valid({ id: 'existing-identity-collision', name: 'FTF-11', serialNumber: 'UNIQUE-COLLISION-PROOF' })]);
+    await expect(dryRun()).rejects.toThrow(/AMBIGUOUS_FLEET_ASSET_MATCH/);
+  });
+
   test('fails contradictory asset/system/position applicability closed', async () => {
     await expect(db.exec(`insert into public.asset_part_requirements(organisation_id,technical_part_version_id,maintainable_asset_id,system_id,application_code,quantity,unit_code,authority_type,lifecycle_state,evidence,effective_from) values('${ids.org1}','${ids.versionA}','${ids.asset1}','${ids.system1b}','CONTRADICTORY',1,'EA','ORGANISATION_STANDARD','DRAFT','{"source":"test"}','2025-01-01')`))
       .rejects.toThrow(/ASSET_TECHNICAL_SCOPE_CONTRADICTION/);
