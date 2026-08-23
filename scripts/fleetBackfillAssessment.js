@@ -58,6 +58,8 @@ function logicalEquivalent(left, right) {
 function assessFleetBackfillInventory(inventory) {
   const classifications = [];
   const currentTemplates = [];
+  let currentTemplatesAssessed = 0;
+  let archivedTemplatesObserved = 0;
   const proposedAssets = [];
   const manualReconciliation = [];
   let historicalSnapshots = 0;
@@ -146,7 +148,11 @@ function assessFleetBackfillInventory(inventory) {
 
     const sourceIds = new Set(assets.map((item) => text(item.id)).filter(Boolean));
     for (const template of Array.isArray(entry.payload?.templates) ? entry.payload.templates : []) {
-      if ((text(template.status) || 'active') === 'archived') continue;
+      if ((text(template.status) || 'active') === 'archived') {
+        archivedTemplatesObserved += 1;
+        continue;
+      }
+      currentTemplatesAssessed += 1;
       const referenced = new Set([
         ...(Array.isArray(template.assetIds) ? template.assetIds : []),
         ...(text(template.truckId) ? [template.truckId] : []),
@@ -168,8 +174,12 @@ function assessFleetBackfillInventory(inventory) {
     trailers,
     proposedFleetAssets: proposedAssets.length,
     currentWorkPackTemplatesAffected: currentTemplates.length,
+    currentTemplatesAssessed,
+    archivedTemplatesObserved,
+    archivedTemplatesProposedForMutation: 0,
     historicalSnapshotsInspected: historicalSnapshots,
     historicalSnapshotsProposedForMutation: 0,
+    historicalWorkPackEvidenceRewritten: 0,
     duplicates: duplicateGroups,
     collisions: collisionRecords,
     ambiguities: ambiguityRecords,
@@ -192,6 +202,7 @@ function assessFleetBackfillInventory(inventory) {
     dryRunPlan: {
       creates: proposedAssets,
       currentTemplateConversions: currentTemplates,
+      archivedTemplateMutations: [],
       skipped: classifications.filter((item) => item.classification === 'ALREADY_CANONICAL'),
       rejected: classifications.filter((item) => ['INVALID', 'COLLISION', 'AMBIGUOUS', 'DUPLICATE'].includes(item.classification)),
       historicalSnapshotMutations: [],

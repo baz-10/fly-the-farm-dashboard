@@ -75,6 +75,8 @@ describe('authoritative Fleet asset foundation migration', () => {
     expect(sql).not.toMatch(/delete from public\.ftf_store/i);
     expect(sql).toMatch(/jsonb_set\(payload, '\{templates\}'/i);
     expect(sql).not.toMatch(/jsonb_set\(payload, '\{snapshots\}'/i);
+    expect(sql).toMatch(/case when coalesce\(template->>'status', 'active'\) <> 'archived'[\s\S]*else template end/i);
+    expect(sql).toMatch(/'archivedTemplateMutations', 0, 'historicalSnapshotMutations', 0/i);
   });
 
   test('blocks archive for current Work Pack references but ignores immutable historical snapshots', () => {

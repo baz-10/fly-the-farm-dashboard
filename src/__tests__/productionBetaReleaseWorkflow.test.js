@@ -32,11 +32,28 @@ describe('GitHub-managed Production Beta release governance', () => {
     });
     expect(diagnostic.environment).toBe('production-beta-deployment');
     expect(diagnostic.if).toContain('inputs.fleet_backfill_assessment_only == true');
+    const checkout = step(diagnostic, 'Check out trusted diagnostic source');
+    expect(checkout.with.ref).toBe('refs/heads/main');
+    expect(checkout.with.ref).not.toContain('inputs.release_sha');
+    const identity = step(diagnostic, 'Verify trusted diagnostic identity');
+    expect(identity.env).toEqual({
+      CANDIDATE_SHA: '${{ inputs.release_sha }}',
+      TRUSTED_REF: '${{ github.ref }}',
+    });
+    expect(identity.run).toContain('[[ "$TRUSTED_REF" == "refs/heads/main" ]]');
+    expect(identity.run).toContain('TRUSTED_SHA="$(git rev-parse HEAD)"');
+    expect(identity.run).toContain('[[ "${CANDIDATE_SHA,,}" == "${TRUSTED_SHA,,}" ]]');
+    const credentialSteps = diagnostic.steps.filter((candidate) => JSON.stringify(candidate).includes('SUPABASE_DB_PASSWORD'));
+    expect(credentialSteps).toHaveLength(1);
+    expect(credentialSteps[0].name).toBe('Run protected read-only Fleet backfill assessment');
+    expect(diagnostic.steps.indexOf(identity)).toBeLessThan(diagnostic.steps.indexOf(credentialSteps[0]));
+    expect(JSON.stringify(credentialSteps[0])).not.toMatch(/inputs\.release_sha|CANDIDATE_SHA|git (?:show|checkout)|npm|source\s+|bash\s+[^\s]+|sh\s+[^\s]+/i);
     expect(source).toContain('scripts/fleetBackfillAssessment.sql');
     expect(source).toContain('default_transaction_read_only=on');
     expect(source).toContain('SUPABASE_DB_PASSWORD');
     expect(source).not.toMatch(/SUPABASE_ACCESS_TOKEN|VERCEL_TOKEN|SUPABASE_SERVICE_ROLE_KEY/);
     expect(source).not.toMatch(/db push|migration list|vercel deploy|alias set|promote|workflow dispatch|ftf_backfill_fleet_assets_from_work_pack/i);
+    expect(source).not.toMatch(/npm (?:ci|install|run)|source\s+|\.\s+[^\s]+|bash\s+[^\s]+|sh\s+[^\s]+/i);
     expect(read('scripts/fleetBackfillAssessment.sql')).toMatch(/^\s*(?:--[^\n]*\n\s*)*with\b/i);
     expect(read('scripts/fleetBackfillAssessment.sql')).not.toMatch(/\b(insert|update|delete|merge|truncate|alter|create|drop|grant|revoke|comment|copy|call|do)\b/i);
     for (const [jobName, job] of Object.entries(definition.jobs)) {

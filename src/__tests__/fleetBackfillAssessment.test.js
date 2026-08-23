@@ -70,6 +70,9 @@ describe('Production-shaped Fleet backfill assessment', () => {
       trailers: 0,
       proposedFleetAssets: 1,
       currentWorkPackTemplatesAffected: 1,
+      currentTemplatesAssessed: 1,
+      archivedTemplatesObserved: 1,
+      archivedTemplatesProposedForMutation: 0,
       historicalSnapshotsInspected: 1,
       historicalSnapshotsProposedForMutation: 0,
       duplicates: 0,
@@ -80,6 +83,7 @@ describe('Production-shaped Fleet backfill assessment', () => {
     }));
     expect(result.classifications).toEqual([expect.objectContaining({ classification: 'CLEAN', safeSourceIdentity: 'FTF11' })]);
     expect(result.currentTemplates).toEqual([expect.objectContaining({ templateId: 'template-current' })]);
+    expect(result.dryRunPlan.archivedTemplateMutations).toEqual([]);
     expect(result.recommendation).toBe('GO — CLEAN AUTOMATIC BACKFILL');
   });
 

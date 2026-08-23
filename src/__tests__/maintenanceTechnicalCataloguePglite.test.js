@@ -169,6 +169,43 @@ if (runPgliteInThisProcess) describe('maintenance technical catalogue PostgreSQL
     expect(JSON.stringify(allowed.rows[0].result)).toContain('PRIVATE-ONE');
   });
 
+  test('backfills only assessed current templates and preserves archived templates and snapshots byte-equivalently', async () => {
+    const sourceId = 'controlled-source-truck';
+    await db.exec(`create or replace function public.digest(value bytea, algorithm text) returns bytea
+      language sql immutable as $$ select decode(repeat(md5(encode(value, 'hex')), 2), 'hex') $$`);
+    await db.query(`insert into public.ftf_store(tenant_id,collection,record_id,payload) values($1,'ftf_work_packs','__value__',$2::jsonb)
+      on conflict(tenant_id,collection,record_id) do update set payload=excluded.payload`, [ids.org1, JSON.stringify({
+      assets: [{ id: sourceId, assetType: 'truck', name: 'FTF-ARCHIVE-PROOF', registration: 'FTF-ARCHIVE-PROOF', vin: 'VIN-ARCHIVE-PROOF', manufacturer: 'Isuzu', model: 'FSS550', status: 'available' }],
+      templates: [
+        { id: 'current', status: 'active', assetIds: [sourceId], truckId: sourceId },
+        { id: 'archived-asset-ids', status: 'archived', assetIds: [sourceId], historical: { untouched: true } },
+        { id: 'archived-truck-id', status: 'archived', truckId: sourceId, notes: ['preserve', 'exactly'] },
+        { id: 'archived-both', status: 'archived', assetIds: [sourceId], truckId: sourceId, nested: { source: { id: sourceId } } },
+        { id: 'archived-unrelated', status: 'archived', unrelated: { arbitrary: ['historical', 7, false] } },
+      ],
+      snapshots: [{ id: 'historical-snapshot', templates: [{ truckId: sourceId }], unrelated: { preserve: true } }],
+    })]);
+
+    const before = await db.query(`select
+      (select jsonb_agg(template order by template->>'id')::text from jsonb_array_elements(payload->'templates') template where template->>'status'='archived') archived,
+      (payload->'snapshots')::text snapshots
+      from public.ftf_store where tenant_id=$1 and collection='ftf_work_packs' and record_id='__value__'`, [ids.org1]);
+    const dryRun = (await db.query(`select public.ftf_backfill_fleet_assets_from_work_pack($1,$2,$3,null,false) result`, [ids.org1, ids.actor1, ids.location1])).rows[0].result;
+    expect(dryRun).toMatchObject({ currentTemplateMutations: 1, archivedTemplateMutations: 0, historicalSnapshotMutations: 0 });
+
+    const applied = (await db.query(`select public.ftf_backfill_fleet_assets_from_work_pack($1,$2,$3,$4,true) result`, [ids.org1, ids.actor1, ids.location1, dryRun.snapshotDigest])).rows[0].result;
+    expect(applied).toMatchObject({ currentTemplateMutations: 1, archivedTemplateMutations: 0, historicalSnapshotMutations: 0 });
+    const canonical = (await db.query(`select id::text id from public.fleet_assets where organisation_id=$1 and source_system='ftf_work_packs' and source_record_id=$2`, [ids.org1, sourceId])).rows[0].id;
+    const after = await db.query(`select
+      (select jsonb_agg(template order by template->>'id')::text from jsonb_array_elements(payload->'templates') template where template->>'status'='archived') archived,
+      (payload->'snapshots')::text snapshots,
+      (select template from jsonb_array_elements(payload->'templates') template where template->>'id'='current') current
+      from public.ftf_store where tenant_id=$1 and collection='ftf_work_packs' and record_id='__value__'`, [ids.org1]);
+    expect(after.rows[0].archived).toBe(before.rows[0].archived);
+    expect(after.rows[0].snapshots).toBe(before.rows[0].snapshots);
+    expect(after.rows[0].current).toMatchObject({ assetIds: [canonical], truckId: canonical });
+  });
+
   test('fails contradictory asset/system/position applicability closed', async () => {
     await expect(db.exec(`insert into public.asset_part_requirements(organisation_id,technical_part_version_id,maintainable_asset_id,system_id,application_code,quantity,unit_code,authority_type,lifecycle_state,evidence,effective_from) values('${ids.org1}','${ids.versionA}','${ids.asset1}','${ids.system1b}','CONTRADICTORY',1,'EA','ORGANISATION_STANDARD','DRAFT','{"source":"test"}','2025-01-01')`))
       .rejects.toThrow(/ASSET_TECHNICAL_SCOPE_CONTRADICTION/);

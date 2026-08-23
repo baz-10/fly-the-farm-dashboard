@@ -334,6 +334,8 @@ declare
   v_current_snapshot_digest text;
   v_source_to_canonical jsonb;
   v_current_templates jsonb;
+  v_current_template_mutations integer;
+  v_archived_templates_observed integer;
 begin
   if not public.ftf_actor_has_permission(p_organisation_id, p_actor_internal_user_id, 'fleet_assets.create') then
     return jsonb_build_object('forbidden', true);
@@ -377,9 +379,28 @@ begin
     select 1 from public.fleet_assets asset where asset.organisation_id = p_organisation_id
       and asset.source_system = 'ftf_work_packs' and asset.source_record_id = item->>'id'
   );
+  select
+    count(*) filter (where coalesce(template->>'status', 'active') <> 'archived' and (
+      exists (
+        select 1
+        from jsonb_array_elements_text(
+          case when jsonb_typeof(template->'assetIds') = 'array' then template->'assetIds' else '[]'::jsonb end
+        ) reference(source_id)
+        where exists (select 1 from jsonb_array_elements(v_assets) source where source->>'id' = reference.source_id)
+      )
+      or exists (select 1 from jsonb_array_elements(v_assets) source where source->>'id' = template->>'truckId')
+    )),
+    count(*) filter (where coalesce(template->>'status', 'active') = 'archived')
+    into v_current_template_mutations, v_archived_templates_observed
+  from jsonb_array_elements(
+    case when jsonb_typeof(v_payload->'templates') = 'array' then v_payload->'templates' else '[]'::jsonb end
+  ) template;
   if not p_apply then
     return jsonb_build_object('applied', false, 'sourceCount', v_source_count, 'createCount', v_create_count,
-      'ambiguityCount', 0, 'snapshotDigest', v_current_snapshot_digest);
+      'ambiguityCount', 0, 'snapshotDigest', v_current_snapshot_digest,
+      'currentTemplateMutations', v_current_template_mutations,
+      'archivedTemplatesObserved', v_archived_templates_observed,
+      'archivedTemplateMutations', 0, 'historicalSnapshotMutations', 0);
   end if;
   for v_asset in select value from jsonb_array_elements(v_assets) loop
     if not exists (select 1 from public.fleet_assets asset where asset.organisation_id = p_organisation_id
@@ -409,21 +430,35 @@ begin
      and asset.archived_at is null;
   if jsonb_typeof(v_payload->'templates') = 'array' then
     select coalesce(jsonb_agg(
-      template || jsonb_build_object(
-        'assetIds', case when jsonb_typeof(template->'assetIds') = 'array' then (
-          select coalesce(jsonb_agg(to_jsonb(coalesce(v_source_to_canonical->>source_id, source_id))), '[]'::jsonb)
-          from jsonb_array_elements_text(template->'assetIds') as source_ids(source_id)
-        ) else '[]'::jsonb end,
-        'truckId', coalesce(v_source_to_canonical->>(template->>'truckId'), template->>'truckId', '')
-      )
+      case when coalesce(template->>'status', 'active') <> 'archived' and (
+        exists (
+          select 1
+          from jsonb_array_elements_text(
+            case when jsonb_typeof(template->'assetIds') = 'array' then template->'assetIds' else '[]'::jsonb end
+          ) reference(source_id)
+          where exists (select 1 from jsonb_array_elements(v_assets) source where source->>'id' = reference.source_id)
+        )
+        or exists (select 1 from jsonb_array_elements(v_assets) source where source->>'id' = template->>'truckId')
+      ) then template || jsonb_build_object(
+          'assetIds', case when jsonb_typeof(template->'assetIds') = 'array' then (
+            select coalesce(jsonb_agg(to_jsonb(coalesce(v_source_to_canonical->>source_id, source_id)) order by ordinal), '[]'::jsonb)
+            from jsonb_array_elements_text(template->'assetIds') with ordinality as source_ids(source_id, ordinal)
+          ) else '[]'::jsonb end,
+          'truckId', coalesce(v_source_to_canonical->>(template->>'truckId'), template->>'truckId', '')
+        )
+      else template end
+      order by ordinal
     ), '[]'::jsonb) into v_current_templates
-    from jsonb_array_elements(v_payload->'templates') template;
+    from jsonb_array_elements(v_payload->'templates') with ordinality as templates(template, ordinal);
     update public.ftf_store
        set payload = jsonb_set(payload, '{templates}', v_current_templates, true), updated_at = now()
      where tenant_id = p_organisation_id and collection = 'ftf_work_packs' and record_id = '__value__';
   end if;
   return jsonb_build_object('applied', true, 'sourceCount', v_source_count, 'createCount', v_create_count,
-    'ambiguityCount', 0, 'snapshotDigest', v_current_snapshot_digest);
+    'ambiguityCount', 0, 'snapshotDigest', v_current_snapshot_digest,
+    'currentTemplateMutations', v_current_template_mutations,
+    'archivedTemplatesObserved', v_archived_templates_observed,
+    'archivedTemplateMutations', 0, 'historicalSnapshotMutations', 0);
 end;
 $$;
 
