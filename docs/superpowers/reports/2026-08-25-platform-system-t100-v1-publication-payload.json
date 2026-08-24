@@ -1,0 +1,77 @@
+{
+  "schemaVersion": 1,
+  "status": "PROPOSED_FOR_CONTENT_PUBLICATION_REVIEW",
+  "effective": false,
+  "publicationApproved": false,
+  "contentAuthority": "PLATFORM_SYSTEM",
+  "profile": {
+    "id": "10000000-0000-4000-8000-000000000100",
+    "stableCode": "DJI-AGRAS-T100-PRE-FLIGHT",
+    "name": "DJI Agras T100 pre-flight",
+    "lifecycleStage": "PRE_FLIGHT"
+  },
+  "profileVersion": {
+    "id": "10000000-0000-4000-8000-000000000101",
+    "versionNumber": 1,
+    "applicability": {
+      "manufacturer": "DJI",
+      "models": ["T100"],
+      "configurations": ["SPRAY", "SPREAD"],
+      "requiresMission": true,
+      "requiresFleetReadiness": true,
+      "requiresRtk": true,
+      "requiresCompassCalibration": true,
+      "requiresFlowCalibration": true
+    },
+    "sourceProvenance": {
+      "authority": "FOUNDER_OPERATOR_REVIEW_PHASE_1_6",
+      "documentTitle": "Preprepared Checklist Library Phase 1.6 Founder/operator refinement",
+      "documentRevision": "2026-08-24"
+    }
+  },
+  "modulePublicationInputs": [
+    {
+      "templateVersionId": "10000000-0000-4000-8000-000000000201",
+      "stableSectionCode": "T100-AIRCRAFT-PROPULSION-POWER",
+      "contentContractRows": ["S01", "S02", "S03", "S04", "S05", "S06", "S07", "S08", "S09", "S11"]
+    },
+    {
+      "templateVersionId": "10000000-0000-4000-8000-000000000202",
+      "stableSectionCode": "T100-POSITIONING-PAYLOAD",
+      "contentContractRows": ["S13", "S14", "S15", "S16", "S17", "S18", "S19", "D16", "D17", "D18", "D19"]
+    },
+    {
+      "templateVersionId": "10000000-0000-4000-8000-000000000203",
+      "stableSectionCode": "T100-RESOLVED-EVIDENCE-SITE-MISSION",
+      "contentContractRows": ["S10", "S20", "S21", "S22", "S23", "S24", "S25", "S26", "S27", "S28", "S29", "S30", "S31", "S32", "S33"]
+    },
+    {
+      "templateVersionId": "10000000-0000-4000-8000-000000000204",
+      "stableSectionCode": "T100-TAKE-OFF-CONFIRMATION",
+      "contentContractRows": ["S12"]
+    }
+  ],
+  "compositionPublishPayload": {
+    "profileVersionId": "10000000-0000-4000-8000-000000000101",
+    "expectedVersion": 1,
+    "modules": [
+      {"ordinal": 1, "templateVersionId": "10000000-0000-4000-8000-000000000201", "stableSectionCode": "T100-AIRCRAFT-PROPULSION-POWER", "required": true},
+      {"ordinal": 2, "templateVersionId": "10000000-0000-4000-8000-000000000202", "stableSectionCode": "T100-POSITIONING-PAYLOAD", "required": true},
+      {"ordinal": 3, "templateVersionId": "10000000-0000-4000-8000-000000000203", "stableSectionCode": "T100-RESOLVED-EVIDENCE-SITE-MISSION", "required": true},
+      {"ordinal": 4, "templateVersionId": "10000000-0000-4000-8000-000000000204", "stableSectionCode": "T100-TAKE-OFF-CONFIRMATION", "required": true}
+    ]
+  },
+  "sourceReferenceContract": {
+    "contentDefinition": "docs/superpowers/reports/2026-08-24-preprepared-checklist-library-phase-1-6-refinement.md",
+    "orderedReferencesRequiredPerItem": true,
+    "consolidatedItemsRequireAtLeastTwoUniqueReferences": true,
+    "unresolvedSourcesFailPublication": true
+  },
+  "explicitExclusions": [
+    "T100 dual-battery configuration",
+    "relay or cellular checks without installed-configuration authority",
+    "jurisdiction-specific chemical regulation",
+    "organisation-owned cleaning, chemical handling, PPE and customer procedures",
+    "automatic Fleet grounding or serviceability mutation"
+  ]
+}

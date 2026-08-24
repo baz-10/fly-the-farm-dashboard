@@ -3,12 +3,29 @@ const path = require('path');
 
 const migrationPath = path.resolve(__dirname, '../../supabase/migrations/20260823100000_checklist_authority_reconciliation.sql');
 const sql = fs.existsSync(migrationPath) ? fs.readFileSync(migrationPath, 'utf8') : '';
+const compositionPath = path.resolve(__dirname, '../../supabase/migrations/20260824100000_preprepared_checklist_composition.sql');
+const compositionSql = fs.existsSync(compositionPath) ? fs.readFileSync(compositionPath, 'utf8') : '';
 
 test('adds explicit platform and organisation template authority without a parallel checklist domain', () => {
   expect(sql).toContain("authority_scope in ('PLATFORM_SYSTEM','ORGANISATION')");
   expect(sql).toContain('source_system_template_version_id');
   expect(sql).toContain('checklist_template_applicability');
   expect(sql).not.toContain('create table public.preprepared_checklist_executions');
+});
+
+test('serializes module applicability with publication and excludes mutable timestamps from the digest', () => {
+  expect(compositionSql.match(/checklist-module-applicability:/g)?.length).toBeGreaterThanOrEqual(3);
+  const authority = compositionSql.slice(compositionSql.indexOf('create function public.ftf_checklist_composition_authority'), compositionSql.indexOf('create function public.ftf_checklist_composition_digest'));
+  expect(authority).not.toContain('to_jsonb(application)');
+  expect(authority).not.toContain('created_at');
+});
+
+test('requires exact predecessor lineage and allowlisted platform metadata', () => {
+  expect(compositionSql).toContain('new.supersedes_version_id is distinct from prior.id');
+  expect(compositionSql).toContain('new.version_number<>prior.version_number+1');
+  expect(compositionSql).toContain("entry.key not in('authority'");
+  expect(compositionSql).toContain("'ADOPTED_SOURCE_MISMATCH'");
+  expect(compositionSql).toContain("'INHERITED_MODULE_MISMATCH'");
 });
 
 test('freezes started execution content and removes latest-version submission invalidation', () => {

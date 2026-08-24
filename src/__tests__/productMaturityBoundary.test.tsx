@@ -132,7 +132,7 @@ describe('product maturity CI boundary', () => {
     expect(result.status).toBe(0);
     expect(result.stderr).toBe('');
     expect(result.stdout).toContain('46 modules and 15 workflows classified');
-    expect(result.stdout).toContain('171 customer UI source files checked');
+    expect(result.stdout).toContain('173 customer UI source files checked');
     expect(result.stdout).toContain('80 evidence references checked');
     expect(result.stdout).toContain('0 customer-facing Legacy violations');
   });

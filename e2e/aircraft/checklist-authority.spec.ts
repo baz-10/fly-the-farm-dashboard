@@ -76,4 +76,17 @@ for (const [viewportName, viewport] of viewports) {
     await expect(page.getByText('Controlled checklist version published. Earlier versions remain immutable.')).toBeVisible();
     await expect(page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).resolves.toBe(true);
   });
+
+  test(`keeps the non-published composed operator preview progressive at ${viewportName} width`,async({page})=>{
+    await page.setViewportSize(viewport);
+    await mockChecklistAdministration(page);
+    await page.goto('/compliance/checklists?developmentFixture=T100_SPRAY');
+    await expect(page.getByText('19 operator actions')).toBeVisible();
+    await expect(page.getByText('6 facts already resolved')).toBeVisible();
+    await expect(page.getByText('Development fixture only — not published customer authority.')).toBeVisible();
+    await expect(page.getByText('Assess current weather and wind')).toBeHidden();
+    await page.getByRole('button',{name:/Mission and site/}).click();
+    await expect(page.getByText('Assess current weather and wind')).toBeVisible();
+    await expect(page.evaluate(()=>document.documentElement.scrollWidth<=document.documentElement.clientWidth)).resolves.toBe(true);
+  });
 }
