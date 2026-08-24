@@ -8,6 +8,8 @@
 
 **Architecture:** Preserve current Checklist template/version/applicability/execution/finding authority. Add one narrow composition aggregate only because a single template-version snapshot cannot preserve multiple exact module lineages. Resolve all model/configuration/Mission/regulatory applicability server-side and freeze it once at start.
 
+**Authority hardening:** A published profile version is one immutable aggregate: its profile authority fields, applicability, provenance, ordered module membership, exact module versions, sections and item definitions cannot be changed in place. Publication is a checked, atomic transition for either the `PLATFORM_SYSTEM` or `ORGANISATION` plane. Preview returns the stored SHA-256 composition digest; start requires that exact digest and re-resolves all checked context in the same transaction before freezing an execution.
+
 **Tech stack:** PostgreSQL/Supabase migrations and PGlite authority tests; trusted Node server repository/API; React/TypeScript/MUI; Jest/Testing Library; Playwright Chromium and WebKit.
 
 **Accepted specification:** `docs/superpowers/reports/2026-08-24-preprepared-checklist-library-phase-1-6-refinement.md`
@@ -44,6 +46,10 @@
 - [ ] RED-test item presentation authority for `PHYSICAL_TAP`, `OPERATOR_DECISION_TAP`, `CONDITIONAL_TAP`, `SYSTEM_RESOLVED`, and `EXCEPTION_ONLY` without changing existing Checklist response authority.
 - [ ] Implement the minimal additive composition tables and execution linkage in one reviewed migration.
 - [ ] Preserve direct-table denial, RLS, tenancy, audit/outbox and optimistic concurrency.
+- [ ] Canonicalise the authority-only composition as PostgreSQL `jsonb`: canonical object-key ordering and explicit ordered arrays for modules, sections and items. Hash the UTF-8 `jsonb::text` representation with SHA-256.
+- [ ] Include profile/version identity, lifecycle and authority scope, organisation/source/supersession identity, applicability, composition provenance, ordered membership, exact module/template versions, module provenance, sections, items and conditional definitions in the digest; exclude timestamps and presentation/runtime noise.
+- [ ] Serialize publication with profile/version row locks and serialize membership mutation through a parent-version lock so publication yields either one complete immutable version or no publication.
+- [ ] Prove the checked platform publication command rejects organisation modules and tenant-private provenance, while the checked organisation command accepts only global PLATFORM_SYSTEM modules or exact-tenant organisation modules.
 
 ## Task 2: checked composition preview and start
 
@@ -57,6 +63,10 @@
 - [ ] Implement a non-mutating checked preview returning included/excluded module identities and reasons.
 - [ ] Implement one transactional compose-and-start command that freezes profile, module, item, source and context versions.
 - [ ] Prove a version published after start cannot alter started or completed evidence.
+- [ ] Require explicit Aircraft identity whenever manufacturer, model, Aircraft or configuration applicability exists; never infer it from text.
+- [ ] Treat zero exact active fitted configuration candidates as unresolved, one as resolved, and more than one as ambiguous; never select an arbitrary candidate.
+- [ ] Recheck exact profile digest, Mission/Aircraft/Base scope and fitted configuration under database locks before creating an execution. Any stale or changed authority returns a conflict/domain failure and inserts no execution/audit/outbox rows.
+- [ ] Preserve an exact older immutable preview across supersession: publishing a new version never rewrites the old version or a start that names the old version and digest.
 
 ## Task 3: library, inheritance and update behavior
 
@@ -82,6 +92,7 @@
 - [ ] RED-test one DEFECT creates one Checklist finding with exact context and `DEFECT_HANDOFF_PENDING`.
 - [ ] Prove no Fleet defect, grounding, due-state calculation or unrelated Mission blocking occurs.
 - [ ] Verify keyboard, large touch targets, accessible names, progressive sections, and phone/iPad mini/iPad Pro/desktop layouts in Chromium and WebKit.
+- [ ] Map checked database sentinels to truthful bounded HTTP failures and recursively fail the whole browser response on malformed/oversized authoritative children, especially frozen execution snapshots.
 
 ## Task 5: reviewed content publication — separately gated
 

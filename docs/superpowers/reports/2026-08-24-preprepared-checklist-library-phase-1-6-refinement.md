@@ -1,5 +1,17 @@
 # Preprepared Checklist Library — Phase 1.6 Founder/operator refinement
 
+## Composition authority hardening addendum
+
+The implementation authority is one immutable published composition-profile version, not a mutable set of links. Profile authority fields and the published version's applicability, provenance, ordered membership and exact module content are append-only. Any authority correction creates a new version and preserves historical versions and frozen executions.
+
+Publication uses separate checked organisation and platform commands. The organisation command is tenant scoped and may compose only exact-tenant organisation modules or organisation-independent published system modules. The platform command requires platform publication authority and accepts only organisation-independent `PLATFORM_SYSTEM` profiles and modules. Both validate every proposed module before inserting any membership, lock the profile/version, publish atomically, and emit the appropriate audit/outbox evidence. No DJI/CASA/system content is seeded or published by this implementation.
+
+The composition identity is lowercase SHA-256 over UTF-8 PostgreSQL `jsonb::text` for a schema-versioned authority-only object. PostgreSQL `jsonb` supplies canonical object-key ordering; explicitly ordered arrays preserve module, section and item order. The object covers profile and profile-version IDs/version, lifecycle, authority/organisation/source/supersession identity, applicability, profile provenance, ordered membership fields, exact module/template version identity, module authority/provenance, full governed sections/items and conditional definitions. Mutable timestamps, UI expansion state and runtime presentation noise are excluded.
+
+Preview returns the exact stored digest after recomputing it from immutable authority. Start requires that digest, locks the composition and exact Mission/Aircraft configuration relationships, reruns authoritative scope/applicability/configuration resolution, compares the digest, freezes the recursively bounded composition and creates the execution in one transaction. A changed configuration or digest fails closed with zero execution. A newer published version does not mutate or invalidate a correctly identified older immutable version.
+
+Aircraft-specific applicability requires authoritative Aircraft identity. Configuration resolution is `UNRESOLVED` for zero candidates, `RESOLVED` for exactly one exact active fitted candidate, and `AMBIGUOUS` for more than one. Trusted HTTP responses map checked failures to 400/403/404/409/422 rather than success, and browser decoding rejects the complete response if any authoritative nested value exceeds its bound or fails its ID, enum, version or digest contract.
+
 **Status:** design refinement only; no content implemented, seeded, or published  
 **Priority:** DJI AGRAS T100  
 **Decision:** approved Founder direction incorporated  
