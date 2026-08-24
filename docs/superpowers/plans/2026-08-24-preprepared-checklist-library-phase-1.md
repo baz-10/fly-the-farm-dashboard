@@ -50,6 +50,10 @@
 - [ ] Include profile/version identity, lifecycle and authority scope, organisation/source/supersession identity, applicability, composition provenance, ordered membership, exact module/template versions, module provenance, sections, items and conditional definitions in the digest; exclude timestamps and presentation/runtime noise.
 - [ ] Serialize publication with profile/version row locks and serialize membership mutation through a parent-version lock so publication yields either one complete immutable version or no publication.
 - [ ] Prove the checked platform publication command rejects organisation modules and tenant-private provenance, while the checked organisation command accepts only global PLATFORM_SYSTEM modules or exact-tenant organisation modules.
+- [ ] Include every module's immutable applicability rows in publication validation, the digest and the frozen preview; reject any module whose lifecycle/model/configuration/authority scope conflicts with its profile.
+- [ ] Preserve ordered multi-source references (`authorityClass`, source identity, locator and represented outcome) on consolidated items. Require at least two unique references when an item is marked consolidated.
+- [ ] Record both the stable source-system profile and exact published source-system profile-version on organisation adoption; validate supersession within the same profile/plane/tenant only.
+- [ ] Provision `platform.checklist_system.publish` only to the platform super-administrator role and reject bounded platform applicability/provenance containing tenant-private keys or identifiers.
 
 ## Task 2: checked composition preview and start
 
@@ -67,6 +71,7 @@
 - [ ] Treat zero exact active fitted configuration candidates as unresolved, one as resolved, and more than one as ambiguous; never select an arbitrary candidate.
 - [ ] Recheck exact profile digest, Mission/Aircraft/Base scope and fitted configuration under database locks before creating an execution. Any stale or changed authority returns a conflict/domain failure and inserts no execution/audit/outbox rows.
 - [ ] Preserve an exact older immutable preview across supersession: publishing a new version never rewrites the old version or a start that names the old version and digest.
+- [ ] Serialize fitted-configuration assignment mutation and composed start using the same organisation/Base advisory transaction lock so a phantom assignment cannot appear across resolution and execution creation.
 
 ## Task 3: library, inheritance and update behavior
 
@@ -76,6 +81,7 @@
 - [ ] RED-test organisation additions preserving private provenance and never being relabelled as DJI/CASA/PLATFORM_SYSTEM authority.
 - [ ] RED-test system update availability against exact adopted lineage while active and completed executions retain their frozen versions.
 - [ ] Implement bounded checked reads and adoption commands using existing authority conventions.
+- [ ] Checked discovery returns exact published system/organisation version identity and update availability; checked adoption creates a tenant Draft linked to the exact source profile version/digest without mutating system authority.
 
 ## Task 4: responsive composed-checklist UX
 
@@ -93,6 +99,7 @@
 - [ ] Prove no Fleet defect, grounding, due-state calculation or unrelated Mission blocking occurs.
 - [ ] Verify keyboard, large touch targets, accessible names, progressive sections, and phone/iPad mini/iPad Pro/desktop layouts in Chromium and WebKit.
 - [ ] Map checked database sentinels to truthful bounded HTTP failures and recursively fail the whole browser response on malformed/oversized authoritative children, especially frozen execution snapshots.
+- [ ] Enforce both per-field/container bounds and a global decoded authority budget (depth, total nodes and total text/key bytes).
 
 ## Task 5: reviewed content publication — separately gated
 

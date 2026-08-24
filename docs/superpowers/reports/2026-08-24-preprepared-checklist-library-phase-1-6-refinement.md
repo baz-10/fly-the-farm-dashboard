@@ -8,9 +8,15 @@ Publication uses separate checked organisation and platform commands. The organi
 
 The composition identity is lowercase SHA-256 over UTF-8 PostgreSQL `jsonb::text` for a schema-versioned authority-only object. PostgreSQL `jsonb` supplies canonical object-key ordering; explicitly ordered arrays preserve module, section and item order. The object covers profile and profile-version IDs/version, lifecycle, authority/organisation/source/supersession identity, applicability, profile provenance, ordered membership fields, exact module/template version identity, module authority/provenance, full governed sections/items and conditional definitions. Mutable timestamps, UI expansion state and runtime presentation noise are excluded.
 
+Each module's immutable applicability rows are part of that authority object. Publication rejects lifecycle, model, configuration, authority-plane or tenant conflicts, and preview requires an exact applicable row whenever a module declares applicability. Applicability rows become append-only when their module is part of a published composition.
+
+Organisation adoption records the stable source-system profile ID and exact published source-system profile-version/digest. Supersession must remain inside the same profile, authority plane and tenant. Consolidated items retain an ordered bounded `sourceReferences` array containing each authority class, source identity, exact locator and represented outcome; `consolidated: true` requires at least two unique sources.
+
 Preview returns the exact stored digest after recomputing it from immutable authority. Start requires that digest, locks the composition and exact Mission/Aircraft configuration relationships, reruns authoritative scope/applicability/configuration resolution, compares the digest, freezes the recursively bounded composition and creates the execution in one transaction. A changed configuration or digest fails closed with zero execution. A newer published version does not mutate or invalidate a correctly identified older immutable version.
 
 Aircraft-specific applicability requires authoritative Aircraft identity. Configuration resolution is `UNRESOLVED` for zero candidates, `RESOLVED` for exactly one exact active fitted candidate, and `AMBIGUOUS` for more than one. Trusted HTTP responses map checked failures to 400/403/404/409/422 rather than success, and browser decoding rejects the complete response if any authoritative nested value exceeds its bound or fails its ID, enum, version or digest contract.
+
+Fitted-configuration assignment mutation and composed start use the same organisation/Base advisory transaction lock, preventing a new assignment from appearing between resolution and execution creation. Browser decoding also enforces a global authority budget of eight levels, 10,000 nodes and 262,144 text/key characters in addition to narrower field/container bounds.
 
 **Status:** design refinement only; no content implemented, seeded, or published  
 **Priority:** DJI AGRAS T100  
