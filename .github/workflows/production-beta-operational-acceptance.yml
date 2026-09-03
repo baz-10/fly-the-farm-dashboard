@@ -296,7 +296,8 @@ jobs:
           git fetch --no-tags origin "$ACCEPTANCE_HARNESS_SHA"
           git checkout "$ACCEPTANCE_HARNESS_SHA" -- \
             e2e/acceptance/commercial-onboarding.spec.ts \
-            e2e/acceptance/fixtures/commercialOnboardingInvitation.ts
+            e2e/acceptance/fixtures/commercialOnboardingInvitation.ts \
+            e2e/acceptance/fixtures/gettingStartedReadiness.ts
 
       - name: Install isolated Chromium runtime
         run: npx playwright install --with-deps chromium

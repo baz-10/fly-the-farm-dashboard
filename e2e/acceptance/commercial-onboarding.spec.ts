@@ -15,6 +15,7 @@ import {
   validatePersistedOperationalRecordResponse,
 } from './fixtures/commercialOnboardingInvitation';
 import { openMissionCreationWorkspace } from './fixtures/missionCreationWorkspace';
+import { validateGettingStartedReadiness } from './fixtures/gettingStartedReadiness';
 
 type SecretSource = Record<string, string | undefined>;
 type OnboardingEnvironment = {
@@ -282,6 +283,12 @@ test('Application → review → approval → invitation → first Draft Mission
     await openInvitation(page, environment, invitationLink, invitationId);
     await page.getByLabel('Create password').fill(environment.applicantPassword);
     await page.getByLabel('Confirm password').fill(environment.applicantPassword);
+    const gettingStartedRequestStartedAt = Date.now();
+    const gettingStartedResponsePromise = page.waitForResponse((response) => {
+      const url = new URL(response.url());
+      return url.origin === environment.baseUrl && url.pathname === '/api/v1/getting-started'
+        && response.request().method() === 'GET';
+    });
     const activationResponsePromise = page.waitForResponse((response) => {
       if (new URL(response.url()).pathname !== '/api/auth' || response.request().method() !== 'POST') return false;
       try { return response.request().postDataJSON()?.action === 'accept-organisation-invitation'; } catch { return false; }
@@ -298,6 +305,16 @@ test('Application → review → approval → invitation → first Draft Mission
       responseBody: activationBody,
     });
     organisationId = provisioning.organisationId;
+
+    const gettingStartedResponse = await gettingStartedResponsePromise;
+    const gettingStartedBody = await gettingStartedResponse.json().catch(() => ({}));
+    validateGettingStartedReadiness({
+      status: gettingStartedResponse.status(),
+      body: gettingStartedBody,
+      requestId: gettingStartedResponse.headers()['x-request-id']
+        || gettingStartedResponse.headers()['x-vercel-id'],
+      durationMs: Date.now() - gettingStartedRequestStartedAt,
+    });
 
     await expect(page).toHaveURL(/\/getting-started$/);
     await expect(page.getByRole('heading', { name: 'Getting Started' })).toBeVisible();
