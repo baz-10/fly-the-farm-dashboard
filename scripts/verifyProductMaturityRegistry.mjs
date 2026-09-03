@@ -23,7 +23,7 @@ const visibleStringDepthBudget = 32;
 const visibleStringNodeBudget = 4096;
 const visibleStringSymbolBudget = 1024;
 // Verifier-only integrity metadata. Runtime maturity authority remains in surfaces.ts.
-const canonicalProductMaturityResolverSourceSha256 = 'd83fd393fd34f59c644b107f27353f423c11320be4c098f8964a0b92826fa4d2';
+const canonicalProductMaturityResolverSourceSha256 = '8384b46b62969a8eb7b93a4bf4688ea6ecbc2a3b8b2c97df755546024bc2d28e';
 const requiredArrayFields = [
   'evidence',
   'requiredAutomatedTests',
@@ -572,6 +572,7 @@ const adminContractorAccessRoutePaths = [
   '/aircraft',
   '/personnel',
   '/fleet-work-packs',
+  '/assets/:source/:id/:section?',
   '/jsa',
   '/weather',
   '/compliance',
@@ -696,6 +697,7 @@ const routeDestinationContracts = new Map([
   ['/aircraft', { modulePath: './pages/AircraftManagement', localName: 'AircraftManagement' }],
   ['/personnel', { modulePath: './pages/Personnel', localName: 'Personnel' }],
   ['/fleet-work-packs', { modulePath: './pages/FleetWorkPacks', localName: 'FleetWorkPacks' }],
+  ['/assets/:source/:id/:section?', { modulePath: './pages/AssetWorkspace', localName: 'AssetWorkspace' }],
   ['/jsa', { modulePath: './pages/JSAManagement', localName: 'JSAManagement' }],
   ['/missions', { modulePath: './pages/MissionRegister', localName: 'MissionRegister' }],
   ['/missions/new', { modulePath: './pages/MissionPlanning', localName: 'MissionPlanning' }],

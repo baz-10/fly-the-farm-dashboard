@@ -48,6 +48,7 @@ import { UserLicenseProvider } from './contexts/UserLicenseContext';
 import { AircraftProvider } from './contexts/AircraftContext';
 import { MissionProvider } from './contexts/MissionContext';
 import { WorkPackProvider } from './contexts/WorkPackContext';
+import { FleetAssetProvider } from './contexts/FleetAssetContext';
 import FleetWorkPacks from './pages/FleetWorkPacks';
 import { useAuth, UserRole } from './contexts/AuthContext';
 import OperationalFeatureGate from './components/OperationalFeatureGate';
@@ -66,6 +67,7 @@ import { AuthorisedProductRoute, ProductRouteSurface } from './components/produc
 import CommercialApplication from './pages/CommercialApplication';
 import AcceptOrganisationInvitation from './pages/AcceptOrganisationInvitation';
 import GettingStarted from './pages/GettingStarted';
+import AssetWorkspace from './pages/AssetWorkspace';
 
 export { REACHABLE_PRODUCT_ROUTES } from './productMaturity/surfaces';
 
@@ -76,9 +78,11 @@ function WorkflowProviders({ children }: { children: React.ReactNode }) {
   return (
     <UserLicenseProvider>
       <AircraftProvider>
-        <WorkPackProvider>
-          <MissionProvider>{children}</MissionProvider>
-        </WorkPackProvider>
+        <FleetAssetProvider>
+          <WorkPackProvider>
+            <MissionProvider>{children}</MissionProvider>
+          </WorkPackProvider>
+        </FleetAssetProvider>
       </AircraftProvider>
     </UserLicenseProvider>
   );
@@ -153,6 +157,7 @@ function App() {
           <Route path="/financials/:actualId" element={productRoute(<ActualDetail />, { allowedRoles: ['admin', 'contractor'] })} />
           <Route path="/ask-ftf" element={productRoute(<AskFTF />, { allowedRoles: ['admin', 'contractor'], requiredEntitlement: 'legacyAskFtf' })} />
           <Route path="/aircraft" element={productRoute(<AircraftManagement />, { allowedRoles: ['admin', 'contractor'] })} />
+          <Route path="/assets/:source/:id/:section?" element={productRoute(<AssetWorkspace />, { allowedRoles: ['admin', 'contractor'] })} />
           <Route path="/personnel" element={productRoute(<Personnel />, { allowedRoles: ['admin', 'contractor'] })} />
           <Route path="/fleet-work-packs" element={productRoute(<FleetWorkPacks />, { allowedRoles: ['admin', 'contractor'] })} />
           <Route path="/jsa" element={productRoute(<JSAManagement />, { allowedRoles: ['admin', 'contractor'] })} />

@@ -29,6 +29,11 @@ const SCHEMAS = {
     activationDate: 'activation_date', status: 'status', serviceabilityState: 'serviceability_state', missionReady: 'mission_ready',
     mtow: 'mtow', maxAltitude: 'max_altitude', maxWindSpeed: 'max_wind_speed', documentation: 'documentation', notes: 'notes',
   } },
+  'fleet-assets': { required: ['operatingLocationId', 'assetType', 'assetIdentifier', 'status'], fields: {
+    operatingLocationId: 'operating_location_id', assetType: 'asset_type', assetIdentifier: 'asset_identifier',
+    registration: 'registration', vin: 'vin', serialNumber: 'serial_number', manufacturer: 'manufacturer',
+    model: 'model', manufactureYear: 'manufacture_year', status: 'status', notes: 'notes',
+  } },
   'equipment-kits': { required: ['operatingLocationId', 'name', 'type'], fields: {} },
 };
 
@@ -70,7 +75,7 @@ function parseBody(req, maxBytes = MAX_BODY_BYTES) {
 
 function hasPermission(context, resource, action) {
   const permissions = new Set(context.permissions || []);
-  const permissionResource = resource === 'equipment-kits' ? 'equipment_kits' : resource;
+  const permissionResource = resource === 'equipment-kits' ? 'equipment_kits' : resource === 'fleet-assets' ? 'fleet_assets' : resource;
   return permissions.has('*') || permissions.has(`${permissionResource}.*`) || permissions.has(`${permissionResource}.${action}`);
 }
 
@@ -144,6 +149,17 @@ function mapDatabaseRecord(resource, record) {
       rowVersion: record.row_version, createdAt: record.created_at, updatedAt: record.updated_at,
     };
   }
+  if (resource === 'fleet-assets') {
+    return {
+      id: record.id, operatingLocationId: record.operating_location_id, assetType: record.asset_type,
+      assetIdentifier: record.asset_identifier, registration: record.registration || undefined,
+      vin: record.vin || undefined, serialNumber: record.serial_number || undefined,
+      manufacturer: record.manufacturer || undefined, model: record.model || undefined,
+      manufactureYear: record.manufacture_year === null || record.manufacture_year === undefined ? undefined : Number(record.manufacture_year),
+      status: record.status, notes: record.notes || '', rowVersion: record.row_version,
+      createdAt: record.created_at, updatedAt: record.updated_at,
+    };
+  }
   const schema = SCHEMAS[resource];
   const result = { id: record.id };
   Object.entries(schema.fields).forEach(([apiField, databaseField]) => {
@@ -176,6 +192,25 @@ function mapInput(resource, body, existing) {
   });
   const baseline = existing ? mapDatabaseRecord(resource, existing) : {};
   const merged = { ...baseline, ...body };
+  if (resource === 'fleet-assets') {
+    const types = new Set(['truck', 'trailer', 'generator', 'crane', 'pump', 'compressor', 'other']);
+    const statuses = new Set(['available', 'assigned', 'maintenance', 'retired']);
+    if (!types.has(merged.assetType)) throw apiError(400, 'VALIDATION_ERROR', 'Select a valid Fleet asset type.');
+    if (!statuses.has(merged.status)) throw apiError(400, 'VALIDATION_ERROR', 'Select a valid Fleet asset status.');
+    if (!String(merged.assetIdentifier || '').trim()) throw apiError(400, 'VALIDATION_ERROR', 'Enter an asset identifier.');
+    if (['truck', 'trailer'].includes(merged.assetType) && !String(merged.registration || '').trim()) {
+      throw apiError(400, 'VALIDATION_ERROR', `Enter the ${merged.assetType} registration.`);
+    }
+    for (const field of ['assetIdentifier', 'registration', 'vin', 'serialNumber', 'manufacturer', 'model', 'notes']) {
+      if (merged[field] !== undefined && merged[field] !== null && typeof merged[field] !== 'string') {
+        throw apiError(400, 'VALIDATION_ERROR', `${field} must be text.`);
+      }
+    }
+    if (merged.manufactureYear !== undefined && merged.manufactureYear !== null
+      && (!Number.isInteger(Number(merged.manufactureYear)) || Number(merged.manufactureYear) < 1900 || Number(merged.manufactureYear) > 2200)) {
+      throw apiError(400, 'VALIDATION_ERROR', 'manufactureYear is invalid.');
+    }
+  }
   const baseLocationFields = ['latitude', 'longitude', 'addressSource', 'locationConfirmedAt', 'locationConfirmed'];
   const hasNewBaseLocationEvidence = resource === 'operating_locations'
     && baseLocationFields.some((field) => body[field] !== undefined);
@@ -293,6 +328,17 @@ function mapInput(resource, body, existing) {
   Object.entries(schema.fields).forEach(([apiField, databaseField]) => {
     if (!readOnly.has(apiField) && merged[apiField] !== undefined) data[databaseField] = merged[apiField];
   });
+  if (resource === 'fleet-assets') {
+    data.asset_type = merged.assetType;
+    data.asset_identifier = merged.assetIdentifier.trim();
+    data.registration = String(merged.registration || '').trim().toUpperCase() || null;
+    data.vin = String(merged.vin || '').trim().toUpperCase() || null;
+    data.serial_number = String(merged.serialNumber || '').trim().toUpperCase() || null;
+    data.manufacturer = String(merged.manufacturer || '').trim() || null;
+    data.model = String(merged.model || '').trim() || null;
+    data.manufacture_year = merged.manufactureYear === undefined || merged.manufactureYear === null || merged.manufactureYear === '' ? null : Number(merged.manufactureYear);
+    data.notes = String(merged.notes || '').trim();
+  }
   if (automaticReference) data.auto_generate_reference = true;
   if (resource === 'missions' && !data.status) data.status = 'planning';
   return { data, merged };
@@ -406,7 +452,7 @@ function assertLocationAccess(context, operatingLocationId, resource = 'record')
 }
 
 function hasAssignedLocationReadAccess(resource, context, record) {
-  if (!['missions', 'aircraft', 'equipment-kits', 'operating_locations'].includes(resource)) return true;
+  if (!['missions', 'aircraft', 'equipment-kits', 'fleet-assets', 'operating_locations'].includes(resource)) return true;
   const operatingLocationId = resource === 'operating_locations'
     ? record?.id : record?.operating_location_id ?? record?.operatingLocationId;
   return typeof operatingLocationId === 'string'
@@ -435,6 +481,7 @@ async function assertRelationships(repository, resource, context, values) {
       operating_location_id: values.operatingLocationId, status: 'available',
     }]));
   }
+  if (resource === 'fleet-assets') required.push(['operating_locations', values.operatingLocationId]);
   for (const [relatedResource, id, filters] of required) {
     const exists = await repository.relationshipExists(relatedResource, context, id, filters);
     if (!exists) throw apiError(409, 'RELATIONSHIP_CONFLICT', 'The related record is missing, archived, or belongs to another organisation.');
@@ -726,10 +773,11 @@ function createOperationalHandler(resource, dependencies = {}) {
         assertPermission(context, resource, 'create');
         const { data, merged } = mapInput(resource, body);
         assertAcceptanceCreateScope(context, resource, merged);
-        if (['missions', 'aircraft', 'equipment-kits'].includes(resource)) assertLocationAccess(context, merged.operatingLocationId, resource === 'missions' ? 'mission' : resource === 'aircraft' ? 'aircraft' : 'equipment kit');
+        if (['missions', 'aircraft', 'equipment-kits', 'fleet-assets'].includes(resource)) assertLocationAccess(context, merged.operatingLocationId, resource === 'missions' ? 'mission' : resource === 'aircraft' ? 'aircraft' : resource === 'fleet-assets' ? 'Fleet asset' : 'equipment kit');
         await assertRelationships(repository, resource, context, merged);
         const result = context.actorType === 'PLATFORM_SUPPORT' ? await repository.createDelegated(resource, context, data) : await repository.create(resource, context, data);
         if (result.relationshipConflict) throw apiError(409, 'RELATIONSHIP_CONFLICT', 'The related record is missing, archived, or belongs to another organisation.');
+        if (result.identityConflict) throw apiError(409, 'IDENTITY_CONFLICT', 'A Fleet asset with this governed identity already exists.');
         if (result.locationForbidden) throw apiError(403, 'LOCATION_FORBIDDEN', 'This mission operating location is not assigned to your membership.');
         if (result.lifecycleConflict) throw apiError(409, 'LIFECYCLE_CONFLICT', 'Only Planning missions can be changed through this endpoint.');
         return res.status(201).json({ data: mapDatabaseRecord(resource, result.record) });
@@ -744,7 +792,7 @@ function createOperationalHandler(resource, dependencies = {}) {
           throw apiError(404, 'NOT_FOUND', 'Operational record not found.');
         }
         const { data, merged } = mapInput(resource, body, existing);
-        if (['missions', 'aircraft', 'equipment-kits'].includes(resource)) assertLocationAccess(context, merged.operatingLocationId, resource === 'missions' ? 'mission' : resource === 'aircraft' ? 'aircraft' : 'equipment kit');
+        if (['missions', 'aircraft', 'equipment-kits', 'fleet-assets'].includes(resource)) assertLocationAccess(context, merged.operatingLocationId, resource === 'missions' ? 'mission' : resource === 'aircraft' ? 'aircraft' : resource === 'fleet-assets' ? 'Fleet asset' : 'equipment kit');
         if (resource === 'aircraft' && (merged.status !== existing.status || merged.serviceabilityState !== existing.serviceability_state || merged.missionReady !== existing.mission_ready)) {
           assertPermission(context, resource, 'serviceability');
         }
@@ -752,6 +800,7 @@ function createOperationalHandler(resource, dependencies = {}) {
         const result = context.actorType === 'PLATFORM_SUPPORT' ? await repository.updateDelegated(resource, context, id, expectedVersion, data) : await repository.update(resource, context, id, expectedVersion, data);
         if (result.notFound) throw apiError(404, 'NOT_FOUND', 'Operational record not found.');
         if (result.relationshipConflict) throw apiError(409, 'RELATIONSHIP_CONFLICT', 'The related record is missing, archived, or belongs to another organisation.');
+        if (result.identityConflict) throw apiError(409, 'IDENTITY_CONFLICT', 'A Fleet asset with this governed identity already exists.');
         if (result.locationForbidden) throw apiError(403, 'LOCATION_FORBIDDEN', 'This mission operating location is not assigned to your membership.');
         if (result.lifecycleConflict) throw apiError(409, 'LIFECYCLE_CONFLICT', 'Only Planning missions can be changed through this endpoint.');
         if (result.conflict) throw apiError(409, 'VERSION_CONFLICT', 'This record changed before your update.', { currentVersion: result.currentVersion });
@@ -761,7 +810,7 @@ function createOperationalHandler(resource, dependencies = {}) {
       if (isAcceptanceActor(context) && !await repository.isAcceptanceRecordOwnedByActor(resource, context, id)) {
         throw apiError(403, 'ACCEPTANCE_ARCHIVE_SCOPE_FORBIDDEN', 'The acceptance role may archive only records it created.');
       }
-      if (['missions', 'aircraft', 'equipment-kits'].includes(resource)) {
+      if (['missions', 'aircraft', 'equipment-kits', 'fleet-assets'].includes(resource)) {
         const existing = await repository.get(resource, context, id);
         if (!existing || existing.archived_at || !hasAssignedLocationReadAccess(resource, context, existing)) {
           throw apiError(404, 'NOT_FOUND', 'Operational record not found.');
@@ -773,6 +822,7 @@ function createOperationalHandler(resource, dependencies = {}) {
       const result = context.actorType === 'PLATFORM_SUPPORT' ? await repository.archiveDelegated(resource, context, id, expectedVersion) : await repository.archive(resource, context, id, expectedVersion);
       if (result.notFound) throw apiError(404, 'NOT_FOUND', 'Operational record not found.');
       if (result.archiveConflict) throw apiError(409, 'ARCHIVE_CONFLICT', 'Archive dependent active records before archiving this record.');
+      if (result.locationForbidden) throw apiError(403, 'LOCATION_FORBIDDEN', 'This record is outside the assigned Base scope.');
       if (result.conflict) throw apiError(409, 'VERSION_CONFLICT', 'This record changed before your update.', { currentVersion: result.currentVersion });
       return res.status(200).json({ data: mapDatabaseRecord(resource, result.record) });
     } catch (error) {
