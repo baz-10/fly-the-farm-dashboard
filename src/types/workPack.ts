@@ -41,7 +41,7 @@ export interface TruckProfile {
   updatedAt: string;
 }
 
-export type DeploymentAssetType = 'truck' | 'trailer';
+export type DeploymentAssetType = 'truck' | 'trailer' | 'generator' | 'crane' | 'pump' | 'compressor' | 'other';
 
 export interface DeploymentAsset extends Omit<TruckProfile, 'id' | 'createdAt' | 'updatedAt'> {
   id: string;

@@ -9,6 +9,7 @@ const TABLES = {
   jobs: 'jobs',
   missions: 'missions',
   aircraft: 'aircraft',
+  'fleet-assets': 'fleet_assets',
   'equipment-kits': 'equipment_kits',
   operating_locations: 'operating_locations',
   field_boundary_versions: 'field_boundary_versions',
@@ -31,7 +32,7 @@ function activeFilter() {
 }
 
 function assignedLocationFilter(resource, context) {
-  const column = resource === 'operating_locations' ? 'id' : ['missions', 'aircraft', 'equipment-kits'].includes(resource) ? 'operating_location_id' : null;
+  const column = resource === 'operating_locations' ? 'id' : ['missions', 'aircraft', 'equipment-kits', 'fleet-assets'].includes(resource) ? 'operating_location_id' : null;
   if (!column) return null;
   const ids = Array.isArray(context.operatingLocationIds) ? context.operatingLocationIds.filter(Boolean) : [];
   if (ids.length === 0) return false;
@@ -181,6 +182,7 @@ class OperationalRepository {
     if (result?.conflict) return { conflict: true, currentVersion: result.current_version };
     if (result?.not_found) return { notFound: true };
     if (result?.relationship_conflict) return { relationshipConflict: true };
+    if (result?.identity_conflict) return { identityConflict: true };
     return { record: result?.record || result, fieldVersion: result?.field_version };
   }
 
@@ -239,6 +241,13 @@ class OperationalRepository {
   }
 
   async hasActiveDependencies(resource, context, id) {
+    if (resource === 'fleet-assets') {
+      const result = await supabaseRequest('rest/v1/rpc/ftf_fleet_asset_has_active_work_pack_dependency', {
+        method: 'POST', body: JSON.stringify({ p_organisation_id: context.organisation.id, p_fleet_asset_id: id }),
+        publicMessage: 'Fleet Work Pack dependency check failed.',
+      });
+      return result === true;
+    }
     const dependency = {
       operating_locations: ['missions', 'operating_location_id'],
       clients: ['properties', 'client_id'],
@@ -445,7 +454,7 @@ class OperationalRepository {
   async writeDelegated(operation,resource,context,entityId,expectedVersion,data){
     const result=await supabaseRequest('rest/v1/rpc/ftf_delegated_support_write',{method:'POST',body:JSON.stringify({p_session_id:context.supportSession.id,p_platform_user_id:context.platformUser.id,p_resource:resource,p_operation:operation,p_entity_id:entityId,p_expected_version:expectedVersion,p_data:data}),publicMessage:'Delegated operational support action could not be completed.'});
     if(result?.denial_code){const error=new Error(result.denial_code);error.statusCode=403;error.code=result.denial_code;error.publicMessage='The delegated Support Session does not authorise this operation.';throw error;}
-    if(result?.conflict)return{conflict:true,currentVersion:result.current_version};if(result?.not_found)return{notFound:true};if(result?.archive_conflict)return{archiveConflict:true};if(result?.relationship_conflict)return{relationshipConflict:true};if(result?.location_forbidden)return{locationForbidden:true};if(result?.lifecycle_conflict)return{lifecycleConflict:true};return{record:result?.record||result};
+    if(result?.conflict)return{conflict:true,currentVersion:result.current_version};if(result?.not_found)return{notFound:true};if(result?.archive_conflict)return{archiveConflict:true};if(result?.relationship_conflict)return{relationshipConflict:true};if(result?.identity_conflict)return{identityConflict:true};if(result?.location_forbidden)return{locationForbidden:true};if(result?.lifecycle_conflict)return{lifecycleConflict:true};return{record:result?.record||result};
   }
   async recordDelegatedActivity(context,operation,resource,resourceId,outcome){return supabaseRequest('rest/v1/rpc/record_delegated_support_activity',{method:'POST',body:JSON.stringify({p_session_id:context.supportSession.id,p_platform_user_id:context.platformUser.id,p_operation:operation,p_module_code:resource,p_resource_type:resource,p_resource_id:resourceId,p_outcome:outcome,p_metadata:{}}),publicMessage:'Delegated support activity could not be recorded.'});}
 }

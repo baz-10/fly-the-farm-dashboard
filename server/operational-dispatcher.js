@@ -27,6 +27,9 @@ const { createOperationsBriefHandler } = require('./operations-brief-api');
 const { createCommercialOnboardingHandler } = require('./commercial-onboarding-api');
 const { createGettingStartedHandler } = require('./getting-started-api');
 const { createFinancialActualsHandler } = require('./financial-actuals-api');
+const { createFleetMaintenanceHandler } = require('./fleet-maintenance-api');
+const { createTechnicalCatalogueHandler } = require('./technical-catalogue-api');
+const ASSET_MAINTENANCE_RESOURCE = 'asset-maintenance';
 
 function createDefaultHandlers() {
   return Object.freeze({
@@ -37,6 +40,7 @@ function createDefaultHandlers() {
     missions: createOperationalHandler('missions'),
     'mission-setup-drafts': createMissionSetupDraftsHandler(),
     aircraft: createOperationalHandler('aircraft'),
+    'fleet-assets': createOperationalHandler('fleet-assets'),
     'equipment-kits': createOperationalHandler('equipment-kits'),
     'operating-locations': createOperationalHandler('operating_locations'),
     'field-boundary-versions': createFieldBoundaryVersionHandler(),
@@ -64,6 +68,8 @@ function createDefaultHandlers() {
     'commercial-onboarding': createCommercialOnboardingHandler(),
     'getting-started': createGettingStartedHandler(),
     'financial-actuals': createFinancialActualsHandler(),
+    [ASSET_MAINTENANCE_RESOURCE]: createFleetMaintenanceHandler(),
+    'technical-catalogue': createTechnicalCatalogueHandler(),
   });
 }
 
@@ -87,4 +93,4 @@ function createVersionedApiDispatcher(handlerMap = createDefaultHandlers()) {
   };
 }
 
-module.exports = { createDefaultHandlers, createVersionedApiDispatcher };
+module.exports = { ASSET_MAINTENANCE_RESOURCE, createDefaultHandlers, createVersionedApiDispatcher };

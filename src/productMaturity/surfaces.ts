@@ -64,6 +64,7 @@ export const REACHABLE_PRODUCT_ROUTES = [
   { path: '/aircraft', moduleCode: 'aircraft', workflowCode: null },
   { path: '/personnel', moduleCode: 'personnel', workflowCode: null },
   { path: '/fleet-work-packs', moduleCode: 'fleet-work-packs', workflowCode: null },
+  { path: '/assets/:source/:id/:section?', moduleCode: 'fleet-work-packs', workflowCode: null },
   { path: '/jsa', moduleCode: 'mission-jsa', workflowCode: null },
   { path: '/missions', moduleCode: 'mission-register', workflowCode: null },
   { path: '/missions/new', moduleCode: 'mission-register', workflowCode: 'setup-drafts' },
