@@ -134,6 +134,23 @@ describe('commercial onboarding acceptance governance', () => {
     expect(source).not.toMatch(/localStorage\.setItem|sessionStorage\.setItem/);
   });
 
+  test('registers authoritative Getting Started readiness before activation and diagnoses it before DOM assertions', () => {
+    const source = read('e2e/acceptance/commercial-onboarding.spec.ts');
+    const wait = source.indexOf('const gettingStartedResponsePromise = page.waitForResponse');
+    const activate = source.indexOf("page.getByRole('button', { name: 'Activate organisation' }).click()");
+    const response = source.indexOf('const gettingStartedResponse = await gettingStartedResponsePromise');
+    const validate = source.indexOf('validateGettingStartedReadiness({');
+    const heading = source.indexOf("page.getByRole('heading', { name: 'Getting Started' })");
+
+    expect(wait).toBeGreaterThan(-1);
+    expect(wait).toBeLessThan(activate);
+    expect(activate).toBeLessThan(response);
+    expect(response).toBeLessThan(validate);
+    expect(validate).toBeLessThan(heading);
+    expect(source).toContain("url.origin === environment.baseUrl && url.pathname === '/api/v1/getting-started'");
+    expect(source).toContain("response.request().method() === 'GET'");
+  });
+
   test('scopes Personnel readiness assertions to the visible semantic region', () => {
     const source = read('e2e/acceptance/commercial-onboarding.spec.ts');
 
@@ -253,6 +270,7 @@ describe('commercial onboarding acceptance governance', () => {
     expect(harness.env.ACCEPTANCE_HARNESS_SHA).toBe('${{ github.sha }}');
     expect(harness.run).toContain('e2e/acceptance/commercial-onboarding.spec.ts');
     expect(harness.run).toContain('e2e/acceptance/fixtures/commercialOnboardingInvitation.ts');
+    expect(harness.run).toContain('e2e/acceptance/fixtures/gettingStartedReadiness.ts');
     expect(harness.run).not.toMatch(/\bsrc\/|\bserver\/|\bapi\//);
     expect(onboardingSteps.indexOf('Run deterministic sharded regression'))
       .toBeLessThan(onboardingSteps.indexOf('Load reviewed mailbox acceptance harness'));
