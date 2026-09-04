@@ -259,6 +259,18 @@ export function mapApiField(record: ApiRecord): Field {
   const area = rawArea === undefined || rawArea === null ? 0 : Number(rawArea);
   if (!Number.isFinite(area) || area < 0) return malformed('areaHectares');
   const fieldBoundaryVersionId = optionalText(record, 'fieldBoundaryVersionId', 'field_boundary_version_id') || undefined;
+  const accessPointLabel = optionalText(record, 'accessPointLabel', 'access_point_label');
+  const rawAccessLatitude = value(record, 'accessLatitude', 'access_latitude');
+  const rawAccessLongitude = value(record, 'accessLongitude', 'access_longitude');
+  const accessCoordinateSource = optionalText(record, 'accessCoordinateSource', 'access_coordinate_source');
+  const accessLocationConfirmedAt = optionalText(record, 'accessLocationConfirmedAt', 'access_location_confirmed_at');
+  const accessValues = [accessPointLabel, rawAccessLatitude, rawAccessLongitude, accessCoordinateSource, accessLocationConfirmedAt];
+  const presentAccessValues = accessValues.filter((entry) => entry !== undefined && entry !== null && entry !== '').length;
+  if (presentAccessValues !== 0 && presentAccessValues !== 5) return malformed('accessPoint');
+  if (presentAccessValues === 5 && (accessCoordinateSource !== 'PROPERTY_SUGGESTED' && accessCoordinateSource !== 'MANUALLY_ADJUSTED')) return malformed('accessCoordinateSource');
+  const accessLatitude = Number(rawAccessLatitude);
+  const accessLongitude = Number(rawAccessLongitude);
+  if (presentAccessValues === 5 && (!Number.isFinite(accessLatitude) || Math.abs(accessLatitude) > 90 || !Number.isFinite(accessLongitude) || Math.abs(accessLongitude) > 180 || Number.isNaN(Date.parse(accessLocationConfirmedAt)))) return malformed('accessPoint');
   return {
     id: requiredText(record, 'id'),
     propertyId: requiredText(record, 'propertyId', 'property_id'),
@@ -271,6 +283,11 @@ export function mapApiField(record: ApiRecord): Field {
     updatedAt: timestamp(record, 'updatedAt', 'updated_at'),
     rowVersion: versionValue(record),
     fieldBoundaryVersionId,
+    ...(presentAccessValues === 5 ? { accessPoint: {
+      label: accessPointLabel, lat: accessLatitude, lng: accessLongitude,
+      coordinateSource: accessCoordinateSource as 'PROPERTY_SUGGESTED' | 'MANUALLY_ADJUSTED',
+      locationConfirmedAt: accessLocationConfirmedAt,
+    } } : {}),
   };
 }
 
@@ -550,6 +567,13 @@ export function createOperationalApi(options: ApiOptions = {}): OperationalApi {
     if (input.name !== undefined) payload.name = input.name;
     if (input.sizeHa !== undefined) payload.areaHectares = input.sizeHa;
     if (input.fieldBoundaryVersionId !== undefined) payload.fieldBoundaryVersionId = input.fieldBoundaryVersionId;
+    if (input.accessPoint !== undefined) {
+      payload.accessPointLabel = input.accessPoint?.label ?? null;
+      payload.accessLatitude = input.accessPoint?.lat ?? null;
+      payload.accessLongitude = input.accessPoint?.lng ?? null;
+      payload.accessCoordinateSource = input.accessPoint?.coordinateSource ?? null;
+      payload.accessLocationConfirmedAt = input.accessPoint?.locationConfirmedAt ?? null;
+    }
     return payload;
   };
 

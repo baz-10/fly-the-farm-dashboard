@@ -14,10 +14,12 @@ import {
   InputAdornment,
   Button,
   Stack,
+  MenuItem,
 } from '@mui/material';
 import PlaceIcon from '@mui/icons-material/Place';
 import SearchIcon from '@mui/icons-material/Search';
-import { AustralianState } from '../types/chemical';
+import { ALL_STATES, AustralianState } from '../types/chemical';
+import { composeAddress, invalidateAddressConfirmation, StructuredAddress } from './address/structuredLocation';
 
 const AddressLocationMap = React.lazy(() => import('./AddressLocationMap'));
 
@@ -40,6 +42,9 @@ interface Props {
   onSelect: (result: AddressResult) => void;
   onInputChange?: (value: string) => void;
   initialValue?: string;
+  initialLocality?: string;
+  initialState?: AustralianState;
+  initialPostcode?: string;
   label?: string;
   size?: 'small' | 'medium';
   showMap?: boolean;
@@ -56,6 +61,9 @@ export default function AddressAutocomplete({
   onSelect,
   onInputChange,
   initialValue = '',
+  initialLocality = '',
+  initialState = 'NSW',
+  initialPostcode = '',
   label = 'Search Address',
   size = 'small',
   showMap = true,
@@ -67,16 +75,20 @@ export default function AddressAutocomplete({
 }: Props) {
   const theme = useTheme();
   const [query, setQuery] = useState(initialValue);
+  const [manual, setManual] = useState(false);
+  const [structured, setStructured] = useState<StructuredAddress>({
+    address: initialValue, locality: initialLocality, state: initialState, postcode: initialPostcode,
+  });
   const [results, setResults] = useState<AddressResult[]>([]);
   const [loading, setLoading] = useState(false);
   const [open, setOpen] = useState(false);
   const [feedback, setFeedback] = useState('');
   const [mapCenter, setMapCenter] = useState<{ lat: number; lng: number } | null>(
-    lat !== undefined && lng !== undefined ? { lat, lng } : null
+    Number.isFinite(lat) && Number.isFinite(lng) ? { lat: lat as number, lng: lng as number } : null
   );
-  const [selected, setSelected] = useState<AddressResult | null>(() => lat !== undefined && lng !== undefined ? {
-    address: initialValue, locality: '', state: 'NSW' as AustralianState, postcode: '', displayName: initialValue,
-    lat, lng, coordinateSource: coordinateSource || 'GEOCODED', locationConfirmedAt,
+  const [selected, setSelected] = useState<AddressResult | null>(() => Number.isFinite(lat) && Number.isFinite(lng) ? {
+    address: initialValue, locality: initialLocality, state: initialState, postcode: initialPostcode, displayName: initialValue,
+    lat: lat as number, lng: lng as number, coordinateSource: coordinateSource || 'GEOCODED', locationConfirmedAt,
   } : null);
   const [viewportResetKey, setViewportResetKey] = useState(0);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -85,8 +97,8 @@ export default function AddressAutocomplete({
 
   // Update map center when external lat/lng props change
   useEffect(() => {
-    if (lat !== undefined && lng !== undefined) {
-      setMapCenter({ lat, lng });
+    if (Number.isFinite(lat) && Number.isFinite(lng)) {
+      setMapCenter({ lat: lat as number, lng: lng as number });
     }
   }, [lat, lng]);
 
@@ -149,12 +161,64 @@ export default function AddressAutocomplete({
   const handleSelect = (result: AddressResult) => {
     const located = { ...result, coordinateSource: 'GEOCODED' as const, locationConfirmedAt: undefined };
     setQuery(result.displayName);
+    setStructured({ address: result.address, locality: result.locality, state: result.state, postcode: result.postcode });
     setMapCenter({ lat: result.lat, lng: result.lng });
     setViewportResetKey((current) => current + 1);
     setSelected(located);
     setOpen(false);
     setResults([]);
     onSelect(located);
+  };
+
+  const updateStructured = (updates: Partial<StructuredAddress>) => {
+    requestRef.current += 1;
+    const next = { ...structured, ...updates };
+    setStructured(next);
+    setQuery(composeAddress(next));
+    const base: AddressResult = selected
+      ? invalidateAddressConfirmation(selected, updates)
+      : { ...next, lat: Number.NaN, lng: Number.NaN, displayName: composeAddress(next) };
+    const changed = { ...base, ...next, displayName: composeAddress(next), locationConfirmedAt: undefined };
+    if (selected) setSelected(changed);
+    onInputChange?.(changed.displayName);
+    onSelect(changed);
+  };
+
+  const locateManualAddress = async () => {
+    const description = composeAddress(structured);
+    if (!structured.address.trim() || !structured.locality.trim() || !structured.postcode.trim()) {
+      setFeedback('Enter the street or property, locality or region, state and postcode before showing it on the map.');
+      return;
+    }
+    const requestNumber = ++requestRef.current;
+    setLoading(true);
+    setFeedback('');
+    try {
+      const response = await fetch(`/api/geocode?${new URLSearchParams({ q: description }).toString()}`, { credentials: 'same-origin' });
+      if (!response.ok) throw new Error('Address search failed');
+      const data = await response.json();
+      if (requestNumber !== requestRef.current) return;
+      const result = Array.isArray(data.results) ? data.results[0] : undefined;
+      const nextLat = Number(result?.lat);
+      const nextLng = Number(result?.lng);
+      if (!Number.isFinite(nextLat) || !Number.isFinite(nextLng)) {
+        setFeedback('This address could not be placed automatically. Check the locality and postcode, then try again.');
+        return;
+      }
+      const located: AddressResult = {
+        ...structured, lat: nextLat, lng: nextLng, displayName: description,
+        coordinateSource: 'GEOCODED', locationConfirmedAt: undefined,
+      };
+      setSelected(located);
+      setMapCenter({ lat: nextLat, lng: nextLng });
+      setViewportResetKey((current) => current + 1);
+      onSelect(located);
+    } catch {
+      if (requestNumber !== requestRef.current) return;
+      setFeedback('The address could not be placed automatically. Your typed address has been retained.');
+    } finally {
+      if (requestNumber === requestRef.current) setLoading(false);
+    }
   };
 
   const handleLocationChange = (nextLat: number, nextLng: number) => {
@@ -261,6 +325,24 @@ export default function AddressAutocomplete({
           </Paper>
         )}
       </Box>
+
+      <Button size="small" onClick={() => setManual((current) => !current)} sx={{ mt: 0.75 }}>
+        {manual ? 'Use address search' : 'Enter address manually'}
+      </Button>
+
+      {manual && (
+        <Stack spacing={1.25} sx={{ mt: 1 }}>
+          <TextField label="Street number and road" value={structured.address} onChange={(event) => updateStructured({ address: event.target.value })} size={size} fullWidth />
+          <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.25}>
+            <TextField label="Town / locality / region" value={structured.locality} onChange={(event) => updateStructured({ locality: event.target.value })} size={size} fullWidth />
+            <TextField label="State" select value={structured.state} onChange={(event) => updateStructured({ state: event.target.value as AustralianState })} size={size} sx={{ minWidth: 100 }}>
+              {ALL_STATES.map((state) => <MenuItem key={state} value={state}>{state}</MenuItem>)}
+            </TextField>
+            <TextField label="Postcode" value={structured.postcode} onChange={(event) => updateStructured({ postcode: event.target.value })} size={size} inputProps={{ inputMode: 'numeric', maxLength: 4 }} sx={{ minWidth: 120 }} />
+          </Stack>
+          <Button variant="outlined" size="small" onClick={() => void locateManualAddress()} disabled={loading} sx={{ alignSelf: 'flex-start' }}>Show address on map</Button>
+        </Stack>
+      )}
 
       {feedback && (
         <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.75 }}>

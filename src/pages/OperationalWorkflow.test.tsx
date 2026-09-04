@@ -14,7 +14,7 @@ const client = {
   createdAt: '2026-08-01T00:00:00Z', updatedAt: '2026-08-01T00:00:00Z',
 };
 const property = {
-  id: 'property-1', clientId: 'client-1', name: 'Home Block', address: '45 Farm Track', state: 'QLD', locality: 'Roma', lotPlan: 'LOT-7', lat: -26.57, lng: 148.79, addressSource: 'GEOCODED', notes: '', rowVersion: 1,
+  id: 'property-1', clientId: 'client-1', name: 'Home Block', address: '45 Farm Track', state: 'QLD', locality: 'Roma', lotPlan: 'LOT-7', lat: -26.57, lng: 148.79, addressSource: 'GEOCODED', locationConfirmedAt: '2026-08-05T00:00:00.000Z', notes: '', rowVersion: 1,
   createdAt: '2026-08-01T00:00:00Z', updatedAt: '2026-08-01T00:00:00Z',
 };
 const field = {
@@ -56,6 +56,7 @@ jest.mock('../components/FieldBoundaryEditor', () => (props: any) => <div>
   Boundary editor
   <button onClick={() => { props.onCoordsChange?.([[-27, 153], [-27, 154], [-28, 154]]); props.onAreaChange?.(20); }}>Draw test boundary</button>
 </div>);
+jest.mock('../components/AddressLocationMap', () => (props: any) => <button onClick={() => props.onLocationChange?.(-26.571, 148.791)}>Move access pin</button>);
 jest.mock('../services/fieldManagementStore', () => ({
   getClients: () => [], getClientById: () => undefined, getPropertiesByClient: () => [], getPropertyById: () => undefined,
   getFieldsByProperty: () => [], getFieldById: () => undefined, getJobsByField: () => [], getJobs: () => [], getJobById: () => undefined,
@@ -225,6 +226,27 @@ describe('authoritative client/property/field workflow screens', () => {
     expect(mockOperational.updateClient).not.toHaveBeenCalled();
     expect(mockOperational.updateProperty).not.toHaveBeenCalled();
     expect(mockNavigate).toHaveBeenCalledWith('/jobs/client/client-1/property/property-1/field/field-new');
+  });
+
+  test('requires explicit confirmation before saving an optional Field access point', async () => {
+    mockOperational.createField.mockResolvedValue({ ...field, id: 'field-access', name: 'South Paddock' });
+    mockSearchParams = new URLSearchParams('view=fields');
+    route('/jobs?view=fields', <ClientList />);
+    fireEvent.click(screen.getByRole('button', { name: 'Add Field' }));
+    fireEvent.mouseDown(screen.getByRole('combobox', { name: 'Select Client' }));
+    fireEvent.click(await screen.findByRole('option', { name: 'North Farm' }));
+    fireEvent.mouseDown(screen.getByRole('combobox', { name: 'Select Property' }));
+    fireEvent.click(await screen.findByRole('option', { name: 'Home Block' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Field name' }), { target: { value: 'South Paddock' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Add field access / launch point' }));
+    expect(screen.getByRole('button', { name: 'Save Field' })).toBeDisabled();
+    fireEvent.change(screen.getByRole('textbox', { name: 'Access point label' }), { target: { value: 'North gate' } });
+    fireEvent.click(await screen.findByRole('button', { name: 'Move access pin' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm access point' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save Field' }));
+    await waitFor(() => expect(mockOperational.createField).toHaveBeenCalledWith(expect.objectContaining({
+      accessPoint: expect.objectContaining({ label: 'North gate', lat: -26.571, lng: 148.791, coordinateSource: 'MANUALLY_ADJUSTED', locationConfirmedAt: expect.any(String) }),
+    })));
   });
 
   test('presents a dedicated Jobs workspace with dominant search, open and add actions', () => {
