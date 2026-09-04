@@ -59,3 +59,22 @@ Implemented in the supplied isolated worktree. No Production application, databa
 - Final focused and adjacent verification passed 9 suites and 76 tests, including both the Task 6 operating-day migration and Fleet meter migration suites:
   - `CI=true npm test -- --watchAll=false src/__tests__/missionAircraftDayActualsMigration.test.js src/__tests__/missionOperatingDaysMigration.test.js src/__tests__/assetRelationshipsMetersMigration.test.js src/components/mission/__tests__/MissionAircraftDayActuals.test.tsx src/__tests__/assetRelationshipsMetersApi.test.js src/__tests__/missionOperationalCloseoutApi.test.js src/__tests__/missionOperationsApi.test.js src/services/__tests__/missionOperationsApi.test.ts src/components/mission/__tests__/MissionOperationalCloseout.test.tsx`
 - `npm run build` completed successfully after the round-fix changes. It retained only the repository's pre-existing lint warnings and stale Browserslist notice.
+
+## Round 2 Important-finding remediation — 2026-09-05
+
+### Delivered
+
+- Corrected chronological Fleet projection so a prior `SIGNED_OFF` day's participating aircraft are read only from that day's frozen `mission_aircraft_day_actuals`. Later mutable actual-resource revisions can no longer retroactively add an aircraft to an earlier signed day. Earlier unsigned days still use the governed expected set and continue to block genuinely out-of-order projection.
+- Added executable coverage for a signed first day with aircraft A/B followed by an authoritative resource revision and second day with A/B/C. The second day signs and projects all three aircraft, including C from its independent baseline, without requiring a nonexistent C total or Fleet reading on the earlier frozen day.
+- Replaced KMZ's metadata-sized synchronous extraction with bounded streaming decompression. The server feeds the decompressor in 1 KiB compressed chunks, counts actual expanded bytes per entry and across the archive, and stops when the 3 MiB entry or 10 MiB archive limit is crossed before immutable storage is invoked.
+- Added central/local ZIP structure agreement and actual CRC-32 validation. Entry count, safe unique paths, encryption rejection, supported stored/deflate compression, bounded advertised sizes, and required valid KML content remain enforced. ZIP64, split archives, malformed directory bounds, forged sizes, incomplete entries, and checksum mismatches fail closed while the accepted opaque original remains byte-for-byte unchanged and supplies no regulatory time.
+
+### TDD and verification evidence
+
+- RED: the new PostgreSQL scenario returned `AIRCRAFT_DAY_PROJECTION_OUT_OF_ORDER` for day two because aircraft C was incorrectly inferred into earlier signed A/B days from the latest mutable resource revision.
+- RED: a compressed KMZ containing a valid short KML prefix followed by more than 3 MiB of expansion was accepted through the storage boundary after both ZIP headers falsely advertised only the prefix length. A separate forged CRC fixture was likewise accepted through that boundary.
+- GREEN: the focused database scenario now signs/projects day two with three readings, while the existing genuine earlier-day attempt still fails atomically before any readings are written. The forged expansion and CRC fixtures return HTTP 400 and do not invoke immutable storage.
+- Final focused and adjacent verification passed 9 suites and 78 tests:
+  - `CI=true npm test -- --watchAll=false --runInBand src/__tests__/missionAircraftDayActualsMigration.test.js src/__tests__/missionOperatingDaysMigration.test.js src/__tests__/assetRelationshipsMetersMigration.test.js src/components/mission/__tests__/MissionAircraftDayActuals.test.tsx src/__tests__/assetRelationshipsMetersApi.test.js src/__tests__/missionOperationalCloseoutApi.test.js src/__tests__/missionOperationsApi.test.js src/services/__tests__/missionOperationsApi.test.ts src/components/mission/__tests__/MissionOperationalCloseout.test.tsx`
+- `npm run build` completed successfully with only the repository's existing lint-warning backlog and stale Browserslist notice.
+- No Production system, external database, storage service, or subagent was used.

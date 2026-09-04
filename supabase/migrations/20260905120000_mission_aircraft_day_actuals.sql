@@ -777,7 +777,23 @@ begin
       where prior.organisation_id = p_organisation_id
         and prior.mission_id = p_mission_id
         and (prior.work_date, prior.id) < (v_day.work_date, v_day.id)
-        and v_actual.aircraft_id = any(public.ftf_expected_mission_day_aircraft_ids(prior.organisation_id, prior.mission_id, prior.id))
+        and (
+          (
+            prior.state = 'SIGNED_OFF'
+            and exists (
+              select 1
+              from public.mission_aircraft_day_actuals prior_authority
+              where prior_authority.organisation_id = prior.organisation_id
+                and prior_authority.mission_id = prior.mission_id
+                and prior_authority.operating_day_id = prior.id
+                and prior_authority.aircraft_id = v_actual.aircraft_id
+            )
+          )
+          or (
+            prior.state <> 'SIGNED_OFF'
+            and v_actual.aircraft_id = any(public.ftf_expected_mission_day_aircraft_ids(prior.organisation_id, prior.mission_id, prior.id))
+          )
+        )
         and (
           prior.state <> 'SIGNED_OFF'
           or public.ftf_mission_aircraft_day_validation_error(prior.organisation_id, prior.mission_id, prior.id) is not null

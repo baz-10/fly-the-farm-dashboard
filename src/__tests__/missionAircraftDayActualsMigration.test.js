@@ -65,6 +65,7 @@ const ids = {
   dayC: 'a0000000-0000-4000-8000-000000000003',
   dayD: 'a0000000-0000-4000-8000-000000000004',
   dayE: 'a0000000-0000-4000-8000-000000000005',
+  dayLater: 'a0000000-0000-4000-8000-000000000006',
   aircraftA: 'b0000000-0000-4000-8000-000000000001',
   aircraftB: 'b0000000-0000-4000-8000-000000000002',
   aircraftC: 'b0000000-0000-4000-8000-000000000003',
@@ -73,6 +74,7 @@ const ids = {
   assignmentC: 'c0000000-0000-4000-8000-000000000003',
   meterA: 'd0000000-0000-4000-8000-000000000001',
   meterB: 'd0000000-0000-4000-8000-000000000002',
+  meterC: 'd0000000-0000-4000-8000-000000000003',
 };
 
 const scalar = async (db, sql, params = []) => (await db.query(sql, params)).rows[0]?.value;
@@ -165,13 +167,15 @@ if (child) {
         select '${ids.meterA}','${orgA}',id,'flight_hours','Flight hours','h',4,'MISSION_DERIVED','${actorA}' from public.maintainable_asset_registry where aircraft_id='${ids.aircraftA}';
       insert into public.asset_meter_definitions(id,organisation_id,maintainable_asset_id,meter_type,name,unit,precision_scale,source_policy,created_by_internal_user_id)
         select '${ids.meterB}','${orgA}',id,'flight_hours','Flight hours','h',4,'MISSION_DERIVED','${actorA}' from public.maintainable_asset_registry where aircraft_id='${ids.aircraftB}';
+      insert into public.asset_meter_definitions(id,organisation_id,maintainable_asset_id,meter_type,name,unit,precision_scale,source_policy,created_by_internal_user_id)
+        select '${ids.meterC}','${orgA}',id,'flight_hours','Flight hours','h',4,'MISSION_DERIVED','${actorA}' from public.maintainable_asset_registry where aircraft_id='${ids.aircraftC}';
       insert into public.mission_operating_days(
         id,organisation_id,operating_location_id,mission_id,work_date,timezone,mission_pack_revision_id,jsa_revision_id,state,
         actual_started_at,created_by_internal_user_id,updated_by_internal_user_id
       ) values
         ('${ids.dayEarly}','${orgA}','${baseA}','${ids.mission}','2026-09-04','Australia/Brisbane','${ids.pack}','${ids.jsa}','IN_PROGRESS','2026-09-03T15:00:00Z','${actorA}','${actorA}'),
         ('${ids.dayA}','${orgA}','${baseA}','${ids.mission}','2026-09-05','Australia/Brisbane','${ids.pack}','${ids.jsa}','IN_PROGRESS','2026-09-04T15:00:00Z','${actorA}','${actorA}'),
-        ('${ids.dayB}','${orgA}','${baseA}','${ids.mission}','2026-09-06','Australia/Brisbane','${ids.pack}','${ids.jsa}','IN_PROGRESS','2026-09-05T15:00:00Z','${actorA}','${actorA}');
+        ('${ids.dayB}','${orgA}','${baseA}','${ids.mission}','2026-09-10','Australia/Brisbane','${ids.pack}','${ids.jsa}','IN_PROGRESS','2026-09-09T15:00:00Z','${actorA}','${actorA}');
     `);
   });
 
@@ -214,7 +218,7 @@ if (child) {
     expect(saved).toMatchObject({ ready_for_sign_off: false });
     expect(saved.actuals[0].reconciliation_status).toBe('MISMATCH');
     expect(await call('ftf_reconcile_mission_aircraft_day_actuals', [orgA, actorA, ids.mission, ids.dayB])).toMatchObject({ error: 'AIRCRAFT_FLIGHT_TOTAL_MISMATCH' });
-    await db.exec(`update public.mission_operating_days set state='COMPLETED',actual_finished_at='2026-09-06T03:00:00Z' where id='${ids.dayB}'`);
+    await db.exec(`update public.mission_operating_days set state='COMPLETED',actual_finished_at='2026-09-10T03:00:00Z' where id='${ids.dayB}'`);
     await db.exec("select set_config('app.mission_operating_day_signoff','allowed',false)");
     await expect(db.exec(`update public.mission_operating_days set state='SIGNED_OFF' where id='${ids.dayB}'`)).rejects.toThrow(/AIRCRAFT_FLIGHT_TOTAL_MISMATCH/);
     await db.exec("select set_config('app.mission_operating_day_signoff','',false)");
@@ -291,6 +295,42 @@ if (child) {
     expect(await scalar(db, `select count(*)::integer as value from public.mission_completion_revisions where mission_id='${ids.mission}'`)).toBe(0);
   });
 
+  test('later resource revisions do not retroactively add aircraft to signed-day projection authority', async () => {
+    await db.exec(`
+      insert into public.mission_operational_resource_revisions(
+        organisation_id,operating_location_id,mission_id,version_number,actual_resources,planned_resources_snapshot,recorded_by_internal_user_id
+      ) values('${orgA}','${baseA}','${ids.mission}',1,'{"aircraftIds":["${ids.aircraftA}","${ids.aircraftB}","${ids.aircraftC}"],"changedFromPlan":true}','{}','${actorA}');
+      insert into public.mission_operating_days(
+        id,organisation_id,operating_location_id,mission_id,work_date,timezone,mission_pack_revision_id,jsa_revision_id,state,
+        actual_started_at,created_by_internal_user_id,updated_by_internal_user_id
+      ) values('${ids.dayLater}','${orgA}','${baseA}','${ids.mission}','2026-09-06','Australia/Brisbane','${ids.pack}','${ids.jsa}','IN_PROGRESS','2026-09-05T15:00:00Z','${actorA}','${actorA}');
+      insert into public.asset_meter_readings(
+        organisation_id,meter_definition_id,recorded_at,value,source,source_system,source_record_id,evidence,recorded_by_internal_user_id
+      ) values('${orgA}','${ids.meterC}','2026-09-01T00:00:00Z',300,'MANUAL','test-baseline','aircraft-c','{}','${actorA}');
+      insert into public.mission_day_field_activity(
+        organisation_id,operating_location_id,mission_id,operating_day_id,field_id,status,created_by_internal_user_id,updated_by_internal_user_id
+      ) values('${orgA}','${baseA}','${ids.mission}','${ids.dayLater}','${ids.field}','COMPLETED','${actorA}','${actorA}');
+    `);
+    expect(await scalar(db, `select count(*)::integer as value from public.mission_aircraft_day_actuals where operating_day_id='${ids.dayA}' and aircraft_id='${ids.aircraftC}'`)).toBe(0);
+    expect(await call('ftf_save_mission_aircraft_day_actuals', [
+      orgA, actorA, ids.mission, ids.dayLater, 1, '3.0000',
+      JSON.stringify([
+        { aircraftId: ids.aircraftA, totalFlightHours: '1.0000' },
+        { aircraftId: ids.aircraftB, totalFlightHours: '1.0000' },
+        { aircraftId: ids.aircraftC, totalFlightHours: '1.0000' },
+      ]), '[]',
+    ])).toMatchObject({ ready_for_sign_off: true });
+    const version = await scalar(db, `select row_version as value from public.mission_operating_days where id='${ids.dayLater}'`);
+    expect(await call('ftf_complete_and_sign_off_mission_operating_day', [orgA, actorA, ids.mission, ids.dayLater, version, '2026-09-06T03:00:00Z', null]))
+      .toMatchObject({ day: { state: 'SIGNED_OFF' }, fleet_projection: { projected_count: 3 } });
+    expect(await scalar(db, `select value::text as value from public.asset_meter_readings where meter_definition_id='${ids.meterC}' order by recorded_at desc limit 1`)).toBe('301.000000');
+    await db.exec(`
+      insert into public.mission_operational_resource_revisions(
+        organisation_id,operating_location_id,mission_id,version_number,actual_resources,planned_resources_snapshot,recorded_by_internal_user_id
+      ) values('${orgA}','${baseA}','${ids.mission}',2,'{"aircraftIds":["${ids.aircraftA}","${ids.aircraftB}"],"changedFromPlan":false}','{}','${actorA}')
+    `);
+  });
+
   test('stores one immutable import and separate bounded attribution links', async () => {
     const payload = {
       storageProvider: 'supabase', storageBucket: 'mission-operational-evidence', storageObjectKey: 'original/multi.kml',
@@ -333,7 +373,7 @@ if (child) {
     await db.exec(`
       insert into public.mission_operational_resource_revisions(
         organisation_id,operating_location_id,mission_id,version_number,actual_resources,planned_resources_snapshot,recorded_by_internal_user_id
-      ) values('${orgA}','${baseA}','${ids.mission}',1,'{"aircraftIds":["${ids.aircraftA}"],"changedFromPlan":true}','{}','${actorA}');
+      ) values('${orgA}','${baseA}','${ids.mission}',3,'{"aircraftIds":["${ids.aircraftA}"],"changedFromPlan":true}','{}','${actorA}');
       insert into public.mission_operating_days(
         id,organisation_id,operating_location_id,mission_id,work_date,timezone,mission_pack_revision_id,jsa_revision_id,state,
         actual_started_at,created_by_internal_user_id,updated_by_internal_user_id
@@ -357,7 +397,7 @@ if (child) {
     await db.exec(`
       insert into public.mission_operational_resource_revisions(
         organisation_id,operating_location_id,mission_id,version_number,actual_resources,planned_resources_snapshot,recorded_by_internal_user_id
-      ) values('${orgA}','${baseA}','${ids.mission}',2,'{"aircraftIds":["${ids.aircraftA}","${ids.aircraftB}"],"changedFromPlan":false}','{}','${actorA}');
+      ) values('${orgA}','${baseA}','${ids.mission}',4,'{"aircraftIds":["${ids.aircraftA}","${ids.aircraftB}"],"changedFromPlan":false}','{}','${actorA}');
       insert into public.mission_operating_days(
         id,organisation_id,operating_location_id,mission_id,work_date,timezone,mission_pack_revision_id,jsa_revision_id,state,
         actual_started_at,created_by_internal_user_id,updated_by_internal_user_id

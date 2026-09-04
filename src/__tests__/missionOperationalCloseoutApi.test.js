@@ -12,6 +12,24 @@ const context = (permissions) => ({ organisation: { id: org }, internalUser: { i
 const repository = { get: jest.fn(), readMissionOperationalCloseout: jest.fn(), createMissionOperationalImport: jest.fn(), saveMissionActualResources: jest.fn(), saveMissionActualChemicals: jest.fn(), saveMissionOperationalEvents: jest.fn(), submitMissionOperationalEvidence: jest.fn(), completeMission: jest.fn() };
 const validKml = '<kml><Document><Placemark><LineString><coordinates>151,-27,0 151.001,-27.001,0</coordinates></LineString></Placemark></Document></kml>';
 const kmz = (entries = { 'doc.kml': strToU8(validKml) }) => Buffer.from(zipSync(entries));
+const forgeAdvertisedUncompressedSize = (archive, advertisedSize) => {
+  const forged = Buffer.from(archive);
+  const localHeader = forged.indexOf(Buffer.from([0x50, 0x4b, 0x03, 0x04]));
+  const centralHeader = forged.lastIndexOf(Buffer.from([0x50, 0x4b, 0x01, 0x02]));
+  if (localHeader < 0 || centralHeader < 0) throw new Error('ZIP fixture headers are missing.');
+  forged.writeUInt32LE(advertisedSize, localHeader + 22);
+  forged.writeUInt32LE(advertisedSize, centralHeader + 24);
+  return forged;
+};
+const forgeAdvertisedCrc = (archive, advertisedCrc) => {
+  const forged = Buffer.from(archive);
+  const localHeader = forged.indexOf(Buffer.from([0x50, 0x4b, 0x03, 0x04]));
+  const centralHeader = forged.lastIndexOf(Buffer.from([0x50, 0x4b, 0x01, 0x02]));
+  if (localHeader < 0 || centralHeader < 0) throw new Error('ZIP fixture headers are missing.');
+  forged.writeUInt32LE(advertisedCrc, localHeader + 14);
+  forged.writeUInt32LE(advertisedCrc, centralHeader + 16);
+  return forged;
+};
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -69,6 +87,11 @@ test.each([
   ['missing KML member', 'flight-lines.kmz', 'kmz', 'application/vnd.google-earth.kmz', kmz({ 'notes.txt': strToU8('opaque') })],
   ['unsafe ZIP member', 'flight-lines.kmz', 'kmz', 'application/vnd.google-earth.kmz', kmz({ '../doc.kml': strToU8(validKml) })],
   ['excess ZIP members', 'flight-lines.kmz', 'kmz', 'application/vnd.google-earth.kmz', kmz(Object.fromEntries(Array.from({ length: 101 }, (_, index) => [`entry-${index}.kml`, strToU8(validKml)])))],
+  ['forged expansion metadata', 'flight-lines.kmz', 'kmz', 'application/vnd.google-earth.kmz', forgeAdvertisedUncompressedSize(
+    kmz({ 'doc.kml': strToU8(`<kml></kml>${'A'.repeat(3 * 1024 * 1024 + 1)}`) }),
+    Buffer.byteLength('<kml></kml>'),
+  )],
+  ['forged checksum metadata', 'flight-lines.kmz', 'kmz', 'application/vnd.google-earth.kmz', forgeAdvertisedCrc(kmz(), 0)],
 ])('rejects %s before immutable storage', async (_name, fileName, fileType, mime, bytes) => {
   const handler = createMissionOperationalCloseoutHandler({ repository, resolveContext: jest.fn().mockResolvedValue(context(['mission.operational.write'])) });
   const res = response();

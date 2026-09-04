@@ -1,6 +1,6 @@
 const { createHttpError } = require('./supabase');
 const crypto = require('crypto');
-const { unzipSync } = require('fflate');
+const { Unzip, UnzipInflate } = require('fflate');
 const { resolveOperationalActorContext } = require('./operational-actor-context');
 const { resolveRequestContext } = require('./request-context');
 const { OperationalRepository } = require('./operational-repository');
@@ -11,6 +11,9 @@ const MAX_BODY_BYTES = 64 * 1024;
 const MAX_BOUNDARY_BODY_BYTES = 256 * 1024;
 const MAX_IMPORT_SOURCE_BYTES = 3 * 1024 * 1024;
 const MAX_IMPORT_BODY_BYTES = Math.ceil(MAX_IMPORT_SOURCE_BYTES * 1.4);
+const MAX_KMZ_ENTRIES = 100;
+const MAX_KMZ_EXPANDED_BYTES = 10 * 1024 * 1024;
+const KMZ_STREAM_CHUNK_BYTES = 1024;
 const MAX_PAGE_SIZE = 100;
 const AUSTRALIAN_STATES = new Set(['NSW', 'VIC', 'QLD', 'SA', 'WA', 'TAS', 'NT', 'ACT']);
 const ACCEPTANCE_PREFIX = 'SC ACCEPTANCE —';
@@ -47,6 +50,167 @@ function apiError(statusCode, code, message, meta) {
   error.code = code;
   error.meta = meta;
   return error;
+}
+
+const KMZ_CRC32_TABLE = (() => {
+  const table = new Uint32Array(256);
+  for (let index = 0; index < table.length; index += 1) {
+    let value = index;
+    for (let bit = 0; bit < 8; bit += 1) value = (value & 1) ? (0xedb88320 ^ (value >>> 1)) : (value >>> 1);
+    table[index] = value >>> 0;
+  }
+  return table;
+})();
+
+function updateKmzCrc32(current, bytes) {
+  let value = current;
+  for (let index = 0; index < bytes.length; index += 1) {
+    value = KMZ_CRC32_TABLE[(value ^ bytes[index]) & 0xff] ^ (value >>> 8);
+  }
+  return value >>> 0;
+}
+
+function unsafeKmzEntryName(name) {
+  const parts = name.split('/');
+  const pathParts = name.endsWith('/') ? parts.slice(0, -1) : parts;
+  return !name || name.length > 255 || /^[\\/]/.test(name) || /[\\:\0-\x1f\x7f]/.test(name)
+    || pathParts.some((part) => !part || part === '.' || part === '..');
+}
+
+function readKmzCentralDirectory(bytes) {
+  if (bytes.length < 22) throw new Error('ZIP end record is missing.');
+  const minimumOffset = Math.max(0, bytes.length - 22 - 65535);
+  let endOffset = -1;
+  for (let offset = bytes.length - 22; offset >= minimumOffset; offset -= 1) {
+    if (bytes.readUInt32LE(offset) === 0x06054b50
+      && offset + 22 + bytes.readUInt16LE(offset + 20) === bytes.length) {
+      endOffset = offset;
+      break;
+    }
+  }
+  if (endOffset < 0) throw new Error('ZIP end record is invalid.');
+
+  const diskNumber = bytes.readUInt16LE(endOffset + 4);
+  const centralDiskNumber = bytes.readUInt16LE(endOffset + 6);
+  const diskEntryCount = bytes.readUInt16LE(endOffset + 8);
+  const entryCount = bytes.readUInt16LE(endOffset + 10);
+  const centralSize = bytes.readUInt32LE(endOffset + 12);
+  const centralOffset = bytes.readUInt32LE(endOffset + 16);
+  if (diskNumber !== 0 || centralDiskNumber !== 0 || diskEntryCount !== entryCount
+    || entryCount === 0 || entryCount === 0xffff || centralSize === 0xffffffff || centralOffset === 0xffffffff
+    || centralOffset + centralSize !== endOffset) {
+    throw new Error('ZIP central directory is invalid.');
+  }
+  if (entryCount > MAX_KMZ_ENTRIES) {
+    throw apiError(400, 'VALIDATION_ERROR', 'KMZ contains unsafe or unsupported entries.');
+  }
+
+  const entries = new Map();
+  const localOffsets = new Set();
+  let advertisedTotal = 0;
+  let cursor = centralOffset;
+  for (let index = 0; index < entryCount; index += 1) {
+    if (cursor + 46 > endOffset || bytes.readUInt32LE(cursor) !== 0x02014b50) {
+      throw new Error('ZIP central entry is invalid.');
+    }
+    const flags = bytes.readUInt16LE(cursor + 8);
+    const compression = bytes.readUInt16LE(cursor + 10);
+    const crc32 = bytes.readUInt32LE(cursor + 16);
+    const compressedSize = bytes.readUInt32LE(cursor + 20);
+    const uncompressedSize = bytes.readUInt32LE(cursor + 24);
+    const nameLength = bytes.readUInt16LE(cursor + 28);
+    const extraLength = bytes.readUInt16LE(cursor + 30);
+    const commentLength = bytes.readUInt16LE(cursor + 32);
+    const diskStart = bytes.readUInt16LE(cursor + 34);
+    const localOffset = bytes.readUInt32LE(cursor + 42);
+    const nextCursor = cursor + 46 + nameLength + extraLength + commentLength;
+    if (nextCursor > endOffset || diskStart !== 0 || compressedSize === 0xffffffff
+      || uncompressedSize === 0xffffffff || localOffset === 0xffffffff) {
+      throw new Error('ZIP central entry bounds are invalid.');
+    }
+    const nameBytes = bytes.subarray(cursor + 46, cursor + 46 + nameLength);
+    const name = Buffer.from(nameBytes).toString('utf8');
+    if (name.includes('\ufffd') || unsafeKmzEntryName(name) || entries.has(name) || localOffsets.has(localOffset)
+      || (flags & 0x2061) !== 0 || ![0, 8].includes(compression)) {
+      throw apiError(400, 'VALIDATION_ERROR', 'KMZ contains unsafe or unsupported entries.');
+    }
+    advertisedTotal += uncompressedSize;
+    if (uncompressedSize > MAX_IMPORT_SOURCE_BYTES || advertisedTotal > MAX_KMZ_EXPANDED_BYTES) {
+      throw apiError(400, 'VALIDATION_ERROR', 'KMZ expanded content is too large.');
+    }
+    if (localOffset + 30 > centralOffset || bytes.readUInt32LE(localOffset) !== 0x04034b50) {
+      throw new Error('ZIP local entry is invalid.');
+    }
+    const localFlags = bytes.readUInt16LE(localOffset + 6);
+    const localCompression = bytes.readUInt16LE(localOffset + 8);
+    const localCrc32 = bytes.readUInt32LE(localOffset + 14);
+    const localCompressedSize = bytes.readUInt32LE(localOffset + 18);
+    const localUncompressedSize = bytes.readUInt32LE(localOffset + 22);
+    const localNameLength = bytes.readUInt16LE(localOffset + 26);
+    const localExtraLength = bytes.readUInt16LE(localOffset + 28);
+    const dataOffset = localOffset + 30 + localNameLength + localExtraLength;
+    if (dataOffset + compressedSize > centralOffset
+      || !Buffer.from(bytes.subarray(localOffset + 30, localOffset + 30 + localNameLength)).equals(Buffer.from(nameBytes))
+      || localFlags !== flags || localCompression !== compression
+      || ((flags & 8) === 0 && (localCrc32 !== crc32 || localCompressedSize !== compressedSize
+        || localUncompressedSize !== uncompressedSize))) {
+      throw new Error('ZIP local and central entries do not agree.');
+    }
+    entries.set(name, { name, flags, compression, crc32, compressedSize, uncompressedSize, completed: false });
+    localOffsets.add(localOffset);
+    cursor = nextCursor;
+  }
+  if (cursor !== endOffset) throw new Error('ZIP central directory length is invalid.');
+  return entries;
+}
+
+function extractBoundedKmzKml(bytes) {
+  const centralEntries = readKmzCentralDirectory(bytes);
+  const seenEntries = new Set();
+  const kmlEntries = [];
+  let expandedTotal = 0;
+  let completedCount = 0;
+  const unzip = new Unzip((file) => {
+    const metadata = centralEntries.get(file.name);
+    if (!metadata || seenEntries.has(file.name) || metadata.compression !== file.compression) {
+      throw apiError(400, 'VALIDATION_ERROR', 'KMZ contains unsafe or unsupported entries.');
+    }
+    seenEntries.add(file.name);
+    let expandedEntryBytes = 0;
+    let crc32 = 0xffffffff;
+    const chunks = !file.name.endsWith('/') && /\.kml$/i.test(file.name) ? [] : null;
+    file.ondata = (error, chunk, final) => {
+      if (error) throw error;
+      const expanded = chunk || new Uint8Array(0);
+      expandedEntryBytes += expanded.length;
+      expandedTotal += expanded.length;
+      if (expandedEntryBytes > MAX_IMPORT_SOURCE_BYTES || expandedTotal > MAX_KMZ_EXPANDED_BYTES) {
+        throw apiError(400, 'VALIDATION_ERROR', 'KMZ expanded content is too large.');
+      }
+      crc32 = updateKmzCrc32(crc32, expanded);
+      if (chunks && expanded.length) chunks.push(Buffer.from(expanded));
+      if (final) {
+        const actualCrc32 = (crc32 ^ 0xffffffff) >>> 0;
+        if (expandedEntryBytes !== metadata.uncompressedSize || actualCrc32 !== metadata.crc32) {
+          throw apiError(400, 'VALIDATION_ERROR', 'KMZ archive integrity validation failed.');
+        }
+        metadata.completed = true;
+        completedCount += 1;
+        if (chunks) kmlEntries.push(Buffer.concat(chunks, expandedEntryBytes));
+      }
+    };
+    file.start();
+  });
+  unzip.register(UnzipInflate);
+  for (let offset = 0; offset < bytes.length; offset += KMZ_STREAM_CHUNK_BYTES) {
+    const end = Math.min(offset + KMZ_STREAM_CHUNK_BYTES, bytes.length);
+    unzip.push(bytes.subarray(offset, end), end === bytes.length);
+  }
+  if (seenEntries.size !== centralEntries.size || completedCount !== centralEntries.size
+    || [...centralEntries.values()].some((entry) => !entry.completed)) {
+    throw new Error('ZIP entries are incomplete.');
+  }
+  return kmlEntries;
 }
 
 function assertUuid(value, field) {
@@ -663,43 +827,20 @@ function parseOperationalImport(body) {
   let parseStatus = 'RETAINED';
   let validationResult = { state: 'retained' };
   if (fileType === 'kmz') {
-    let entryCount = 0;
-    let uncompressedBytes = 0;
-    const entryNames = new Set();
-    let extracted;
+    let kmlEntries;
     try {
-      extracted = unzipSync(bytes, {
-        filter(info) {
-          entryCount += 1;
-          const name = String(info.name || '');
-          const parts = name.split('/');
-          const pathParts = name.endsWith('/') ? parts.slice(0, -1) : parts;
-          const unsafe = !name || name.length > 255 || /^[\\/]/.test(name) || /[\\:\0-\x1f\x7f]/.test(name)
-            || pathParts.some((part) => !part || part === '.' || part === '..');
-          if (entryCount > 100 || unsafe || entryNames.has(name) || ![0, 8].includes(info.compression)) {
-            throw apiError(400, 'VALIDATION_ERROR', 'KMZ contains unsafe or unsupported entries.');
-          }
-          entryNames.add(name);
-          uncompressedBytes += Number(info.originalSize);
-          if (!Number.isSafeInteger(info.originalSize) || info.originalSize < 0
-            || info.originalSize > MAX_IMPORT_SOURCE_BYTES || uncompressedBytes > 10 * 1024 * 1024) {
-            throw apiError(400, 'VALIDATION_ERROR', 'KMZ expanded content is too large.');
-          }
-          return !name.endsWith('/') && /\.kml$/i.test(name);
-        },
-      });
+      kmlEntries = extractBoundedKmzKml(bytes);
     } catch (error) {
       if (error?.code === 'VALIDATION_ERROR') throw error;
       throw apiError(400, 'VALIDATION_ERROR', 'KMZ is not a valid bounded ZIP archive.');
     }
-    const kmlEntries = Object.values(extracted || {});
     if (!kmlEntries.length || !kmlEntries.some((entry) => {
       const text = Buffer.from(entry).toString('utf8');
       return /<kml(?:\s[^>]*)?>/i.test(text) && (/<\/kml\s*>/i.test(text) || /<kml(?:\s[^>]*)?\/>/i.test(text));
     })) {
       throw apiError(400, 'VALIDATION_ERROR', 'KMZ must contain a valid KML entry.');
     }
-    validationResult = { state: 'retained', parserVersion: 'operational-kmz-envelope-v1' };
+    validationResult = { state: 'retained', parserVersion: 'operational-kmz-envelope-v2' };
   }
   if (fileType === 'kml') {
     const text = bytes.toString('utf8');
