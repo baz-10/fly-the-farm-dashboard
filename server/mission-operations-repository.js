@@ -97,6 +97,7 @@ class MissionOperationsRepository {
     if (failed) return failed;
     return {
       missionId: result.mission_id,
+      currentRevision: result.current_revision,
       packages: (result.packages || []).map((record) => packageRevision(record)),
       decisions: (result.decisions || []).map((record) => crpDecision(record)),
     };

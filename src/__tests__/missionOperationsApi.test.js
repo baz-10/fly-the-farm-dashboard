@@ -40,7 +40,7 @@ const repository = () => ({
   saveScope: jest.fn().mockResolvedValue(packageRevision),
   submitForApproval: jest.fn().mockResolvedValue(packageRevision),
   decide: jest.fn().mockResolvedValue(crpDecision),
-  readPackageHistory: jest.fn().mockResolvedValue({ missionId: MISSION, packages: [packageRevision], decisions: [crpDecision] }),
+  readPackageHistory: jest.fn().mockResolvedValue({ missionId: MISSION, currentRevision: 4, packages: [packageRevision], decisions: [crpDecision] }),
 });
 
 test('registers only the focused mission-operations resource name', () => {
@@ -172,12 +172,14 @@ test('maps only trusted organisation and actor identities to checked RPC paramet
 test('normalises immutable history from the canonical pack and authorisation streams', async () => {
   const rpc = jest.fn().mockResolvedValue({
     mission_id: MISSION,
+    current_revision: 5,
     packages: [{ id: PACKAGE, mission_id: MISSION, revision_number: 4, field_ids: [FIELD_A], jsa_revision_id: JSA, evidence_digest: DIGEST, state: 'REJECTED', created_at: '2026-09-04T10:00:00.000Z' }],
     decisions: [{ id: DECISION, package_revision_id: PACKAGE, decision: 'REJECTED', decided_by_internal_user_id: ACTOR, decided_at: '2026-09-04T11:00:00.000Z', declaration: 'Map requires correction.' }],
   });
   const repo = new MissionOperationsRepository(rpc);
   await expect(repo.readPackageHistory(context(['mission.pack.read']), MISSION)).resolves.toEqual({
     missionId: MISSION,
+    currentRevision: 5,
     packages: [expect.objectContaining({ id: PACKAGE, state: 'REJECTED', fieldIds: [FIELD_A] })],
     decisions: [expect.objectContaining({ id: DECISION, decision: 'REJECTED', packageRevisionId: PACKAGE })],
   });

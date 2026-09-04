@@ -28,9 +28,19 @@ test('keeps legacy reads compatible without presenting rejected or pre-authorisa
   expect(sql).toContain('create or replace function public.ftf_read_mission_authorisation');
   expect(sql).toContain("a.decision = 'authorised'");
   expect(sql).toContain('create or replace function public.ftf_read_mission_pack');
-  expect(sql).toContain("decision.decision = 'authorised'");
-  expect(sql).toContain("a.decision = 'authorised'");
+  expect(sql).toContain("authorisation.decision = 'authorised'");
+  expect(sql).toContain('current_authorised_pack_revision_id');
+  expect(sql).toContain('ftf_resolve_effective_mission_authorisation');
+  expect(sql).toContain('ftf_project_mission_authorisation_evidence');
   expect(sql).toContain('create or replace function public.ftf_generate_mission_pack');
+  for (const consumer of [
+    'ftf_read_mission_operational_closeout',
+    'ftf_save_mission_actual_resources',
+    'ftf_save_mission_actual_chemicals',
+    'ftf_submit_mission_operational_evidence',
+    'ftf_complete_mission',
+    'ftf_request_report_artefact',
+  ]) expect(sql).toContain(`create or replace function public.${consumer}`);
 });
 
 test('binds every package to one Mission Job subset and exact JSA/evidence identities', () => {
@@ -87,7 +97,10 @@ test('checks organisation, Base and optimistic concurrency under one aggregate l
     'mission_package_version_conflict',
     'mission_package_decision_conflict',
   ]) expect(sql).toContain(token);
-  expect(sql.match(/pg_advisory_xact_lock\(hashtext\(p_organisation_id::text\)::bigint\)/g)).toHaveLength(3);
+  expect(sql.match(/pg_advisory_xact_lock\(hashtext\(p_organisation_id::text\)::bigint\)/g)).toHaveLength(1);
+  expect(sql).toContain('create function public.ftf_lock_mission_package_aggregate');
+  expect(sql.match(/perform public\.ftf_lock_mission_package_aggregate\(p_organisation_id, p_mission_id\)/g).length).toBeGreaterThanOrEqual(9);
+  expect(sql).toContain('create trigger mission_package_aggregate_lock');
 });
 
 test('records bounded audit/outbox evidence for each package authority transition', () => {

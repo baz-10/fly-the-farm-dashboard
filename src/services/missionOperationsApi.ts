@@ -16,6 +16,8 @@ export class MissionOperationsApiError extends Error {
     readonly code: string,
     message: string,
     readonly correlationId?: string,
+    readonly currentVersion?: number,
+    readonly currentDigest?: string,
   ) {
     super(message);
     this.name = 'MissionOperationsApiError';
@@ -44,6 +46,11 @@ function uuid(value: unknown): string {
 
 function positiveInteger(value: unknown): number {
   if (typeof value !== 'number' || !Number.isInteger(value) || value < 1) return malformed();
+  return value;
+}
+
+function nonNegativeInteger(value: unknown): number {
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < 0) return malformed();
   return value;
 }
 
@@ -103,9 +110,10 @@ export function decodeCrpDecision(value: unknown): CrpDecision {
 }
 
 export function decodeMissionPackageHistory(value: unknown): MissionPackageHistory {
-  const source = exact(object(value), ['missionId', 'packages', 'decisions']);
+  const source = exact(object(value), ['missionId', 'currentRevision', 'packages', 'decisions']);
   if (!Array.isArray(source.packages) || source.packages.length > 100 || !Array.isArray(source.decisions) || source.decisions.length > 100) return malformed();
   const missionId = uuid(source.missionId);
+  const currentRevision = nonNegativeInteger(source.currentRevision);
   const packages = source.packages.map(decodeMissionPackageRevision);
   const decisions = source.decisions.map(decodeCrpDecision);
   const packageIds = new Set(packages.map((revision) => revision.id));
@@ -114,18 +122,25 @@ export function decodeMissionPackageHistory(value: unknown): MissionPackageHisto
     || new Set(packages.map((revision) => revision.revisionNumber)).size !== packages.length
     || new Set(decisions.map((entry) => entry.packageRevisionId)).size !== decisions.length
     || decisions.some((entry) => !packageIds.has(entry.packageRevisionId))) return malformed();
-  return { missionId, packages, decisions };
+  if (packages.some((revision) => revision.revisionNumber > currentRevision)) return malformed();
+  return { missionId, currentRevision, packages, decisions };
 }
 
 async function parseResponse(response: Response): Promise<unknown> {
   const envelope: any = await response.json().catch(() => ({}));
   const correlationId = response.headers.get('X-Correlation-ID') || envelope?.error?.correlationId || undefined;
   if (!response.ok) {
+    const currentVersion = Number.isInteger(envelope?.error?.currentVersion) && envelope.error.currentVersion >= 0
+      ? envelope.error.currentVersion : undefined;
+    const currentDigest = typeof envelope?.error?.currentDigest === 'string' && SHA256.test(envelope.error.currentDigest)
+      ? envelope.error.currentDigest : undefined;
     throw new MissionOperationsApiError(
       response.status,
       typeof envelope?.error?.code === 'string' ? envelope.error.code : 'MISSION_OPERATIONS_API_ERROR',
       typeof envelope?.error?.message === 'string' ? envelope.error.message : 'Mission Operations request failed.',
       correlationId,
+      currentVersion,
+      currentDigest,
     );
   }
   if (!envelope || !('data' in envelope)) return malformed();

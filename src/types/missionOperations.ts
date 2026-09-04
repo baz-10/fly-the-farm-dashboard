@@ -22,6 +22,7 @@ export interface CrpDecision {
 
 export interface MissionPackageHistory {
   missionId: string;
+  currentRevision: number;
   packages: MissionPackageRevision[];
   decisions: CrpDecision[];
 }

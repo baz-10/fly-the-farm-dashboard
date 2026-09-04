@@ -55,4 +55,42 @@ Complete and ready for parent review. No Production system was contacted and no 
 
 - Self-review found and fixed the null-manifest SQL three-valued-logic bypass, assignment asset drift omission, mutable Field/Property evidence omission, Job-scope concurrency mismatch, inherited direct table INSERT grants, and legacy reads interpreting new pre-authorisation/rejection rows as effective authority.
 - The migration depends on the repository's established `pgcrypto.digest` facility. The generic local verifier does not load `pgcrypto`; the dedicated PGlite verification did and passed.
-- The older operational-closeout RPCs still consume their legacy authorisation evidence schema. The later multi-day operating-day slice should bind new operational activity to `missions.current_authorised_pack_revision_id`; this Task does not reinterpret old closeout payloads as new daily evidence.
+- PGlite validates transactions and catalog structure in one in-memory database client, but it cannot prove blocking timing across independent PostgreSQL sessions. The committed behavior suite therefore verifies shared-lock participation through `pg_proc`/`pg_trigger`, then verifies stale-evidence and authority behavior transactionally. Production was not contacted.
+
+## Review fix round 1/5 — effective authority and serialization
+
+All round-one findings are addressed without adding a parallel package or CRP-decision stream.
+
+- Added `ftf_resolve_effective_mission_authorisation`, which follows `missions.current_authorised_pack_revision_id`, joins only a canonical `decision='AUTHORISED'`, and emits a legacy-compatible `evidence_manifest` containing `planning`, `preflight`, readiness and the immutable `sourceManifest`.
+- Added `ftf_project_mission_pack`; both `ftf_read_mission_pack` and Mission Pack report generation now project the canonical `sourceManifest` through the legacy `pack_snapshot.evidence` shape used by the report renderer.
+- Replaced every direct closeout authority consumer from `20260803120000_authoritative_operational_closeout.sql` in this forward migration. Closeout reads, actual resources, actual chemicals, operational evidence submission and completion now resolve the pointer-based effective authority and explicitly require `AUTHORISED`. Historical migrations were not edited.
+- Added one aggregate lock order (organisation advisory lock, Mission advisory lock, Mission row lock), fail-safe triggers on every table that contributes source identity/readiness/CRP eligibility, and entry wrappers for the established map, personnel, chemical, JSA and weather evidence RPCs. Package submit and decision now rerun the canonical manifest/digest validation under that lock immediately before their immutable insert.
+- History now returns `current_revision` across both legacy and focused pack rows. The package page and decision page are coherent because decisions are restricted to IDs in the returned package set. Legacy pack versions therefore remain recoverable as an `expectedRevision` without fabricating missing focused-package evidence fields.
+- The strict client history decoder now accepts a non-negative `currentRevision`, rejects returned package revisions above it, and preserves validated `currentVersion` (including zero) and SHA-256 `currentDigest` metadata on conflicts.
+- Added the committed, repeatable `missionScopeRevisionDatabase.test.js` PGlite suite. It executes the repository migration chain and behaviorally covers exact Job subset rejection, stale JSA evidence, CRP ineligibility, duplicate decisions, cross-tenant IDs, append-only immutability, pointer stability after rejection, legacy closeout/report projection, and old-authorise/generate interoperability with the new history API.
+
+### Round-one RED evidence
+
+- `CI=true npm test -- --watchAll=false src/services/__tests__/missionOperationsApi.test.ts src/__tests__/missionOperationsApi.test.js`
+  - Failed as intended: history omitted `currentRevision`; the repository omitted `current_revision`; client errors dropped `currentVersion`/`currentDigest`.
+- `CI=true npm test -- --watchAll=false src/__tests__/missionScopeRevisionDatabase.test.js`
+  - Failed as intended after the complete migration chain executed: all three new checked authority/lock helpers were absent.
+- `CI=true npm test -- --watchAll=false src/services/__tests__/missionOperationsApi.test.ts`
+  - Failed as intended for the initial concurrency value: `currentVersion: 0` was discarded.
+
+### Round-one GREEN evidence
+
+- Focused authority/API suite:
+  - `CI=true npm test -- --watchAll=false src/__tests__/missionScopeRevisionMigration.test.js src/__tests__/missionScopeRevisionDatabase.test.js src/__tests__/missionOperationsApi.test.js src/services/__tests__/missionOperationsApi.test.ts src/__tests__/missionAuthorisationOperationalApi.test.js`
+  - Passed: 5 suites, 34 tests.
+- Adjacent compatibility suite:
+  - `CI=true npm test -- --watchAll=false src/__tests__/versionedApiDispatcher.test.js src/__tests__/multifieldJobScopeMigration.test.js src/__tests__/multifieldJobScopeOperationalApi.test.js src/services/__tests__/operationalApi.test.ts src/__tests__/authoritativeOperationalCloseoutMigration.test.js src/components/mission/__tests__/MissionAuthorisation.test.tsx src/__tests__/missionSummaryReportMigration.test.js src/__tests__/checklistAuthorityReconciliationPglite.test.js`
+  - Passed: 8 suites, 71 tests.
+- Targeted ESLint and Node syntax checks passed with no Task 4 warnings/errors.
+- `CI=false npm run build` passed with only the existing repository-wide lint-warning backlog.
+- `CI=true npm run build` failed solely because Create React App promotes that same pre-existing warning backlog to errors; no Task 4 file was reported.
+- `git diff --check` passed.
+
+### Controller-ruling deviation retained
+
+The reviewed fix continues to extend only `public.mission_pack_revisions` and `public.mission_authorisation_revisions`. No `mission_package_revisions` or `mission_crp_decisions` table was introduced. Legacy rows that lack the focused Field/JSA/digest contract are represented in `current_revision` for concurrency, rather than being relabelled as synthetic focused-package revisions.

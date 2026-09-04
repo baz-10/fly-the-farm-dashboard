@@ -71,14 +71,49 @@ describe('Mission Operations strict contracts', () => {
   test('decodes bounded immutable package and decision history', () => {
     expect(decodeMissionPackageHistory({
       missionId: MISSION_ID,
+      currentRevision: 5,
       packages: [packageRevision],
       decisions: [decision],
-    })).toEqual({ missionId: MISSION_ID, packages: [packageRevision], decisions: [decision] });
+    })).toEqual({ missionId: MISSION_ID, currentRevision: 5, packages: [packageRevision], decisions: [decision] });
     expect(() => decodeMissionPackageHistory({
       missionId: MISSION_ID,
+      currentRevision: 5,
       packages: [packageRevision],
       decisions: [{ ...decision, packageRevisionId: FIELD_A }],
     })).toThrow(expect.objectContaining({ code: 'MALFORMED_RESPONSE' }));
+    expect(() => decodeMissionPackageHistory({
+      missionId: MISSION_ID,
+      currentRevision: 0,
+      packages: [packageRevision],
+      decisions: [decision],
+    })).toThrow(expect.objectContaining({ code: 'MALFORMED_RESPONSE' }));
+    expect(decodeMissionPackageHistory({
+      missionId: MISSION_ID,
+      currentRevision: 0,
+      packages: [],
+      decisions: [],
+    })).toEqual({ missionId: MISSION_ID, currentRevision: 0, packages: [], decisions: [] });
+  });
+
+  test('preserves safe conflict revision and digest metadata', async () => {
+    const fetcher = jest.fn(() => response({ error: {
+      code: 'MISSION_PACKAGE_EVIDENCE_STALE',
+      message: 'Mission package evidence changed.',
+      currentVersion: 8,
+      currentDigest: 'c'.repeat(64),
+    } }, 409));
+    const api = createMissionOperationsApi(fetcher as typeof fetch);
+    await expect(api.submitForApproval(MISSION_ID, PACKAGE_ID, 7, DIGEST)).rejects.toEqual(expect.objectContaining({
+      status: 409,
+      code: 'MISSION_PACKAGE_EVIDENCE_STALE',
+      currentVersion: 8,
+      currentDigest: 'c'.repeat(64),
+      correlationId: 'corr-12345678',
+    }));
+    const initialConflict = createMissionOperationsApi(jest.fn(() => response({ error: {
+      code: 'MISSION_PACKAGE_VERSION_CONFLICT', message: 'Changed.', currentVersion: 0,
+    } }, 409)) as typeof fetch);
+    await expect(initialConflict.saveScope(MISSION_ID, 1, [FIELD_A])).rejects.toEqual(expect.objectContaining({ currentVersion: 0 }));
   });
 
   test('sends exact scope, submit, authorise, reject and history commands', async () => {
@@ -88,7 +123,7 @@ describe('Mission Operations strict contracts', () => {
       .mockImplementationOnce(() => response(packageRevision))
       .mockImplementationOnce(() => response(decision, 201))
       .mockImplementationOnce(() => response(rejectedDecision, 201))
-      .mockImplementationOnce(() => response({ missionId: MISSION_ID, packages: [packageRevision], decisions: [decision] }));
+      .mockImplementationOnce(() => response({ missionId: MISSION_ID, currentRevision: 4, packages: [packageRevision], decisions: [decision] }));
     const api = createMissionOperationsApi(fetcher as typeof fetch);
 
     await api.saveScope(MISSION_ID, 3, [FIELD_A, FIELD_B]);
