@@ -32,3 +32,10 @@ Implemented in the supplied isolated worktree. The UI uses only the canonical Mi
 - Confirmed candidate Job Fields are intersected with the day’s exact `packageRevisionId` scope before activity entry. If canonical package history cannot be loaded, the detail refuses Field activity instead of broadening scope.
 - Confirmed a reviewed JSA must be `CONDITIONS_COVERED` and bound to the day’s stored JSA revision before the start action becomes available. The server remains the final lifecycle/readiness authority.
 - The adjacent `MissionRemoteWorkflow` suite logs pre-existing asynchronous `act(...)` and jsdom network console warnings, but all 39 assertions passed. They were not changed within this Task 7 slice.
+
+## Fix round 1/5
+
+- Excluded `PLANNED` Field activities from card values labelled `Actual` and rendered proposed and actual activity lists separately.
+- Corrected Field-activity optimistic concurrency: creation sends `activityId: null, expectedVersion: 0`; editing a selected activity sends that activity's own `rowVersion`.
+- Recognised the canonical operating-day/activity version and lifecycle conflict codes, exposed `Reload operating day`, reread the authoritative aggregate, selected the exact day by id, and retried commands with its refreshed version.
+- Focused RED initially failed for the proposed-total, create/update payload and conflict-reload cases. The payload tests also identified that optional-callback short-circuiting prevented commands when no parent callback was supplied; commands now execute before the optional notification.

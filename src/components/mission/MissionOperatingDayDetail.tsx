@@ -15,7 +15,7 @@ import {
   Typography,
 } from '@mui/material';
 import type { AuthorisedMissionOperatingField } from '../../types/missionWorkspace';
-import type { MissionFieldActivityStatus, MissionJsaDayReviewOutcome, MissionOperatingDay } from '../../types/missionOperations';
+import type { MissionFieldActivity, MissionFieldActivityStatus, MissionJsaDayReviewOutcome, MissionOperatingDay } from '../../types/missionOperations';
 import { canStartMissionOperatingDay, formatMissionOperatingWorkDate } from '../../utils/missionWorkspace';
 
 type DayCommandApi = {
@@ -26,6 +26,13 @@ type DayCommandApi = {
   }) => Promise<MissionOperatingDay>;
   completeDay: (missionId: string, dayId: string, expectedVersion: number, finishedAt: string, notes: string | null) => Promise<MissionOperatingDay>;
 };
+
+const conflictCodes = new Set([
+  'MISSION_OPERATING_DAY_VERSION_CONFLICT',
+  'MISSION_FIELD_ACTIVITY_VERSION_CONFLICT',
+  'JSA_DAY_REVIEW_CONFLICT',
+  'MISSION_FIELD_ACTIVITY_CONFLICT',
+]);
 
 function stateLabel(state: MissionOperatingDay['state'] | MissionFieldActivityStatus) {
   return state.toLowerCase().replace('_', ' ').replace(/\b\w/g, (letter) => letter.toUpperCase());
@@ -42,11 +49,13 @@ export default function MissionOperatingDayDetail({
   authorisedFields,
   api,
   onDayChanged,
+  onReloadDay,
 }: {
   day: MissionOperatingDay;
   authorisedFields: AuthorisedMissionOperatingField[];
   api: DayCommandApi;
   onDayChanged?: (day: MissionOperatingDay) => void;
+  onReloadDay?: (dayId: string) => Promise<MissionOperatingDay>;
 }) {
   const [reviewNotes, setReviewNotes] = React.useState('');
   const [fieldId, setFieldId] = React.useState(authorisedFields[0]?.id || '');
@@ -57,9 +66,13 @@ export default function MissionOperatingDayDetail({
   const [completionNotes, setCompletionNotes] = React.useState(day.notes || '');
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState('');
+  const [hasConflict, setHasConflict] = React.useState(false);
+  const [editingActivity, setEditingActivity] = React.useState<MissionFieldActivity | null>(null);
   const jsaEffective = canStartMissionOperatingDay(day);
   const mutable = day.state !== 'SIGNED_OFF';
   const canComplete = day.state === 'IN_PROGRESS';
+  const proposedActivities = day.fieldActivities.filter((activity) => activity.status === 'PLANNED');
+  const actualActivities = day.fieldActivities.filter((activity) => activity.status !== 'PLANNED');
 
   React.useEffect(() => {
     if (!authorisedFields.some((field) => field.id === fieldId)) setFieldId(authorisedFields[0]?.id || '');
@@ -68,14 +81,46 @@ export default function MissionOperatingDayDetail({
   const command = async (action: () => Promise<MissionOperatingDay>) => {
     setBusy(true);
     setError('');
+    setHasConflict(false);
     try {
-      onDayChanged?.(await action());
+      const updated = await action();
+      onDayChanged?.(updated);
+      setEditingActivity(null);
     } catch (caught) {
+      setHasConflict(conflictCodes.has((caught as { code?: string })?.code || ''));
       setError(caught instanceof Error ? caught.message : 'The authoritative operating-day command could not be completed.');
     } finally {
       setBusy(false);
     }
   };
+
+  const reloadAfterConflict = async () => {
+    if (!onReloadDay) return;
+    setBusy(true);
+    setError('');
+    try {
+      onDayChanged?.(await onReloadDay(day.id));
+      setHasConflict(false);
+      setEditingActivity(null);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'The authoritative operating day could not be reloaded.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const editActivity = (activity: MissionFieldActivity) => {
+    setEditingActivity(activity);
+    setFieldId(activity.fieldId);
+    setAttempted(activity.hectaresAttempted || '');
+    setCompleted(activity.hectaresCompleted || '');
+    setActivityStatus(activity.status);
+    setActivityNotes(activity.notes || '');
+  };
+
+  const saveActivity = () => command(() => api.saveFieldActivity(day.missionId, day.id, editingActivity?.id || null, editingActivity?.rowVersion ?? 0, {
+    fieldId, hectaresAttempted: asFixedHa(attempted), hectaresCompleted: asFixedHa(completed), startedAt: null, finishedAt: null, status: activityStatus, notes: activityNotes.trim() || null,
+  }));
 
   return <Box component="section" aria-labelledby={`operating-day-${day.id}`} sx={{ maxWidth: 1080, mx: 'auto' }}>
     <Stack spacing={2.25}>
@@ -86,7 +131,7 @@ export default function MissionOperatingDayDetail({
         </Box>
         <Chip label={stateLabel(day.state)} color={day.state === 'SIGNED_OFF' || day.state === 'COMPLETED' ? 'success' : day.state === 'DRAFT' ? 'warning' : 'primary'} variant="outlined" />
       </Stack>
-      {error && <Alert severity="error">{error}</Alert>}
+      {error && <Alert severity="error" action={hasConflict && onReloadDay ? <Button color="inherit" size="small" onClick={() => void reloadAfterConflict()}>Reload operating day</Button> : undefined}>{error}</Alert>}
       <Alert severity={jsaEffective ? 'success' : 'warning'}>
         {jsaEffective ? 'The effective JSA revision has been reviewed for this operating day.' : 'Review the effective JSA before starting this operating day.'}
       </Alert>
@@ -120,13 +165,15 @@ export default function MissionOperatingDayDetail({
           <Grid size={{ xs: 6, md: 2 }}><TextField fullWidth label="Hectares completed" inputMode="decimal" value={completed} onChange={(event) => setCompleted(event.target.value)} disabled={!mutable || busy} /></Grid>
           <Grid size={{ xs: 12, md: 3 }}><FormControl fullWidth disabled={!mutable || busy}><InputLabel id={`activity-state-label-${day.id}`}>Activity status</InputLabel><Select labelId={`activity-state-label-${day.id}`} label="Activity status" value={activityStatus} onChange={(event) => setActivityStatus(event.target.value as MissionFieldActivityStatus)}><MenuItem value="PLANNED">Proposed</MenuItem><MenuItem value="IN_PROGRESS">In progress</MenuItem><MenuItem value="COMPLETED">Completed</MenuItem><MenuItem value="NOT_WORKED">Not worked</MenuItem></Select></FormControl></Grid>
           <Grid size={{ xs: 12, md: 9 }}><TextField fullWidth label="Field activity notes" value={activityNotes} onChange={(event) => setActivityNotes(event.target.value)} disabled={!mutable || busy} /></Grid>
-          <Grid size={{ xs: 12, md: 3 }}><Button fullWidth variant="outlined" disabled={!mutable || busy || !fieldId || (attempted.trim() !== '' && !asFixedHa(attempted)) || (completed.trim() !== '' && !asFixedHa(completed))} onClick={() => void command(() => api.saveFieldActivity(day.missionId, day.id, null, day.rowVersion, {
-            fieldId, hectaresAttempted: asFixedHa(attempted), hectaresCompleted: asFixedHa(completed), startedAt: null, finishedAt: null, status: activityStatus, notes: activityNotes.trim() || null,
-          }))}>Record Field activity</Button></Grid>
+          <Grid size={{ xs: 12, md: 3 }}><Button fullWidth variant="outlined" disabled={!mutable || busy || !fieldId || (attempted.trim() !== '' && !asFixedHa(attempted)) || (completed.trim() !== '' && !asFixedHa(completed))} onClick={() => void saveActivity()}>{editingActivity ? 'Update Field activity' : 'Record Field activity'}</Button></Grid>
         </Grid>}
-        {day.fieldActivities.length > 0 && <Box sx={{ mt: 2 }}><Typography variant="subtitle2" fontWeight={800} sx={{ mb: 0.75 }}>Actual Field activity</Typography><Stack spacing={0.75}>{day.fieldActivities.map((activity) => {
+        {proposedActivities.length > 0 && <Box sx={{ mt: 2 }}><Typography variant="subtitle2" fontWeight={800} sx={{ mb: 0.75 }}>Proposed Field activity</Typography><Stack spacing={0.75}>{proposedActivities.map((activity) => {
           const field = authorisedFields.find((candidate) => candidate.id === activity.fieldId);
-          return <Box key={activity.id} sx={{ display: 'flex', justifyContent: 'space-between', gap: 2, py: 1, borderTop: '1px solid', borderColor: 'divider' }}><Typography variant="body2" fontWeight={700}>{field?.name || 'Authorised Field'}</Typography><Typography variant="body2" color="text.secondary">{activity.status === 'PLANNED' ? 'Proposed' : stateLabel(activity.status)} · {activity.hectaresAttempted || '0.000000'} ha attempted / {activity.hectaresCompleted || '0.000000'} ha completed</Typography></Box>;
+          return <Box key={activity.id} sx={{ display: 'flex', justifyContent: 'space-between', gap: 2, py: 1, borderTop: '1px solid', borderColor: 'divider' }}><Typography variant="body2" fontWeight={700}>{field?.name || 'Authorised Field'}</Typography><Stack direction="row" spacing={1} alignItems="center"><Typography variant="body2" color="text.secondary">Proposed · {activity.hectaresAttempted || '0.000000'} ha attempted / {activity.hectaresCompleted || '0.000000'} ha completed</Typography><Button size="small" disabled={!mutable || busy} aria-label={`Edit ${field?.name || 'authorised Field'} activity`} onClick={() => editActivity(activity)}>Edit</Button></Stack></Box>;
+        })}</Stack></Box>}
+        {actualActivities.length > 0 && <Box sx={{ mt: 2 }}><Typography variant="subtitle2" fontWeight={800} sx={{ mb: 0.75 }}>Actual Field activity</Typography><Stack spacing={0.75}>{actualActivities.map((activity) => {
+          const field = authorisedFields.find((candidate) => candidate.id === activity.fieldId);
+          return <Box key={activity.id} sx={{ display: 'flex', justifyContent: 'space-between', gap: 2, py: 1, borderTop: '1px solid', borderColor: 'divider' }}><Typography variant="body2" fontWeight={700}>{field?.name || 'Authorised Field'}</Typography><Stack direction="row" spacing={1} alignItems="center"><Typography variant="body2" color="text.secondary">{activity.status === 'PLANNED' ? 'Proposed' : stateLabel(activity.status)} · {activity.hectaresAttempted || '0.000000'} ha attempted / {activity.hectaresCompleted || '0.000000'} ha completed</Typography><Button size="small" disabled={!mutable || busy} aria-label={`Edit ${field?.name || 'authorised Field'} activity`} onClick={() => editActivity(activity)}>Edit</Button></Stack></Box>;
         })}</Stack></Box>}
       </Box>
 

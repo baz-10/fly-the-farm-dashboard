@@ -34,4 +34,12 @@ describe('MissionOperatingDays', () => {
     expect(screen.getByTestId('operating-day-card-grid')).toHaveStyle({ gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))' });
     expect(screen.queryByRole('button', { name: 'Start operating day' })).not.toBeInTheDocument();
   });
+
+  test('keeps proposed hectares out of the actual card total', () => {
+    const proposed = { id: 'planned', operatingDayId: day('2026-09-05').id, missionId, fieldId: 'field-a', hectaresAttempted: '9.000000', hectaresCompleted: '9.000000', startedAt: null, finishedAt: null, status: 'PLANNED' as const, notes: null, rowVersion: 1, createdAt: '2026-09-01T00:00:00.000Z', updatedAt: '2026-09-01T00:00:00.000Z' };
+    const recorded = { ...proposed, id: 'actual', status: 'COMPLETED' as const, hectaresAttempted: '3.000000', hectaresCompleted: '2.000000' };
+    render(<MissionOperatingDays missionId={missionId} days={[{ ...day('2026-09-05'), fieldActivities: [proposed, recorded] }]} authorisedFields={[]} />);
+
+    expect(screen.getByText('Actual: 2.0 ha completed of 3.0 ha attempted')).toBeVisible();
+  });
 });

@@ -13,8 +13,9 @@ function stateLabel(state: MissionOperatingDay['state']) {
 }
 
 function daySummary(day: MissionOperatingDay) {
-  const attempted = day.fieldActivities.reduce((total, activity) => total + Number(activity.hectaresAttempted || 0), 0);
-  const completed = day.fieldActivities.reduce((total, activity) => total + Number(activity.hectaresCompleted || 0), 0);
+  const actualActivities = day.fieldActivities.filter((activity) => activity.status !== 'PLANNED');
+  const attempted = actualActivities.reduce((total, activity) => total + Number(activity.hectaresAttempted || 0), 0);
+  const completed = actualActivities.reduce((total, activity) => total + Number(activity.hectaresCompleted || 0), 0);
   return { attempted, completed };
 }
 
@@ -68,6 +69,14 @@ export default function MissionOperatingDays({
     if (days === undefined) setLoadedDays((current) => current.map((day) => day.id === updated.id ? updated : day));
   };
 
+  const reloadDay = async (dayId: string) => {
+    const records = await api.readDays(missionId);
+    const refreshed = records.days.find((day) => day.id === dayId);
+    if (!refreshed) throw new Error('The operating day is no longer available from the authoritative record.');
+    if (days === undefined) setLoadedDays(records.days);
+    return refreshed;
+  };
+
   const createDay = async () => {
     if (!newWorkDate) return;
     setLoading(true);
@@ -87,7 +96,7 @@ export default function MissionOperatingDays({
   if (error) return <Alert severity="error" action={<Button color="inherit" size="small" onClick={() => void reload()}>Retry</Button>}>{error}</Alert>;
   if (selectedDay) return <Stack spacing={2}>
     <Button variant="text" sx={{ alignSelf: 'flex-start' }} onClick={() => setSelectedId(null)}>Back to operating days</Button>
-    <MissionOperatingDayDetail day={selectedDay} authorisedFields={resolvedFieldsFor(selectedDay)} api={api} onDayChanged={updateDay} />
+    <MissionOperatingDayDetail day={selectedDay} authorisedFields={resolvedFieldsFor(selectedDay)} api={api} onDayChanged={updateDay} onReloadDay={reloadDay} />
   </Stack>;
 
   return <Box component="section" aria-label="Operating days">
