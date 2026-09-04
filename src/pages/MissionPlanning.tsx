@@ -694,7 +694,7 @@ function AuthoritativeMissionPlanning() {
     <Stack direction="row" justifyContent="flex-end">{simpleNext}</Stack>
   </Stack> : activeStage === 'jsa' ? <Stack spacing={2}>
     <Panel title="JSA & Risk Controls" icon={<SecurityIcon />}><Alert severity="info" sx={{ mb: 1.5 }}>Mission Checks, triggered hazards, controls and PIC approval are retained as authoritative versioned evidence.</Alert><Button fullWidth variant="contained" startIcon={<SecurityIcon />} onClick={() => setAuthoritativeJsaOpen(true)}>Complete Mission JSA</Button></Panel>
-    <Panel title="Controlled Checklists" icon={<CheckCircleIcon />}><MissionChecklists missionId={selectedMission!.id} operatingLocationId={selectedMission!.operatingLocationId} onChanged={() => setAuthorisationRefreshToken((current) => current + 1)} /></Panel>
+    <Panel title="Controlled Checklists" icon={<CheckCircleIcon />}><MissionChecklists missionId={selectedMission!.id} operatingLocationId={selectedMission!.operatingLocationId} aircraftId={selectedAircraftId || undefined} onChanged={() => setAuthorisationRefreshToken((current) => current + 1)} /></Panel>
     <Stack direction="row" justifyContent="flex-end">{simpleNext}</Stack>
   </Stack> : activeStage === 'review' ? <Panel title="Mission Readiness & Authorisation" icon={<GavelIcon />}><MissionAuthorisation missionId={selectedMission!.id} refreshToken={authorisationRefreshToken} onReadinessChanged={setStepReadiness} onLifecycleChanged={lifecycle.refresh} /></Panel>
     : activeStage === 'operational-closeout' ? <Panel title="Operational Closeout" icon={<FlightTakeoffIcon />}><MissionOperationalCloseout missionId={selectedMission!.id} onLifecycleChanged={lifecycle.refresh} /></Panel>
