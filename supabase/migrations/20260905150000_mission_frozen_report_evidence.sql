@@ -29,9 +29,21 @@ begin
   -- MISSION_REPORT_EVIDENCE_LOCK_ORDER_V1. All display and operational rows
   -- are locked before either half of the canonical completion manifest is
   -- constructed. The table order and each row's UUID order are fixed.
-  -- lock rows: jobs (already locked above)
+  -- lock rows: jobs
+  -- lock referenced rows: jobs
+  perform job.id from public.jobs job where job.organisation_id=p_organisation_id and (
+    job.id=v_job.id or exists(select 1 from public.mission_pack_revisions pack where pack.organisation_id=p_organisation_id
+      and pack.mission_id=p_mission_id and pack.job_id=job.id)) order by job.id for update;
   -- lock rows: clients
-  perform client.id from public.clients client where client.organisation_id=p_organisation_id and client.id=v_client.id order by client.id for update;
+  -- lock referenced rows: clients
+  perform client.id from public.clients client where client.organisation_id=p_organisation_id and (
+    client.id=v_client.id or exists(select 1 from public.jobs job where job.organisation_id=p_organisation_id
+      and job.client_id=client.id and (job.id=v_job.id or exists(select 1 from public.mission_pack_revisions pack
+        where pack.organisation_id=p_organisation_id and pack.mission_id=p_mission_id and pack.job_id=job.id)))
+    or exists(select 1 from public.properties property where property.organisation_id=p_organisation_id
+      and property.client_id=client.id and exists(select 1 from public.mission_pack_fields scope
+        where scope.organisation_id=p_organisation_id and scope.mission_id=p_mission_id and scope.property_id=property.id)))
+    order by client.id for update;
   -- lock rows: properties
   -- lock referenced rows: properties
   perform property.id from public.properties property where property.organisation_id=p_organisation_id and (
@@ -63,15 +75,26 @@ begin
       where actual.organisation_id=p_organisation_id and actual.mission_id=p_mission_id
         and actual.mission_aircraft_assignment_id=assignment.id)) order by assignment.id for update;
   -- lock rows: mission_pack_revisions
-  perform pack.id from public.mission_pack_revisions pack where pack.organisation_id=p_organisation_id and pack.mission_id=p_mission_id order by pack.id for update;
+  perform pack.id from public.mission_pack_revisions pack where pack.organisation_id=p_organisation_id and (
+    pack.mission_id=p_mission_id or exists(select 1 from public.mission_operating_days day
+      where day.organisation_id=p_organisation_id and day.mission_id=p_mission_id and day.mission_pack_revision_id=pack.id)) order by pack.id for update;
   -- lock rows: mission_pack_fields
   perform scope.id from public.mission_pack_fields scope where scope.organisation_id=p_organisation_id and scope.mission_id=p_mission_id order by scope.id for update;
   -- lock rows: job_fields
-  perform scope.id from public.job_fields scope where scope.organisation_id=p_organisation_id and scope.job_id=v_job.id order by scope.id for update;
+  perform scope.id from public.job_fields scope where scope.organisation_id=p_organisation_id and (
+    scope.job_id=v_job.id or exists(select 1 from public.mission_pack_revisions pack where pack.organisation_id=p_organisation_id
+      and pack.mission_id=p_mission_id and pack.job_id=scope.job_id)) order by scope.id for update;
   -- lock rows: mission_authorisation_revisions
   perform decision.id from public.mission_authorisation_revisions decision where decision.organisation_id=p_organisation_id and decision.mission_id=p_mission_id order by decision.id for update;
-  -- lock rows: mission_jsa_revisions
-  perform jsa.id from public.mission_jsa_revisions jsa where jsa.organisation_id=p_organisation_id and jsa.mission_id=p_mission_id order by jsa.id for update;
+  -- lock referenced rows: mission_jsa_revisions
+  perform jsa.id from public.mission_jsa_revisions jsa where jsa.organisation_id=p_organisation_id and (
+    jsa.mission_id=p_mission_id
+    or exists(select 1 from public.mission_pack_revisions pack where pack.organisation_id=p_organisation_id
+      and pack.mission_id=p_mission_id and pack.jsa_revision_id=jsa.id)
+    or exists(select 1 from public.mission_operating_days day where day.organisation_id=p_organisation_id
+      and day.mission_id=p_mission_id and day.jsa_revision_id=jsa.id)
+    or exists(select 1 from public.mission_day_jsa_reviews review where review.organisation_id=p_organisation_id
+      and review.mission_id=p_mission_id and review.jsa_revision_id=jsa.id)) order by jsa.id for update;
   -- lock rows: mission_operating_days
   perform day.id from public.mission_operating_days day where day.organisation_id=p_organisation_id and day.mission_id=p_mission_id order by day.id for update;
   -- lock rows: mission_day_jsa_reviews
@@ -143,6 +166,44 @@ begin
     or not exists(select 1 from public.mission_jsa_revisions jsa where jsa.organisation_id=p_organisation_id and jsa.mission_id=p_mission_id
       and jsa.id=v_effective_pack.jsa_revision_id and jsa.operating_location_id=v_mission.operating_location_id) then
     raise exception 'MISSION_REPORT_EVIDENCE_INVALID: base' using errcode='22023';
+  end if;
+
+  -- reference: package_parent_graph
+  -- Required equalities: pack.job_id=v_job.id; scope.pack_revision_id=pack.id;
+  -- property.client_id=v_client.id; job_scope.job_id=v_job.id.
+  if exists(select 1 from public.mission_pack_revisions pack
+      where pack.organisation_id=p_organisation_id and pack.mission_id=p_mission_id
+        and (pack.job_id is null or not (pack.job_id=v_job.id)
+          or pack.jsa_revision_id is null
+          or not exists(select 1 from public.jobs job where job.organisation_id=p_organisation_id
+            and job.id=pack.job_id and job.client_id=v_client.id)
+          or not exists(select 1 from public.mission_jsa_revisions jsa where jsa.organisation_id=p_organisation_id
+            and jsa.id=pack.jsa_revision_id and jsa.mission_id=p_mission_id
+            and jsa.operating_location_id=v_mission.operating_location_id)))
+    or exists(select 1 from public.mission_pack_fields scope
+      left join public.mission_pack_revisions pack on pack.organisation_id=scope.organisation_id and pack.id=scope.pack_revision_id
+      left join public.fields field on field.organisation_id=scope.organisation_id and field.id=scope.field_id
+      left join public.properties property on property.organisation_id=scope.organisation_id and property.id=scope.property_id
+      left join public.job_fields job_scope on job_scope.organisation_id=scope.organisation_id and job_scope.job_id=scope.job_id
+        and job_scope.property_id=scope.property_id and job_scope.field_id=scope.field_id
+      where scope.organisation_id=p_organisation_id and scope.mission_id=p_mission_id
+        and (pack.id is null or pack.mission_id<>p_mission_id or scope.pack_revision_id<>pack.id
+          or scope.job_id<>v_job.id or field.id is null or property.id is null
+          or field.property_id<>property.id or property.client_id<>v_client.id or job_scope.id is null)) then
+    raise exception 'MISSION_REPORT_EVIDENCE_INVALID: package_parent_graph' using errcode='22023';
+  end if;
+
+  -- reference: day_governing_package_jsa
+  if exists(select 1 from public.mission_operating_days day
+      left join public.mission_pack_revisions pack on pack.organisation_id=day.organisation_id and pack.id=day.mission_pack_revision_id
+      left join public.mission_jsa_revisions jsa on jsa.organisation_id=day.organisation_id and jsa.id=day.jsa_revision_id
+      where day.organisation_id=p_organisation_id and day.mission_id=p_mission_id
+        and (pack.id is null or pack.mission_id<>p_mission_id
+          or pack.operating_location_id<>v_mission.operating_location_id
+          or day.jsa_revision_id is null or not (day.jsa_revision_id=pack.jsa_revision_id)
+          or jsa.id is null or jsa.mission_id<>p_mission_id
+          or jsa.operating_location_id<>v_mission.operating_location_id)) then
+    raise exception 'MISSION_REPORT_EVIDENCE_INVALID: day_governing_package_jsa' using errcode='22023';
   end if;
 
   -- reference: field_activity_field

@@ -496,6 +496,38 @@ if (child) {
       ) values('${ids.chemicalActualLine}','${orgA}','${baseA}','${ids.mission}','${ids.dayA}','${ids.chemicalActual}',1,
         '${ids.field}','${ids.chemicalPlanLine}','Product A','product a',2,'L_HA',20,'L','${ids.aircraftA}');
     `);
+    const alternateJsa = 'e2000000-0000-4000-8000-000000000001';
+    await db.exec('begin');
+    await db.exec(`insert into public.mission_jsa_revisions(
+        id,organisation_id,operating_location_id,mission_id,version_number,template_id,template_version_id,template_version,
+        policy_id,policy_version_id,policy_version,policy_snapshot,template_snapshot,created_by_internal_user_id
+      ) select '${alternateJsa}',organisation_id,operating_location_id,mission_id,2,template_id,template_version_id,template_version,
+        policy_id,policy_version_id,policy_version,policy_snapshot,template_snapshot,created_by_internal_user_id
+        from public.mission_jsa_revisions where id='${ids.jsa}';
+      alter table public.mission_operating_days disable trigger mission_operating_days_mutation_guard;
+      update public.mission_operating_days set jsa_revision_id='${alternateJsa}' where id='${ids.dayA}';
+      alter table public.mission_operating_days enable trigger mission_operating_days_mutation_guard`);
+    await expect(call('ftf_build_mission_report_evidence_manifest', [orgA, ids.mission]))
+      .rejects.toThrow(/MISSION_REPORT_EVIDENCE_INVALID: day_governing_package_jsa/);
+    await db.exec('rollback');
+    expect(await scalar(db, `select jsa_revision_id::text as value from public.mission_operating_days where id='${ids.dayA}'`)).toBe(ids.jsa);
+
+    const foreignClient = 'e2000000-0000-4000-8000-000000000002';
+    const foreignProperty = 'e2000000-0000-4000-8000-000000000003';
+    const foreignJob = 'e2000000-0000-4000-8000-000000000004';
+    await db.exec('begin');
+    await db.exec(`insert into public.clients(id,organisation_id,name) values('${foreignClient}','${orgA}','Foreign Client');
+      insert into public.properties(id,organisation_id,client_id,name) values('${foreignProperty}','${orgA}','${foreignClient}','Foreign Property');
+      insert into public.jobs(id,organisation_id,client_id,property_id,reference)
+        values('${foreignJob}','${orgA}','${foreignClient}','${foreignProperty}','FOREIGN-JOB');
+      alter table public.mission_pack_revisions disable trigger mission_pack_revisions_immutable;
+      update public.mission_pack_revisions set job_id='${foreignJob}' where id='${prospectivePackId}';
+      alter table public.mission_pack_revisions enable trigger mission_pack_revisions_immutable`);
+    await expect(call('ftf_build_mission_report_evidence_manifest', [orgA, ids.mission]))
+      .rejects.toThrow(/MISSION_REPORT_EVIDENCE_INVALID: package_parent_graph/);
+    await db.exec('rollback');
+    expect(await scalar(db, `select job_id::text as value from public.mission_pack_revisions where id='${prospectivePackId}'`)).toBe(ids.job);
+
     await db.exec('begin');
     await db.exec(`update public.mission_aircraft_assignments set unassigned_at=now(),unassigned_by_internal_user_id='${actorA}'
       where id='${ids.assignmentC}'`);

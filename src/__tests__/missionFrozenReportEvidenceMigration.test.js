@@ -125,3 +125,29 @@ test('locks referenced parents even when their own Mission identity is corrupt',
     'lock referenced rows: aircraft',
   ]) expect(sql).toContain(marker);
 });
+
+test('binds every day JSA to that days exact governing package and Mission lineage', () => {
+  const sql = migration();
+  expect(sql).toContain('reference: day_governing_package_jsa');
+  expect(sql).toContain('day.jsa_revision_id=pack.jsa_revision_id');
+  expect(sql).toContain('jsa.mission_id=p_mission_id');
+  expect(sql).toContain('jsa.operating_location_id=v_mission.operating_location_id');
+});
+
+test('reconciles every historical package to the Mission Job JSA and scoped client graph', () => {
+  const sql = migration();
+  expect(sql).toContain('reference: package_parent_graph');
+  expect(sql).toContain('pack.job_id=v_job.id');
+  expect(sql).toContain('scope.pack_revision_id=pack.id');
+  expect(sql).toContain('property.client_id=v_client.id');
+  expect(sql).toContain('job_scope.job_id=v_job.id');
+});
+
+test('locks corrupt same-organisation package parents before lineage validation', () => {
+  const sql = migration();
+  for (const marker of [
+    'lock referenced rows: jobs', 'lock referenced rows: clients',
+    'lock referenced rows: properties', 'lock referenced rows: fields',
+    'lock referenced rows: mission_jsa_revisions',
+  ]) expect(sql).toContain(marker);
+});

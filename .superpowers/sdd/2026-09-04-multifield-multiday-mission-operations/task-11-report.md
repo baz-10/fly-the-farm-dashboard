@@ -61,19 +61,27 @@
 - The related-reference audit also verifies each day's package/JSA, package Field→Job/Property/Client and `job_fields` membership, aircraft actual→day package, chemical/weather→day package, chemical revision→day plan, and CRP decision→Mission package.
 - Executable PostgreSQL transactions prove valid post-sign-off assignment retirement remains historical authority, pre-sign-off retirement fails closed, and corrupt assignment, wrong-day attribution, wrong planned-line revision and non-participating chemical aircraft all fail with complete rollback.
 
+## Task 11B review round 4
+
+- Every operating day now proves its `jsa_revision_id` is exactly the JSA carried by that day's governing package, with exact Mission, organisation and Base lineage; independently valid but different Mission JSA revisions fail closed.
+- Every effective and historical package now reconciles to the Mission's exact Job and governing JSA. Every package Field scope resolves through the exact package, Mission Job, `job_fields`, Field, Property and Client chain.
+- The deterministic parent-lock phase now follows package references to Jobs, Clients and JSAs even when a same-organisation reference is corrupt; Properties, Fields and `job_fields` are likewise locked in table/UUID order before lineage validation and snapshot construction.
+- The package/day graph audit covers package→Job/Client, package→JSA, package scope→Field→Property→Client/Job, day→package/JSA, approval→package, actual→day/package and all previously documented chemical, weather, import and aircraft relationships.
+- Executable PostgreSQL transactions corrupt a signed day's JSA and a historical package's Job while retaining otherwise valid same-organisation rows. Both fail at their named lineage boundary and roll back completely.
+
 ## RED evidence
 
 The first focused run failed for the intended missing migration, absent `MissionFinalSignoff` component and unsupported API actions. The lifecycle refinement also identified and corrected the existing-closeout compatibility case: revision 1 may already exist, so final sign-off must append rather than overwrite or falsely return it.
 
 ## Verification
 
-- Focused Task 11/11B authority/API/decoder/UI/Financial/Fleet/migration suite: 10 suites / 94 tests PASS.
+- Focused Task 11/11B authority/API/decoder/UI/Financial/Fleet/migration suite: 10 suites / 97 tests PASS.
 - Full-chain PGlite migration execution and Fleet behavior: PASS, including an executable multi-day final-sign-off fail-closed/zero-mutation assertion.
 - Production build: PASS with the repository's pre-existing Browserslist, lint-warning and bundle-size warning backlog.
 - Targeted ESLint: zero errors; six pre-existing unused-import warnings remain in `JobDetail.tsx`.
 - `git diff --check`: PASS.
 - Migration SHA-256: `7586956d1652e8ca5b4a20da86113a64cec41dd4dcd17a522f82b540d057c743`.
-- Task 11B migration SHA-256: `331c266ee50ddf704246d845b709d04cd61b831d39836b201d7357e6858459a8`.
+- Task 11B migration SHA-256: `c636cfbaf1f7dc7ffa952c2a1392795e22b7293f0485f927b18fc9706f8f852b`.
 
 ## Files
 
