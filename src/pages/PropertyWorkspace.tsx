@@ -304,7 +304,7 @@ export default function PropertyWorkspace() {
                 </Stack>
               </Box>}
               <Box sx={{ mt: 2 }}>
-                <AddressAutocomplete key={mapKey} label="Search Property Address" initialValue={draft.address} lat={draft.lat} lng={draft.lng} coordinateSource={draft.addressSource === 'MANUAL' ? 'MANUALLY_ADJUSTED' : 'GEOCODED'} locationConfirmedAt={draft.locationConfirmedAt} onSelect={selectAddress} mapHeight={320} />
+                <AddressAutocomplete key={mapKey} label="Search Property Address" initialValue={draft.address} initialLocality={draft.locality} initialState={draft.state} initialPostcode={draft.postcode} lat={draft.lat} lng={draft.lng} coordinateSource={draft.addressSource === 'MANUAL' ? 'MANUALLY_ADJUSTED' : 'GEOCODED'} locationConfirmedAt={draft.locationConfirmedAt} onSelect={selectAddress} mapHeight={320} />
               </Box>
               {draft.provenance && <Alert severity={draft.locationConfirmedAt ? 'success' : 'info'} sx={{ mt: 1.5 }}><Typography variant="body2" fontWeight={750}>{draft.provenance}</Typography><Typography variant="caption">This Property location is separate from the Client’s saved location.</Typography></Alert>}
             </Box>

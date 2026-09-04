@@ -73,6 +73,14 @@ export interface BoundaryFileRef {
 
 export type LatLng = [number, number]; // [lat, lng]
 
+export interface FieldAccessPoint {
+  label: string;
+  lat: number;
+  lng: number;
+  coordinateSource: 'PROPERTY_SUGGESTED' | 'MANUALLY_ADJUSTED';
+  locationConfirmedAt: string;
+}
+
 export interface Field {
   id: string;
   propertyId: string;
@@ -87,6 +95,8 @@ export interface Field {
   rowVersion?: number;
   /** Server-managed reference to the active immutable boundary version. */
   fieldBoundaryVersionId?: string;
+  /** Optional confirmed operational access or aircraft launch point. */
+  accessPoint?: FieldAccessPoint;
 }
 
 // ─── Chemical Entry ──────────────────────────────────────────
