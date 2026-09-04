@@ -28,18 +28,29 @@
 - Executable privileged-update coverage attempts to reparent an existing operational event from a finalized Mission to a non-final Mission and proves the source identity and row count remain unchanged.
 - The API now recognizes only the exact thrown PostgREST pair `55000` + `MISSION_FINAL_SIGNOFF_IMMUTABLE` and maps it to a fixed safe 409 response. Other `55000` errors remain the generic safe 500 path; upstream details are never returned.
 
+## Task 11B — frozen report-ready evidence prerequisite
+
+- Added the forward-only migration `20260905150000_mission_frozen_report_evidence.sql`; the previously reviewed Task 11 migration remains unchanged.
+- The existing canonical completion manifest is enriched at final sign-off with a bounded `reportEvidence` member. No report table, report lifecycle, parallel sign-off record or new callable browser authority was introduced.
+- The server-derived snapshot is assembled under the existing Mission package aggregate locks and freezes stable Mission, Job, Client, Property and ordered Field identities; Field and target hectares; the effective package and bounded package/decision history; effective CRP approval; governing JSA and bounded JSA history; aircraft identity and daily participation/totals; planned chemical revisions and lines; safe flight-line evidence references; and bounded amendment/exception history.
+- Flight-line evidence contains only controlled identity, version, safe filename, digest, format/type and import timestamp. Binary content, storage locations, download URLs and provider credentials are not frozen.
+- Every collection has an explicit deterministic order and bounded count, and the complete report-evidence object has a one-mebibyte canonical JSON bound. Missing Job/Client/package/approval/JSA authority, tenant/Base mismatch and malformed scope fail closed.
+- The final digest remains the canonical SHA-256 of the complete `daily_evidence_manifest`, so report evidence cannot be altered without invalidating the completion digest. Exact final-sign-off retries return the already frozen revision and never recalculate it.
+- Executable PostgreSQL coverage proves snapshot content, deterministic aircraft ordering, safe flight-line references, cross-organisation denial, exact-retry identity/digest stability and post-final mutation immutability.
+
 ## RED evidence
 
 The first focused run failed for the intended missing migration, absent `MissionFinalSignoff` component and unsupported API actions. The lifecycle refinement also identified and corrected the existing-closeout compatibility case: revision 1 may already exist, so final sign-off must append rather than overwrite or falsely return it.
 
 ## Verification
 
-- Focused authority/API/decoder/UI/Financial/Fleet/migration suite: 9 suites / 83 tests PASS.
+- Focused Task 11/11B authority/API/decoder/UI/Financial/Fleet/migration suite: 10 suites / 86 tests PASS.
 - Full-chain PGlite migration execution and Fleet behavior: PASS, including an executable multi-day final-sign-off fail-closed/zero-mutation assertion.
 - Production build: PASS with the repository's pre-existing Browserslist, lint-warning and bundle-size warning backlog.
 - Targeted ESLint: zero errors; six pre-existing unused-import warnings remain in `JobDetail.tsx`.
 - `git diff --check`: PASS.
 - Migration SHA-256: `7586956d1652e8ca5b4a20da86113a64cec41dd4dcd17a522f82b540d057c743`.
+- Task 11B migration SHA-256: `f1f5a155fffb443c7115a75d3e805c8eced68c3f1b822eb25b3ea7e1a6ae7acf`.
 
 ## Files
 
@@ -56,6 +67,8 @@ The first focused run failed for the intended missing migration, absent `Mission
 - `src/components/mission/MissionOperationalCloseout.tsx`
 - `src/pages/JobDetail.tsx`
 - `src/__tests__/missionOperationsApi.test.js`
+- `supabase/migrations/20260905150000_mission_frozen_report_evidence.sql`
+- `src/__tests__/missionFrozenReportEvidenceMigration.test.js`
 
 ## Deviations / limitations
 

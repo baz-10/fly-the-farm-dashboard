@@ -444,6 +444,8 @@ if (child) {
     const operationalId = 'e0000000-0000-4000-8000-000000000003';
     const prospectivePackId = 'e0000000-0000-4000-8000-000000000004';
     const eventId = 'e0000000-0000-4000-8000-000000000005';
+    await expect(call('ftf_build_mission_report_evidence_manifest', [orgB, ids.mission]))
+      .rejects.toThrow(/MISSION_REPORT_EVIDENCE_INVALID/);
     await db.exec(`
       insert into public.missions(id,organisation_id,job_id,operating_location_id,mission_number,status)
         values('${ids.missionOther}','${orgA}','${ids.job}','${baseA}','MIS-OTHER','cancelled');
@@ -470,8 +472,22 @@ if (child) {
       insert into public.mission_completion_revisions(
         organisation_id,operating_location_id,mission_id,version_number,authorisation_revision_id,operational_revision_id,
         completion_snapshot,declaration,completed_by_internal_user_id,daily_evidence_manifest,daily_evidence_digest
-      ) values('${orgA}','${baseA}','${ids.mission}',1,'${authorisationId}','${operationalId}','{}','Final','${actorA}','{}','${'d'.repeat(64)}');
+      ) select '${orgA}','${baseA}','${ids.mission}',1,'${authorisationId}','${operationalId}','{}','Final','${actorA}',evidence,
+        encode(digest(convert_to(evidence::text,'UTF8'),'sha256'),'hex')
+        from (select public.ftf_build_mission_daily_evidence_manifest('${orgA}','${ids.mission}') evidence) frozen;
     `);
+    const frozen = await scalar(db, `select daily_evidence_manifest as value from public.mission_completion_revisions where mission_id='${ids.mission}'`);
+    expect(frozen.reportEvidence.scope).toMatchObject({
+      mission: { id: ids.mission, missionNumber: 'MIS-A', operatingLocationId: baseA },
+      job: { id: ids.job, reference: 'JOB-A' }, client: { id: ids.client, name: 'Client A' },
+    });
+    expect(frozen.reportEvidence.scope.properties[0].fields[0]).toMatchObject({ id: ids.field, name: 'Field A', areaHectares: '10.0000', targetHectares: '10.0000' });
+    expect(frozen.reportEvidence.governance.effectivePackage).toMatchObject({ id: ids.pack, revisionNumber: 1 });
+    expect(frozen.reportEvidence.aircraft.map((item) => item.registration)).toEqual(['FTF-T100-001', 'FTF-T100-002', 'FTF-T100-003']);
+    expect(frozen.reportEvidence.flightLineEvidence[0]).toEqual(expect.objectContaining({ filename: 'multi.kml', digest: 'b'.repeat(64), format: 'KML' }));
+    const frozenDigest = await scalar(db, `select daily_evidence_digest as value from public.mission_completion_revisions where mission_id='${ids.mission}'`);
+    const retry = await call('ftf_final_signoff_mission', [orgA, actorA, ids.mission, 1, 'Final']);
+    expect(retry).toMatchObject({ idempotent: true, record: { version_number: 1, daily_evidence_digest: frozenDigest } });
     expect(await scalar(db, "select count(*)::integer as value from pg_trigger where tgname='aaa_mission_terminal_guard' and not tgisinternal")).toBe(15);
     const before = await scalar(db, `select count(*)::integer as value from public.mission_operational_events where mission_id='${ids.mission}'`);
     await expect(call('ftf_save_mission_operational_events', [orgA, actorA, ids.mission, 0, '[]']))
@@ -492,6 +508,7 @@ if (child) {
       .rejects.toThrow(/MISSION_FINAL_SIGNOFF_IMMUTABLE/);
     expect(await scalar(db, `select count(*)::integer as value from public.mission_operational_events where mission_id='${ids.mission}'`)).toBe(before);
     expect(await scalar(db, `select count(*)::integer as value from public.mission_completion_revisions where mission_id='${ids.mission}'`)).toBe(1);
+    expect(await scalar(db, `select daily_evidence_digest as value from public.mission_completion_revisions where mission_id='${ids.mission}'`)).toBe(frozenDigest);
     await db.exec(`insert into public.permissions(organisation_id,code,description) values('${orgA}','jobs.write','Write Jobs') on conflict do nothing;
       insert into public.role_permissions(organisation_id,role_id,permission_id)
       select '${orgA}',role.id,permission.id from public.roles role join public.permissions permission on permission.organisation_id=role.organisation_id
