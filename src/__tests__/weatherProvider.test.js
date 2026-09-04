@@ -102,6 +102,31 @@ test('rejects misaligned arrays and non-finite historical values into manual fal
   })).rejects.toThrow('aligned finite hourly observations');
 });
 
+test.each([
+  ['null latitude', null, 153.1],
+  ['empty latitude', '', 153.1],
+  ['numeric-string latitude', '-27.5', 153.1],
+  ['boolean latitude', false, 153.1],
+  ['missing latitude', undefined, 153.1],
+  ['null longitude', -27.5, null],
+  ['empty longitude', -27.5, ''],
+  ['numeric-string longitude', -27.5, '153.1'],
+  ['boolean longitude', -27.5, false],
+  ['missing longitude', -27.5, undefined],
+])('rejects provider responses with %s before numeric conversion', async (_caseName, latitude, longitude) => {
+  const hourly = {
+    time: ['2026-09-05T00:00'], temperature_2m: [22], relative_humidity_2m: [60], dew_point_2m: [14],
+    wind_speed_10m: [8], wind_direction_10m: [90], precipitation: [0],
+  };
+  await expect(fetchOpenMeteoHistoricalWeather({
+    latitude: -27.5, longitude: 153.1,
+    intervalStart: '2026-09-05T00:00:00.000Z', intervalEnd: '2026-09-05T01:00:00.000Z',
+    fetchImpl: jest.fn().mockResolvedValue({ ok: true, json: async () => ({
+      latitude, longitude, timezone: 'GMT', utc_offset_seconds: 0, hourly,
+    }) }),
+  })).rejects.toThrow('invalid historical coordinates');
+});
+
 test('requests a padded provider date range so Australian local Mission hours are retained', async () => {
   const fetchImpl = jest.fn().mockResolvedValue({
     ok: true,

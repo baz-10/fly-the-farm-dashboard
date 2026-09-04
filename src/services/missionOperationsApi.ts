@@ -616,12 +616,23 @@ export function decodeMissionDayWeatherReport(value: unknown): MissionDayWeather
   const coverageGaps = source.coverageGaps.map(decodeWeatherGap);
   const start = Date.parse(intervalStartAt);
   const end = Date.parse(intervalEndAt);
-  if (hourlyObservations.some((entry) => Date.parse(entry.observedAt) < Date.parse(intervalStartAt)
-    || Date.parse(entry.observedAt) >= Date.parse(intervalEndAt))
-    || coverageGaps.some((gap) => {
-      const at = Date.parse(gap.observedAt);
-      return at < start || at >= end || at % (60 * 60 * 1000) !== 0;
-    })) return malformed();
+  const hourMs = 60 * 60 * 1000;
+  const expectedBuckets: number[] = [];
+  for (let at = Math.ceil(start / hourMs) * hourMs; at < end; at += hourMs) expectedBuckets.push(at);
+  const expected = new Set(expectedBuckets);
+  const observations = hourlyObservations.map((entry) => Date.parse(entry.observedAt));
+  const gaps = coverageGaps.map((gap) => Date.parse(gap.observedAt));
+  const uniqueObservations = new Set(observations);
+  const uniqueGaps = new Set(gaps);
+  const covered = new Set([...observations, ...gaps]);
+  if (!expected.size
+    || observations.some((at) => at % hourMs !== 0 || !expected.has(at))
+    || gaps.some((at) => at % hourMs !== 0 || !expected.has(at))
+    || uniqueObservations.size !== observations.length
+    || uniqueGaps.size !== gaps.length
+    || observations.some((at) => uniqueGaps.has(at))
+    || covered.size !== expected.size
+    || expectedBuckets.some((at) => !covered.has(at))) return malformed();
   return {
     id: uuid(source.id),
     missionId: uuid(source.missionId),

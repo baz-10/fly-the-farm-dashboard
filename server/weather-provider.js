@@ -19,7 +19,10 @@ async function fetchOpenMeteoHistoricalWeather({latitude,longitude,intervalStart
   if(!['GMT','UTC'].includes(snapshot?.timezone)||snapshot?.utc_offset_seconds!==0){
     throw new Error('Open-Meteo historical timestamps must use an explicit UTC/GMT zero offset.');
   }
-  const responseLatitude=Number(snapshot.latitude),responseLongitude=Number(snapshot.longitude);
+  if(typeof snapshot?.latitude!=='number'||typeof snapshot?.longitude!=='number'){
+    throw new Error('Open-Meteo returned invalid historical coordinates.');
+  }
+  const responseLatitude=snapshot.latitude,responseLongitude=snapshot.longitude;
   if(!Number.isFinite(responseLatitude)||responseLatitude < -90||responseLatitude > 90
     ||!Number.isFinite(responseLongitude)||responseLongitude < -180||responseLongitude > 180){
     throw new Error('Open-Meteo returned invalid historical coordinates.');

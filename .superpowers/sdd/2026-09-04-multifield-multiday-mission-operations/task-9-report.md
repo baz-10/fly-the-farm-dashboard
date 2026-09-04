@@ -57,3 +57,9 @@ Implemented in the supplied isolated worktree. No Production application, databa
 - The review RED run failed 6 suites and 18 tests across the intended seams: multi-Field/revision editing, optional/supplied batch handling, explicit manual gap coverage, all-null observations, context binding, provider timezone/array validation, and strict decoding.
 - The executable PostgreSQL race regression prepares a weather context, changes the selected source observation's version and coordinates before freeze, then proves the stale digest is rejected without a report insert.
 - The final review verification passed the nine-suite focused/adjacent matrix, targeted ESLint, Node syntax checks, `git diff --check`, and `npm run build`. The build continues to report only the repository's pre-existing warning backlog and Browserslist notice; no Task 9 file is named.
+
+## Review round 2 closure — 2026-09-05
+
+- Mirrored the database's frozen hourly-evidence contract in the strict TypeScript response decoder. Observations and gaps must be UTC-hour aligned, unique within each set, non-overlapping across sets, within the frozen interval's expected bucket set, and together cover every expected bucket. A malformed stored or transported report now fails closed as `MALFORMED_RESPONSE`.
+- Required Open-Meteo response coordinates to be actual finite JSON numbers before range validation. Null, empty, missing, boolean, and numeric-string coordinates can no longer coerce to zero or another accepted number.
+- Focused RED reproduced five malformed frozen-evidence shapes and null/empty coordinate coercion. Focused GREEN passed the affected strict-contract and historical-provider suites; targeted lint, syntax, and diff checks were then rerun without broad-suite expansion.

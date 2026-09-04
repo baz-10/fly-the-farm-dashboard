@@ -167,7 +167,13 @@ const weatherReport = {
   providerRetrievedAt: '2026-09-06T00:00:00.000Z',
   hourlyObservations: [{ observedAt: '2026-09-04T22:00:00.000Z', temperatureC: 24, relativeHumidity: 60,
     dewPointC: 16, windSpeedKmh: 10, windDirectionDegrees: 90, precipitationMm: 0 }],
-  inversionInputs: {}, inversionResults: { assessment: 'UNABLE_TO_DETERMINE' }, coverageGaps: [],
+  inversionInputs: {}, inversionResults: { assessment: 'UNABLE_TO_DETERMINE' }, coverageGaps: [
+    { observedAt: '2026-09-04T23:00:00.000Z', reason: 'Provider hour unavailable' },
+    { observedAt: '2026-09-05T00:00:00.000Z', reason: 'Provider hour unavailable' },
+    { observedAt: '2026-09-05T01:00:00.000Z', reason: 'Provider hour unavailable' },
+    { observedAt: '2026-09-05T02:00:00.000Z', reason: 'Provider hour unavailable' },
+    { observedAt: '2026-09-05T03:00:00.000Z', reason: 'Provider hour unavailable' },
+  ],
   sourceMetadata: {}, manualReason: null, sourceDigest: DIGEST,
   recordedByInternalUserId: ACTOR_ID, createdAt: '2026-09-06T00:00:00.000Z',
 };
@@ -386,6 +392,32 @@ describe('Mission Operations strict contracts', () => {
       observedAt: '2026-09-04T22:30:00.000Z', reason: 'Not an hourly bucket',
     }] })).toThrow(expect.objectContaining({ code: 'MALFORMED_RESPONSE' }));
     expect(() => decodeMissionDayWeatherReport({ ...weatherReport, providerSecret: true }))
+      .toThrow(expect.objectContaining({ code: 'MALFORMED_RESPONSE' }));
+  });
+
+  test.each([
+    ['unaligned observation', {
+      ...weatherReport,
+      hourlyObservations: [{ ...weatherReport.hourlyObservations[0], observedAt: '2026-09-04T22:30:00.000Z' }],
+    }],
+    ['duplicate observation', {
+      ...weatherReport,
+      hourlyObservations: [weatherReport.hourlyObservations[0], weatherReport.hourlyObservations[0]],
+    }],
+    ['duplicate gap', {
+      ...weatherReport,
+      coverageGaps: [weatherReport.coverageGaps[0], ...weatherReport.coverageGaps],
+    }],
+    ['observation and gap overlap', {
+      ...weatherReport,
+      coverageGaps: [{ observedAt: '2026-09-04T22:00:00.000Z', reason: 'Overlaps observation' }, ...weatherReport.coverageGaps],
+    }],
+    ['missing expected bucket', {
+      ...weatherReport,
+      coverageGaps: weatherReport.coverageGaps.slice(1),
+    }],
+  ])('rejects malformed frozen weather evidence with %s', (_caseName, malformedReport) => {
+    expect(() => decodeMissionDayWeatherReport(malformedReport))
       .toThrow(expect.objectContaining({ code: 'MALFORMED_RESPONSE' }));
   });
 
