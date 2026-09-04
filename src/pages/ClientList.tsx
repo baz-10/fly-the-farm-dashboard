@@ -602,6 +602,9 @@ export default function ClientList() {
                   <AddressAutocomplete
                     label="Search Address"
                     initialValue={addr.address}
+                    initialLocality={addr.locality}
+                    initialState={addr.state}
+                    initialPostcode={addr.postcode}
                     lat={addr.lat}
                     lng={addr.lng}
                     onSelect={(result: AddressResult) => {
@@ -618,32 +621,6 @@ export default function ClientList() {
                     }}
                     mapHeight={220}
                   />
-                  <Stack direction="row" spacing={1.5}>
-                    <TextField
-                      label="Town / Locality"
-                      value={addr.locality}
-                      onChange={(e) => updateAddress(idx, { locality: e.target.value })}
-                      size="small"
-                      fullWidth
-                    />
-                    <TextField
-                      label="State"
-                      select
-                      value={addr.state}
-                      onChange={(e) => updateAddress(idx, { state: e.target.value as AustralianState })}
-                      size="small"
-                      sx={{ minWidth: 90 }}
-                    >
-                      {ALL_STATES.map((s) => <MenuItem key={s} value={s}>{s}</MenuItem>)}
-                    </TextField>
-                    <TextField
-                      label="Postcode"
-                      value={addr.postcode}
-                      onChange={(e) => updateAddress(idx, { postcode: e.target.value })}
-                      size="small"
-                      sx={{ width: 110 }}
-                    />
-                  </Stack>
                 </Stack>
               </Box>
             ))}

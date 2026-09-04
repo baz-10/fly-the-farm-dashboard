@@ -28,6 +28,32 @@ describe('operational API adapter', () => {
     expect(record.addresses?.[0]).toEqual(expect.objectContaining({ label: 'Northern gate', coordinateSource: 'MANUALLY_ADJUSTED', lat: -26.57, lng: 148.79 }));
   });
 
+  test('round-trips an optional confirmed Field access point through the trusted API', async () => {
+    const response = {
+      id: 'field-1', propertyId: 'property-1', name: 'North Paddock', areaHectares: 12.5,
+      accessPointLabel: 'North gate', accessLatitude: -26.970001, accessLongitude: 152.960001,
+      accessCoordinateSource: 'MANUALLY_ADJUSTED', accessLocationConfirmedAt: '2026-09-04T06:00:00.000Z',
+      rowVersion: 1, createdAt: '2026-09-04T06:00:00.000Z', updatedAt: '2026-09-04T06:00:00.000Z',
+    };
+    const fetchMock = jest.spyOn(global, 'fetch').mockImplementation(() => jsonResponse(201, { data: response }));
+
+    const field = await createOperationalApi().fields.create({
+      propertyId: 'property-1', name: 'North Paddock', sizeHa: 12.5, boundary: null, notes: '',
+      accessPoint: { label: 'North gate', lat: -26.970001, lng: 152.960001,
+        coordinateSource: 'MANUALLY_ADJUSTED', locationConfirmedAt: '2026-09-04T06:00:00.000Z' },
+    } as any);
+
+    expect(field).toEqual(expect.objectContaining({ accessPoint: {
+      label: 'North gate', lat: -26.970001, lng: 152.960001,
+      coordinateSource: 'MANUALLY_ADJUSTED', locationConfirmedAt: '2026-09-04T06:00:00.000Z',
+    } }));
+    expect(fetchMock).toHaveBeenCalledWith('/api/v1/fields', expect.objectContaining({ body: JSON.stringify({
+      propertyId: 'property-1', name: 'North Paddock', areaHectares: 12.5,
+      accessPointLabel: 'North gate', accessLatitude: -26.970001, accessLongitude: 152.960001,
+      accessCoordinateSource: 'MANUALLY_ADJUSTED', accessLocationConfirmedAt: '2026-09-04T06:00:00.000Z',
+    }) }));
+  });
+
   test('maps relational API records explicitly into the existing workflow types', () => {
     expect(mapApiClient({
       id: 'client-1', name: 'North Farm', contact_email: 'ops@example.com',

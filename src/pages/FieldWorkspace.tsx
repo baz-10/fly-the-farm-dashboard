@@ -16,8 +16,11 @@ import FieldBoundaryEditor from '../components/FieldBoundaryEditor';
 import { useOperationalData } from '../contexts/OperationalDataContext';
 import { describeOperationalError } from '../services/operationalDataStore';
 import { LatLng } from '../types/fieldManagement';
+import { FieldAccessPointDraft, moveFieldAccessPoint, suggestFieldAccessPoint } from '../utils/fieldAccessPoint';
 
-type FieldDraft = { clientId: string; propertyId: string; name: string; area: number; coords: LatLng[] };
+const AddressLocationMap = React.lazy(() => import('../components/AddressLocationMap'));
+
+type FieldDraft = { clientId: string; propertyId: string; name: string; area: number; coords: LatLng[]; accessPoint?: FieldAccessPointDraft };
 const emptyDraft = (): FieldDraft => ({ clientId: '', propertyId: '', name: '', area: 0, coords: [] });
 
 export default function FieldWorkspace() {
@@ -75,6 +78,7 @@ export default function FieldWorkspace() {
         sizeHa: draft.area,
         boundary: null,
         boundaryCoords: draft.coords.length >= 3 ? draft.coords : undefined,
+        ...(draft.accessPoint?.locationConfirmedAt ? { accessPoint: { ...draft.accessPoint, locationConfirmedAt: draft.accessPoint.locationConfirmedAt } } : {}),
         notes: '',
       });
       if (draft.coords.length >= 3) await operational.createFieldBoundaryVersion(created.id, draft.coords);
@@ -159,7 +163,7 @@ export default function FieldWorkspace() {
           <TextField select label="Select Client" value={draft.clientId} onChange={(event) => setDraft({ ...emptyDraft(), clientId: event.target.value })} required fullWidth>
             {operational.clients.map((client) => <MenuItem key={client.id} value={client.id}>{client.name}</MenuItem>)}
           </TextField>
-          {draft.clientId && <TextField select label="Select Property" value={draft.propertyId} onChange={(event) => setDraft((current) => ({ ...current, propertyId: event.target.value, coords: [], area: 0 }))} required fullWidth>
+          {draft.clientId && <TextField select label="Select Property" value={draft.propertyId} onChange={(event) => setDraft((current) => ({ ...current, propertyId: event.target.value, coords: [], area: 0, accessPoint: undefined }))} required fullWidth>
             {availableProperties.map((property) => <MenuItem key={property.id} value={property.id}>{property.name}</MenuItem>)}
           </TextField>}
           {selectedProperty && <>
@@ -171,10 +175,27 @@ export default function FieldWorkspace() {
               <FieldBoundaryEditor coords={draft.coords} onCoordsChange={(coords) => setDraft((current) => ({ ...current, coords }))} onAreaChange={(area) => setDraft((current) => ({ ...current, area }))} propertyLat={selectedProperty.lat} propertyLng={selectedProperty.lng} initialAddress={selectedProperty.address} mapHeight={360} />
               <Typography variant="body2" fontWeight={800} sx={{ mt: 1 }}>{draft.area > 0 ? `${Number(draft.area.toFixed(2))} ha calculated from boundary` : 'Area will be calculated from the saved boundary.'}</Typography>
             </Box>
+            <Box>
+              {!draft.accessPoint ? <Button variant="outlined" startIcon={<PlaceIcon />} disabled={!selectedProperty.locationConfirmedAt || !Number.isFinite(selectedProperty.lat) || !Number.isFinite(selectedProperty.lng)} onClick={() => {
+                if (selectedProperty.locationConfirmedAt && Number.isFinite(selectedProperty.lat) && Number.isFinite(selectedProperty.lng)) setDraft((current) => ({ ...current, accessPoint: suggestFieldAccessPoint(selectedProperty.lat!, selectedProperty.lng!) }));
+              }}>Add field access / launch point</Button> : <Stack spacing={1.25}>
+                <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} alignItems={{ sm: 'center' }}>
+                  <TextField label="Access point label" value={draft.accessPoint.label} onChange={(event) => setDraft((current) => current.accessPoint ? ({ ...current, accessPoint: { ...current.accessPoint, label: event.target.value, locationConfirmedAt: undefined } }) : current)} fullWidth />
+                  <Button color="error" onClick={() => setDraft((current) => ({ ...current, accessPoint: undefined }))}>Remove access point</Button>
+                </Stack>
+                <Typography variant="caption" color="text.secondary">Move the pin to the exact gate, staging area or aircraft launch point, then confirm it.</Typography>
+                <React.Suspense fallback={<Box sx={{ height: 300 }} />}><AddressLocationMap lat={draft.accessPoint.lat} lng={draft.accessPoint.lng} height={300} onLocationChange={(lat, lng) => setDraft((current) => current.accessPoint ? ({ ...current, accessPoint: moveFieldAccessPoint(current.accessPoint, lat, lng) }) : current)} /></React.Suspense>
+                <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} justifyContent="space-between" alignItems={{ sm: 'center' }}>
+                  <Typography variant="body2" fontWeight={750} color={draft.accessPoint.locationConfirmedAt ? 'success.main' : 'warning.main'}>{draft.accessPoint.locationConfirmedAt ? 'Access point confirmed' : 'Access point not confirmed'}</Typography>
+                  <Button variant={draft.accessPoint.locationConfirmedAt ? 'outlined' : 'contained'} disabled={draft.accessPoint.label.trim().length < 2} onClick={() => setDraft((current) => current.accessPoint ? ({ ...current, accessPoint: { ...current.accessPoint, locationConfirmedAt: new Date().toISOString() } }) : current)}>Confirm access point</Button>
+                </Stack>
+              </Stack>}
+              {(!selectedProperty.locationConfirmedAt || !Number.isFinite(selectedProperty.lat) || !Number.isFinite(selectedProperty.lng)) && <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 0.75 }}>Confirm the Property location before adding a Field access point.</Typography>}
+            </Box>
           </>}
         </Stack>
       </DialogContent>
-      <DialogActions sx={{ px: 3, pb: 2.5 }}><Button onClick={() => setDialogOpen(false)}>Cancel</Button><Button variant="contained" onClick={() => void saveField()} disabled={!draft.propertyId || !draft.name.trim() || operational.saving}>{operational.saving ? 'Saving…' : 'Save Field'}</Button></DialogActions>
+      <DialogActions sx={{ px: 3, pb: 2.5 }}><Button onClick={() => setDialogOpen(false)}>Cancel</Button><Button variant="contained" onClick={() => void saveField()} disabled={!draft.propertyId || !draft.name.trim() || Boolean(draft.accessPoint && !draft.accessPoint.locationConfirmedAt) || operational.saving}>{operational.saving ? 'Saving…' : 'Save Field'}</Button></DialogActions>
     </Dialog>
   </Box>;
 }
