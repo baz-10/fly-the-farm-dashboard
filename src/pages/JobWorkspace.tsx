@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Alert, Box, Button, Card, CardActions, CardContent, Chip, Collapse, Dialog, DialogActions,
-  DialogContent, DialogTitle, Grid, MenuItem, Stack, TextField, Typography, alpha, useTheme,
+  DialogContent, DialogTitle, Grid, Stack, TextField, Typography, alpha, useTheme,
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import ArrowForwardIcon from '@mui/icons-material/ArrowForward';
@@ -14,9 +14,10 @@ import UploadFileIcon from '@mui/icons-material/UploadFile';
 import FlightTakeoffIcon from '@mui/icons-material/FlightTakeoff';
 import { useOperationalData } from '../contexts/OperationalDataContext';
 import { deriveJobMissionAction } from '../utils/jobMissionAction';
+import JobFieldScopeSelector from '../components/jobs/JobFieldScopeSelector';
 
-type JobStart = { clientId: string; propertyId: string; fieldId: string };
-const emptyStart = (): JobStart => ({ clientId: '', propertyId: '', fieldId: '' });
+type JobStart = { clientId: string; fieldIds: string[] };
+const emptyStart = (): JobStart => ({ clientId: '', fieldIds: [] });
 
 const formatDate = (value?: string) => value
   ? new Date(`${value.length === 10 ? `${value}T00:00:00` : value}`).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' })
@@ -39,9 +40,9 @@ export default function JobWorkspace() {
   const clientById = useMemo(() => new Map(operational.clients.map((client) => [client.id, client])), [operational.clients]);
   const propertyById = useMemo(() => new Map(operational.properties.map((property) => [property.id, property])), [operational.properties]);
   const fieldById = useMemo(() => new Map(operational.fields.map((field) => [field.id, field])), [operational.fields]);
-  const availableProperties = operational.properties.filter((property) => property.clientId === start.clientId);
-  const availableFields = operational.fields.filter((field) => field.propertyId === start.propertyId);
-  const selectedField = fieldById.get(start.fieldId);
+  const selectedFields = start.fieldIds.map((id) => fieldById.get(id)).filter(Boolean);
+  const primaryField = selectedFields[0];
+  const primaryProperty = primaryField ? propertyById.get(primaryField.propertyId) : undefined;
 
   const rows = useMemo(() => [...operational.jobs]
     .sort((a, b) => (b.scheduledDate || b.requestedDate || b.createdAt).localeCompare(a.scheduledDate || a.requestedDate || a.createdAt))
@@ -71,9 +72,13 @@ export default function JobWorkspace() {
   }, [onboardingAction]);
 
   const continueToJob = () => {
-    if (!start.clientId || !start.propertyId || !start.fieldId) return;
-    const suffix = returnTo ? '?returnTo=%2Fgetting-started' : '';
-    navigate(`/jobs/client/${start.clientId}/property/${start.propertyId}/field/${start.fieldId}/new-job${suffix}`);
+    if (!start.clientId || !primaryProperty || !primaryField) return;
+    const params = new URLSearchParams();
+    if (start.fieldIds.length > 1) params.set('fieldIds', start.fieldIds.join(','));
+    if (returnTo) params.set('returnTo', '/getting-started');
+    const encodedParams = params.toString();
+    const suffix = encodedParams ? `?${encodedParams}` : '';
+    navigate(`/jobs/client/${start.clientId}/property/${primaryProperty.id}/field/${primaryField.id}/new-job${suffix}`);
   };
 
   return <Box>
@@ -155,21 +160,17 @@ export default function JobWorkspace() {
     <Dialog open={dialogOpen} onClose={() => setDialogOpen(false)} maxWidth="sm" fullWidth PaperProps={{ sx: { borderRadius: '16px' } }}>
       <DialogTitle sx={{ fontWeight: 800 }}>Add Job</DialogTitle>
       <DialogContent>
-        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>Choose where the work will occur. Spray Command will carry this context into the existing Job form.</Typography>
-        <Stack spacing={2}>
-          <TextField select label="Select Client" value={start.clientId} onChange={(event) => setStart({ clientId: event.target.value, propertyId: '', fieldId: '' })} required fullWidth>
-            {operational.clients.map((client) => <MenuItem key={client.id} value={client.id}>{client.name}</MenuItem>)}
-          </TextField>
-          {start.clientId && <TextField select label="Select Property" value={start.propertyId} onChange={(event) => setStart((current) => ({ ...current, propertyId: event.target.value, fieldId: '' }))} required fullWidth>
-            {availableProperties.map((property) => <MenuItem key={property.id} value={property.id}>{property.name}</MenuItem>)}
-          </TextField>}
-          {start.propertyId && <TextField select label="Select Field" value={start.fieldId} onChange={(event) => setStart((current) => ({ ...current, fieldId: event.target.value }))} required fullWidth>
-            {availableFields.map((field) => <MenuItem key={field.id} value={field.id}>{field.name}</MenuItem>)}
-          </TextField>}
-          {selectedField && <Alert severity="info"><Typography variant="body2" fontWeight={800}>{selectedField.name}</Typography><Typography variant="caption">{Number((selectedField.sizeHa || 0).toFixed(1))} ha · Known Field details will be reused.</Typography></Alert>}
-        </Stack>
+        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>Choose the Client and Fields where work will occur. Add another Property only when its Fields are part of this Job.</Typography>
+        <JobFieldScopeSelector
+          clients={operational.clients}
+          properties={operational.properties}
+          fields={operational.fields}
+          selectedClientId={start.clientId}
+          selectedFieldIds={start.fieldIds}
+          onScopeChange={(scope) => setStart(scope)}
+        />
       </DialogContent>
-      <DialogActions sx={{ px: 3, pb: 2.5 }}><Button onClick={() => setDialogOpen(false)}>Cancel</Button><Button variant="contained" onClick={continueToJob} disabled={!start.fieldId}>Continue to Job details</Button></DialogActions>
+      <DialogActions sx={{ px: 3, pb: 2.5 }}><Button onClick={() => setDialogOpen(false)}>Cancel</Button><Button variant="contained" onClick={continueToJob} disabled={!primaryField}>Continue to Job details</Button></DialogActions>
     </Dialog>
   </Box>;
 }

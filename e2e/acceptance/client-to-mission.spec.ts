@@ -49,7 +49,16 @@ test('creates, persists, reopens, and archives the authoritative Client to Draft
 
     await page.getByRole('button', { name: 'Create new Job' }).click();
     await page.getByRole('textbox', { name: 'Job scope' }).fill(label);
+    const jobResponsePromise = page.waitForResponse((response) => {
+      const responseUrl = new URL(response.url());
+      return responseUrl.origin === new URL(acceptanceEnvironment().baseUrl).origin
+        && responseUrl.pathname === '/api/v1/jobs'
+        && response.request().method() === 'POST';
+    });
     await page.getByRole('button', { name: 'Save Job and continue' }).click();
+    const jobResponse = await jobResponsePromise;
+    expect(jobResponse.status()).toBe(201);
+    expect((await jobResponse.json()).data.fieldIds).toEqual([records.field.id]);
     await expect(page.getByRole('heading', { name: 'Create the authoritative Draft Mission' })).toBeVisible();
     records.job = await findAcceptanceRecord(page.request, 'jobs', label);
 

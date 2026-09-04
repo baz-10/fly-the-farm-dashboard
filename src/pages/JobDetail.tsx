@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   Typography,
@@ -58,7 +58,7 @@ import {
   updateOutcome,
 } from '../services/fieldManagementStore';
 import { getReportsForJob, AskFtfReportRecord } from '../services/askFtfReportStore';
-import { JobOutcome, EfficacyRating, PhotoRef } from '../types/fieldManagement';
+import { Field, JobOutcome, EfficacyRating, PhotoRef } from '../types/fieldManagement';
 import PhotoUpload from '../components/PhotoUpload';
 import { generateClientReportPdf } from '../utils/clientReportPdf';
 import AssessmentIcon from '@mui/icons-material/Assessment';
@@ -89,12 +89,27 @@ function AuthoritativeJobDetail() {
   const operational = useOperationalData();
   const [archiveConfirm, setArchiveConfirm] = useState(false);
   const [actionError, setActionError] = useState('');
-  const job = operational.jobs.find((record) => record.id === jobId && record.clientId === clientId
-    && record.propertyId === propertyId && record.fieldIds.includes(fieldId || ''));
+  const job = operational.jobs.find((record) => record.id === jobId && record.clientId === clientId);
   const field = operational.fields.find((record) => record.id === fieldId && record.propertyId === propertyId);
   const property = operational.properties.find((record) => record.id === propertyId && record.clientId === clientId);
   const client = operational.clients.find((record) => record.id === clientId);
   const basePath = `/jobs/client/${clientId}/property/${propertyId}/field/${fieldId}`;
+  const fieldsByProperty = useMemo<Array<{ id: string; name: string; fields: Field[] }>>(() => {
+    if (!job) return [];
+    const grouped = new Map<string, Field[]>();
+    job.fieldIds.forEach((id) => {
+      const scopedField = operational.fields.find((record) => record.id === id);
+      if (!scopedField) return;
+      const existing = grouped.get(scopedField.propertyId) || [];
+      existing.push(scopedField);
+      grouped.set(scopedField.propertyId, existing);
+    });
+    return Array.from(grouped.entries()).map(([id, scopedFields]) => ({
+      id,
+      name: operational.properties.find((record) => record.id === id)?.name || 'Property unavailable',
+      fields: scopedFields,
+    }));
+  }, [job, operational.fields, operational.properties]);
 
   if (operational.status === 'loading') return <Alert severity="info">Loading job…</Alert>;
   if (operational.status === 'error' || operational.status === 'unauthorised') {
@@ -124,7 +139,7 @@ function AuthoritativeJobDetail() {
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 3 }} className="ftf-animate-in">
         <Box>
           <Typography variant="h4" sx={{ fontWeight: 800, color: 'primary.dark', fontSize: { xs: '1.4rem', md: '1.75rem' } }}>Spray Job — {job.reference}</Typography>
-          <Typography variant="body2" color="text.secondary">{client.name} &bull; {property.name} &bull; {field.name}</Typography>
+          <Typography variant="body2" color="text.secondary">{client.name} &bull; {fieldsByProperty.length} {fieldsByProperty.length === 1 ? 'Property' : 'Properties'} &bull; {job.fieldIds.length} {job.fieldIds.length === 1 ? 'Field' : 'Fields'}</Typography>
         </Box>
         <Stack direction="row" spacing={1}>
           <Button
@@ -148,6 +163,16 @@ function AuthoritativeJobDetail() {
               <InfoRow label="Requested Date" value={displayDate(job.requestedDate)} />
               <InfoRow label="Scheduled Date" value={displayDate(job.scheduledDate)} />
               <InfoRow label="Notes" value={job.notes || '—'} />
+            </Stack>
+            <Divider sx={{ my: 2 }} />
+            <Typography variant="body2" fontWeight={700} sx={{ mb: 1 }}>Field scope</Typography>
+            <Stack spacing={0.75}>
+              {fieldsByProperty.map((group) => {
+                const totalHa = group.fields.reduce((total, scopedField) => total + (scopedField.sizeHa || 0), 0);
+                return <Typography key={group.id} variant="body2" color="text.secondary">
+                  <strong>{group.name}</strong> · {group.fields.map((scopedField) => scopedField.name).join(', ')} · {totalHa.toFixed(4)} ha
+                </Typography>;
+              })}
             </Stack>
           </CardContent>
         </Card>
