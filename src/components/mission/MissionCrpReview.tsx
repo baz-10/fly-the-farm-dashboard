@@ -4,7 +4,7 @@ import type { CrpDecision, MissionPackageRevision } from '../../types/missionOpe
 import { missionOperationsApi } from '../../services/missionOperationsApi';
 
 type CrpApi = Pick<typeof missionOperationsApi, 'authorise' | 'reject'>;
-const staleCodes = new Set(['VERSION_CONFLICT', 'MISSION_PACKAGE_EVIDENCE_STALE', 'MISSION_PACKAGE_DECISION_CONFLICT']);
+const staleCodes = new Set(['MISSION_PACKAGE_VERSION_CONFLICT', 'MISSION_PACKAGE_EVIDENCE_STALE', 'MISSION_PACKAGE_DECISION_CONFLICT']);
 
 export default function MissionCrpReview({
   missionId,
@@ -23,20 +23,29 @@ export default function MissionCrpReview({
   onDecision?: (decision: CrpDecision) => void;
   onReload?: () => void;
 }) {
-  const [declaration, setDeclaration] = React.useState('I confirm I have reviewed this exact Mission package and authorise it to proceed.');
+  const [authorisationDeclaration, setAuthorisationDeclaration] = React.useState('I confirm I have reviewed this exact Mission package and authorise it to proceed.');
+  const [rejectionReason, setRejectionReason] = React.useState('');
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState('');
   const [stale, setStale] = React.useState(false);
   const [ineligible, setIneligible] = React.useState(false);
   const eligibleState = packageRevision.state === 'AWAITING_CRP_APPROVAL';
+  const packageIdentity = `${packageRevision.id}\u0000${packageRevision.revisionNumber}\u0000${packageRevision.evidenceDigest}\u0000${packageRevision.state}`;
+
+  React.useEffect(() => {
+    setError('');
+    setStale(false);
+    setIneligible(false);
+    setRejectionReason('');
+  }, [packageIdentity]);
 
   const decide = async (kind: 'AUTHORISE' | 'REJECT') => {
     setBusy(true);
     setError('');
     try {
       const saved = kind === 'AUTHORISE'
-        ? await api.authorise(missionId, packageRevision.id, packageRevision.revisionNumber, packageRevision.evidenceDigest, declaration.trim())
-        : await api.reject(missionId, packageRevision.id, packageRevision.revisionNumber, packageRevision.evidenceDigest, declaration.trim());
+        ? await api.authorise(missionId, packageRevision.id, packageRevision.revisionNumber, packageRevision.evidenceDigest, authorisationDeclaration.trim())
+        : await api.reject(missionId, packageRevision.id, packageRevision.revisionNumber, packageRevision.evidenceDigest, rejectionReason.trim());
       onDecision?.(saved);
     } catch (caught) {
       const code = caught && typeof caught === 'object' ? (caught as { code?: string }).code : undefined;
@@ -69,10 +78,11 @@ export default function MissionCrpReview({
     {decision ? <Alert severity={decision.decision === 'AUTHORISED' ? 'success' : 'warning'}>CRP decision: {decision.decision} · {new Date(decision.decidedAt).toLocaleString()}</Alert>
       : !eligibleState ? <Alert severity="info">This package is not ready for a CRP decision.</Alert>
         : !canDecide || ineligible ? <Alert severity="warning">Only an eligible CRP can decide this Mission package.</Alert>
-          : <><TextField fullWidth multiline minRows={2} label="CRP declaration" value={declaration} onChange={(event) => setDeclaration(event.target.value)} disabled={busy || stale} />
+          : <><TextField fullWidth multiline minRows={2} label="CRP declaration" value={authorisationDeclaration} onChange={(event) => setAuthorisationDeclaration(event.target.value)} disabled={busy || stale} />
+            <TextField fullWidth multiline minRows={2} label="Reason for rejecting package" value={rejectionReason} onChange={(event) => setRejectionReason(event.target.value)} disabled={busy || stale} required />
             <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
-              <Button variant="contained" disabled={busy || stale || !declaration.trim()} onClick={() => void decide('AUTHORISE')}>Authorise Mission</Button>
-              <Button variant="outlined" color="warning" disabled={busy || stale || !declaration.trim()} onClick={() => void decide('REJECT')}>Reject Mission</Button>
+              <Button variant="contained" disabled={busy || stale || !authorisationDeclaration.trim()} onClick={() => void decide('AUTHORISE')}>Authorise Mission</Button>
+              <Button variant="outlined" color="warning" disabled={busy || stale || !rejectionReason.trim()} onClick={() => void decide('REJECT')}>Reject Mission</Button>
               {stale && onReload && <Button variant="text" onClick={onReload}>Reload package</Button>}
             </Stack></>}
   </Stack>;

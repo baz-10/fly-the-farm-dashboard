@@ -1,5 +1,5 @@
 import React from 'react';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import MissionCrpReview from '../MissionCrpReview';
 
@@ -13,10 +13,10 @@ const packageRevision = {
 };
 
 describe('MissionCrpReview', () => {
-  test('shows the exact revision and blocks stale CRP approval', async () => {
+  test('shows the exact revision and blocks the canonical stale-package conflict', async () => {
     const user = userEvent.setup();
     const api = {
-      authorise: jest.fn().mockRejectedValue(Object.assign(new Error('Package changed.'), { code: 'VERSION_CONFLICT' })),
+      authorise: jest.fn().mockRejectedValue(Object.assign(new Error('Package changed.'), { code: 'MISSION_PACKAGE_VERSION_CONFLICT' })),
       reject: jest.fn(),
     };
     render(<MissionCrpReview missionId={missionId} packageRevision={packageRevision} api={api} />);
@@ -28,6 +28,51 @@ describe('MissionCrpReview', () => {
 
     expect(await screen.findByText('Package changed. Reload before deciding.')).toBeVisible();
     expect(screen.getByRole('button', { name: 'Authorise Mission' })).toBeDisabled();
+  });
+
+  test('clears a stale decision state when reload supplies a different exact package', async () => {
+    const user = userEvent.setup();
+    const api = {
+      authorise: jest.fn()
+        .mockRejectedValueOnce(Object.assign(new Error('Package changed.'), { code: 'MISSION_PACKAGE_VERSION_CONFLICT' }))
+        .mockResolvedValue({ packageRevisionId: '55555555-5555-4555-8555-555555555555', decision: 'AUTHORISED', decidedAt: '2026-09-04T11:00:00.000Z' }),
+      reject: jest.fn(),
+    };
+    const onReload = jest.fn();
+    const { rerender } = render(<MissionCrpReview missionId={missionId} packageRevision={packageRevision} api={api} onReload={onReload} />);
+
+    await user.click(screen.getByRole('button', { name: 'Authorise Mission' }));
+    expect(await screen.findByText('Package changed. Reload before deciding.')).toBeVisible();
+    await user.click(screen.getByRole('button', { name: 'Reload package' }));
+    expect(onReload).toHaveBeenCalledTimes(1);
+
+    const reloadedPackage = {
+      ...packageRevision,
+      id: '55555555-5555-4555-8555-555555555555',
+      revisionNumber: 5,
+      evidenceDigest: 'b'.repeat(64),
+    };
+    rerender(<MissionCrpReview missionId={missionId} packageRevision={reloadedPackage} api={api} onReload={onReload} />);
+
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Authorise Mission' })).toBeEnabled());
+    await user.click(screen.getByRole('button', { name: 'Authorise Mission' }));
+    await waitFor(() => expect(api.authorise).toHaveBeenLastCalledWith(
+      missionId, reloadedPackage.id, 5, reloadedPackage.evidenceDigest, expect.any(String),
+    ));
+  });
+
+  test('requires a separate rejection reason and never sends the authorisation declaration on reject', async () => {
+    const user = userEvent.setup();
+    const api = { authorise: jest.fn(), reject: jest.fn().mockResolvedValue({ packageRevisionId: packageRevision.id, decision: 'REJECTED', decidedAt: '2026-09-04T11:00:00.000Z' }) };
+    render(<MissionCrpReview missionId={missionId} packageRevision={packageRevision} api={api} />);
+
+    expect(screen.getByRole('button', { name: 'Reject Mission' })).toBeDisabled();
+    await user.type(screen.getByRole('textbox', { name: 'Reason for rejecting package' }), 'JSA scope needs correction.');
+    await user.click(screen.getByRole('button', { name: 'Reject Mission' }));
+
+    await waitFor(() => expect(api.reject).toHaveBeenCalledWith(
+      missionId, packageRevision.id, packageRevision.revisionNumber, packageRevision.evidenceDigest, 'JSA scope needs correction.',
+    ));
   });
 
   test('does not offer a CRP decision for an incomplete package revision', () => {

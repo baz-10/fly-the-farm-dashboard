@@ -1,12 +1,15 @@
 import React from 'react';
 import { Alert, Button, Divider, LinearProgress, Stack, Typography } from '@mui/material';
+import { createMissionAuthorisationApi } from '../../services/missionAuthorisationApi';
 import { missionOperationsApi } from '../../services/missionOperationsApi';
 import type { CrpDecision, MissionPackageHistory, MissionPackageRevision } from '../../types/missionOperations';
 import MissionCrpReview from './MissionCrpReview';
 import MissionFieldScope, { MissionScopePropertyGroup } from './MissionFieldScope';
 
 type Api = Pick<typeof missionOperationsApi, 'readPackageHistory' | 'saveScope' | 'submitForApproval' | 'authorise' | 'reject'>;
-const conflictCodes = new Set(['VERSION_CONFLICT', 'MISSION_PACKAGE_EVIDENCE_STALE', 'MISSION_PACKAGE_DECISION_CONFLICT']);
+type ReadinessApi = Pick<ReturnType<typeof createMissionAuthorisationApi>, 'readiness'>;
+const defaultReadinessApi = createMissionAuthorisationApi();
+const conflictCodes = new Set(['MISSION_PACKAGE_VERSION_CONFLICT', 'MISSION_PACKAGE_EVIDENCE_STALE', 'MISSION_PACKAGE_DECISION_CONFLICT']);
 
 function latestPackage(history: MissionPackageHistory | null): MissionPackageRevision | null {
   if (!history?.packages.length) return null;
@@ -23,7 +26,9 @@ export default function MissionAuthorisation({
   fieldsByProperty = [],
   refreshToken = 0,
   api = missionOperationsApi,
+  readinessApi = defaultReadinessApi,
   crpEligible = true,
+  onReadinessChanged,
   onLifecycleChanged,
 }: {
   missionId: string;
@@ -31,6 +36,7 @@ export default function MissionAuthorisation({
   fieldsByProperty?: MissionScopePropertyGroup[];
   refreshToken?: number;
   api?: Api;
+  readinessApi?: ReadinessApi;
   crpEligible?: boolean;
   onReadinessChanged?: (readiness: unknown) => void;
   onLifecycleChanged?: () => void;
@@ -59,13 +65,26 @@ export default function MissionAuthorisation({
   }, [api, missionId]);
 
   React.useEffect(() => { void reload(); }, [reload, refreshToken]);
-  React.useEffect(() => {
-    setSelectedFieldIds((current) => current.length === jobFieldIds.length
-      && current.every((fieldId, index) => fieldId === jobFieldIds[index]) ? current : [...jobFieldIds]);
-  }, [missionId, jobFieldKey, jobFieldIds]);
-
   const currentPackage = latestPackage(history);
   const currentDecision = decisionFor(history, currentPackage?.id);
+  const scopeFieldIds = currentPackage?.fieldIds || jobFieldIds;
+  const scopeIdentity = currentPackage
+    ? `${currentPackage.id}\u0000${currentPackage.revisionNumber}\u0000${currentPackage.evidenceDigest}`
+    : 'first-proposal';
+
+  React.useEffect(() => {
+    setSelectedFieldIds((current) => current.length === scopeFieldIds.length
+      && current.every((fieldId, index) => fieldId === scopeFieldIds[index]) ? current : [...scopeFieldIds]);
+  }, [missionId, jobFieldKey, scopeIdentity, scopeFieldIds]);
+
+  React.useEffect(() => {
+    let active = true;
+    void readinessApi.readiness(missionId).then((readiness) => {
+      if (active) onReadinessChanged?.(readiness);
+    }).catch(() => undefined);
+    return () => { active = false; };
+  }, [missionId, onReadinessChanged, readinessApi, refreshToken]);
+
   const hasJobFieldContext = availableJobFieldIds.size > 0;
   const scopeCanBeSaved = hasJobFieldContext && selectedFieldIds.length > 0
     && selectedFieldIds.every((fieldId) => availableJobFieldIds.has(fieldId)) && !busy && !stale;

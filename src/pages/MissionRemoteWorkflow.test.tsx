@@ -34,6 +34,7 @@ const mockMissionMapSave = jest.fn();
 const mockMissionMapUploadSourceFile = jest.fn();
 const mockMissionMapHistory = jest.fn();
 const mockMissionPackageHistory = jest.fn();
+const mockMissionReadiness = jest.fn();
 const missionAircraft = {
   id: 'aircraft-1', operatingLocationId: 'location-1', registration: 'VH-FTF1', model: 'DJI Agras T50',
   status: 'operational', serviceabilityState: 'serviceable', missionReady: true,
@@ -86,7 +87,7 @@ jest.mock('../components/FieldBoundaryEditor', () => (props: any) => <div>
 </div>);
 jest.mock('../components/mission/MissionChemicalPlanning', () => () => <div>Authoritative chemical planning</div>);
 jest.mock('../services/missionAuthorisationApi', () => ({ createMissionAuthorisationApi: () => ({
-  readiness: jest.fn().mockResolvedValue({ ready: false, blockers: [{ code: 'WEATHER_EXPIRED', message: 'Observed Weather expired.' }], warnings: [], categories: {} }),
+  readiness: (...args: any[]) => mockMissionReadiness(...args),
   read: jest.fn().mockResolvedValue(null), readPack: jest.fn().mockResolvedValue(null), authorise: jest.fn(), generatePack: jest.fn(),
 }) }));
 jest.mock('../services/missionOperationsApi', () => ({ missionOperationsApi: {
@@ -126,6 +127,7 @@ describe('remote authoritative mission workflow', () => {
     });
     mockMissionMapHistory.mockReset().mockResolvedValue([]);
     mockMissionPackageHistory.mockReset().mockResolvedValue({ missionId: 'mission-1', currentRevision: 0, packages: [], decisions: [] });
+    mockMissionReadiness.mockReset().mockResolvedValue({ ready: false, blockers: [{ code: 'WEATHER_EXPIRED', message: 'Observed Weather expired.' }], warnings: [], categories: {} });
   });
 
   test('lists only authoritative Planning missions with explicit not-ready language', () => {
@@ -213,6 +215,19 @@ describe('remote authoritative mission workflow', () => {
     expect(await screen.findByText('Mission scope and CRP review')).toBeVisible();
     expect(screen.getByRole('checkbox', { name: 'North Paddock' })).toBeChecked();
     expect(screen.getByText(/A Job does not approve a Mission/i)).toBeVisible();
+  });
+
+  test('updates Weather, JSA, and review stages from the authoritative read-only readiness feed', async () => {
+    mockParams = { missionId: 'mission-1' };
+    mockSearch = 'stage=review';
+    mockMissionMapGet.mockResolvedValue({ id: 'map-revision-1', version: 1, notes: '', geometries: [] });
+    mockMissionReadiness.mockResolvedValue({ ready: false, blockers: [], warnings: [], categories: { weather: 'COMPLETE', chemical: 'COMPLETE', jsa: 'COMPLETE' } });
+    render(<MissionPlanning />);
+
+    expect(await screen.findByRole('button', { name: /Weather & Chemicals — Complete/i })).toBeEnabled();
+    expect(screen.getByRole('button', { name: /JSA — Complete/i })).toBeEnabled();
+    expect(screen.getByRole('button', { name: /Review — Current/i })).toBeEnabled();
+    expect(mockMissionReadiness).toHaveBeenCalledWith('mission-1');
   });
 
   test('resolves authoritative parent records instead of asking for duplicate entry', () => {

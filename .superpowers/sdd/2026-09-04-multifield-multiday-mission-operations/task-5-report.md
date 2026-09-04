@@ -20,3 +20,19 @@
 ## Concern
 
 The existing remote-workflow and guided-creation test suites emit pre-existing React `act(...)`, network, and MUI select warnings despite passing. They were not changed as part of this task.
+
+## Review round 1 fixes
+
+- Replaced the legacy frontend conflict identifier with the canonical Task 4 `MISSION_PACKAGE_VERSION_CONFLICT` in both CRP decision and package-edit conflict handling.
+- Clear stale, ineligibility, error, and rejection-reason state when the exact package identity changes, allowing a conflict → reload → decision flow to proceed on the new revision.
+- Hydrate the Field editor from the latest package revision after history loads; all Job Fields remain the first-proposal default only.
+- Restored the read-only authoritative readiness feed into the Mission planner’s workspace stages. It only calls `readiness` and does not introduce a browser authorisation authority.
+- Separated a required rejection reason from the prefilled authorisation declaration.
+
+## Review round 1 verification
+
+- RED: the targeted new regressions failed before implementation for canonical conflict recognition, reset-after-reload, persisted one-Field scope, readiness stage changes, and reject payload isolation.
+- `CI=true npm test -- --watchAll=false --runInBand --silent src/components/mission/__tests__/MissionAuthorisation.test.tsx src/components/mission/__tests__/MissionFieldScope.test.tsx src/components/mission/__tests__/MissionCrpReview.test.tsx src/utils/__tests__/missionWorkspace.test.ts src/pages/MissionRemoteWorkflow.test.tsx src/components/mission/__tests__/GuidedMissionCreation.test.tsx src/pages/__tests__/JobDetailMissionReview.test.tsx`
+  - 53 tests passed across 7 suites.
+- `npm run build`
+  - completed successfully with the repository’s existing lint warnings; none were introduced by this fix.
