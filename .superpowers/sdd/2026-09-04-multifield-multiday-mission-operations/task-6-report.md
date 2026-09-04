@@ -56,3 +56,24 @@ The committed test executes the repository migration chain with `pgcrypto` in an
 - Confirmed Field activity remains editable after daily completion for later administrative reconciliation, but becomes immutable at governed sign-off. Day completion does not rewrite or reinterpret its historical package/JSA binding.
 - A `CHANGE_DECLARED` review safely leaves the day in `DRAFT` and prevents start. Rebinding or cancelling such a pre-start day after a new authorised revision is not one of Task 6's command interfaces and remains a later workflow decision.
 - PGlite has one PostgreSQL backend, so it cannot prove real two-session blocking/interleaving. The suite behaviorally verifies shared-lock entry, optimistic loser outcomes and stale-package rejection; multi-session timing remains dependent on the already-established aggregate-lock protocol.
+
+## Review fix round 1 — live start readiness and exact read authority
+
+### Root cause and correction
+
+- `ftf_start_mission_operating_day` validated the stored package authorisation, package freshness and daily JSA review but did not re-run the canonical readiness evaluator. It could therefore transition a READY day to `IN_PROGRESS` after a live readiness dependency became blocked. The command now calls `ftf_evaluate_mission_readiness` while holding the existing Mission aggregate lock, as the final validation immediately before the state update, and returns `{ "readiness_blocked": true, "readiness": ... }` without mutating or emitting events when readiness is not ready.
+- `ftf_read_mission_operating_days` accepted `mission.operational.write` as an alternative to `mission.operational.read`. The RPC now requires the exact read permission.
+- The PGlite fixture now includes an active same-organisation administrator assigned only to a second Base and an active same-Base actor with write-only Mission Operations permission. Direct service-role RPC assertions prove both read and write reject the other-Base actor with `location_forbidden`, while the write-only same-Base actor is rejected from read with `forbidden`.
+
+### RED
+
+1. The direct read-RPC regression failed because a same-Base actor with `mission.operational.write=true` and `mission.operational.read=false` received the day aggregate instead of `{ "forbidden": true }`.
+2. The live-readiness regression first authorised the package with a READY readiness snapshot, then changed the controlled live dependency to BLOCKED. Start incorrectly returned an `IN_PROGRESS` day instead of `readiness_blocked`.
+
+### GREEN and verification
+
+- The direct PGlite child run passed all 13 sequential behavior checks, including stored-READY/live-BLOCKED start denial, no start audit on denial, exact read permission, and same-organisation second-Base read/write denial.
+- Focused and adjacent verification passed: 7 suites, 41 tests.
+- Targeted ESLint and JavaScript syntax checks passed. ESLint emitted only the stale Browserslist-data notice.
+- `npm run build` completed successfully with the repository's pre-existing warning backlog; neither changed Task 6 file was reported.
+- `git diff --check` passed. No Production system was contacted and migrations ran only in ephemeral PGlite databases.

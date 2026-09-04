@@ -473,6 +473,7 @@ declare
   v_day public.mission_operating_days%rowtype;
   v_pack public.mission_pack_revisions%rowtype;
   v_authority jsonb;
+  v_readiness jsonb;
   v_latest_package_version integer;
 begin
   perform public.ftf_lock_mission_package_aggregate(p_organisation_id, p_mission_id);
@@ -517,6 +518,10 @@ begin
   if v_day.state <> 'READY' then return jsonb_build_object('error', 'MISSION_OPERATING_DAY_STATE_INVALID'); end if;
   if p_started_at is null or timezone(v_day.timezone, p_started_at)::date <> v_day.work_date then
     return jsonb_build_object('error', 'MISSION_OPERATING_TIME_INVALID');
+  end if;
+  v_readiness := public.ftf_evaluate_mission_readiness(p_organisation_id, p_mission_id, now());
+  if not coalesce((v_readiness->>'ready')::boolean, false) then
+    return jsonb_build_object('readiness_blocked', true, 'readiness', v_readiness);
   end if;
   update public.mission_operating_days
   set state = 'IN_PROGRESS', actual_started_at = p_started_at,
@@ -720,10 +725,8 @@ declare
   v_mission public.missions%rowtype;
 begin
   if not public.ftf_actor_has_active_beta_seat(p_organisation_id, p_actor_internal_user_id)
-    or not (
-      public.ftf_actor_has_permission(p_organisation_id, p_actor_internal_user_id, 'mission.operational.read')
-      or public.ftf_actor_has_permission(p_organisation_id, p_actor_internal_user_id, 'mission.operational.write')
-    ) then return jsonb_build_object('forbidden', true); end if;
+    or not public.ftf_actor_has_permission(p_organisation_id, p_actor_internal_user_id, 'mission.operational.read')
+    then return jsonb_build_object('forbidden', true); end if;
   select * into v_mission from public.missions
   where organisation_id = p_organisation_id and id = p_mission_id and archived_at is null;
   if not found then return jsonb_build_object('error', 'MISSION_OPERATING_DAY_NOT_FOUND'); end if;

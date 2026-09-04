@@ -42,6 +42,18 @@ test('day start requires current CRP authority and JSA review', () => {
 const ids = {
   authA: '10000000-0000-4000-8000-000000000001',
   authB: '10000000-0000-4000-8000-000000000002',
+  authAOtherBase: '10000000-0000-4000-8000-000000000003',
+  authAWriter: '10000000-0000-4000-8000-000000000004',
+  actorAOtherBase: '11000000-0000-4000-8000-000000000003',
+  actorAWriter: '11000000-0000-4000-8000-000000000004',
+  baseAOther: '12000000-0000-4000-8000-000000000002',
+  writerRole: '13000000-0000-4000-8000-000000000001',
+  membershipAOtherBase: '14000000-0000-4000-8000-000000000003',
+  membershipAWriter: '14000000-0000-4000-8000-000000000004',
+  seatAOtherBase: '15000000-0000-4000-8000-000000000003',
+  seatAWriter: '15000000-0000-4000-8000-000000000004',
+  locationAssignmentAOtherBase: '16000000-0000-4000-8000-000000000003',
+  locationAssignmentAWriter: '16000000-0000-4000-8000-000000000004',
   client: '20000000-0000-4000-8000-000000000001',
   property: '30000000-0000-4000-8000-000000000001',
   fieldA: '40000000-0000-4000-8000-000000000001',
@@ -90,12 +102,40 @@ if (child) {
     for (const name of fs.readdirSync(migrations).filter((name) => /^\d{14}_.+\.sql$/.test(name)).sort()) {
       if (!excluded.has(name)) await db.exec(fs.readFileSync(path.join(migrations, name), 'utf8'));
     }
-    await db.exec(`insert into auth.users(id,email) values('${ids.authA}','a@example.test'),('${ids.authB}','b@example.test')`);
+    await db.exec(`insert into auth.users(id,email) values
+      ('${ids.authA}','a@example.test'),
+      ('${ids.authB}','b@example.test'),
+      ('${ids.authAOtherBase}','a-other-base@example.test'),
+      ('${ids.authAWriter}','a-writer@example.test')`);
     const a = await call('ftf_bootstrap_production_beta_organisation', [ids.authA, 'Organisation A', 'Admin A', 'Base A', null, 'Australia/Brisbane']);
     const b = await call('ftf_bootstrap_production_beta_organisation', [ids.authB, 'Organisation B', 'Admin B', 'Base B', null, 'Australia/Brisbane']);
     orgA = a.organisation_id; actorA = a.internal_user_id; baseA = a.operating_location_id;
     orgB = b.organisation_id; actorB = b.internal_user_id;
     await db.exec(`
+      update public.organisation_seat_allocations set allocated_seats=3 where organisation_id='${orgA}';
+      insert into public.operating_locations(id,organisation_id,name,timezone)
+        values('${ids.baseAOther}','${orgA}','Base A Other','Australia/Brisbane');
+      insert into public.internal_users(id,organisation_id,auth_user_id,display_name) values
+        ('${ids.actorAOtherBase}','${orgA}','${ids.authAOtherBase}','Other Base Admin'),
+        ('${ids.actorAWriter}','${orgA}','${ids.authAWriter}','Base A Writer');
+      insert into public.roles(id,organisation_id,code,name)
+        values('${ids.writerRole}','${orgA}','mission_writer_test','Mission writer test');
+      insert into public.memberships(id,organisation_id,internal_user_id,role_id) values
+        ('${ids.membershipAOtherBase}','${orgA}','${ids.actorAOtherBase}',(select id from public.roles where organisation_id='${orgA}' and code='admin')),
+        ('${ids.membershipAWriter}','${orgA}','${ids.actorAWriter}','${ids.writerRole}');
+      insert into public.role_permissions(organisation_id,role_id,permission_id)
+        select '${orgA}','${ids.writerRole}',id from public.permissions
+        where organisation_id='${orgA}' and code='mission.operational.write';
+      insert into public.internal_user_seat_assignments(
+        id,organisation_id,organisation_seat_allocation_id,internal_user_id,membership_id,status,assignment_source
+      ) values
+        ('${ids.seatAOtherBase}','${orgA}',(select id from public.organisation_seat_allocations where organisation_id='${orgA}'),'${ids.actorAOtherBase}','${ids.membershipAOtherBase}','active','mission_day_test'),
+        ('${ids.seatAWriter}','${orgA}',(select id from public.organisation_seat_allocations where organisation_id='${orgA}'),'${ids.actorAWriter}','${ids.membershipAWriter}','active','mission_day_test');
+      insert into public.membership_operating_location_assignments(
+        id,organisation_id,membership_id,operating_location_id,assignment_source
+      ) values
+        ('${ids.locationAssignmentAOtherBase}','${orgA}','${ids.membershipAOtherBase}','${ids.baseAOther}','mission_day_test'),
+        ('${ids.locationAssignmentAWriter}','${orgA}','${ids.membershipAWriter}','${baseA}','mission_day_test');
       insert into public.clients(id,organisation_id,name) values('${ids.client}','${orgA}','Client A');
       insert into public.properties(id,organisation_id,client_id,name) values('${ids.property}','${orgA}','${ids.client}','Property A');
       insert into public.fields(id,organisation_id,property_id,name,area_hectares) values
@@ -127,8 +167,18 @@ if (child) {
         values('${ids.personnel}','${orgA}','${actorA}','Eligible CRP','${actorA}','${actorA}');
       insert into public.personnel_operating_locations(organisation_id,personnel_id,operating_location_id,created_by_internal_user_id)
         values('${orgA}','${ids.personnel}','${baseA}','${actorA}');
+      create table public.test_mission_readiness_dependency(blocked boolean not null);
+      insert into public.test_mission_readiness_dependency(blocked) values(false);
       create or replace function public.ftf_evaluate_mission_readiness(p_organisation_id uuid,p_mission_id uuid,p_evaluated_at timestamptz default now())
-      returns jsonb language sql stable as $$select jsonb_build_object('ready',true,'overallState','READY','blockers','[]'::jsonb,'warnings','[]'::jsonb,'evidenceManifest',jsonb_build_object('planning',jsonb_build_object('chemicals',jsonb_build_object('revision',1),'aircraft','[]'::jsonb,'equipmentKits','[]'::jsonb,'personnel',jsonb_build_object('assignments','[]'::jsonb)),'preflight',jsonb_build_object('jsa',jsonb_build_object('id','${ids.jsa}'),'observedWeather',null)))$$;
+      returns jsonb language sql stable as $$
+        select jsonb_build_object(
+          'ready',not dependency.blocked,
+          'overallState',case when dependency.blocked then 'BLOCKED' else 'READY' end,
+          'blockers',case when dependency.blocked then jsonb_build_array(jsonb_build_object('code','LIVE_DEPENDENCY_BLOCKED')) else '[]'::jsonb end,
+          'warnings','[]'::jsonb,
+          'evidenceManifest',jsonb_build_object('planning',jsonb_build_object('chemicals',jsonb_build_object('revision',1),'aircraft','[]'::jsonb,'equipmentKits','[]'::jsonb,'personnel',jsonb_build_object('assignments','[]'::jsonb)),'preflight',jsonb_build_object('jsa',jsonb_build_object('id','${ids.jsa}'),'observedWeather',null))
+        ) from public.test_mission_readiness_dependency dependency
+      $$;
     `);
     const preparing = await call('ftf_save_mission_package_scope', [orgA, actorA, ids.mission, 0, JSON.stringify([ids.fieldA])]);
     const submitted = await call('ftf_submit_mission_package', [orgA, actorA, ids.mission, preparing.record.id, 1, preparing.record.evidence_digest]);
@@ -143,6 +193,13 @@ if (child) {
     expect(await call('ftf_create_mission_operating_day', [orgB, actorB, ids.mission, '2026-09-05', null])).toMatchObject({ error: 'MISSION_OPERATING_DAY_NOT_FOUND' });
   });
 
+  test('denies direct read and write RPCs to a same-org actor assigned only another Base', async () => {
+    expect(await scalar(db, `select public.ftf_actor_has_permission('${orgA}','${ids.actorAOtherBase}','mission.operational.read') as value`)).toBe(true);
+    expect(await scalar(db, `select public.ftf_actor_has_permission('${orgA}','${ids.actorAOtherBase}','mission.operational.write') as value`)).toBe(true);
+    expect(await call('ftf_create_mission_operating_day', [orgA, ids.actorAOtherBase, ids.mission, '2026-09-07', null])).toMatchObject({ location_forbidden: true });
+    expect(await call('ftf_read_mission_operating_days', [orgA, ids.actorAOtherBase, ids.mission])).toMatchObject({ location_forbidden: true });
+  });
+
   test('requires the exact day JSA review and rejects Fields outside the authorised package', async () => {
     expect(await call('ftf_start_mission_operating_day', [orgA, actorA, ids.mission, day.day.id, 1, '2026-09-04T15:30:00.000Z'])).toMatchObject({ error: 'JSA_DAY_REVIEW_REQUIRED' });
     expect(await call('ftf_review_mission_day_jsa', [orgA, actorA, ids.mission, day.day.id, null, 'CONDITIONS_COVERED', null])).toMatchObject({ error: 'MISSION_OPERATING_DAY_VERSION_CONFLICT', current_version: 1 });
@@ -155,6 +212,16 @@ if (child) {
     day = saved;
   });
 
+  test('rechecks live readiness under the aggregate lock immediately before start', async () => {
+    expect(await scalar(db, `select (readiness_snapshot->>'ready')::boolean as value from public.mission_authorisation_revisions where mission_pack_revision_id='${pack.id}'`)).toBe(true);
+    await db.exec(`update public.test_mission_readiness_dependency set blocked=true`);
+    const blocked = await call('ftf_start_mission_operating_day', [orgA, actorA, ids.mission, day.day.id, 3, '2026-09-04T15:30:00.000Z']);
+    expect(blocked).toMatchObject({ readiness_blocked: true, readiness: { ready: false, overallState: 'BLOCKED' } });
+    expect(await scalar(db, `select state as value from public.mission_operating_days where id='${day.day.id}'`)).toBe('READY');
+    expect(await scalar(db, `select count(*)::integer as value from public.audit_events where entity_id='${day.day.id}' and event_type='mission.operating_day.started'`)).toBe(0);
+    await db.exec(`update public.test_mission_readiness_dependency set blocked=false`);
+  });
+
   test('starts once under optimistic concurrency and preserves exact overnight timestamps', async () => {
     expect(await call('ftf_start_mission_operating_day', [orgA, actorA, ids.mission, day.day.id, null, '2026-09-04T15:30:00.000Z'])).toMatchObject({ error: 'MISSION_OPERATING_DAY_VERSION_CONFLICT', current_version: 3 });
     const started = await call('ftf_start_mission_operating_day', [orgA, actorA, ids.mission, day.day.id, 3, '2026-09-04T15:30:00.000Z']);
@@ -165,6 +232,12 @@ if (child) {
     const completed = await call('ftf_complete_mission_operating_day', [orgA, actorA, ids.mission, day.day.id, 4, '2026-09-05T17:00:00.000Z', 'Overnight operation.']);
     expect(completed.day).toMatchObject({ state: 'COMPLETED', row_version: 5 });
     expect(new Date(completed.day.actual_finished_at).toISOString()).toBe('2026-09-05T17:00:00.000Z');
+  });
+
+  test('requires exact operational read permission at the direct read RPC', async () => {
+    expect(await scalar(db, `select public.ftf_actor_has_permission('${orgA}','${ids.actorAWriter}','mission.operational.write') as value`)).toBe(true);
+    expect(await scalar(db, `select public.ftf_actor_has_permission('${orgA}','${ids.actorAWriter}','mission.operational.read') as value`)).toBe(false);
+    expect(await call('ftf_read_mission_operating_days', [orgA, ids.actorAWriter, ids.mission])).toMatchObject({ forbidden: true });
   });
 
   test('freezes the day and its Field evidence after governed sign-off', async () => {
