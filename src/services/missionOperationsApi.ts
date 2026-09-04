@@ -29,6 +29,9 @@ import type {
   MissionDayWeatherManualInput,
   MissionDayWeatherReportRecord,
   MissionDayWeatherSource,
+  MissionFinalSignoffReadiness,
+  MissionCompletionRevision,
+  MissionJobCloseResult,
 } from '../types/missionOperations';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -666,6 +669,33 @@ function decodeRequiredMissionDayWeatherReport(value: unknown): MissionDayWeathe
   return report;
 }
 
+export function decodeMissionFinalSignoffReadiness(value: unknown): MissionFinalSignoffReadiness {
+  const source = exact(object(value), ['missionId', 'operationalWorkCompleted', 'finalSignedOff', 'readyForFinalSignoff', 'currentCompletionRevision', 'blockers']);
+  if (!Array.isArray(source.blockers) || source.blockers.length > 100) return malformed();
+  const blockers = source.blockers.map((candidate) => {
+    const blocker = exact(object(candidate), ['code', 'message']);
+    return { code: boundedText(blocker.code, 100), message: boundedText(blocker.message, 1000) };
+  });
+  const readiness = {
+    missionId: uuid(source.missionId), operationalWorkCompleted: boolean(source.operationalWorkCompleted), finalSignedOff: boolean(source.finalSignedOff),
+    readyForFinalSignoff: boolean(source.readyForFinalSignoff), currentCompletionRevision: nonNegativeInteger(source.currentCompletionRevision), blockers,
+  };
+  if (readiness.readyForFinalSignoff !== (readiness.blockers.length === 0 && !readiness.finalSignedOff)) return malformed();
+  return readiness;
+}
+
+export function decodeMissionCompletionRevision(value: unknown): MissionCompletionRevision {
+  const source = exact(object(value), ['id', 'missionId', 'versionNumber', 'dailyEvidenceDigest', 'completedAt']);
+  return { id: uuid(source.id), missionId: uuid(source.missionId), versionNumber: positiveInteger(source.versionNumber),
+    dailyEvidenceDigest: digest(source.dailyEvidenceDigest), completedAt: exactTimestamp(source.completedAt) };
+}
+
+export function decodeMissionJobCloseResult(value: unknown): MissionJobCloseResult {
+  const source = exact(object(value), ['id', 'status', 'rowVersion']);
+  if (source.status !== 'closed') return malformed();
+  return { id: uuid(source.id), status: 'closed', rowVersion: positiveInteger(source.rowVersion) };
+}
+
 async function parseResponse(response: Response): Promise<unknown> {
   const envelope: any = await response.json().catch(() => ({}));
   const correlationId = response.headers.get('X-Correlation-ID') || envelope?.error?.correlationId || undefined;
@@ -721,6 +751,9 @@ export function createMissionOperationsApi(fetcher: typeof fetch = fetch) {
     readWeatherReport: async (missionId: string, dayId: string) => decodeMissionDayWeatherReport(await request('day-weather', { method: 'GET' }, missionId, dayId)),
     captureWeather: async (dayId: string, input: MissionDayWeatherCaptureInput) => decodeRequiredMissionDayWeatherReport(await write('day-weather-capture', { ...input, dayId })),
     saveManualWeather: async (dayId: string, input: MissionDayWeatherManualInput) => decodeRequiredMissionDayWeatherReport(await write('day-weather-manual', { ...input, dayId })),
+    readFinalSignoffReadiness: async (missionId: string) => decodeMissionFinalSignoffReadiness(await request('final-signoff-readiness', { method: 'GET' }, missionId)),
+    finalSignoffMission: async (missionId: string, expectedRevision: number, declarationValue: string) => decodeMissionCompletionRevision(await write('final-signoff', { missionId, expectedRevision, declaration: declarationValue })),
+    closeJob: async (jobId: string, expectedVersion: number) => decodeMissionJobCloseResult(await write('job-close', { jobId, expectedVersion })),
   };
 }
 

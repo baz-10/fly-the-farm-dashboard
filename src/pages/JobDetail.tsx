@@ -66,6 +66,8 @@ import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import ExpandLessIcon from '@mui/icons-material/ExpandLess';
 import { useOperationalData } from '../contexts/OperationalDataContext';
 import { describeOperationalError } from '../services/operationalDataStore';
+import { missionOperationsApi } from '../services/missionOperationsApi';
+import type { MissionFinalSignoffReadiness } from '../types/missionOperations';
 
 const efficacyLabels: Record<number, string> = {
   1: 'No effect',
@@ -186,6 +188,10 @@ function AuthoritativeJobDetail() {
                 <Typography variant="body2" fontWeight={700}>{mission.missionNumber} · {mission.title}</Typography>
                 <Button size="small" variant="outlined" onClick={() => navigate(`/missions/${mission.id}?stage=review`)}>Open Mission review</Button>
               </Stack>)}</Stack>}
+            <Divider sx={{ my: 2 }} />
+            <JobCloseControl jobId={job.id} jobVersion={job.rowVersion} jobStatus={job.status}
+              missions={linkedMissions}
+              onClosed={() => operational.refresh()} />
           </CardContent>
         </Card>
         <Alert severity="info">Outcomes, reports, financials and compliance records are unavailable until their authoritative Production Beta slices are connected. Chemical, weather, spray recommendation and actual/quote data are not shown as server data.</Alert>
@@ -204,6 +210,32 @@ function AuthoritativeJobDetail() {
 
 function InfoRow({ label, value }: { label: string; value: string }) {
   return <Box sx={{ display: 'flex', gap: 2, py: 0.75 }}><Typography variant="body2" color="text.secondary" sx={{ minWidth: 140, fontWeight: 600 }}>{label}</Typography><Typography variant="body2">{value}</Typography></Box>;
+}
+
+function JobCloseControl({ jobId, jobVersion, jobStatus, missions, onClosed }: {
+  jobId: string; jobVersion: number; jobStatus: string;
+  missions: Array<{ id: string; status: string }>; onClosed: () => Promise<void>;
+}) {
+  const [readiness, setReadiness] = useState<MissionFinalSignoffReadiness[]>([]);
+  const [error, setError] = useState('');
+  const governedMissions = useMemo(() => missions.filter((mission) => !['cancelled', 'canceled'].includes(String(mission.status || '').toLowerCase())), [missions]);
+  const allOperationallyCompleted = missions.length > 0 && governedMissions.every((mission) => String(mission.status || '').toLowerCase() === 'completed');
+  React.useEffect(() => {
+    if (!allOperationallyCompleted || jobStatus.toLowerCase() === 'closed') return;
+    let active = true;
+    void Promise.all(governedMissions.map((mission) => missionOperationsApi.readFinalSignoffReadiness(mission.id)))
+      .then((records) => { if (active) setReadiness(records); })
+      .catch((candidate) => { if (active) setError(candidate instanceof Error ? candidate.message : 'Job close readiness could not be loaded.'); });
+    return () => { active = false; };
+  }, [allOperationallyCompleted, governedMissions, jobStatus]);
+  if (jobStatus.toLowerCase() === 'closed') return <Alert severity="success">Job closed</Alert>;
+  if (!allOperationallyCompleted) return <Typography variant="body2" color="text.secondary">Job close becomes available after every non-cancelled Mission completes operational work and final sign-off.</Typography>;
+  if (error) return <Alert severity="error">{error}</Alert>;
+  const ready = readiness.length === governedMissions.length && readiness.every((record) => record.finalSignedOff);
+  return <Stack spacing={1}>
+    <Typography variant="body2" fontWeight={700}>{ready ? 'Job ready to close' : 'Mission final sign-off remains incomplete'}</Typography>
+    {ready && <Button variant="contained" onClick={async () => { try { setError(''); await missionOperationsApi.closeJob(jobId, jobVersion); await onClosed(); } catch (candidate) { setError(candidate instanceof Error ? candidate.message : 'Job close failed.'); } }}>Close Job</Button>}
+  </Stack>;
 }
 
 function LocalJobDetail() {

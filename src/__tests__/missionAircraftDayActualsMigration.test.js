@@ -427,6 +427,16 @@ if (child) {
       .toMatchObject({ fleet_projection: { projected_count: 0, idempotent_count: 2 } });
   });
 
+  test('multi-day final sign-off fails closed before creating completion or projection authority', async () => {
+    const readiness = await call('ftf_read_mission_final_signoff_readiness', [orgA, actorA, ids.mission]);
+    expect(readiness.ready_for_final_signoff).toBe(false);
+    expect(readiness.blockers.map((blocker) => blocker.code)).toContain('MISSION_DAY_INCOMPLETE');
+    expect(await call('ftf_final_signoff_mission', [orgA, actorA, ids.mission, 0, 'Evidence reviewed and complete.']))
+      .toMatchObject({ error: readiness.blockers[0].code });
+    expect(await scalar(db, `select count(*)::integer as value from public.mission_completion_revisions where mission_id='${ids.mission}'`)).toBe(0);
+    expect(await scalar(db, `select count(*)::integer as value from public.mission_final_projection_sources where mission_id='${ids.mission}'`)).toBe(0);
+  });
+
   test('writes bounded audit and outbox evidence and closes the database', async () => {
     expect(await scalar(db, `select count(*)::integer as value from public.audit_events where organisation_id='${orgA}' and event_type like 'mission.aircraft_day.%'`)).toBeGreaterThan(0);
     expect(await scalar(db, `select count(*)::integer as value from public.transactional_outbox where organisation_id='${orgA}' and topic like 'operational.mission.aircraft_day_%'`)).toBeGreaterThan(0);

@@ -257,6 +257,25 @@ function weatherReport(record) {
   };
 }
 
+function finalSignoffReadiness(result) {
+  const failed = failure(result); if (failed) return failed;
+  return {
+    missionId: result.mission_id,
+    operationalWorkCompleted: result.operational_work_completed,
+    finalSignedOff: result.final_signed_off,
+    readyForFinalSignoff: result.ready_for_final_signoff,
+    currentCompletionRevision: result.current_completion_revision,
+    blockers: (result.blockers || []).map((item) => ({ code: item.code, message: item.message })),
+  };
+}
+
+function completionRevision(result) {
+  const failed = failure(result); if (failed) return failed;
+  const record = result.record || result;
+  return { id: record.id, missionId: record.mission_id, versionNumber: record.version_number,
+    dailyEvidenceDigest: record.daily_evidence_digest, completedAt: record.completed_at };
+}
+
 function weatherCaptureContext(result) {
   const failed = failure(result);
   if (failed) return failed;
@@ -506,6 +525,27 @@ class MissionOperationsRepository {
     }, 'Mission day weather report could not be loaded.');
     const failed = failure(result);
     return failed || weatherReport(result.report);
+  }
+
+  async readFinalSignoffReadiness(context, missionId) {
+    return finalSignoffReadiness(await this.rpc('ftf_read_mission_final_signoff_readiness', {
+      ...this.trusted(context), p_mission_id: missionId,
+    }, 'Mission final sign-off readiness could not be loaded.'));
+  }
+
+  async finalSignoffMission(context, { missionId, expectedRevision, declaration }) {
+    return completionRevision(await this.rpc('ftf_final_signoff_mission', {
+      ...this.trusted(context), p_mission_id: missionId, p_expected_revision: expectedRevision, p_declaration: declaration,
+    }, 'Mission final sign-off could not be completed.'));
+  }
+
+  async closeJob(context, { jobId, expectedVersion }) {
+    const result = await this.rpc('ftf_close_job', {
+      ...this.trusted(context), p_job_id: jobId, p_expected_version: expectedVersion,
+    }, 'Job could not be closed.');
+    const failed = failure(result); if (failed) return failed;
+    const record = result.record || result;
+    return { id: record.id, status: record.status, rowVersion: record.row_version };
   }
 }
 

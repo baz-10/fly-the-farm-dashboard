@@ -62,6 +62,29 @@ const repository = () => ({
   prepareWeatherCapture: jest.fn().mockResolvedValue({ missionId: MISSION, operatingDayId: DAY, dayVersion: 4, contextDigest: 'c'.repeat(64), coverage: 'ACTUAL_INTERVAL', intervalStartAt: '2026-09-04T21:30:00.000Z', intervalEndAt: '2026-09-05T03:15:00.000Z', timezone: 'Australia/Brisbane', latitude: '-27.500000', longitude: '153.100000' }),
   freezeWeatherReport: jest.fn().mockResolvedValue({ id: WEATHER_REPORT, missionId: MISSION, operatingDayId: DAY, sourceDigest: DIGEST }),
   readWeatherReport: jest.fn().mockResolvedValue(null),
+  readFinalSignoffReadiness: jest.fn().mockResolvedValue({ missionId: MISSION, operationalWorkCompleted: true, finalSignedOff: false, readyForFinalSignoff: true, currentCompletionRevision: 0, blockers: [] }),
+  finalSignoffMission: jest.fn().mockResolvedValue({ id: DECISION, missionId: MISSION, versionNumber: 1, dailyEvidenceDigest: DIGEST, completedAt: '2026-09-06T10:00:00.000Z' }),
+  closeJob: jest.fn().mockResolvedValue({ id: FIELD_B, status: 'closed', rowVersion: 5 }),
+});
+
+test('routes checked final readiness, canonical final sign-off and Job close commands', async () => {
+  const repo = repository();
+  const handler = createMissionOperationsHandler({
+    repository: repo,
+    resolveContext: async () => context(['mission.completion.complete', 'mission.operational.read', 'jobs.write']),
+  });
+  let res = response();
+  await handler(request('GET', 'final-signoff-readiness', {}, { missionId: MISSION }), res);
+  expect(res.statusCode).toBe(200);
+  expect(repo.readFinalSignoffReadiness).toHaveBeenCalledWith(expect.anything(), MISSION);
+  res = response();
+  await handler(request('POST', 'final-signoff', { missionId: MISSION, expectedRevision: 0, declaration: 'Evidence reviewed and complete.' }), res);
+  expect(res.statusCode).toBe(201);
+  expect(repo.finalSignoffMission).toHaveBeenCalledWith(expect.anything(), { missionId: MISSION, expectedRevision: 0, declaration: 'Evidence reviewed and complete.' });
+  res = response();
+  await handler(request('POST', 'job-close', { jobId: FIELD_B, expectedVersion: 4 }), res);
+  expect(res.statusCode).toBe(200);
+  expect(repo.closeJob).toHaveBeenCalledWith(expect.anything(), { jobId: FIELD_B, expectedVersion: 4 });
 });
 
 test('routes a strictly decoded amendment through checked package authority', async () => {

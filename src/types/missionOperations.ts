@@ -280,3 +280,31 @@ export interface MissionDayWeatherCaptureInput {
 export interface MissionDayWeatherManualInput extends MissionDayWeatherCaptureInput {
   evidence: MissionDayWeatherEvidence;
 }
+
+export interface MissionFinalSignoffBlocker {
+  code: string;
+  message: string;
+}
+
+export interface MissionFinalSignoffReadiness {
+  missionId: string;
+  operationalWorkCompleted: boolean;
+  finalSignedOff: boolean;
+  readyForFinalSignoff: boolean;
+  currentCompletionRevision: number;
+  blockers: MissionFinalSignoffBlocker[];
+}
+
+export interface MissionCompletionRevision {
+  id: string;
+  missionId: string;
+  versionNumber: number;
+  dailyEvidenceDigest: string;
+  completedAt: string;
+}
+
+export interface MissionJobCloseResult {
+  id: string;
+  status: 'closed';
+  rowVersion: number;
+}

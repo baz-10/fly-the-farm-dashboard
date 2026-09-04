@@ -27,6 +27,9 @@ const ACTIONS = Object.freeze({
   'day-weather': { method: 'GET', permission: 'mission.operational.read' },
   'day-weather-capture': { method: 'POST', permission: 'mission.operational.write' },
   'day-weather-manual': { method: 'POST', permission: 'mission.operational.write' },
+  'final-signoff-readiness': { method: 'GET', permission: 'mission.operational.read' },
+  'final-signoff': { method: 'POST', permission: 'mission.completion.complete' },
+  'job-close': { method: 'POST', permission: 'jobs.write' },
 });
 
 function fail(statusCode, code, message) {
@@ -387,7 +390,10 @@ function checkedFailure(req, result) {
     'METER_SOURCE_NOT_ALLOWED', 'METER_VALUE_REQUIRES_CORRECTION',
     'MISSION_REAUTHORISATION_REQUIRED', 'MISSION_DAY_CHEMICAL_REVISION_CONFLICT',
     'MISSION_DAY_WEATHER_ALREADY_FROZEN', 'MISSION_DAY_ACTUAL_INTERVAL_REQUIRED',
-    'MISSION_DAY_WEATHER_CONTEXT_CONFLICT',
+    'MISSION_DAY_WEATHER_CONTEXT_CONFLICT', 'MISSION_DAY_INCOMPLETE',
+    'MISSION_JSA_REVIEW_REQUIRED', 'MISSION_DAY_CHEMICAL_REQUIRED',
+    'MISSION_DAY_WEATHER_REQUIRED', 'MISSION_COMPLETION_VERSION_CONFLICT',
+    'JOB_MISSIONS_NOT_SIGNED_OFF', 'JOB_MISSIONS_REQUIRED', 'JOB_VERSION_CONFLICT',
     'MISSION_DAY_CHEMICAL_PLAN_NOT_FOUND', 'MISSION_DAY_WEATHER_LOCATION_REQUIRED'].includes(code)) {
     const messages = {
       MISSION_NOT_AUTHORISED: 'The Mission requires current CRP authority.',
@@ -466,6 +472,8 @@ function createMissionOperationsHandler(dependencies = {}) {
           uuid(req.query?.missionId, 'Mission'),
           uuid(req.query?.dayId, 'Operating day'),
         );
+      } else if (action === 'final-signoff-readiness') {
+        result = await repository.readFinalSignoffReadiness(context, uuid(req.query?.missionId, 'Mission'));
       } else if (action === 'scope') {
         const body = exactObject(req.body, ['missionId', 'expectedRevision', 'fieldIds']);
         result = await repository.saveScope(context, {
@@ -580,6 +588,16 @@ function createMissionOperationsHandler(dependencies = {}) {
           notes: optionalNotes(body.notes),
         });
         status = 201;
+      } else if (action === 'final-signoff') {
+        const body = exactObject(req.body, ['missionId', 'expectedRevision', 'declaration']);
+        result = await repository.finalSignoffMission(context, {
+          missionId: uuid(body.missionId, 'Mission'), expectedRevision: revision(body.expectedRevision),
+          declaration: declaration(body.declaration),
+        });
+        status = 201;
+      } else if (action === 'job-close') {
+        const body = exactObject(req.body, ['jobId', 'expectedVersion']);
+        result = await repository.closeJob(context, { jobId: uuid(body.jobId, 'Job'), expectedVersion: revision(body.expectedVersion) });
       } else if (action === 'day-weather-capture' || action === 'day-weather-manual') {
         const body = exactObject(req.body, action === 'day-weather-manual'
           ? ['missionId', 'dayId', 'coverage', 'evidence']

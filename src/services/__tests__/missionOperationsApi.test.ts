@@ -8,6 +8,9 @@ import {
   decodeMissionAircraftDayActuals,
   decodeMissionDayChemicalActuals,
   decodeMissionDayWeatherReport,
+  decodeMissionFinalSignoffReadiness,
+  decodeMissionCompletionRevision,
+  decodeMissionJobCloseResult,
 } from '../missionOperationsApi';
 
 const MISSION_ID = '11111111-1111-4111-8111-111111111111';
@@ -188,6 +191,22 @@ function response(data: unknown, status = 200) {
 }
 
 describe('Mission Operations strict contracts', () => {
+  test('decodes exact final-signoff readiness, completion and Job-close projections', () => {
+    const readiness = { missionId: MISSION_ID, operationalWorkCompleted: true, finalSignedOff: false,
+      readyForFinalSignoff: true, currentCompletionRevision: 1, blockers: [] };
+    expect(decodeMissionFinalSignoffReadiness(readiness)).toEqual(readiness);
+    expect(decodeMissionCompletionRevision({ id: DECISION_ID, missionId: MISSION_ID, versionNumber: 2,
+      dailyEvidenceDigest: DIGEST, completedAt: '2026-09-06T10:00:00.000Z' })).toEqual({
+      id: DECISION_ID, missionId: MISSION_ID, versionNumber: 2, dailyEvidenceDigest: DIGEST, completedAt: '2026-09-06T10:00:00.000Z',
+    });
+    expect(decodeMissionJobCloseResult({ id: FIELD_A, status: 'closed', rowVersion: 6 })).toEqual({ id: FIELD_A, status: 'closed', rowVersion: 6 });
+    expect(() => decodeMissionFinalSignoffReadiness({ ...readiness, readyForFinalSignoff: false }))
+      .toThrow(expect.objectContaining({ code: 'MALFORMED_RESPONSE' }));
+    expect(() => decodeMissionCompletionRevision({ id: DECISION_ID, missionId: MISSION_ID, versionNumber: 2,
+      dailyEvidenceDigest: 'unsafe', completedAt: '2026-09-06T10:00:00.000Z' })).toThrow(expect.objectContaining({ code: 'MALFORMED_RESPONSE' }));
+    expect(() => decodeMissionJobCloseResult({ id: FIELD_A, status: 'completion_review', rowVersion: 6 }))
+      .toThrow(expect.objectContaining({ code: 'MALFORMED_RESPONSE' }));
+  });
   test('decodes the exact immutable package revision contract', () => {
     expect(decodeMissionPackageRevision(packageRevision)).toEqual(packageRevision);
   });
