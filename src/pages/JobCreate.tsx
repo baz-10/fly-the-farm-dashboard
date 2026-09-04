@@ -104,8 +104,15 @@ export default function JobCreate() {
     return Array.from(new Set(queryFieldIds.length ? queryFieldIds : (fieldId ? [fieldId] : [])));
   }, [fieldId, searchParams]);
   const [scope, setScope] = useState({ clientId: clientId || '', fieldIds: initialScopeFieldIds });
+  const scopedPropertyIds = new Set(operational.properties
+    .filter((record) => record.clientId === scope.clientId)
+    .map((record) => record.id));
+  const scopedFieldIds = scope.fieldIds.filter((id) => {
+    const record = operational.fields.find((fieldRecord) => fieldRecord.id === id);
+    return Boolean(record && scopedPropertyIds.has(record.propertyId));
+  });
   const scopedFields = operational.mode === 'remote'
-    ? scope.fieldIds.map((id) => operational.fields.find((record) => record.id === id)).filter((record): record is typeof operational.fields[number] => Boolean(record))
+    ? scopedFieldIds.map((id) => operational.fields.find((record) => record.id === id)).filter((record): record is typeof operational.fields[number] => Boolean(record))
     : field ? [field] : [];
   const scopedClient = operational.mode === 'remote'
     ? operational.clients.find((record) => record.id === scope.clientId)
@@ -611,7 +618,7 @@ export default function JobCreate() {
                   properties={operational.properties}
                   fields={operational.fields}
                   selectedClientId={scope.clientId}
-                  selectedFieldIds={scope.fieldIds}
+                  selectedFieldIds={scopedFieldIds}
                   onScopeChange={setScope}
                 />
                 <TextField label="Job Reference" value={jobReference} onChange={(event) => setJobReference(event.target.value)} required fullWidth />

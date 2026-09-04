@@ -52,6 +52,18 @@ export default defineConfig({
       testIgnore: [/environment\.spec\.ts/, /auth\.setup\.ts/, /cleanup\.setup\.ts/, /commercial-onboarding\.spec\.ts/],
     },
     {
+      name: 'webkit',
+      use: {
+        ...devices['Desktop Safari'],
+        storageState: 'test-results/.auth/organisation.json',
+        trace: 'off',
+        screenshot: 'off',
+        video: 'off',
+      },
+      dependencies: ['auth'],
+      testIgnore: [/environment\.spec\.ts/, /auth\.setup\.ts/, /cleanup\.setup\.ts/, /commercial-onboarding\.spec\.ts/],
+    },
+    {
       name: 'commercial-onboarding',
       retries: 0,
       testMatch: /commercial-onboarding\.spec\.ts/,

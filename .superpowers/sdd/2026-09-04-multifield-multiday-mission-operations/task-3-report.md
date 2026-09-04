@@ -30,3 +30,23 @@
 - Selection order is preserved so the first selected Field supplies only the bookmark-safe compatibility route; the complete `fieldIds` array remains the authoritative submitted scope.
 - The UI never exposes Fields from another Client. Client changes clear selected Fields before any further selection occurs.
 - The browser acceptance response waiter is installed before the Job submission click and matches both the configured origin and the exact `/api/v1/jobs` POST route.
+
+## Review fix round 1/5
+
+### Root cause and RED evidence
+
+- `JobCreate` used raw `fieldIds` from the query when it built its selected scope. It checked that an ID resolved to a Field, but did not check that the Field's parent Property belonged to the selected Client. A route with one valid Field and one foreign-client Field could therefore render and submit both.
+- Added `drops a foreign-client Field seeded through the Job scope query` to `src/pages/OperationalWorkflow.test.tsx`. Before the fix, it failed because the selector rendered a two-Property scope instead of the required single valid Field.
+
+### GREEN implementation and verification
+
+- `JobCreate` now derives scope IDs by resolving each Field through a Property owned by the selected Client. The sanitized IDs are the only IDs supplied to the selector and the only IDs eligible for submission.
+- The focused Jest command passed after the fix: 3 suites, 73 tests.
+- `npm run build` passed with the repository's pre-existing lint-warning backlog.
+
+### Browser coverage
+
+- Added a WebKit project using the existing authenticated-project pattern.
+- The acceptance workflow now creates a second Property and Field for the same Client, selects one Field at phone width, reveals the second Property at tablet width, selects its Field at desktop width, and asserts exactly the two created Field IDs in the authoritative Job POST response. The response waiter is registered before the create click and checks same origin, exact path, POST method and HTTP 201.
+- `npx playwright test e2e/acceptance/client-to-mission.spec.ts --project=chromium --project=webkit --list` passed and lists Chromium and WebKit coverage.
+- The full Chromium/WebKit run was attempted. Sandbox browser launch was denied by macOS port registration; the elevated retry reached the auth setup but stopped because `E2E_ORGANISATION_EMAIL` and `E2E_ORGANISATION_PASSWORD` are not available in this environment. No acceptance workflow, remote mutation or browser result was misreported as passing.

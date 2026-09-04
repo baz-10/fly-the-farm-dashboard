@@ -631,6 +631,24 @@ describe('authoritative client/property/field workflow screens', () => {
     })));
   });
 
+  test('drops a foreign-client Field seeded through the Job scope query', async () => {
+    const otherClient = { ...client, id: 'client-2', name: 'South Farm' };
+    const otherProperty = { ...property, id: 'property-2', clientId: 'client-2', name: 'South Block' };
+    const otherField = { ...field, id: 'field-2', propertyId: 'property-2', name: 'South Field' };
+    mockOperational = baseOperational({ clients: [client, otherClient], properties: [property, otherProperty], fields: [field, otherField] });
+    mockSearchParams = new URLSearchParams('fieldIds=field-1%2Cfield-2');
+    route('/jobs/client/client-1/property/property-1/field/field-1/new-job', <JobCreate />);
+
+    expect(screen.getByText('1 Property · 1 Field · 12.5000 ha')).toBeVisible();
+    fireEvent.change(screen.getByRole('textbox', { name: 'Job Reference' }), { target: { value: 'JOB-SANITISED' } });
+    fireEvent.change(screen.getByRole('combobox', { name: 'Weed Target' }), { target: { value: 'Spray lantana' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save Job' }));
+
+    await waitFor(() => expect(mockOperational.createJob).toHaveBeenCalledWith(expect.objectContaining({
+      clientId: 'client-1', propertyId: 'property-1', fieldIds: ['field-1'], reference: 'JOB-SANITISED',
+    })));
+  });
+
   test('blocks remote save when an unsupported operator value was entered', async () => {
     route('/jobs/client/client-1/property/property-1/field/field-1/new-job', <JobCreate />);
     fireEvent.change(screen.getByRole('textbox', { name: 'Job Reference' }), { target: { value: 'JOB-99' } });
