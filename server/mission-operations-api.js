@@ -13,7 +13,7 @@ const ACTIONS = Object.freeze({
   'day-jsa-review': { method: 'POST', permission: 'mission.operational.write' },
   'day-start': { method: 'POST', permission: 'mission.operational.write' },
   'field-activity-save': { method: 'POST', permission: 'mission.operational.write' },
-  'day-complete': { method: 'POST', permission: 'mission.operational.write' },
+  'day-complete': { method: 'POST', permissionsAll: ['mission.operational.write', 'mission.completion.complete', 'asset_meters.manage'] },
   days: { method: 'GET', permission: 'mission.operational.read' },
   'aircraft-actuals-save': { method: 'POST', permission: 'mission.operational.write' },
   'aircraft-actuals-reconcile': { method: 'POST', permission: 'mission.operational.write' },
@@ -173,6 +173,7 @@ function declaration(value) {
 function permitted(context, definition) {
   const permissions = context.permissions || [];
   if (permissions.includes('*')) return true;
+  if (definition.permissionsAll) return definition.permissionsAll.every((permission) => permissions.includes(permission));
   return definition.permissionsAny
     ? definition.permissionsAny.some((permission) => permissions.includes(permission))
     : permissions.includes(definition.permission);
@@ -218,7 +219,9 @@ function checkedFailure(req, result) {
     'JSA_DAY_REVIEW_CONFLICT', 'MISSION_DAY_FIELD_ACTIVITY_REQUIRED',
     'MISSION_AIRCRAFT_DAY_REQUIRED', 'MISSION_OPERATING_DAY_NOT_SIGNED_OFF',
     'AIRCRAFT_FLIGHT_HOURS_METER_REQUIRED', 'AIRCRAFT_FLIGHT_TOTAL_MISMATCH',
-    'AIRCRAFT_DAY_TOTAL_MISMATCH'].includes(code)) {
+    'AIRCRAFT_DAY_TOTAL_MISMATCH', 'MISSION_AIRCRAFT_DAY_SET_MISMATCH',
+    'AIRCRAFT_DAY_PROJECTION_OUT_OF_ORDER', 'AIRCRAFT_DAY_FLEET_PROJECTION_FAILED',
+    'METER_SOURCE_NOT_ALLOWED', 'METER_VALUE_REQUIRES_CORRECTION'].includes(code)) {
     const messages = {
       MISSION_NOT_AUTHORISED: 'The Mission requires current CRP authority.',
       JSA_DAY_REVIEW_REQUIRED: 'Review the effective Mission JSA before starting this operating day.',

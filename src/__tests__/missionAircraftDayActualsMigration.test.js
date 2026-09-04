@@ -59,13 +59,18 @@ const ids = {
   personnel: '70000000-0000-4000-8000-000000000001',
   jsa: '80000000-0000-4000-8000-000000000001',
   pack: '90000000-0000-4000-8000-000000000001',
+  dayEarly: 'a0000000-0000-4000-8000-000000000000',
   dayA: 'a0000000-0000-4000-8000-000000000001',
   dayB: 'a0000000-0000-4000-8000-000000000002',
   dayC: 'a0000000-0000-4000-8000-000000000003',
+  dayD: 'a0000000-0000-4000-8000-000000000004',
+  dayE: 'a0000000-0000-4000-8000-000000000005',
   aircraftA: 'b0000000-0000-4000-8000-000000000001',
   aircraftB: 'b0000000-0000-4000-8000-000000000002',
+  aircraftC: 'b0000000-0000-4000-8000-000000000003',
   assignmentA: 'c0000000-0000-4000-8000-000000000001',
   assignmentB: 'c0000000-0000-4000-8000-000000000002',
+  assignmentC: 'c0000000-0000-4000-8000-000000000003',
   meterA: 'd0000000-0000-4000-8000-000000000001',
   meterB: 'd0000000-0000-4000-8000-000000000002',
 };
@@ -134,7 +139,11 @@ if (child) {
       insert into public.mission_pack_revisions(
         id,organisation_id,operating_location_id,mission_id,version_number,pack_snapshot,generated_by_internal_user_id,
         job_id,package_state,jsa_revision_id,evidence_digest,source_manifest
-      ) values('${ids.pack}','${orgA}','${baseA}','${ids.mission}',1,'{}','${actorA}','${ids.job}','PREPARING','${ids.jsa}','${'a'.repeat(64)}','{}');
+      ) values('${ids.pack}','${orgA}','${baseA}','${ids.mission}',1,'{}','${actorA}','${ids.job}','PREPARING','${ids.jsa}','${'a'.repeat(64)}',
+        '${JSON.stringify({ aircraftAssignments: [
+          { id: ids.assignmentA, aircraftId: ids.aircraftA, aircraftRowVersion: 1 },
+          { id: ids.assignmentB, aircraftId: ids.aircraftB, aircraftRowVersion: 1 },
+        ] })}');
       insert into public.mission_pack_fields(organisation_id,operating_location_id,mission_id,job_id,pack_revision_id,property_id,field_id,field_order)
         values('${orgA}','${baseA}','${ids.mission}','${ids.job}','${ids.pack}','${ids.property}','${ids.field}',1);
       insert into public.aircraft(
@@ -144,10 +153,12 @@ if (child) {
         max_flight_time,service_range,minimum_crew_size,created_by_internal_user_id,updated_by_internal_user_id
       ) values
         ('${ids.aircraftA}','${orgA}','${baseA}','FTF-T100-001','DJI','T100','SER-001','operational','serviceable',true,100,120,30,0,0,'POL-1','Insurer','2030-01-01',100000,50000,-10,50,50,60,10,1,'${actorA}','${actorA}'),
-        ('${ids.aircraftB}','${orgA}','${baseA}','FTF-T100-002','DJI','T100','SER-002','operational','serviceable',true,100,120,30,0,0,'POL-2','Insurer','2030-01-01',100000,50000,-10,50,50,60,10,1,'${actorA}','${actorA}');
+        ('${ids.aircraftB}','${orgA}','${baseA}','FTF-T100-002','DJI','T100','SER-002','operational','serviceable',true,100,120,30,0,0,'POL-2','Insurer','2030-01-01',100000,50000,-10,50,50,60,10,1,'${actorA}','${actorA}'),
+        ('${ids.aircraftC}','${orgA}','${baseA}','FTF-T100-003','DJI','T100','SER-003','operational','serviceable',true,100,120,30,0,0,'POL-3','Insurer','2030-01-01',100000,50000,-10,50,50,60,10,1,'${actorA}','${actorA}');
       insert into public.mission_aircraft_assignments(id,organisation_id,operating_location_id,mission_id,aircraft_id,assigned_by_internal_user_id) values
         ('${ids.assignmentA}','${orgA}','${baseA}','${ids.mission}','${ids.aircraftA}','${actorA}'),
-        ('${ids.assignmentB}','${orgA}','${baseA}','${ids.mission}','${ids.aircraftB}','${actorA}');
+        ('${ids.assignmentB}','${orgA}','${baseA}','${ids.mission}','${ids.aircraftB}','${actorA}'),
+        ('${ids.assignmentC}','${orgA}','${baseA}','${ids.mission}','${ids.aircraftC}','${actorA}');
       insert into public.maintainable_asset_registry(organisation_id,aircraft_id,created_by_internal_user_id,updated_by_internal_user_id)
         select organisation_id,id,'${actorA}','${actorA}' from public.aircraft where organisation_id='${orgA}';
       insert into public.asset_meter_definitions(id,organisation_id,maintainable_asset_id,meter_type,name,unit,precision_scale,source_policy,created_by_internal_user_id)
@@ -158,6 +169,7 @@ if (child) {
         id,organisation_id,operating_location_id,mission_id,work_date,timezone,mission_pack_revision_id,jsa_revision_id,state,
         actual_started_at,created_by_internal_user_id,updated_by_internal_user_id
       ) values
+        ('${ids.dayEarly}','${orgA}','${baseA}','${ids.mission}','2026-09-04','Australia/Brisbane','${ids.pack}','${ids.jsa}','IN_PROGRESS','2026-09-03T15:00:00Z','${actorA}','${actorA}'),
         ('${ids.dayA}','${orgA}','${baseA}','${ids.mission}','2026-09-05','Australia/Brisbane','${ids.pack}','${ids.jsa}','IN_PROGRESS','2026-09-04T15:00:00Z','${actorA}','${actorA}'),
         ('${ids.dayB}','${orgA}','${baseA}','${ids.mission}','2026-09-06','Australia/Brisbane','${ids.pack}','${ids.jsa}','IN_PROGRESS','2026-09-05T15:00:00Z','${actorA}','${actorA}');
     `);
@@ -177,7 +189,10 @@ if (child) {
   test('derives a flights-only aircraft total from authoritative durations', async () => {
     const result = await call('ftf_save_mission_aircraft_day_actuals', [
       orgA, actorA, ids.mission, ids.dayB, 1, '10.0000',
-      JSON.stringify([{ aircraftId: ids.aircraftA, totalFlightHours: null }]),
+      JSON.stringify([
+        { aircraftId: ids.aircraftA, totalFlightHours: null },
+        { aircraftId: ids.aircraftB, totalFlightHours: '0.0000' },
+      ]),
       JSON.stringify([
         { aircraftId: ids.aircraftA, durationHours: '4.0000', startedAt: null, finishedAt: null, fieldId: null, sourceImportId: null },
         { aircraftId: ids.aircraftA, durationHours: '6.0000', startedAt: null, finishedAt: null, fieldId: null, sourceImportId: null },
@@ -190,7 +205,10 @@ if (child) {
     const current = await scalar(db, `select row_version as value from public.mission_operating_days where id='${ids.dayB}'`);
     const saved = await call('ftf_save_mission_aircraft_day_actuals', [
       orgA, actorA, ids.mission, ids.dayB, current, '9.0000',
-      JSON.stringify([{ aircraftId: ids.aircraftA, totalFlightHours: '9.0000' }]),
+      JSON.stringify([
+        { aircraftId: ids.aircraftA, totalFlightHours: '9.0000' },
+        { aircraftId: ids.aircraftB, totalFlightHours: '0.0000' },
+      ]),
       JSON.stringify([{ aircraftId: ids.aircraftA, durationHours: '10.0000', startedAt: null, finishedAt: null, fieldId: null, sourceImportId: null }]),
     ]);
     expect(saved).toMatchObject({ ready_for_sign_off: false });
@@ -209,20 +227,68 @@ if (child) {
     expect(await scalar(db, `select count(*)::integer as value from public.mission_aircraft_day_actuals where operating_day_id='${ids.dayC}'`)).toBe(0);
   });
 
-  test('projects signed-off daily totals once through the existing Fleet meter command', async () => {
+  test('requires the exact day-bound package aircraft set even when another assignment is active', async () => {
+    const omitted = await call('ftf_save_mission_aircraft_day_actuals', [
+      orgA, actorA, ids.mission, ids.dayC, 1, '1.0000',
+      JSON.stringify([{ aircraftId: ids.aircraftA, totalFlightHours: '1.0000' }]), '[]',
+    ]);
+    expect(omitted).toMatchObject({ error: 'MISSION_AIRCRAFT_DAY_SET_MISMATCH' });
+    const extraneous = await call('ftf_save_mission_aircraft_day_actuals', [
+      orgA, actorA, ids.mission, ids.dayC, 1, '1.0000',
+      JSON.stringify([
+        { aircraftId: ids.aircraftA, totalFlightHours: '1.0000' },
+        { aircraftId: ids.aircraftB, totalFlightHours: '0.0000' },
+        { aircraftId: ids.aircraftC, totalFlightHours: '0.0000' },
+      ]), '[]',
+    ]);
+    expect(extraneous).toMatchObject({ error: 'MISSION_AIRCRAFT_DAY_SET_MISMATCH' });
+    expect(await scalar(db, `select count(*)::integer as value from public.mission_aircraft_day_actuals where operating_day_id='${ids.dayC}'`)).toBe(0);
+  });
+
+  test('signs off and projects atomically in chronological order with independent aircraft baselines', async () => {
+    expect(await call('ftf_save_mission_aircraft_day_actuals', [
+      orgA, actorA, ids.mission, ids.dayEarly, 1, '2.0000',
+      JSON.stringify([
+        { aircraftId: ids.aircraftA, totalFlightHours: '1.0000' },
+        { aircraftId: ids.aircraftB, totalFlightHours: '1.0000' },
+      ]), '[]',
+    ])).toMatchObject({ ready_for_sign_off: true });
     await db.exec(`
-      update public.mission_operating_days set state='COMPLETED',actual_finished_at='2026-09-05T03:00:00Z' where id='${ids.dayA}';
-      begin;
-      select set_config('app.mission_operating_day_signoff','allowed',true);
-      update public.mission_operating_days set state='SIGNED_OFF' where id='${ids.dayA}';
-      commit;
+      insert into public.asset_meter_readings(organisation_id,meter_definition_id,recorded_at,value,source,source_system,source_record_id,evidence,recorded_by_internal_user_id) values
+        ('${orgA}','${ids.meterA}','2026-09-01T00:00:00Z',100,'MANUAL','test-baseline','aircraft-a','{}','${actorA}'),
+        ('${orgA}','${ids.meterB}','2026-09-01T00:00:00Z',200,'MANUAL','test-baseline','aircraft-b','{}','${actorA}');
+      insert into public.mission_day_field_activity(organisation_id,operating_location_id,mission_id,operating_day_id,field_id,status,created_by_internal_user_id,updated_by_internal_user_id) values
+        ('${orgA}','${baseA}','${ids.mission}','${ids.dayEarly}','${ids.field}','COMPLETED','${actorA}','${actorA}'),
+        ('${orgA}','${baseA}','${ids.mission}','${ids.dayA}','${ids.field}','COMPLETED','${actorA}','${actorA}');
     `);
-    const first = await call('ftf_project_signed_off_aircraft_day_actuals', [orgA, actorA, ids.mission, ids.dayA]);
-    const second = await call('ftf_project_signed_off_aircraft_day_actuals', [orgA, actorA, ids.mission, ids.dayA]);
-    expect(first).toMatchObject({ projected_count: 2, idempotent_count: 0 });
-    expect(second).toMatchObject({ projected_count: 0, idempotent_count: 2 });
-    expect(await scalar(db, `select count(*)::integer as value from public.asset_meter_readings where organisation_id='${orgA}' and source_system='mission_aircraft_day_actual'`)).toBe(2);
-    expect(await scalar(db, `select sum(value)::text as value from public.asset_meter_readings where organisation_id='${orgA}' and source_system='mission_aircraft_day_actual'`)).toBe('20.000000');
+    const dayAVersion = await scalar(db, `select row_version as value from public.mission_operating_days where id='${ids.dayA}'`);
+    expect(await call('ftf_complete_and_sign_off_mission_operating_day', [orgA, actorA, ids.mission, ids.dayA, dayAVersion, '2026-09-05T03:00:00Z', null]))
+      .toMatchObject({ error: 'AIRCRAFT_DAY_PROJECTION_OUT_OF_ORDER' });
+    expect(await scalar(db, `select state as value from public.mission_operating_days where id='${ids.dayA}'`)).toBe('IN_PROGRESS');
+    expect(await scalar(db, `select count(*)::integer as value from public.asset_meter_readings where source_system='mission_aircraft_day_actual'`)).toBe(0);
+
+    const earlyVersion = await scalar(db, `select row_version as value from public.mission_operating_days where id='${ids.dayEarly}'`);
+    const early = await call('ftf_complete_and_sign_off_mission_operating_day', [orgA, actorA, ids.mission, ids.dayEarly, earlyVersion, '2026-09-04T03:00:00Z', null]);
+    expect(early).toMatchObject({ day: { state: 'SIGNED_OFF' }, fleet_projection: { projected_count: 2 } });
+    const completedA = await call('ftf_complete_and_sign_off_mission_operating_day', [orgA, actorA, ids.mission, ids.dayA, dayAVersion, '2026-09-05T03:00:00Z', null]);
+    expect(completedA).toMatchObject({ day: { state: 'SIGNED_OFF' }, fleet_projection: { projected_count: 2 } });
+    const retriedA = await call('ftf_complete_and_sign_off_mission_operating_day', [orgA, actorA, ids.mission, ids.dayA, completedA.day.row_version, '2026-09-05T03:00:00Z', null]);
+    expect(retriedA).toMatchObject({ day: { state: 'SIGNED_OFF' }, fleet_projection: { projected_count: 0, idempotent_count: 2 } });
+    const retriedEarly = await call('ftf_complete_and_sign_off_mission_operating_day', [orgA, actorA, ids.mission, ids.dayEarly, early.day.row_version, '2026-09-04T03:00:00Z', null]);
+    expect(retriedEarly).toMatchObject({ day: { state: 'SIGNED_OFF' }, fleet_projection: { projected_count: 0, idempotent_count: 2 } });
+    expect(await scalar(db, `select count(*)::integer as value from public.asset_meter_readings where organisation_id='${orgA}' and source_system='mission_aircraft_day_actual'`)).toBe(4);
+    expect(await scalar(db, `select value::text as value from public.asset_meter_readings where meter_definition_id='${ids.meterA}' and source_system='mission_aircraft_day_actual' order by recorded_at desc limit 1`)).toBe('111.000000');
+    expect(await scalar(db, `select value::text as value from public.asset_meter_readings where meter_definition_id='${ids.meterB}' and source_system='mission_aircraft_day_actual' order by recorded_at desc limit 1`)).toBe('211.000000');
+    await expect(db.exec(`update public.mission_operating_days set notes='changed' where id='${ids.dayA}'`)).rejects.toThrow(/SIGNED_OFF_IMMUTABLE/);
+    await expect(db.exec(`update public.mission_day_field_activity set notes='changed' where operating_day_id='${ids.dayA}'`)).rejects.toThrow(/SIGNED_OFF_IMMUTABLE/);
+  });
+
+  test('legacy Mission completion fails closed while any operating-day aircraft totals are incomplete', async () => {
+    const result = await call('ftf_complete_mission', [
+      orgA, actorA, ids.mission, 'f0000000-0000-4000-8000-000000000001', 0, 'Checked.', null,
+    ]);
+    expect(result).toMatchObject({ aircraft_days_incomplete: true });
+    expect(await scalar(db, `select count(*)::integer as value from public.mission_completion_revisions where mission_id='${ids.mission}'`)).toBe(0);
   });
 
   test('stores one immutable import and separate bounded attribution links', async () => {
@@ -245,16 +311,80 @@ if (child) {
     expect(await scalar(db, `select count(*)::integer as value from public.mission_operational_import_attributions where operational_import_id='${result.record.id}'`)).toBe(3);
     expect(await call('ftf_save_mission_aircraft_day_actuals', [
       orgA, actorA, ids.mission, ids.dayC, 1, '1.0000',
-      JSON.stringify([{ aircraftId: ids.aircraftB, totalFlightHours: null }]),
+      JSON.stringify([
+        { aircraftId: ids.aircraftA, totalFlightHours: '0.0000' },
+        { aircraftId: ids.aircraftB, totalFlightHours: null },
+      ]),
       JSON.stringify([{ aircraftId: ids.aircraftB, durationHours: '1.0000', startedAt: null, finishedAt: null, fieldId: null, sourceImportId: result.record.id }]),
     ])).toMatchObject({ error: 'MISSION_FLIGHT_IMPORT_NOT_FOUND' });
     expect(await scalar(db, `select count(*)::integer as value from public.mission_aircraft_day_actuals where operating_day_id='${ids.dayC}'`)).toBe(0);
     expect(await call('ftf_save_mission_aircraft_day_actuals', [
       orgA, actorA, ids.mission, ids.dayC, 1, '1.0000',
-      JSON.stringify([{ aircraftId: ids.aircraftA, totalFlightHours: null }]),
+      JSON.stringify([
+        { aircraftId: ids.aircraftA, totalFlightHours: null },
+        { aircraftId: ids.aircraftB, totalFlightHours: '0.0000' },
+      ]),
       JSON.stringify([{ aircraftId: ids.aircraftA, durationHours: '1.0000', startedAt: null, finishedAt: null, fieldId: null, sourceImportId: result.record.id }]),
     ])).toMatchObject({ total_aircraft_hours: '1.0000', ready_for_sign_off: true });
     await expect(db.exec(`update public.mission_operational_imports set original_filename='changed.kml' where id='${result.record.id}'`)).rejects.toThrow();
+  });
+
+  test('latest authoritative changed actual-resource revision overrides the package aircraft set', async () => {
+    await db.exec(`
+      insert into public.mission_operational_resource_revisions(
+        organisation_id,operating_location_id,mission_id,version_number,actual_resources,planned_resources_snapshot,recorded_by_internal_user_id
+      ) values('${orgA}','${baseA}','${ids.mission}',1,'{"aircraftIds":["${ids.aircraftA}"],"changedFromPlan":true}','{}','${actorA}');
+      insert into public.mission_operating_days(
+        id,organisation_id,operating_location_id,mission_id,work_date,timezone,mission_pack_revision_id,jsa_revision_id,state,
+        actual_started_at,created_by_internal_user_id,updated_by_internal_user_id
+      ) values('${ids.dayD}','${orgA}','${baseA}','${ids.mission}','2026-09-08','Australia/Brisbane','${ids.pack}','${ids.jsa}','IN_PROGRESS','2026-09-07T15:00:00Z','${actorA}','${actorA}');
+    `);
+    const dayCVersion = await scalar(db, `select row_version as value from public.mission_operating_days where id='${ids.dayC}'`);
+    const corrected = await call('ftf_save_mission_aircraft_day_actuals', [
+      orgA, actorA, ids.mission, ids.dayC, dayCVersion, '1.0000',
+      JSON.stringify([{ aircraftId: ids.aircraftA, totalFlightHours: '1.0000' }]), '[]',
+    ]);
+    expect(corrected.actuals).toHaveLength(1);
+    expect(corrected.actuals[0].aircraft_id).toBe(ids.aircraftA);
+    await expect(db.exec(`delete from public.mission_aircraft_day_actuals where operating_day_id='${ids.dayC}'`)).rejects.toThrow(/MISSION_AIRCRAFT_DAY_DELETE_FORBIDDEN/);
+    expect(await call('ftf_save_mission_aircraft_day_actuals', [
+      orgA, actorA, ids.mission, ids.dayD, 1, '1.0000',
+      JSON.stringify([{ aircraftId: ids.aircraftA, totalFlightHours: '1.0000' }]), '[]',
+    ])).toMatchObject({ total_aircraft_hours: '1.0000', ready_for_sign_off: true });
+  });
+
+  test('a newer unchanged resource revision restores the day-bound package set', async () => {
+    await db.exec(`
+      insert into public.mission_operational_resource_revisions(
+        organisation_id,operating_location_id,mission_id,version_number,actual_resources,planned_resources_snapshot,recorded_by_internal_user_id
+      ) values('${orgA}','${baseA}','${ids.mission}',2,'{"aircraftIds":["${ids.aircraftA}","${ids.aircraftB}"],"changedFromPlan":false}','{}','${actorA}');
+      insert into public.mission_operating_days(
+        id,organisation_id,operating_location_id,mission_id,work_date,timezone,mission_pack_revision_id,jsa_revision_id,state,
+        actual_started_at,created_by_internal_user_id,updated_by_internal_user_id
+      ) values('${ids.dayE}','${orgA}','${baseA}','${ids.mission}','2026-09-09','Australia/Brisbane','${ids.pack}','${ids.jsa}','IN_PROGRESS','2026-09-08T15:00:00Z','${actorA}','${actorA}');
+    `);
+    expect(await call('ftf_save_mission_aircraft_day_actuals', [
+      orgA, actorA, ids.mission, ids.dayE, 1, '1.0000',
+      JSON.stringify([{ aircraftId: ids.aircraftA, totalFlightHours: '1.0000' }]), '[]',
+    ])).toMatchObject({ error: 'MISSION_AIRCRAFT_DAY_SET_MISMATCH' });
+    expect(await call('ftf_save_mission_aircraft_day_actuals', [
+      orgA, actorA, ids.mission, ids.dayE, 1, '1.0000',
+      JSON.stringify([
+        { aircraftId: ids.aircraftA, totalFlightHours: '1.0000' },
+        { aircraftId: ids.aircraftB, totalFlightHours: '0.0000' },
+      ]), '[]',
+    ])).toMatchObject({ total_aircraft_hours: '1.0000', ready_for_sign_off: true });
+  });
+
+  test('fails reconciliation closed when an expected aircraft assignment is no longer active', async () => {
+    await db.exec(`update public.mission_aircraft_assignments set unassigned_at=now(),unassigned_by_internal_user_id='${actorA}' where id='${ids.assignmentB}'`);
+    expect(await call('ftf_reconcile_mission_aircraft_day_actuals', [orgA, actorA, ids.mission, ids.dayE]))
+      .toMatchObject({ error: 'MISSION_DAY_AIRCRAFT_NOT_AUTHORISED' });
+    expect(await call('ftf_reconcile_mission_aircraft_day_actuals', [orgA, actorA, ids.mission, ids.dayA]))
+      .toMatchObject({ ready_for_sign_off: true });
+    const signedVersion = await scalar(db, `select row_version as value from public.mission_operating_days where id='${ids.dayA}'`);
+    expect(await call('ftf_complete_and_sign_off_mission_operating_day', [orgA, actorA, ids.mission, ids.dayA, signedVersion, '2026-09-05T03:00:00Z', null]))
+      .toMatchObject({ fleet_projection: { projected_count: 0, idempotent_count: 2 } });
   });
 
   test('writes bounded audit and outbox evidence and closes the database', async () => {

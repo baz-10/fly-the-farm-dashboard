@@ -256,7 +256,7 @@ class MissionOperationsRepository {
   }
 
   async completeDay(context, { missionId, dayId, expectedVersion, finishedAt, notes }) {
-    return operatingDay(await this.rpc('ftf_complete_mission_operating_day', {
+    return operatingDay(await this.rpc('ftf_complete_and_sign_off_mission_operating_day', {
       ...this.trusted(context),
       p_mission_id: missionId,
       p_operating_day_id: dayId,

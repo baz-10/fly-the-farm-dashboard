@@ -1,4 +1,4 @@
-import React from'react';import{fireEvent,render,screen,waitFor}from'@testing-library/react';import MissionOperationalCloseout from'../MissionOperationalCloseout';import{PRODUCT_MATURITY_REGISTRY}from'../../../productMaturity/registry';import{ProductMaturityEntry}from'../../../productMaturity/types';
+import React from'react';import{fireEvent,render,screen,waitFor}from'@testing-library/react';import{strToU8,zipSync}from'fflate';import MissionOperationalCloseout from'../MissionOperationalCloseout';import{PRODUCT_MATURITY_REGISTRY}from'../../../productMaturity/registry';import{ProductMaturityEntry}from'../../../productMaturity/types';
 const mockReportStatusMount=jest.fn();jest.mock('../../reports/ReportArtefactStatus',()=>({__esModule:true,default:({reportType}:any)=>{mockReportStatusMount(reportType);return <button>Generate {reportType}</button>}}));
 const state={authorisation:{id:'a1',evidence_manifest:{planning:{aircraft:[{aircraftId:'ac1',snapshot:{registration:'FTF-T100'}}],equipmentKits:[{equipmentKitId:'k1',snapshot:{name:'Broadcast Kit'}}],personnel:{assignments:[{personnelId:'p1',snapshot:{name:'Ben Trollope'}}]},chemicals:{products:[{productName:'Grazon Extra',rate:2}],application_volume_l_ha:40,treatment_area_ha:10.9}}}},imports:[{id:'i1',evidence_type:'FINAL_KML',parse_status:'PARSED',original_filename:'flight.kml'}],resources:null,chemicals:null,events:[],operationalRevision:null,completion:null};
 const api={read:jest.fn().mockResolvedValue(state),upload:jest.fn(),saveResources:jest.fn().mockResolvedValue({id:'r1',version_number:1}),saveChemicals:jest.fn().mockResolvedValue({id:'c1',version_number:1}),saveEvents:jest.fn().mockResolvedValue([{id:'e1',batch_version:1}]),submit:jest.fn().mockResolvedValue({id:'o1',version_number:1}),complete:jest.fn().mockResolvedValue({id:'x1',version_number:1})};
@@ -14,7 +14,7 @@ test('uploads one immutable KMZ with explicit day and aircraft attribution',asyn
  fireEvent.mouseDown(screen.getByLabelText('Attribution aircraft'));
  fireEvent.click(await screen.findByRole('option',{name:'FTF-T100-001'}));
  fireEvent.click(screen.getByRole('button',{name:'Add evidence attribution'}));
- const file=new File(['PK retained KMZ'],'multi.kmz',{type:'application/vnd.google-earth.kmz'}),input=document.querySelector('input[type="file"]') as HTMLInputElement;
+ const file=new File([zipSync({'doc.kml':strToU8('<kml><Document/></kml>')})],'multi.kmz',{type:'application/vnd.google-earth.kmz'}),input=document.querySelector('input[type="file"]') as HTMLInputElement;
  fireEvent.change(input,{target:{files:[file]}});
  await waitFor(()=>expect(api.upload).toHaveBeenCalledWith('m1',expect.objectContaining({fileType:'kmz',evidenceType:'FLIGHT_LINES',attributions:[{operatingDayId:dayId,aircraftId,confidence:'OPERATOR_CONFIRMED'}]})));
 });

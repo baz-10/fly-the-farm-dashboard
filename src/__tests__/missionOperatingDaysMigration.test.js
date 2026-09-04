@@ -240,11 +240,11 @@ if (child) {
     expect(await call('ftf_read_mission_operating_days', [orgA, ids.actorAWriter, ids.mission])).toMatchObject({ forbidden: true });
   });
 
-  test('freezes the day and its Field evidence after governed sign-off', async () => {
-    const activityId = await scalar(db, `select id::text as value from public.mission_day_field_activity where operating_day_id='${day.day.id}'`);
-    await db.exec(`begin; select set_config('app.mission_operating_day_signoff','allowed',true); update public.mission_operating_days set state='SIGNED_OFF' where id='${day.day.id}'; commit;`);
-    await expect(db.exec(`update public.mission_operating_days set notes='changed' where id='${day.day.id}'`)).rejects.toThrow(/SIGNED_OFF_IMMUTABLE/);
-    await expect(db.exec(`update public.mission_day_field_activity set notes='changed' where id='${activityId}'`)).rejects.toThrow(/SIGNED_OFF_IMMUTABLE/);
+  test('fails governed sign-off closed when aircraft-day authority is missing', async () => {
+    await db.exec(`select set_config('app.mission_operating_day_signoff','allowed',false)`);
+    await expect(db.exec(`update public.mission_operating_days set state='SIGNED_OFF' where id='${day.day.id}'`)).rejects.toThrow(/MISSION_AIRCRAFT_DAY_REQUIRED/);
+    await db.exec(`select set_config('app.mission_operating_day_signoff','',false)`);
+    expect(await scalar(db, `select state as value from public.mission_operating_days where id='${day.day.id}'`)).toBe('COMPLETED');
   });
 
   test('fails closed when a newer unapproved package makes a reviewed day stale', async () => {

@@ -95,7 +95,7 @@ test('routes exact operating-day commands and derives all authority identities f
   const repo = repository();
   const handler = createMissionOperationsHandler({
     repository: repo,
-    resolveContext: async () => context(['mission.operational.read', 'mission.operational.write']),
+    resolveContext: async () => context(['mission.operational.read', 'mission.operational.write', 'mission.completion.complete', 'asset_meters.manage']),
   });
   const calls = [
     ['day-create', { missionId: MISSION, workDate: '2026-09-05', notes: null }],
@@ -141,6 +141,17 @@ test('keeps operating-day read and write permissions distinct', async () => {
   expect(res.statusCode).toBe(403);
   expect(repo.createDay).not.toHaveBeenCalled();
   expect(repo.readDays).not.toHaveBeenCalled();
+});
+
+test('requires completion and Fleet meter permissions at the atomic day sign-off boundary', async () => {
+  const repo = repository();
+  const res = response();
+  await createMissionOperationsHandler({ repository: repo, resolveContext: async () => context(['mission.operational.write']) })(
+    request('POST', 'day-complete', { missionId: MISSION, dayId: DAY, expectedVersion: 4, finishedAt: '2026-09-05T17:00:00.000Z', notes: null }),
+    res,
+  );
+  expect(res.statusCode).toBe(403);
+  expect(repo.completeDay).not.toHaveBeenCalled();
 });
 
 test('rejects invalid calendar dates, local timestamps and decimal hectare values before repository access', async () => {
@@ -377,7 +388,7 @@ test('maps operating-day RPCs with trusted organisation and actor identities onl
     hectaresAttempted: '1.250000', hectaresCompleted: null, startedAt: null, finishedAt: null,
     status: 'PLANNED', notes: null,
   });
-  await repo.completeDay(context(['mission.operational.write']), { missionId: MISSION, dayId: DAY, expectedVersion: 4, finishedAt: '2026-09-05T17:00:00.000Z', notes: null });
+  await repo.completeDay(context(['mission.operational.write', 'mission.completion.complete', 'asset_meters.manage']), { missionId: MISSION, dayId: DAY, expectedVersion: 4, finishedAt: '2026-09-05T17:00:00.000Z', notes: null });
   await expect(repo.readDays(context(['mission.operational.read']), MISSION)).resolves.toEqual({
     missionId: MISSION,
     days: [expect.objectContaining({ id: DAY, workDate: '2026-09-05', fieldActivities: [] })],
@@ -387,7 +398,7 @@ test('maps operating-day RPCs with trusted organisation and actor identities onl
     'rest/v1/rpc/ftf_review_mission_day_jsa',
     'rest/v1/rpc/ftf_start_mission_operating_day',
     'rest/v1/rpc/ftf_save_mission_day_field_activity',
-    'rest/v1/rpc/ftf_complete_mission_operating_day',
+    'rest/v1/rpc/ftf_complete_and_sign_off_mission_operating_day',
     'rest/v1/rpc/ftf_read_mission_operating_days',
   ]);
   expect(JSON.parse(rpc.mock.calls[0][1].body)).toEqual({

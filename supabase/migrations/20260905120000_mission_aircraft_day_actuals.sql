@@ -160,7 +160,15 @@ as $$
 declare v_day_state text;
 begin
   if tg_op = 'DELETE' then
-    raise exception using errcode = '55000', message = 'MISSION_AIRCRAFT_DAY_DELETE_FORBIDDEN';
+    select state into v_day_state from public.mission_operating_days
+      where organisation_id = old.organisation_id and mission_id = old.mission_id and id = old.operating_day_id;
+    if old.signed_off_at is not null or v_day_state = 'SIGNED_OFF' then
+      raise exception using errcode = '55000', message = 'MISSION_AIRCRAFT_DAY_SIGNED_OFF_IMMUTABLE';
+    end if;
+    if coalesce(current_setting('app.mission_aircraft_actuals_write', true), '') <> 'allowed' then
+      raise exception using errcode = '55000', message = 'MISSION_AIRCRAFT_DAY_DELETE_FORBIDDEN';
+    end if;
+    return old;
   end if;
   if old.signed_off_at is not null then
     raise exception using errcode = '55000', message = 'MISSION_AIRCRAFT_DAY_SIGNED_OFF_IMMUTABLE';
@@ -208,31 +216,130 @@ begin
 end;
 $$;
 
+-- The aircraft authority for a day is frozen by its bound package revision.
+-- A later Operational Closeout resource declaration replaces that planned set
+-- only when the operator explicitly declares that the resources changed.
+create function public.ftf_expected_mission_day_aircraft_ids(
+  p_organisation_id uuid,
+  p_mission_id uuid,
+  p_operating_day_id uuid
+)
+returns uuid[]
+language plpgsql
+stable
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  v_manifest jsonb;
+  v_actual_resources jsonb;
+begin
+  select package.source_manifest,
+    (select resource.actual_resources
+     from public.mission_operational_resource_revisions resource
+     where resource.organisation_id = day.organisation_id
+       and resource.mission_id = day.mission_id
+     order by resource.version_number desc
+     limit 1)
+  into v_manifest, v_actual_resources
+  from public.mission_operating_days day
+  join public.mission_pack_revisions package
+    on package.organisation_id = day.organisation_id
+   and package.mission_id = day.mission_id
+   and package.id = day.mission_pack_revision_id
+  where day.organisation_id = p_organisation_id
+    and day.mission_id = p_mission_id
+    and day.id = p_operating_day_id;
+
+  if v_actual_resources is not null
+    and coalesce(v_actual_resources->>'changedFromPlan', 'false') = 'true' then
+    return coalesce(array(
+      select distinct value::uuid
+      from jsonb_array_elements_text(coalesce(v_actual_resources->'aircraftIds', '[]'::jsonb)) item(value)
+      order by value::uuid
+    ), '{}'::uuid[]);
+  end if;
+  return coalesce(array(
+    select distinct (assignment->>'aircraftId')::uuid
+    from jsonb_array_elements(coalesce(v_manifest->'aircraftAssignments', '[]'::jsonb)) item(assignment)
+    order by (assignment->>'aircraftId')::uuid
+  ), '{}'::uuid[]);
+end;
+$$;
+
+create function public.ftf_mission_aircraft_day_validation_error(
+  p_organisation_id uuid,
+  p_mission_id uuid,
+  p_operating_day_id uuid
+)
+returns text
+language plpgsql
+stable
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  v_day public.mission_operating_days%rowtype;
+  v_expected uuid[];
+  v_actual uuid[];
+begin
+  select * into v_day
+  from public.mission_operating_days
+  where organisation_id = p_organisation_id and mission_id = p_mission_id and id = p_operating_day_id;
+  if not found then return 'MISSION_OPERATING_DAY_NOT_FOUND'; end if;
+  select coalesce(array_agg(actual.aircraft_id order by actual.aircraft_id), '{}'::uuid[])
+  into v_actual
+  from public.mission_aircraft_day_actuals actual
+  where actual.organisation_id = p_organisation_id
+    and actual.mission_id = p_mission_id
+    and actual.operating_day_id = p_operating_day_id;
+  if cardinality(v_actual) = 0 then return 'MISSION_AIRCRAFT_DAY_REQUIRED'; end if;
+  if exists (
+    select 1 from public.mission_aircraft_day_actuals actual
+    where actual.organisation_id = p_organisation_id
+      and actual.mission_id = p_mission_id
+      and actual.operating_day_id = p_operating_day_id
+      and actual.reconciliation_status = 'MISMATCH'
+  ) then return 'AIRCRAFT_FLIGHT_TOTAL_MISMATCH'; end if;
+  -- Once the governed transition succeeds, the immutable signed rows are the
+  -- historical aircraft-set authority. Later Mission resource revisions or
+  -- assignment end dates must not rewrite that signed fact.
+  if v_day.state = 'SIGNED_OFF' then return null; end if;
+  v_expected := public.ftf_expected_mission_day_aircraft_ids(p_organisation_id, p_mission_id, p_operating_day_id);
+  if cardinality(v_expected) = 0 then return 'MISSION_AIRCRAFT_DAY_REQUIRED'; end if;
+  if exists (
+    select 1 from unnest(v_expected) expected(aircraft_id)
+    where not exists (
+      select 1
+      from public.mission_aircraft_assignments assignment
+      join public.aircraft aircraft
+        on aircraft.organisation_id = assignment.organisation_id
+       and aircraft.id = assignment.aircraft_id
+       and aircraft.operating_location_id = v_day.operating_location_id
+       and aircraft.archived_at is null
+      where assignment.organisation_id = p_organisation_id
+        and assignment.operating_location_id = v_day.operating_location_id
+        and assignment.mission_id = p_mission_id
+        and assignment.aircraft_id = expected.aircraft_id
+        and assignment.unassigned_at is null
+    )
+  ) then return 'MISSION_DAY_AIRCRAFT_NOT_AUTHORISED'; end if;
+  if v_actual <> v_expected then return 'MISSION_AIRCRAFT_DAY_SET_MISMATCH'; end if;
+  return null;
+end;
+$$;
+
 create function public.ftf_guard_mission_aircraft_actuals_on_day_signoff()
 returns trigger
 language plpgsql
 security definer
 set search_path = public, pg_temp
 as $$
+declare v_error text;
 begin
   if new.state = 'SIGNED_OFF' and old.state <> 'SIGNED_OFF' then
-    if not exists (
-      select 1 from public.mission_aircraft_day_actuals actual
-      where actual.organisation_id = new.organisation_id
-        and actual.mission_id = new.mission_id
-        and actual.operating_day_id = new.id
-    ) then
-      raise exception using errcode = '23514', message = 'MISSION_AIRCRAFT_DAY_REQUIRED';
-    end if;
-    if exists (
-      select 1 from public.mission_aircraft_day_actuals actual
-      where actual.organisation_id = new.organisation_id
-        and actual.mission_id = new.mission_id
-        and actual.operating_day_id = new.id
-        and actual.reconciliation_status = 'MISMATCH'
-    ) then
-      raise exception using errcode = '23514', message = 'AIRCRAFT_FLIGHT_TOTAL_MISMATCH';
-    end if;
+    v_error := public.ftf_mission_aircraft_day_validation_error(new.organisation_id, new.mission_id, new.id);
+    if v_error is not null then raise exception using errcode = '23514', message = v_error; end if;
   end if;
   return new;
 end;
@@ -273,9 +380,7 @@ as $$
     'total_aircraft_hours', coalesce((select sum(actual.total_flight_hours)::numeric(10,4)::text
       from public.mission_aircraft_day_actuals actual
       where actual.organisation_id = day.organisation_id and actual.mission_id = day.mission_id and actual.operating_day_id = day.id), '0.0000'),
-    'ready_for_sign_off', coalesce((select count(*) > 0 and bool_and(actual.reconciliation_status <> 'MISMATCH')
-      from public.mission_aircraft_day_actuals actual
-      where actual.organisation_id = day.organisation_id and actual.mission_id = day.mission_id and actual.operating_day_id = day.id), false),
+    'ready_for_sign_off', public.ftf_mission_aircraft_day_validation_error(day.organisation_id, day.mission_id, day.id) is null,
     'actuals', coalesce((select jsonb_agg(
       jsonb_build_object(
         'id', actual.id,
@@ -375,6 +480,8 @@ declare
   v_actual public.mission_aircraft_day_actuals%rowtype;
   v_started_at timestamptz;
   v_finished_at timestamptz;
+  v_expected_aircraft uuid[];
+  v_supplied_aircraft uuid[];
 begin
   perform public.ftf_lock_mission_package_aggregate(p_organisation_id, p_mission_id);
   if not public.ftf_actor_has_active_beta_seat(p_organisation_id, p_actor_internal_user_id)
@@ -407,10 +514,6 @@ begin
   ) or exists (
     select 1 from jsonb_array_elements(p_aircraft_totals) total
     group by lower(total->>'aircraftId') having count(*) > 1
-  ) or exists (
-    select 1 from public.mission_aircraft_day_actuals actual
-    where actual.organisation_id = p_organisation_id and actual.mission_id = p_mission_id and actual.operating_day_id = p_operating_day_id
-      and not exists (select 1 from jsonb_array_elements(p_aircraft_totals) total where lower(total->>'aircraftId') = lower(actual.aircraft_id::text))
   ) then return jsonb_build_object('error', 'MISSION_AIRCRAFT_DAY_INPUT_INVALID'); end if;
   if exists (
     select 1 from jsonb_array_elements(p_flights) flight
@@ -422,6 +525,13 @@ begin
       or not exists (select 1 from jsonb_array_elements(p_aircraft_totals) total where lower(total->>'aircraftId') = lower(flight->>'aircraftId'))
   ) then return jsonb_build_object('error', 'MISSION_AIRCRAFT_DAY_INPUT_INVALID'); end if;
 
+  v_expected_aircraft := public.ftf_expected_mission_day_aircraft_ids(p_organisation_id, p_mission_id, p_operating_day_id);
+  select coalesce(array_agg((total->>'aircraftId')::uuid order by (total->>'aircraftId')::uuid), '{}'::uuid[])
+  into v_supplied_aircraft from jsonb_array_elements(p_aircraft_totals) total;
+  if v_expected_aircraft <> v_supplied_aircraft then
+    return jsonb_build_object('error', 'MISSION_AIRCRAFT_DAY_SET_MISMATCH');
+  end if;
+
   -- Validate the complete request and calculate fixed-scale totals before any
   -- row changes, so every rejection remains atomic.
   for v_total in select value from jsonb_array_elements(p_aircraft_totals) loop
@@ -431,18 +541,13 @@ begin
       where aircraft.organisation_id = p_organisation_id and aircraft.id = v_aircraft_id
         and aircraft.operating_location_id = v_day.operating_location_id and aircraft.archived_at is null
     ) then return jsonb_build_object('error', 'MISSION_DAY_AIRCRAFT_NOT_AUTHORISED'); end if;
+    v_assignment_id := null;
     select assignment.id into v_assignment_id from public.mission_aircraft_assignments assignment
     where assignment.organisation_id = p_organisation_id and assignment.mission_id = p_mission_id
       and assignment.operating_location_id = v_day.operating_location_id and assignment.aircraft_id = v_aircraft_id
-    order by (assignment.unassigned_at is null) desc, assignment.assigned_at desc limit 1;
-    if v_assignment_id is null and not exists (
-      select 1 from public.mission_operational_resource_revisions resource,
-        lateral jsonb_array_elements_text(coalesce(resource.actual_resources->'aircraftIds', '[]'::jsonb)) actual_aircraft(id)
-      where resource.organisation_id = p_organisation_id and resource.mission_id = p_mission_id
-        and actual_aircraft.id = v_aircraft_id::text
-        and resource.version_number = (select max(latest.version_number) from public.mission_operational_resource_revisions latest
-          where latest.organisation_id = p_organisation_id and latest.mission_id = p_mission_id)
-    ) then return jsonb_build_object('error', 'MISSION_DAY_AIRCRAFT_NOT_AUTHORISED'); end if;
+      and assignment.unassigned_at is null
+    order by assignment.assigned_at desc, assignment.id limit 1;
+    if v_assignment_id is null then return jsonb_build_object('error', 'MISSION_DAY_AIRCRAFT_NOT_AUTHORISED'); end if;
     v_declared_text := v_total->>'totalFlightHours';
     if v_declared_text is not null and v_declared_text !~ '^(0|[1-9][0-9]{0,5})\.[0-9]{4}$' then
       return jsonb_build_object('error', 'MISSION_AIRCRAFT_DAY_INPUT_INVALID');
@@ -488,12 +593,32 @@ begin
     end if;
   end loop;
 
+  -- A changed authoritative resource revision may legitimately narrow an
+  -- unsigned draft set. Only this fully validated command may remove those
+  -- superseded draft children; signed evidence remains immutable.
+  perform set_config('app.mission_aircraft_actuals_write', 'allowed', true);
+  delete from public.mission_flight_actuals flight
+  using public.mission_aircraft_day_actuals actual
+  where flight.organisation_id = p_organisation_id
+    and flight.aircraft_day_actual_id = actual.id
+    and actual.organisation_id = p_organisation_id
+    and actual.mission_id = p_mission_id
+    and actual.operating_day_id = p_operating_day_id
+    and not (actual.aircraft_id = any(v_expected_aircraft));
+  delete from public.mission_aircraft_day_actuals actual
+  where actual.organisation_id = p_organisation_id
+    and actual.mission_id = p_mission_id
+    and actual.operating_day_id = p_operating_day_id
+    and not (actual.aircraft_id = any(v_expected_aircraft));
+
   for v_total in select value from jsonb_array_elements(p_aircraft_totals) loop
     v_aircraft_id := (v_total->>'aircraftId')::uuid;
+    v_assignment_id := null;
     select assignment.id into v_assignment_id from public.mission_aircraft_assignments assignment
     where assignment.organisation_id = p_organisation_id and assignment.mission_id = p_mission_id
       and assignment.operating_location_id = v_day.operating_location_id and assignment.aircraft_id = v_aircraft_id
-    order by (assignment.unassigned_at is null) desc, assignment.assigned_at desc limit 1;
+      and assignment.unassigned_at is null
+    order by assignment.assigned_at desc, assignment.id limit 1;
     v_declared_text := v_total->>'totalFlightHours';
     select coalesce(sum((flight->>'durationHours')::numeric), 0)::numeric(10,4), count(*)
       into v_flights_total, v_flight_count
@@ -568,7 +693,7 @@ language plpgsql
 security definer
 set search_path = public, pg_temp
 as $$
-declare v_day public.mission_operating_days%rowtype;
+declare v_day public.mission_operating_days%rowtype; v_error text;
 begin
   perform public.ftf_lock_mission_package_aggregate(p_organisation_id, p_mission_id);
   if not public.ftf_actor_has_active_beta_seat(p_organisation_id, p_actor_internal_user_id)
@@ -581,12 +706,8 @@ begin
   if not public.ftf_operational_location_allowed(p_organisation_id, p_actor_internal_user_id, v_day.operating_location_id) then
     return jsonb_build_object('location_forbidden', true);
   end if;
-  if not exists (select 1 from public.mission_aircraft_day_actuals where organisation_id = p_organisation_id and operating_day_id = p_operating_day_id) then
-    return jsonb_build_object('error', 'MISSION_AIRCRAFT_DAY_REQUIRED');
-  end if;
-  if exists (select 1 from public.mission_aircraft_day_actuals where organisation_id = p_organisation_id and operating_day_id = p_operating_day_id and reconciliation_status = 'MISMATCH') then
-    return jsonb_build_object('error', 'AIRCRAFT_FLIGHT_TOTAL_MISMATCH');
-  end if;
+  v_error := public.ftf_mission_aircraft_day_validation_error(p_organisation_id, p_mission_id, p_operating_day_id);
+  if v_error is not null then return jsonb_build_object('error', v_error); end if;
   return public.ftf_project_mission_aircraft_day_actuals(p_organisation_id, p_mission_id, p_operating_day_id);
 end;
 $$;
@@ -608,6 +729,7 @@ declare
   v_meter public.asset_meter_definitions%rowtype;
   v_baseline numeric;
   v_result jsonb;
+  v_error text;
   v_projected integer := 0;
   v_idempotent integer := 0;
 begin
@@ -624,20 +746,71 @@ begin
     return jsonb_build_object('location_forbidden', true);
   end if;
   if v_day.state <> 'SIGNED_OFF' then return jsonb_build_object('error', 'MISSION_OPERATING_DAY_NOT_SIGNED_OFF'); end if;
-  if not exists (select 1 from public.mission_aircraft_day_actuals where organisation_id = p_organisation_id and operating_day_id = p_operating_day_id) then
-    return jsonb_build_object('error', 'MISSION_AIRCRAFT_DAY_REQUIRED');
-  end if;
-  if exists (select 1 from public.mission_aircraft_day_actuals where organisation_id = p_organisation_id and operating_day_id = p_operating_day_id and reconciliation_status = 'MISMATCH') then
-    return jsonb_build_object('error', 'AIRCRAFT_FLIGHT_TOTAL_MISMATCH');
-  end if;
+  v_error := public.ftf_mission_aircraft_day_validation_error(p_organisation_id, p_mission_id, p_operating_day_id);
+  if v_error is not null then return jsonb_build_object('error', v_error); end if;
   if exists (
     select 1 from public.mission_aircraft_day_actuals actual
     left join public.maintainable_asset_registry registry on registry.organisation_id = actual.organisation_id
       and registry.aircraft_id = actual.aircraft_id and registry.tracking_state = 'ACTIVE'
     left join public.asset_meter_definitions meter on meter.organisation_id = registry.organisation_id
-      and meter.maintainable_asset_id = registry.id and meter.meter_type = 'flight_hours' and meter.archived_at is null
+      and meter.maintainable_asset_id = registry.id and meter.meter_type = 'flight_hours'
+      and meter.source_policy = 'MISSION_DERIVED' and meter.archived_at is null
     where actual.organisation_id = p_organisation_id and actual.operating_day_id = p_operating_day_id and meter.id is null
   ) then return jsonb_build_object('error', 'AIRCRAFT_FLIGHT_HOURS_METER_REQUIRED'); end if;
+
+  -- Preflight every aircraft before any signed-total or meter mutation. A
+  -- cumulative meter may only be advanced in the day sequence and may not be
+  -- inserted behind a later authoritative reading.
+  for v_actual in select * from public.mission_aircraft_day_actuals
+    where organisation_id = p_organisation_id and mission_id = p_mission_id and operating_day_id = p_operating_day_id
+    order by aircraft_id loop
+    select meter.* into v_meter from public.maintainable_asset_registry registry
+    join public.asset_meter_definitions meter on meter.organisation_id = registry.organisation_id
+      and meter.maintainable_asset_id = registry.id and meter.meter_type = 'flight_hours'
+      and meter.source_policy = 'MISSION_DERIVED' and meter.archived_at is null
+    where registry.organisation_id = p_organisation_id and registry.aircraft_id = v_actual.aircraft_id
+      and registry.tracking_state = 'ACTIVE'
+    order by meter.created_at, meter.id limit 1 for update of meter;
+    if exists (
+      select 1
+      from public.mission_operating_days prior
+      where prior.organisation_id = p_organisation_id
+        and prior.mission_id = p_mission_id
+        and (prior.work_date, prior.id) < (v_day.work_date, v_day.id)
+        and v_actual.aircraft_id = any(public.ftf_expected_mission_day_aircraft_ids(prior.organisation_id, prior.mission_id, prior.id))
+        and (
+          prior.state <> 'SIGNED_OFF'
+          or public.ftf_mission_aircraft_day_validation_error(prior.organisation_id, prior.mission_id, prior.id) is not null
+          or not exists (
+            select 1
+            from public.mission_aircraft_day_actuals prior_actual
+            join public.asset_meter_readings prior_reading
+              on prior_reading.organisation_id = prior_actual.organisation_id
+             and prior_reading.meter_definition_id = v_meter.id
+             and prior_reading.source_system = 'mission_aircraft_day_actual'
+             and prior_reading.source_record_id = prior_actual.id::text
+            where prior_actual.organisation_id = prior.organisation_id
+              and prior_actual.mission_id = prior.mission_id
+              and prior_actual.operating_day_id = prior.id
+              and prior_actual.aircraft_id = v_actual.aircraft_id
+          )
+        )
+    ) or exists (
+      select 1 from public.asset_meter_readings reading
+      where reading.organisation_id = p_organisation_id
+        and reading.meter_definition_id = v_meter.id
+        and reading.recorded_at > v_day.actual_finished_at
+        and not exists (select 1 from public.asset_meter_readings correction where correction.supersedes_reading_id = reading.id)
+        and not exists (
+          select 1 from public.asset_meter_readings current_projection
+          where current_projection.organisation_id = p_organisation_id
+            and current_projection.meter_definition_id = v_meter.id
+            and current_projection.source_system = 'mission_aircraft_day_actual'
+            and current_projection.source_record_id = v_actual.id::text
+        )
+    ) then return jsonb_build_object('error', 'AIRCRAFT_DAY_PROJECTION_OUT_OF_ORDER'); end if;
+  end loop;
+
   perform set_config('app.mission_aircraft_projection', 'allowed', true);
   update public.mission_aircraft_day_actuals set signed_off_at = coalesce(signed_off_at, now()),
     signed_off_by_internal_user_id = coalesce(signed_off_by_internal_user_id, p_actor_internal_user_id),
@@ -649,12 +822,15 @@ begin
     order by aircraft_id loop
     select meter.* into v_meter from public.maintainable_asset_registry registry
     join public.asset_meter_definitions meter on meter.organisation_id = registry.organisation_id
-      and meter.maintainable_asset_id = registry.id and meter.meter_type = 'flight_hours' and meter.archived_at is null
+      and meter.maintainable_asset_id = registry.id and meter.meter_type = 'flight_hours'
+      and meter.source_policy = 'MISSION_DERIVED' and meter.archived_at is null
     where registry.organisation_id = p_organisation_id and registry.aircraft_id = v_actual.aircraft_id and registry.tracking_state = 'ACTIVE'
     order by meter.created_at, meter.id limit 1 for update of meter;
     select coalesce((select reading.value from public.asset_meter_readings reading
       where reading.organisation_id = p_organisation_id and reading.meter_definition_id = v_meter.id
         and not exists (select 1 from public.asset_meter_readings correction where correction.supersedes_reading_id = reading.id)
+        and reading.recorded_at <= v_day.actual_finished_at
+        and not (reading.source_system = 'mission_aircraft_day_actual' and reading.source_record_id = v_actual.id::text)
       order by reading.recorded_at desc, reading.created_at desc limit 1), aircraft.total_flight_hours)
     into v_baseline from public.aircraft aircraft
     where aircraft.organisation_id = p_organisation_id and aircraft.id = v_actual.aircraft_id;
@@ -671,6 +847,9 @@ begin
           'aircraftDayActualId', v_actual.id, 'dailyFlightHours', v_actual.total_flight_hours::text)
       )
     );
+    if not (v_result ? 'record') then
+      raise exception using errcode = 'P0001', message = 'AIRCRAFT_DAY_FLEET_PROJECTION_FAILED';
+    end if;
     if coalesce((v_result->>'idempotent')::boolean, false) then v_idempotent := v_idempotent + 1;
     else v_projected := v_projected + 1; end if;
   end loop;
@@ -683,6 +862,97 @@ begin
       jsonb_build_object('operating_day_id', p_operating_day_id, 'projected_count', v_projected));
   end if;
   return jsonb_build_object('projected_count', v_projected, 'idempotent_count', v_idempotent);
+end;
+$$;
+
+-- The public operating-day completion boundary is one transaction: legacy
+-- completion validation, authoritative SIGNED_OFF transition, and Fleet meter
+-- projection either all commit or all roll back.
+create function public.ftf_complete_and_sign_off_mission_operating_day(
+  p_organisation_id uuid,
+  p_actor_internal_user_id uuid,
+  p_mission_id uuid,
+  p_operating_day_id uuid,
+  p_expected_version integer,
+  p_finished_at timestamptz,
+  p_notes text default null
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  v_day public.mission_operating_days%rowtype;
+  v_completion jsonb;
+  v_projection jsonb;
+begin
+  perform public.ftf_lock_active_organisation(p_organisation_id);
+  perform public.ftf_lock_mission_package_aggregate(p_organisation_id, p_mission_id);
+  if not public.ftf_actor_has_active_beta_seat(p_organisation_id, p_actor_internal_user_id)
+    or not public.ftf_actor_has_permission(p_organisation_id, p_actor_internal_user_id, 'mission.operational.write')
+    or not public.ftf_actor_has_permission(p_organisation_id, p_actor_internal_user_id, 'mission.completion.complete')
+    or not public.ftf_actor_has_permission(p_organisation_id, p_actor_internal_user_id, 'asset_meters.manage') then
+    return jsonb_build_object('forbidden', true);
+  end if;
+  select * into v_day from public.mission_operating_days
+  where organisation_id = p_organisation_id and mission_id = p_mission_id and id = p_operating_day_id for update;
+  if not found then return jsonb_build_object('error', 'MISSION_OPERATING_DAY_NOT_FOUND'); end if;
+  if not public.ftf_operational_location_allowed(p_organisation_id, p_actor_internal_user_id, v_day.operating_location_id) then
+    return jsonb_build_object('location_forbidden', true);
+  end if;
+  if p_expected_version is null or p_expected_version < 1 or v_day.row_version <> p_expected_version then
+    return jsonb_build_object('error', 'MISSION_OPERATING_DAY_VERSION_CONFLICT', 'current_version', v_day.row_version);
+  end if;
+  begin
+    if v_day.state = 'SIGNED_OFF' then
+      v_projection := public.ftf_project_signed_off_aircraft_day_actuals(
+        p_organisation_id, p_actor_internal_user_id, p_mission_id, p_operating_day_id
+      );
+      if v_projection ? 'error' then raise exception using errcode = 'P0001', message = v_projection->>'error'; end if;
+      return jsonb_build_object(
+        'day', public.ftf_project_mission_operating_day(p_organisation_id, p_mission_id, p_operating_day_id),
+        'fleet_projection', v_projection
+      );
+    end if;
+    v_completion := public.ftf_complete_mission_operating_day(
+      p_organisation_id, p_actor_internal_user_id, p_mission_id, p_operating_day_id,
+      p_expected_version, p_finished_at, p_notes
+    );
+    if v_completion ? 'error' or v_completion ? 'forbidden' or v_completion ? 'location_forbidden' then
+      return v_completion;
+    end if;
+    perform set_config('app.mission_operating_day_signoff', 'allowed', true);
+    update public.mission_operating_days
+    set state = 'SIGNED_OFF', updated_by_internal_user_id = p_actor_internal_user_id
+    where organisation_id = p_organisation_id and mission_id = p_mission_id and id = p_operating_day_id
+    returning * into v_day;
+    v_projection := public.ftf_project_signed_off_aircraft_day_actuals(
+      p_organisation_id, p_actor_internal_user_id, p_mission_id, p_operating_day_id
+    );
+    if v_projection ? 'error' then raise exception using errcode = 'P0001', message = v_projection->>'error'; end if;
+    insert into public.audit_events (organisation_id, actor_internal_user_id, event_type, entity_type, entity_id, event_payload)
+    values (p_organisation_id, p_actor_internal_user_id, 'mission.operating_day.signed_off', 'mission_operating_day', v_day.id,
+      jsonb_build_object('mission_id', p_mission_id, 'package_revision_id', v_day.mission_pack_revision_id,
+        'day_version', v_day.row_version, 'fleet_projected_count', v_projection->'projected_count'));
+    insert into public.transactional_outbox (organisation_id, topic, aggregate_type, aggregate_id, payload)
+    values (p_organisation_id, 'operational.mission.day_signed_off', 'mission', p_mission_id,
+      jsonb_build_object('operating_day_id', v_day.id, 'package_revision_id', v_day.mission_pack_revision_id,
+        'day_version', v_day.row_version, 'fleet_projected_count', v_projection->'projected_count'));
+    return jsonb_build_object(
+      'day', public.ftf_project_mission_operating_day(p_organisation_id, p_mission_id, p_operating_day_id),
+      'fleet_projection', v_projection
+    );
+  exception when others then
+    if sqlerrm in (
+      'MISSION_AIRCRAFT_DAY_REQUIRED', 'MISSION_AIRCRAFT_DAY_SET_MISMATCH',
+      'MISSION_DAY_AIRCRAFT_NOT_AUTHORISED', 'AIRCRAFT_FLIGHT_TOTAL_MISMATCH',
+      'AIRCRAFT_FLIGHT_HOURS_METER_REQUIRED', 'AIRCRAFT_DAY_PROJECTION_OUT_OF_ORDER',
+      'AIRCRAFT_DAY_FLEET_PROJECTION_FAILED', 'METER_SOURCE_NOT_ALLOWED',
+      'METER_VALUE_REQUIRES_CORRECTION'
+    ) then return jsonb_build_object('error', sqlerrm); end if;
+    raise;
+  end;
 end;
 $$;
 
@@ -744,7 +1014,9 @@ begin
       where aircraft.organisation_id = p_organisation_id and aircraft.operating_location_id = v_mission.operating_location_id
         and aircraft.id = v_aircraft_id and aircraft.archived_at is null
         and (exists (select 1 from public.mission_aircraft_assignments assignment
-          where assignment.organisation_id = p_organisation_id and assignment.mission_id = p_mission_id and assignment.aircraft_id = aircraft.id)
+          where assignment.organisation_id = p_organisation_id and assignment.mission_id = p_mission_id
+            and assignment.operating_location_id = v_mission.operating_location_id
+            and assignment.aircraft_id = aircraft.id and assignment.unassigned_at is null)
           or exists (select 1 from public.mission_aircraft_day_actuals actual
             where actual.organisation_id = p_organisation_id and actual.mission_id = p_mission_id and actual.aircraft_id = aircraft.id))
     ) then return jsonb_build_object('attribution_invalid', true); end if;
@@ -798,6 +1070,62 @@ exception when invalid_text_representation then return jsonb_build_object('attri
 end;
 $$;
 
+-- Compatibility guard until the later final-signoff orchestration owns this
+-- boundary. Legacy Mission completion cannot bypass operating-day authority.
+alter function public.ftf_complete_mission(uuid, uuid, uuid, uuid, integer, text, text)
+  rename to ftf_complete_mission_before_aircraft_day_guard;
+
+create function public.ftf_complete_mission(
+  p_organisation_id uuid,
+  p_actor_internal_user_id uuid,
+  p_mission_id uuid,
+  p_operational_revision_id uuid,
+  p_expected_version integer,
+  p_declaration text,
+  p_override_reason text default null
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  v_day public.mission_operating_days%rowtype;
+  v_error text;
+begin
+  perform public.ftf_lock_mission_package_aggregate(p_organisation_id, p_mission_id);
+  for v_day in
+    select * from public.mission_operating_days
+    where organisation_id = p_organisation_id and mission_id = p_mission_id
+    order by work_date, id
+    for update
+  loop
+    if v_day.state <> 'SIGNED_OFF' then
+      return jsonb_build_object('aircraft_days_incomplete', true, 'operating_day_id', v_day.id,
+        'reason', 'MISSION_OPERATING_DAY_NOT_SIGNED_OFF');
+    end if;
+    v_error := public.ftf_mission_aircraft_day_validation_error(p_organisation_id, p_mission_id, v_day.id);
+    if v_error is not null then
+      return jsonb_build_object('aircraft_days_incomplete', true, 'operating_day_id', v_day.id, 'reason', v_error);
+    end if;
+    if exists (
+      select 1 from public.mission_aircraft_day_actuals actual
+      where actual.organisation_id = p_organisation_id
+        and actual.mission_id = p_mission_id
+        and actual.operating_day_id = v_day.id
+        and (actual.signed_off_at is null or actual.signed_off_by_internal_user_id is null)
+    ) then
+      return jsonb_build_object('aircraft_days_incomplete', true, 'operating_day_id', v_day.id,
+        'reason', 'MISSION_AIRCRAFT_DAY_NOT_PROJECTED');
+    end if;
+  end loop;
+  return public.ftf_complete_mission_before_aircraft_day_guard(
+    p_organisation_id, p_actor_internal_user_id, p_mission_id, p_operational_revision_id,
+    p_expected_version, p_declaration, p_override_reason
+  );
+end;
+$$;
+
 create or replace function public.ftf_read_mission_operational_closeout(p_organisation_id uuid, p_mission_id uuid)
 returns jsonb
 language sql
@@ -846,13 +1174,20 @@ $$;
 
 revoke all on function public.ftf_guard_mission_aircraft_day_actual_mutation() from public, anon, authenticated, service_role;
 revoke all on function public.ftf_guard_mission_flight_actual_mutation() from public, anon, authenticated, service_role;
+revoke all on function public.ftf_expected_mission_day_aircraft_ids(uuid, uuid, uuid) from public, anon, authenticated, service_role;
+revoke all on function public.ftf_mission_aircraft_day_validation_error(uuid, uuid, uuid) from public, anon, authenticated, service_role;
 revoke all on function public.ftf_guard_mission_aircraft_actuals_on_day_signoff() from public, anon, authenticated, service_role;
 revoke all on function public.ftf_project_mission_aircraft_day_actuals(uuid, uuid, uuid) from public, anon, authenticated, service_role;
 revoke all on function public.ftf_read_mission_aircraft_day_actuals(uuid, uuid, uuid, uuid) from public, anon, authenticated;
 revoke all on function public.ftf_save_mission_aircraft_day_actuals(uuid, uuid, uuid, uuid, integer, text, jsonb, jsonb) from public, anon, authenticated;
 revoke all on function public.ftf_reconcile_mission_aircraft_day_actuals(uuid, uuid, uuid, uuid) from public, anon, authenticated;
 revoke all on function public.ftf_project_signed_off_aircraft_day_actuals(uuid, uuid, uuid, uuid) from public, anon, authenticated;
+revoke all on function public.ftf_complete_mission_operating_day(uuid, uuid, uuid, uuid, integer, timestamptz, text) from service_role;
+revoke all on function public.ftf_complete_and_sign_off_mission_operating_day(uuid, uuid, uuid, uuid, integer, timestamptz, text) from public, anon, authenticated, service_role;
+revoke all on function public.ftf_complete_mission_before_aircraft_day_guard(uuid, uuid, uuid, uuid, integer, text, text) from public, anon, authenticated, service_role;
+revoke all on function public.ftf_complete_mission(uuid, uuid, uuid, uuid, integer, text, text) from public, anon, authenticated, service_role;
 grant execute on function public.ftf_read_mission_aircraft_day_actuals(uuid, uuid, uuid, uuid) to service_role;
 grant execute on function public.ftf_save_mission_aircraft_day_actuals(uuid, uuid, uuid, uuid, integer, text, jsonb, jsonb) to service_role;
 grant execute on function public.ftf_reconcile_mission_aircraft_day_actuals(uuid, uuid, uuid, uuid) to service_role;
-grant execute on function public.ftf_project_signed_off_aircraft_day_actuals(uuid, uuid, uuid, uuid) to service_role;
+grant execute on function public.ftf_complete_and_sign_off_mission_operating_day(uuid, uuid, uuid, uuid, integer, timestamptz, text) to service_role;
+grant execute on function public.ftf_complete_mission(uuid, uuid, uuid, uuid, integer, text, text) to service_role;

@@ -1,5 +1,6 @@
 const { createHttpError } = require('./supabase');
 const crypto = require('crypto');
+const { unzipSync } = require('fflate');
 const { resolveOperationalActorContext } = require('./operational-actor-context');
 const { resolveRequestContext } = require('./request-context');
 const { OperationalRepository } = require('./operational-repository');
@@ -595,7 +596,154 @@ function parseMissionMapSourceFile(body) {
     transformationMetadata: body.transformationMetadata, validationResult: body.validationResult };
 }
 
-function parseOperationalImport(body){const allowed=new Set(['expectedVersion','fileName','fileType','evidenceType','sizeBytes','dataUrl','attributions']);Object.keys(body).forEach(k=>{if(!allowed.has(k))throw apiError(400,'VALIDATION_ERROR',`Unexpected import field: ${k}.`);});if(typeof body.fileName!=='string'||!body.fileName.trim()||body.fileName.length>255||/[\\/\0]/.test(body.fileName))throw apiError(400,'VALIDATION_ERROR','fileName is invalid.');const fileType=String(body.fileType||'').toLowerCase();if(!['kml','kmz','csv','txt','log','bin'].includes(fileType))throw apiError(400,'VALIDATION_ERROR','Unsupported Operational Evidence file type.');if(!['FINAL_KML','FLIGHT_LINES','TELEMETRY','FLIGHT_LOG'].includes(body.evidenceType))throw apiError(400,'VALIDATION_ERROR','evidenceType is invalid.');const rawAttributions=body.attributions===undefined?[]:body.attributions;if(!Array.isArray(rawAttributions)||rawAttributions.length>100)throw apiError(400,'VALIDATION_ERROR','Operational Evidence attributions are invalid.');const attributions=rawAttributions.map(item=>{if(!item||typeof item!=='object'||Array.isArray(item)||Object.keys(item).length!==3||!Object.prototype.hasOwnProperty.call(item,'operatingDayId')||!Object.prototype.hasOwnProperty.call(item,'aircraftId')||!Object.prototype.hasOwnProperty.call(item,'confidence'))throw apiError(400,'VALIDATION_ERROR','Operational Evidence attribution is invalid.');const operatingDayId=item.operatingDayId===null?null:assertUuid(item.operatingDayId,'operatingDayId'),aircraftId=item.aircraftId===null?null:assertUuid(item.aircraftId,'aircraftId');if(operatingDayId===null&&aircraftId===null)throw apiError(400,'VALIDATION_ERROR','Operational Evidence attribution must link a day or Aircraft.');if(!['OPERATOR_CONFIRMED','SOURCE_METADATA'].includes(item.confidence))throw apiError(400,'VALIDATION_ERROR','Operational Evidence attribution confidence is invalid.');return{operatingDayId,aircraftId,confidence:item.confidence};});const attributionKeys=attributions.map(item=>`${item.operatingDayId||''}:${item.aircraftId||''}`);if(new Set(attributionKeys).size!==attributionKeys.length)throw apiError(400,'VALIDATION_ERROR','Operational Evidence attributions contain duplicates.');const match=typeof body.dataUrl==='string'&&body.dataUrl.match(/^data:([^;,]+);base64,([A-Za-z0-9+/=]+)$/);if(!match)throw apiError(400,'VALIDATION_ERROR','dataUrl must contain a base64-encoded file.');const bytes=Buffer.from(match[2],'base64');if(!bytes.length||bytes.length>MAX_IMPORT_SOURCE_BYTES||Number(body.sizeBytes)!==bytes.length)throw apiError(400,'VALIDATION_ERROR','Operational file size is invalid.');let operationalGeometry=null,derivedStatistics={},parseStatus='RETAINED',validationResult={state:'retained'};if(fileType==='kml'){const text=bytes.toString('utf8'),lines=[...text.matchAll(/<LineString\b[^>]*>[\s\S]*?<coordinates\b[^>]*>([\s\S]*?)<\/coordinates>[\s\S]*?<\/LineString>/gi)].map(m=>parseCoordinateSequence(m[1])).filter(x=>x.length>=2),polygons=[...text.matchAll(/<Polygon\b[^>]*>[\s\S]*?<coordinates\b[^>]*>([\s\S]*?)<\/coordinates>[\s\S]*?<\/Polygon>/gi)].map(m=>parseCoordinateSequence(m[1])).filter(x=>x.length>=4);if(!lines.length&&!polygons.length)throw apiError(400,'UNSUPPORTED_GEOMETRY','KML contains no supported flight lines or polygon geometry.');const distanceMetres=lines.reduce((sum,line)=>sum+line.slice(1).reduce((s,p,i)=>s+haversine(line[i],p),0),0);operationalGeometry={type:'GeometryCollection',geometries:[...(lines.length?[{type:'MultiLineString',coordinates:lines}]:[]),...polygons.map(r=>({type:'Polygon',coordinates:[r]}))]};derivedStatistics={flightLineCount:lines.length,totalFlightDistanceMetres:Math.round(distanceMetres),areaTreatedHa:polygons.reduce((s,r)=>s+ringAreaHa(r),0)};parseStatus='PARSED';validationResult={state:'valid',parserVersion:'operational-kml-v1'};}return{expectedVersion:Number(body.expectedVersion),fileName:body.fileName.trim(),fileType,evidenceType:body.evidenceType,contentType:match[1],bytes,checksum:crypto.createHash('sha256').update(bytes).digest('hex'),operationalGeometry,derivedStatistics,parseStatus,validationResult,attributions};}
+function parseOperationalImport(body) {
+  const allowed = new Set(['expectedVersion', 'fileName', 'fileType', 'evidenceType', 'sizeBytes', 'dataUrl', 'attributions']);
+  Object.keys(body).forEach((key) => {
+    if (!allowed.has(key)) throw apiError(400, 'VALIDATION_ERROR', `Unexpected import field: ${key}.`);
+  });
+  if (typeof body.fileName !== 'string' || !body.fileName.trim() || body.fileName.length > 255 || /[\\/\0]/.test(body.fileName)) {
+    throw apiError(400, 'VALIDATION_ERROR', 'fileName is invalid.');
+  }
+  const fileName = body.fileName.trim();
+  const fileType = String(body.fileType || '').toLowerCase();
+  const mimeByType = {
+    kml: 'application/vnd.google-earth.kml+xml',
+    kmz: 'application/vnd.google-earth.kmz',
+    csv: 'text/csv',
+    txt: 'text/plain',
+    log: 'text/plain',
+    bin: 'application/octet-stream',
+  };
+  if (!Object.prototype.hasOwnProperty.call(mimeByType, fileType)) {
+    throw apiError(400, 'VALIDATION_ERROR', 'Unsupported Operational Evidence file type.');
+  }
+  const extension = fileName.includes('.') ? fileName.slice(fileName.lastIndexOf('.') + 1).toLowerCase() : '';
+  if (extension !== fileType) throw apiError(400, 'VALIDATION_ERROR', 'Operational file extension does not match fileType.');
+  if (!['FINAL_KML', 'FLIGHT_LINES', 'TELEMETRY', 'FLIGHT_LOG'].includes(body.evidenceType)) {
+    throw apiError(400, 'VALIDATION_ERROR', 'evidenceType is invalid.');
+  }
+  const rawAttributions = body.attributions === undefined ? [] : body.attributions;
+  if (!Array.isArray(rawAttributions) || rawAttributions.length > 100) {
+    throw apiError(400, 'VALIDATION_ERROR', 'Operational Evidence attributions are invalid.');
+  }
+  const attributions = rawAttributions.map((item) => {
+    if (!item || typeof item !== 'object' || Array.isArray(item) || Object.keys(item).length !== 3
+      || !Object.prototype.hasOwnProperty.call(item, 'operatingDayId')
+      || !Object.prototype.hasOwnProperty.call(item, 'aircraftId')
+      || !Object.prototype.hasOwnProperty.call(item, 'confidence')) {
+      throw apiError(400, 'VALIDATION_ERROR', 'Operational Evidence attribution is invalid.');
+    }
+    const operatingDayId = item.operatingDayId === null ? null : assertUuid(item.operatingDayId, 'operatingDayId');
+    const aircraftId = item.aircraftId === null ? null : assertUuid(item.aircraftId, 'aircraftId');
+    if (operatingDayId === null && aircraftId === null) {
+      throw apiError(400, 'VALIDATION_ERROR', 'Operational Evidence attribution must link a day or Aircraft.');
+    }
+    if (!['OPERATOR_CONFIRMED', 'SOURCE_METADATA'].includes(item.confidence)) {
+      throw apiError(400, 'VALIDATION_ERROR', 'Operational Evidence attribution confidence is invalid.');
+    }
+    return { operatingDayId, aircraftId, confidence: item.confidence };
+  });
+  const attributionKeys = attributions.map((item) => `${item.operatingDayId || ''}:${item.aircraftId || ''}`);
+  if (new Set(attributionKeys).size !== attributionKeys.length) {
+    throw apiError(400, 'VALIDATION_ERROR', 'Operational Evidence attributions contain duplicates.');
+  }
+  const match = typeof body.dataUrl === 'string' && body.dataUrl.match(/^data:([^;,]+);base64,([A-Za-z0-9+/]+={0,2})$/);
+  if (!match || match[1].toLowerCase() !== mimeByType[fileType] || match[2].length % 4 !== 0) {
+    throw apiError(400, 'VALIDATION_ERROR', 'Operational file MIME type does not match fileType.');
+  }
+  const bytes = Buffer.from(match[2], 'base64');
+  const canonicalBase64 = match[2].replace(/=+$/, '');
+  if (bytes.toString('base64').replace(/=+$/, '') !== canonicalBase64
+    || !bytes.length || bytes.length > MAX_IMPORT_SOURCE_BYTES || Number(body.sizeBytes) !== bytes.length) {
+    throw apiError(400, 'VALIDATION_ERROR', 'Operational file size or encoding is invalid.');
+  }
+
+  let operationalGeometry = null;
+  let derivedStatistics = {};
+  let parseStatus = 'RETAINED';
+  let validationResult = { state: 'retained' };
+  if (fileType === 'kmz') {
+    let entryCount = 0;
+    let uncompressedBytes = 0;
+    const entryNames = new Set();
+    let extracted;
+    try {
+      extracted = unzipSync(bytes, {
+        filter(info) {
+          entryCount += 1;
+          const name = String(info.name || '');
+          const parts = name.split('/');
+          const pathParts = name.endsWith('/') ? parts.slice(0, -1) : parts;
+          const unsafe = !name || name.length > 255 || /^[\\/]/.test(name) || /[\\:\0-\x1f\x7f]/.test(name)
+            || pathParts.some((part) => !part || part === '.' || part === '..');
+          if (entryCount > 100 || unsafe || entryNames.has(name) || ![0, 8].includes(info.compression)) {
+            throw apiError(400, 'VALIDATION_ERROR', 'KMZ contains unsafe or unsupported entries.');
+          }
+          entryNames.add(name);
+          uncompressedBytes += Number(info.originalSize);
+          if (!Number.isSafeInteger(info.originalSize) || info.originalSize < 0
+            || info.originalSize > MAX_IMPORT_SOURCE_BYTES || uncompressedBytes > 10 * 1024 * 1024) {
+            throw apiError(400, 'VALIDATION_ERROR', 'KMZ expanded content is too large.');
+          }
+          return !name.endsWith('/') && /\.kml$/i.test(name);
+        },
+      });
+    } catch (error) {
+      if (error?.code === 'VALIDATION_ERROR') throw error;
+      throw apiError(400, 'VALIDATION_ERROR', 'KMZ is not a valid bounded ZIP archive.');
+    }
+    const kmlEntries = Object.values(extracted || {});
+    if (!kmlEntries.length || !kmlEntries.some((entry) => {
+      const text = Buffer.from(entry).toString('utf8');
+      return /<kml(?:\s[^>]*)?>/i.test(text) && (/<\/kml\s*>/i.test(text) || /<kml(?:\s[^>]*)?\/>/i.test(text));
+    })) {
+      throw apiError(400, 'VALIDATION_ERROR', 'KMZ must contain a valid KML entry.');
+    }
+    validationResult = { state: 'retained', parserVersion: 'operational-kmz-envelope-v1' };
+  }
+  if (fileType === 'kml') {
+    const text = bytes.toString('utf8');
+    if (!/<kml(?:\s[^>]*)?>/i.test(text) || !/<\/kml\s*>/i.test(text)) {
+      throw apiError(400, 'VALIDATION_ERROR', 'KML document structure is invalid.');
+    }
+    const lines = [...text.matchAll(/<LineString\b[^>]*>[\s\S]*?<coordinates\b[^>]*>([\s\S]*?)<\/coordinates>[\s\S]*?<\/LineString>/gi)]
+      .map((candidate) => parseCoordinateSequence(candidate[1])).filter((coordinates) => coordinates.length >= 2);
+    const polygons = [...text.matchAll(/<Polygon\b[^>]*>[\s\S]*?<coordinates\b[^>]*>([\s\S]*?)<\/coordinates>[\s\S]*?<\/Polygon>/gi)]
+      .map((candidate) => parseCoordinateSequence(candidate[1])).filter((coordinates) => coordinates.length >= 4);
+    if (!lines.length && !polygons.length) {
+      throw apiError(400, 'UNSUPPORTED_GEOMETRY', 'KML contains no supported flight lines or polygon geometry.');
+    }
+    const distanceMetres = lines.reduce((sum, line) => sum + line.slice(1).reduce((lineSum, point, index) => lineSum + haversine(line[index], point), 0), 0);
+    operationalGeometry = {
+      type: 'GeometryCollection',
+      geometries: [
+        ...(lines.length ? [{ type: 'MultiLineString', coordinates: lines }] : []),
+        ...polygons.map((ring) => ({ type: 'Polygon', coordinates: [ring] })),
+      ],
+    };
+    derivedStatistics = {
+      flightLineCount: lines.length,
+      totalFlightDistanceMetres: Math.round(distanceMetres),
+      areaTreatedHa: polygons.reduce((sum, ring) => sum + ringAreaHa(ring), 0),
+    };
+    parseStatus = 'PARSED';
+    validationResult = { state: 'valid', parserVersion: 'operational-kml-v1' };
+  }
+  return {
+    expectedVersion: Number(body.expectedVersion),
+    fileName,
+    fileType,
+    evidenceType: body.evidenceType,
+    contentType: match[1].toLowerCase(),
+    bytes,
+    checksum: crypto.createHash('sha256').update(bytes).digest('hex'),
+    operationalGeometry,
+    derivedStatistics,
+    parseStatus,
+    validationResult,
+    attributions,
+  };
+}
 function parseCoordinateSequence(raw){return raw.trim().split(/\s+/).map(v=>v.split(',').slice(0,2).map(Number)).filter(p=>p.length===2&&Number.isFinite(p[0])&&Number.isFinite(p[1])&&p[0]>=-180&&p[0]<=180&&p[1]>=-90&&p[1]<=90);}
 function haversine(a,b){const r=6371000,rad=Math.PI/180,dLat=(b[1]-a[1])*rad,dLon=(b[0]-a[0])*rad,x=Math.sin(dLat/2)**2+Math.cos(a[1]*rad)*Math.cos(b[1]*rad)*Math.sin(dLon/2)**2;return 2*r*Math.asin(Math.sqrt(x));}
 function ringAreaHa(ring){if(ring.length<4)return 0;const lat=ring.reduce((s,p)=>s+p[1],0)/ring.length*Math.PI/180,m=111320,scaleX=m*Math.cos(lat);let area=0;for(let i=0,j=ring.length-1;i<ring.length;j=i++)area+=(ring[j][0]*scaleX)*(ring[i][1]*m)-(ring[i][0]*scaleX)*(ring[j][1]*m);return Math.round(Math.abs(area)/2/10000*100)/100;}
@@ -960,7 +1108,7 @@ function createMissionOperationalCloseoutHandler(dependencies={}){const reposito
  else if(action==='submit'){assertPermission(context,'mission.operational','write');result=await repository.submitMissionOperationalEvidence(context,missionId,{...body,expectedVersion});}
  else if(action==='complete'){assertPermission(context,'mission.completion','complete');const operationalRevisionId=assertUuid(body.operationalRevisionId,'operationalRevisionId');if(typeof body.declaration!=='string'||!body.declaration.trim())throw apiError(400,'VALIDATION_ERROR','A completion declaration is required.');if(body.overrideReason){assertPermission(context,'mission.completion','override_flight_lines');}result=await repository.completeMission(context,missionId,{operationalRevisionId,expectedVersion,declaration:body.declaration.trim(),overrideReason:body.overrideReason});}
  else throw apiError(400,'UNSUPPORTED_ACTION','Unsupported Mission Operational Closeout action.');
- if(result.conflict)throw apiError(409,'VERSION_CONFLICT','Mission Operational Evidence changed.',{currentVersion:result.currentVersion});if(result.notAuthorised)throw apiError(409,'MISSION_NOT_AUTHORISED','Authorise the Mission before recording actuals.');if(result.evidenceIncomplete)throw apiError(409,'EVIDENCE_INCOMPLETE','Complete each Operational Closeout step before review.');if(result.flightLinesRequired)throw apiError(409,'FLIGHT_LINES_REQUIRED','Import final flight-line evidence or provide an authorised exception.');if(result.personnelRequired)throw apiError(409,'PERSONNEL_REQUIRED','A linked authorised Personnel record is required.');if(result.attributionInvalid)throw apiError(400,'OPERATIONAL_ATTRIBUTION_INVALID','Operational Evidence attribution is invalid.');if(result.forbidden)throw apiError(403,'FORBIDDEN','You do not have permission to record Mission Operational Evidence.');if(result.locationForbidden)throw apiError(403,'LOCATION_FORBIDDEN','Mission location is not assigned.');if(result.notFound)throw apiError(404,'NOT_FOUND','Mission evidence was not found.');return res.status(201).json({data:result.record});}catch(error){const{status,response}=errorEnvelope(error);return res.status(status).json(response);}};}
+ if(result.conflict)throw apiError(409,'VERSION_CONFLICT','Mission Operational Evidence changed.',{currentVersion:result.currentVersion});if(result.notAuthorised)throw apiError(409,'MISSION_NOT_AUTHORISED','Authorise the Mission before recording actuals.');if(result.evidenceIncomplete)throw apiError(409,'EVIDENCE_INCOMPLETE','Complete each Operational Closeout step before review.');if(result.aircraftDaysIncomplete)throw apiError(409,'AIRCRAFT_DAYS_INCOMPLETE','Sign off every operating day with exact aircraft totals before completing the Mission.');if(result.flightLinesRequired)throw apiError(409,'FLIGHT_LINES_REQUIRED','Import final flight-line evidence or provide an authorised exception.');if(result.personnelRequired)throw apiError(409,'PERSONNEL_REQUIRED','A linked authorised Personnel record is required.');if(result.attributionInvalid)throw apiError(400,'OPERATIONAL_ATTRIBUTION_INVALID','Operational Evidence attribution is invalid.');if(result.forbidden)throw apiError(403,'FORBIDDEN','You do not have permission to record Mission Operational Evidence.');if(result.locationForbidden)throw apiError(403,'LOCATION_FORBIDDEN','Mission location is not assigned.');if(result.notFound)throw apiError(404,'NOT_FOUND','Mission evidence was not found.');return res.status(201).json({data:result.record});}catch(error){const{status,response}=errorEnvelope(error);return res.status(status).json(response);}};}
 
 function createMissionOutcomesHandler(dependencies={}){const repository=dependencies.repository||new OperationalRepository(),getContext=dependencies.resolveContext||resolveRequestContext;return async function(req,res){res.setHeader('Cache-Control','no-store');res.setHeader('Content-Type','application/json; charset=utf-8');try{const context=await getContext(req,res),missionId=assertUuid(req.query?.missionId,'missionId'),mission=await repository.get('missions',context,missionId);if(!mission||!hasAssignedLocationReadAccess('missions',context,mission))throw apiError(404,'NOT_FOUND','Mission not found.');if(req.method==='GET'){assertPermission(context,'mission.outcomes','read');return res.status(200).json({data:await repository.readMissionOutcomes(context,missionId)});}if(req.method!=='POST')throw apiError(405,'METHOD_NOT_ALLOWED','Method not allowed.');assertSameOrigin(req);assertLocationAccess(context,mission.operating_location_id,'Mission');const action=req.query?.action,body=parseBody(req,MAX_IMPORT_BODY_BYTES);let result;if(action==='observation'){assertPermission(context,'mission.outcomes','create');for(const field of['observerPersonnelId','observedAt','observationTypeCode','methodCode','confidenceCode'])if(typeof body[field]!=='string'||!body[field].trim())throw apiError(400,'VALIDATION_ERROR',`${field} is required.`);result=await repository.createMissionOutcomeObservation(context,missionId,body);}else if(action==='photo'){assertPermission(context,'mission.outcomes','photo.upload');result=await repository.stageMissionOutcomePhoto(context,missionId,body);}else if(action==='follow-up'){assertPermission(context,'mission.outcomes','follow_up.manage');const version=Number(body.expectedVersion);if(!Number.isInteger(version)||version<0)throw apiError(400,'VALIDATION_ERROR','expectedVersion is required.');result=await repository.writeMissionOutcomeFollowUp(context,missionId,body.actionId||null,version,body);}else throw apiError(400,'UNSUPPORTED_ACTION','Unsupported Mission Outcomes action.');if(result.completionRequired)throw apiError(409,'COMPLETION_REQUIRED','Complete the Mission before recording outcomes.');if(result.conflict)throw apiError(409,'VERSION_CONFLICT','The follow-up action changed.');return res.status(201).json({data:result.record});}catch(error){const{status,response}=errorEnvelope(error);return res.status(status).json(response);}};}
 
