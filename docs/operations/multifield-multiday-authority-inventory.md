@@ -20,6 +20,7 @@ The existing one-Field, one-day and single-aircraft paths remain supported subse
 | Immutable Mission JSA | `public.mission_jsa_revisions`, responses, hazards, controls, attachments and approvals; `ftf_read_mission_jsa`, `ftf_save_mission_jsa`, `ftf_approve_mission_jsa`, `ftf_evaluate_mission_jsa_readiness` | `OperationalRepository.readMissionJsa/saveMissionJsa/approveMissionJsa`; `/api/v1/mission-jsa` in `createMissionJsaHandler` | `src/services/missionJsaApi.ts`, `src/types/missionJsa.ts`; `src/components/mission/AuthoritativeMissionJsa.tsx` in `src/pages/MissionPlanning.tsx` | **EXTEND.** Daily review confirmations reference the effective existing JSA revision. **DO_NOT_DUPLICATE:** no new daily JSA aggregate, mutable approval record or browser-only checklist authority. |
 | CRP/PIC Mission authorisation and package | `public.mission_authorisation_revisions`, `public.mission_pack_revisions`; `ftf_evaluate_mission_readiness`, `ftf_read_mission_authorisation`, `ftf_authorise_mission`, `ftf_read_mission_pack`, `ftf_generate_mission_pack` | `OperationalRepository.readMissionAuthorisation/authoriseMission/readMissionPack/generateMissionPack`; `/api/v1/mission-authorisation` in `createMissionAuthorisationHandler` | `src/services/missionAuthorisationApi.ts`; `src/components/mission/MissionAuthorisation.tsx` in `src/pages/MissionPlanning.tsx` | **EXTEND.** Future package revisions and CRP decisions must preserve this immutable revision/decision model and exact evidence digest. **DO_NOT_DUPLICATE:** no Job-level mutable approval flag or second CRP decision stream. |
 | Operational actuals and completion | `public.mission_operational_imports`, resource/chemical revisions, events, `public.mission_operational_revisions`, `public.mission_completion_revisions`; `ftf_read_mission_operational_closeout`, save/submit/complete RPCs | `OperationalRepository` closeout methods; `/api/v1/mission-operational-closeout` in `createMissionOperationalCloseoutHandler` | `src/services/missionOperationalCloseoutApi.ts`; `src/components/mission/MissionOperationalCloseout.tsx` in `src/pages/MissionPlanning.tsx` | **EXTEND.** Daily evidence is additive and final sign-off remains distinct from current operational completion. **DO_NOT_DUPLICATE:** no replacement closeout/Completion history or mutable completed evidence. |
+| Mission Outcomes evidence and follow-up | `public.mission_outcome_observation_types`, `public.mission_outcome_methods`, `public.mission_outcome_confidence_levels`, `public.mission_outcome_observations`, `public.mission_outcome_pending_files`, `public.mission_outcome_observation_files`, `public.mission_outcome_follow_up_actions`; `ftf_read_mission_outcomes`, `ftf_stage_mission_outcome_photo`, `ftf_create_mission_outcome_observation`, `ftf_write_mission_outcome_follow_up` | `OperationalRepository.readMissionOutcomes/stageMissionOutcomePhoto/createMissionOutcomeObservation/writeMissionOutcomeFollowUp`; `/api/v1/mission-outcomes` in `createMissionOutcomesHandler` | `request` envelope boundary and `createMissionOutcomesApi` in `src/services/missionOutcomesApi.ts` (there is no separate structural Outcomes decoder); `src/components/mission/MissionOutcomes.tsx` in `src/pages/MissionPlanning.tsx` | **REUSE.** Retain post-completion observations, immutable photo evidence and governed follow-up actions against the existing completion revision. **DO_NOT_DUPLICATE:** no second outcomes timeline, attachment store, customer-effectiveness authority or browser-owned outcome state. |
 | Fleet technical-register meter | Append-only `public.asset_meter_readings`, immutable trigger, unique source identity `(organisation_id, meter_definition_id, source_system, source_record_id)`; `ftf_write_asset_maintenance_command` | `server/fleet-maintenance-repository.js`; `/api/v1/asset-maintenance` through `server/fleet-maintenance-api.js` | `src/services/maintenanceApi.ts`; Fleet maintenance workspaces | **EXTEND.** Signed-off aircraft-day time projects through the existing `MISSION` source and stable source identity only. **DO_NOT_DUPLICATE:** no Mission-local technical-register hours or second Fleet meter ledger. |
 | Financial Actual operational prefill | `public.ftf_read_financial_actual_operational_prefill`, `ftf_accept_financial_actual_operational_prefill`, source provenance and drift RPCs; it currently reads completed Mission operational revisions | `server/financial-actuals-repository.js`, `server/financial-actuals-api.js`; `/api/v1/financial-actuals` | strict `decodePrefill` in `src/services/financialActualsApi.ts`; Financial Actual workspace | **EXTEND.** Future final-sign-off migration may `create or replace` the existing checked prefill RPC to consume signed-off daily sources while preserving single-closeout reads. **DO_NOT_DUPLICATE:** Financial Actuals consume operational evidence and never own it. |
 | Report artefacts | Existing report artefact/output-file authority, requested via `OperationalRepository.requestReportArtefact` | `server/operational-repository.js` and report route/worker | `ReportArtefactStatus`, Mission pack/report UI | **REUSE.** Final reports render frozen signed-off authority. **DO_NOT_DUPLICATE:** no parallel Mission-report store or recalculation from live mutable records. |
@@ -153,11 +154,43 @@ select evidence_type, parse_status, count(*) as imports
 from public.mission_operational_imports
 group by evidence_type, parse_status
 order by evidence_type, parse_status;
+
+-- Post-completion Mission Outcomes are completed evidence too: preserve their
+-- observation/photo history, follow-up lineage and pending-upload ambiguity.
+select 'observation_types' as outcome_record, count(*) as records
+from public.mission_outcome_observation_types
+union all select 'methods', count(*) from public.mission_outcome_methods
+union all select 'confidence_levels', count(*) from public.mission_outcome_confidence_levels
+union all select 'observations', count(*) from public.mission_outcome_observations
+union all select 'pending_files', count(*) from public.mission_outcome_pending_files
+union all select 'observation_files', count(*) from public.mission_outcome_observation_files
+union all select 'follow_up_actions', count(*) from public.mission_outcome_follow_up_actions;
+
+select
+  p.mission_id,
+  count(*) filter (where p.claimed_at is null and p.expires_at <= now()) as expired_unclaimed_photo_staging,
+  count(*) filter (where p.claimed_at is null and p.expires_at > now()) as active_unclaimed_photo_staging
+from public.mission_outcome_pending_files p
+group by p.mission_id
+having count(*) filter (where p.claimed_at is null) > 0;
+
+select
+  o.mission_id,
+  count(distinct o.id) as observations,
+  count(distinct o.id) filter (where o.supersedes_observation_id is not null) as correction_lineage,
+  count(distinct f.id) as attached_photos,
+  count(distinct a.id) filter (where a.status not in ('COMPLETED', 'CANCELLED')) as open_follow_ups
+from public.mission_outcome_observations o
+left join public.mission_outcome_observation_files f
+  on f.organisation_id = o.organisation_id and f.observation_id = o.id
+left join public.mission_outcome_follow_up_actions a
+  on a.organisation_id = o.organisation_id and a.source_observation_id = o.id
+group by o.mission_id;
 ```
 
 ### Ambiguity treatment
 
-An ambiguous legacy Job/Mission is an inventory finding, not an invitation to guess. Examples include zero active `job_fields`, multiple Properties before the checked scope command exists, broken parent links, cross-Client scope, completed evidence missing an older stream, absent operating timestamps, unparsed flight files, and a completion made with a flight-line override. Preserve its original rows and flag it for review.
+An ambiguous legacy Job/Mission is an inventory finding, not an invitation to guess. Examples include zero active `job_fields`, multiple Properties before the checked scope command exists, broken parent links, cross-Client scope, completed evidence missing an older stream, absent operating timestamps, unparsed flight files, a completion made with a flight-line override, and expired/unclaimed Mission Outcome photo staging. Preserve its original rows and flag it for review.
 
 **No fabricated historical operating days.** Existing completed Missions must not acquire inferred operating dates, daily Field activity, flight hours, CRP decisions, weather windows, chemical actuals or JSA day confirmations. A date range, planned scope, KML geometry or Financial Actual must never be used to invent that evidence.
 
@@ -165,5 +198,10 @@ An ambiguous legacy Job/Mission is an inventory finding, not an invitation to gu
 
 - Existing `fieldIds` arrays, Mission statuses, JSA records, chemical plans, maps and completion evidence remain readable as valid historical/simple workflows.
 - Existing completed evidence is append-only/immutable; corrections use governed revision or correction lineage, never an update to history.
+- Existing Mission Outcome observations and observation files remain immutable completed evidence; follow-up actions retain their current governed row-version lifecycle and are not an alternative operational authority.
 - `public.job_fields`, `public.mission_jsa_revisions`, `public.mission_authorisation_revisions`, `public.mission_operational_revisions`, `public.asset_meter_readings` and `public.ftf_read_financial_actual_operational_prefill` are the named adoption points for this design.
 - A future migration must state why an adopted authority cannot satisfy the new relation, include record counts and ambiguity classes, preserve completed evidence, specify RLS/grants/checked commands and fix-forward boundary, and obtain separate Production approval.
+
+## Source-owner verification
+
+On 4 September 2026, the unchanged-code ownership claims in this matrix were checked against their referenced files. The verified paths/symbols are: Job `mapApiJob`; JSA `readMissionJsa`, `createMissionJsaHandler`, `createMissionJsaApi`, `AuthoritativeMissionJsa`; authorisation `readMissionAuthorisation`, `createMissionAuthorisationHandler`, `createMissionAuthorisationApi`, `MissionAuthorisation`; closeout `readMissionOperationalCloseout`, `createMissionOperationalCloseoutHandler`, `createMissionOperationalCloseoutApi`, `MissionOperationalCloseout`; Fleet `FleetMaintenanceRepository` and `MaintenanceApiError`; Financial `readPrefill` and `decodePrefill`; reports `requestReportArtefact` and `ReportArtefactStatus`; and Outcomes `readMissionOutcomes`, `createMissionOutcomesHandler`, `createMissionOutcomesApi`, `MissionOutcomes`. This is an inventory verification only; no unchanged implementation file was modified.
