@@ -12,7 +12,7 @@ test('keeps the full lifecycle clickable and identifies the active stage without
   const select = jest.fn();
   const stages = deriveMissionWorkspaceStages({ planningSteps: complete, authorised: false, completed: false });
   render(<MissionWorkspaceStepper stages={stages} activeStage="map" onStageSelect={select} />);
-  expect(screen.getAllByRole('button')).toHaveLength(9);
+  expect(screen.getAllByRole('button')).toHaveLength(10);
   expect(screen.getByRole('button', { name: 'Map — Current' })).toHaveAttribute('aria-current', 'step');
   expect(screen.getByRole('button', { name: 'Mission — Complete' })).toBeEnabled();
   expect(screen.getByRole('button', { name: 'Operational Closeout — Available after Mission Authorisation' })).toBeEnabled();

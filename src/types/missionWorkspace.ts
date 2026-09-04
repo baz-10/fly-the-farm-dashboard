@@ -7,6 +7,7 @@ export type MissionWorkspaceStageId =
   | 'weather-chemicals'
   | 'jsa'
   | 'review'
+  | 'operating-days'
   | 'operational-closeout'
   | 'mission-outcomes'
   | 'customer-outcome';
@@ -37,4 +38,11 @@ export type MissionStatusGroups = {
   needsAttention: MissionStatusItem[];
   needsReview: MissionStatusItem[];
   complete: MissionStatusItem[];
+};
+
+/** A display-only Field identity sourced from the authoritative Mission package scope. */
+export type AuthorisedMissionOperatingField = {
+  id: string;
+  name: string;
+  sizeHa?: number;
 };
