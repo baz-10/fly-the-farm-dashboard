@@ -11,10 +11,14 @@ export type MissionWorkspaceStageId =
   | 'mission-outcomes'
   | 'customer-outcome';
 
+/** The review stage only presents an immutable Mission package revision for decision. */
+export type MissionReviewAuthority = 'MISSION_PACKAGE_REVISION';
+
 export type MissionWorkspaceStageDefinition = {
   id: MissionWorkspaceStageId;
   label: string;
   question: string;
+  authority?: MissionReviewAuthority;
 };
 
 export type MissionWorkspaceStage = MissionWorkspaceStageDefinition & {

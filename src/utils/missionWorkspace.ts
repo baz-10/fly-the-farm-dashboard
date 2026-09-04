@@ -12,7 +12,7 @@ export const MISSION_WORKSPACE_STAGES: readonly MissionWorkspaceStageDefinition[
   { id: 'resources', label: 'Resources', question: 'What am I taking?' },
   { id: 'weather-chemicals', label: 'Weather & Chemicals', question: 'What conditions am I expecting and what am I applying?' },
   { id: 'jsa', label: 'JSA', question: 'Is it safe?' },
-  { id: 'review', label: 'Review', question: 'Am I ready to fly?' },
+  { id: 'review', label: 'Review', question: 'What exact package may the eligible CRP decide?', authority: 'MISSION_PACKAGE_REVISION' },
   { id: 'operational-closeout', label: 'Operational Closeout', question: 'What actually happened?' },
   { id: 'mission-outcomes', label: 'Mission Outcomes', question: 'How effective was the work?' },
   { id: 'customer-outcome', label: 'Customer Outcome', question: 'What did the customer think?' },

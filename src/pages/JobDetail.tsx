@@ -110,6 +110,7 @@ function AuthoritativeJobDetail() {
       fields: scopedFields,
     }));
   }, [job, operational.fields, operational.properties]);
+  const linkedMissions = useMemo(() => operational.missions.filter((mission) => mission.jobId === job?.id), [job?.id, operational.missions]);
 
   if (operational.status === 'loading') return <Alert severity="info">Loading job…</Alert>;
   if (operational.status === 'error' || operational.status === 'unauthorised') {
@@ -174,6 +175,17 @@ function AuthoritativeJobDetail() {
                 </Typography>;
               })}
             </Stack>
+          </CardContent>
+        </Card>
+        <Card elevation={0} sx={{ border: `1.5px solid ${alpha(theme.palette.primary.main, 0.1)}`, borderRadius: '16px' }}>
+          <CardContent sx={{ p: 3 }}>
+            <Typography variant="subtitle1" fontWeight={700} color="primary.dark" sx={{ mb: 1 }}>Mission CRP review</Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>A Job defines eligible Fields; it does not approve operational work. Scope and CRP decisions are recorded against an exact Mission package revision.</Typography>
+            {linkedMissions.length === 0 ? <Typography variant="body2" color="text.secondary">Create a Mission to prepare its scope and CRP review.</Typography>
+              : <Stack spacing={1}>{linkedMissions.map((mission) => <Stack key={mission.id} direction={{ xs: 'column', sm: 'row' }} justifyContent="space-between" alignItems={{ sm: 'center' }} spacing={1}>
+                <Typography variant="body2" fontWeight={700}>{mission.missionNumber} · {mission.title}</Typography>
+                <Button size="small" variant="outlined" onClick={() => navigate(`/missions/${mission.id}?stage=review`)}>Open Mission review</Button>
+              </Stack>)}</Stack>}
           </CardContent>
         </Card>
         <Alert severity="info">Outcomes, reports, financials and compliance records are unavailable until their authoritative Production Beta slices are connected. Chemical, weather, spray recommendation and actual/quote data are not shown as server data.</Alert>

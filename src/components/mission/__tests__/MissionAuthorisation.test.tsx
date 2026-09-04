@@ -1,7 +1,51 @@
-import React from'react';import{render,screen,waitFor}from'@testing-library/react';import userEvent from'@testing-library/user-event';import MissionAuthorisation from'../MissionAuthorisation';
-import{PRODUCT_MATURITY_REGISTRY}from'../../../productMaturity/registry';import{ProductMaturityEntry}from'../../../productMaturity/types';
-const api={readiness:jest.fn(),read:jest.fn(),readPack:jest.fn(),authorise:jest.fn(),generatePack:jest.fn()};beforeEach(()=>{jest.clearAllMocks();api.readiness.mockResolvedValue({overallState:'READY',ready:true,blockers:[],warnings:[],categories:{'Planning Evidence':'COMPLETE','Pre-flight Weather':'COMPLETE'},outstandingSections:[],completedSections:['Planning Evidence','Pre-flight Weather']});api.read.mockResolvedValue(null);api.readPack.mockResolvedValue(null);api.authorise.mockResolvedValue({id:'auth',version_number:1,authorised_at:'2026-08-03T01:00:00Z',evidence_manifest:{schemaVersion:1}});api.generatePack.mockResolvedValue({id:'pack',version_number:1,authorisation_revision_id:'auth',authorisation_version:1,pack_snapshot:{title:'Mission Pack'}});});
-test('authorises readiness evidence then generates a pack from that exact revision',async()=>{render(<MissionAuthorisation missionId="44444444-4444-4444-8444-444444444444" api={api as any}/>);await waitFor(()=>expect(api.readiness).toHaveBeenCalled());expect(await screen.findByText('Mission is ready for authorisation.')).toBeInTheDocument();const declaration=screen.getByLabelText('PIC authorisation declaration');await userEvent.clear(declaration);await userEvent.type(declaration,'Evidence reviewed.');await userEvent.click(screen.getByRole('button',{name:'Authorise Mission'}));await waitFor(()=>expect(api.authorise).toHaveBeenCalledWith(expect.any(String),0,'Evidence reviewed.'));await userEvent.click(screen.getByRole('button',{name:'Generate Mission Pack'}));expect(api.generatePack).toHaveBeenCalledWith(expect.any(String),'auth',0);expect(await screen.findByText(/Mission Pack version 1/)).toBeInTheDocument();});
-test('reloads readiness when authoritative Mission evidence changes',async()=>{api.readiness.mockResolvedValueOnce({ready:false,blockers:[{code:'WEATHER_EXPIRED',message:'Weather expired'}],categories:{'Pre-flight Weather':'OUTSTANDING'}}).mockResolvedValueOnce({ready:true,blockers:[],categories:{'Pre-flight Weather':'COMPLETE'}});const view=render(<MissionAuthorisation missionId="44444444-4444-4444-8444-444444444444" refreshToken={0} api={api as any}/>);expect(await screen.findByText('Mission is not ready for authorisation.')).toBeInTheDocument();view.rerender(<MissionAuthorisation missionId="44444444-4444-4444-8444-444444444444" refreshToken={1} api={api as any}/>);expect(await screen.findByText('Mission is ready for authorisation.')).toBeInTheDocument();expect(api.readiness).toHaveBeenCalledTimes(2);});
-test('reloads the pack inside its workflow child when Mission evidence changes',async()=>{api.read.mockResolvedValue({id:'auth',version_number:1,authorised_at:'2026-08-03T01:00:00Z'});const view=render(<MissionAuthorisation missionId="44444444-4444-4444-8444-444444444444" refreshToken={0} api={api as any}/>);await waitFor(()=>expect(api.readPack).toHaveBeenCalledTimes(1));view.rerender(<MissionAuthorisation missionId="44444444-4444-4444-8444-444444444444" refreshToken={1} api={api as any}/>);await waitFor(()=>expect(api.readPack).toHaveBeenCalledTimes(2));});
-test('constrains Mission Pack reports without mounting pack APIs or hiding Mission authorisation context',async()=>{const entry=(PRODUCT_MATURITY_REGISTRY as ProductMaturityEntry[]).find(item=>item.moduleCode==='mission-workspace'&&item.workflowCode==='reports')!;const previous=entry.maturity;entry.maturity='COMING_SOON';api.read.mockResolvedValue({id:'auth',version_number:1,authorised_at:'2026-08-03T01:00:00Z'});try{render(<MissionAuthorisation missionId="44444444-4444-4444-8444-444444444444" api={api as any}/>);expect(await screen.findByText('Mission is ready for authorisation.')).toBeVisible();expect(screen.getByText(/Mission authorised/)).toBeVisible();expect(screen.getByRole('heading',{name:'Mission Reports',level:2})).toBeVisible();expect(screen.queryByRole('button',{name:'Generate Mission Pack'})).not.toBeInTheDocument();expect(api.readPack).not.toHaveBeenCalled();expect(api.generatePack).not.toHaveBeenCalled();}finally{entry.maturity=previous;}});
+import React from 'react';
+import { render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import MissionAuthorisation from '../MissionAuthorisation';
+
+const missionId = '11111111-1111-4111-8111-111111111111';
+const fieldId = '22222222-2222-4222-8222-222222222222';
+const preparing = {
+  id: '33333333-3333-4333-8333-333333333333', missionId, revisionNumber: 1, fieldIds: [fieldId],
+  jsaRevisionId: '44444444-4444-4444-8444-444444444444', evidenceDigest: 'a'.repeat(64),
+  state: 'PREPARING' as const, createdAt: '2026-09-04T10:00:00.000Z',
+};
+const awaiting = { ...preparing, state: 'AWAITING_CRP_APPROVAL' as const };
+
+describe('MissionAuthorisation', () => {
+  test('saves a non-empty Job Field proposal then submits that exact package for CRP review', async () => {
+    const user = userEvent.setup();
+    const api = {
+      readPackageHistory: jest.fn().mockResolvedValue({ missionId, currentRevision: 0, packages: [], decisions: [] }),
+      saveScope: jest.fn().mockResolvedValue(preparing),
+      submitForApproval: jest.fn().mockResolvedValue(awaiting),
+      authorise: jest.fn(), reject: jest.fn(),
+    };
+    render(<MissionAuthorisation missionId={missionId} jobFieldIds={[fieldId]} fieldsByProperty={[
+      { propertyId: 'property-1', propertyName: 'North Farm', fields: [{ id: fieldId, name: 'North Paddock' }] },
+    ]} api={api} />);
+
+    expect(await screen.findByRole('checkbox', { name: 'North Paddock' })).toBeChecked();
+    await user.click(screen.getByRole('button', { name: 'Save Mission Field scope' }));
+    await waitFor(() => expect(api.saveScope).toHaveBeenCalledWith(missionId, 0, [fieldId]));
+    await user.click(screen.getByRole('button', { name: 'Submit exact package for CRP review' }));
+    await waitFor(() => expect(api.submitForApproval).toHaveBeenCalledWith(missionId, preparing.id, 1, preparing.evidenceDigest));
+    expect(await screen.findByText('Revision 1')).toBeVisible();
+  });
+
+  test('requires a Job Field context before a mission package can be created', async () => {
+    const api = { readPackageHistory: jest.fn().mockResolvedValue({ missionId, currentRevision: 0, packages: [], decisions: [] }), saveScope: jest.fn(), submitForApproval: jest.fn(), authorise: jest.fn(), reject: jest.fn() };
+    render(<MissionAuthorisation missionId={missionId} api={api} />);
+
+    expect(await screen.findByText('Open this review from an authoritative Job with at least one selected Field.')).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Authorise Mission' })).not.toBeInTheDocument();
+  });
+
+  test('does not offer a scope command when Job Field records are unavailable', async () => {
+    const api = { readPackageHistory: jest.fn().mockResolvedValue({ missionId, currentRevision: 0, packages: [], decisions: [] }), saveScope: jest.fn(), submitForApproval: jest.fn(), authorise: jest.fn(), reject: jest.fn() };
+    render(<MissionAuthorisation missionId={missionId} jobFieldIds={[fieldId]} api={api} />);
+
+    expect(await screen.findByText('Open this review from an authoritative Job with at least one selected Field.')).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Save Mission Field scope' })).not.toBeInTheDocument();
+  });
+});

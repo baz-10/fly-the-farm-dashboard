@@ -13,7 +13,7 @@ describe('Mission Workspace state model', () => {
     expect(MISSION_WORKSPACE_STAGES.map((stage) => [stage.id, stage.question])).toEqual([
       ['mission', 'What am I doing?'], ['map', 'Where am I working?'], ['resources', 'What am I taking?'],
       ['weather-chemicals', 'What conditions am I expecting and what am I applying?'], ['jsa', 'Is it safe?'],
-      ['review', 'Am I ready to fly?'], ['operational-closeout', 'What actually happened?'],
+      ['review', 'What exact package may the eligible CRP decide?'], ['operational-closeout', 'What actually happened?'],
       ['mission-outcomes', 'How effective was the work?'], ['customer-outcome', 'What did the customer think?'],
     ]);
   });

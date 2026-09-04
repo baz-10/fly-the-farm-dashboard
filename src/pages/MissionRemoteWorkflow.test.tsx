@@ -33,6 +33,7 @@ const mockMissionMapGet = jest.fn();
 const mockMissionMapSave = jest.fn();
 const mockMissionMapUploadSourceFile = jest.fn();
 const mockMissionMapHistory = jest.fn();
+const mockMissionPackageHistory = jest.fn();
 const missionAircraft = {
   id: 'aircraft-1', operatingLocationId: 'location-1', registration: 'VH-FTF1', model: 'DJI Agras T50',
   status: 'operational', serviceabilityState: 'serviceable', missionReady: true,
@@ -88,6 +89,9 @@ jest.mock('../services/missionAuthorisationApi', () => ({ createMissionAuthorisa
   readiness: jest.fn().mockResolvedValue({ ready: false, blockers: [{ code: 'WEATHER_EXPIRED', message: 'Observed Weather expired.' }], warnings: [], categories: {} }),
   read: jest.fn().mockResolvedValue(null), readPack: jest.fn().mockResolvedValue(null), authorise: jest.fn(), generatePack: jest.fn(),
 }) }));
+jest.mock('../services/missionOperationsApi', () => ({ missionOperationsApi: {
+  readPackageHistory: (...args: any[]) => mockMissionPackageHistory(...args), saveScope: jest.fn(), submitForApproval: jest.fn(), authorise: jest.fn(), reject: jest.fn(),
+} }));
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -121,6 +125,7 @@ describe('remote authoritative mission workflow', () => {
       sourceFormat: 'kml', checksum: 'a'.repeat(64), originalCrs: 'EPSG:4326',
     });
     mockMissionMapHistory.mockReset().mockResolvedValue([]);
+    mockMissionPackageHistory.mockReset().mockResolvedValue({ missionId: 'mission-1', currentRevision: 0, packages: [], decisions: [] });
   });
 
   test('lists only authoritative Planning missions with explicit not-ready language', () => {
@@ -198,6 +203,16 @@ describe('remote authoritative mission workflow', () => {
     expect(mockSetSearchParams).toHaveBeenCalledWith(expect.objectContaining({ get: expect.any(Function) }), { replace: true });
     const selected = mockSetSearchParams.mock.calls[0][0] as URLSearchParams;
     expect(selected.get('stage')).toBe('weather-chemicals');
+  });
+
+  test('surfaces CRP review from the Mission while retaining the Job Field subset as a proposal', async () => {
+    mockParams = { missionId: 'mission-1' };
+    mockSearch = 'stage=review';
+    render(<MissionPlanning />);
+
+    expect(await screen.findByText('Mission scope and CRP review')).toBeVisible();
+    expect(screen.getByRole('checkbox', { name: 'North Paddock' })).toBeChecked();
+    expect(screen.getByText(/A Job does not approve a Mission/i)).toBeVisible();
   });
 
   test('resolves authoritative parent records instead of asking for duplicate entry', () => {
