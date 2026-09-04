@@ -74,11 +74,11 @@ test('creates, persists, reopens, and archives the authoritative Client to Draft
     await page.getByRole('button', { name: 'Add Job' }).first().click();
     await page.setViewportSize({ width: 390, height: 844 });
     await page.getByRole('combobox', { name: 'Client' }).selectOption(records.client.id);
-    await page.getByRole('checkbox', { name: secondaryLabel }).check();
+    await page.getByRole('checkbox', { name: label }).check();
     await page.setViewportSize({ width: 768, height: 1024 });
     await page.getByRole('button', { name: 'Add fields from another Property' }).click();
     await page.setViewportSize({ width: 1280, height: 900 });
-    await page.getByRole('checkbox', { name: label }).check();
+    await page.getByRole('checkbox', { name: secondaryLabel }).check();
     await expect(page.getByText(/2 Properties · 2 Fields/)).toBeVisible();
     await page.getByRole('button', { name: 'Continue to Job details' }).click();
     await expect(page.getByRole('heading', { name: 'Record Spray Job' })).toBeVisible();
@@ -100,10 +100,10 @@ test('creates, persists, reopens, and archives the authoritative Client to Draft
 
     await openMissionCreationWorkspace(page);
     await page.getByRole('combobox', { name: 'Client' }).click();
-    await page.getByRole('option', { name: secondaryLabel }).click();
+    await page.getByRole('option', { name: label }).click();
     await page.getByRole('button', { name: 'Continue' }).click();
     await page.getByRole('combobox', { name: 'Property' }).click();
-    await page.getByRole('option', { name: secondaryLabel }).click();
+    await page.getByRole('option', { name: label }).click();
     await page.getByRole('button', { name: 'Continue' }).click();
     await page.getByRole('combobox', { name: 'Field' }).click();
     await page.getByRole('option', { name: label }).click();
