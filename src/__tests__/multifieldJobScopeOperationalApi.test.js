@@ -29,7 +29,7 @@ function request(method, body) {
   };
 }
 
-function context(permissions = ['jobs.update']) {
+function context(permissions = ['jobs.write']) {
   return {
     organisation: { id: ORGANISATION, name: 'Farm A' },
     internalUser: { id: ACTOR, name: 'Operator' },
@@ -73,6 +73,33 @@ describe('checked multi-property Job scope API', () => {
 
     expect(res.statusCode).toBe(200);
     expect(repository.writeJobScope).toHaveBeenCalled();
+  });
+
+  test('rejects legacy jobs.update without calling the checked command', async () => {
+    const repository = { writeJobScope: jest.fn() };
+    const handler = createOperationalHandler('jobs', {
+      repository, resolveContext: jest.fn().mockResolvedValue(context(['jobs.update'])),
+    });
+    const res = response();
+
+    await handler(request('PATCH', { expectedVersion: 3, fieldIds: [FIELD_A, FIELD_B] }), res);
+
+    expect(res.statusCode).toBe(403);
+    expect(res.body.error.code).toBe('FORBIDDEN');
+    expect(repository.writeJobScope).not.toHaveBeenCalled();
+  });
+
+  test('fails closed when the checked RPC denies jobs.write', async () => {
+    const repository = { writeJobScope: jest.fn().mockResolvedValue({ forbidden: true }) };
+    const handler = createOperationalHandler('jobs', {
+      repository, resolveContext: jest.fn().mockResolvedValue(context(['jobs.write'])),
+    });
+    const res = response();
+
+    await handler(request('PATCH', { expectedVersion: 3, fieldIds: [FIELD_A, FIELD_B] }), res);
+
+    expect(res.statusCode).toBe(403);
+    expect(res.body.error.code).toBe('FORBIDDEN');
   });
 
   test.each([

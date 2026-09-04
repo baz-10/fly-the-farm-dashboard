@@ -42,6 +42,9 @@ begin
   if not public.ftf_actor_has_active_beta_seat(p_organisation_id, p_actor_internal_user_id) then
     raise exception 'active organisation actor seat required' using errcode = '42501';
   end if;
+  if not public.ftf_actor_has_permission(p_organisation_id, p_actor_internal_user_id, 'jobs.write') then
+    return jsonb_build_object('forbidden', true);
+  end if;
 
   select * into v_job
   from public.jobs

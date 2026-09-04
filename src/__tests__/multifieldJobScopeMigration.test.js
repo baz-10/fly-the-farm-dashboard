@@ -20,6 +20,12 @@ test('checks every Field through Property and one Client under the aggregate loc
   expect(sql).toContain('job_scope_version_conflict');
 });
 
+test('enforces the exact jobs.write authority in the checked RPC', () => {
+  const sql = migration();
+  expect(sql).toContain("public.ftf_actor_has_permission(p_organisation_id, p_actor_internal_user_id, 'jobs.write')");
+  expect(sql).toContain("return jsonb_build_object('forbidden', true)");
+});
+
 test('keeps the adopted Job Field relation while removing its single-property parent restriction', () => {
   const sql = migration();
   expect(sql).toContain('alter table public.job_fields drop constraint');

@@ -299,6 +299,7 @@ class OperationalRepository {
       }),
       publicMessage: 'Job scope could not be saved.',
     });
+    if (result?.forbidden) return { forbidden: true };
     if (result?.error) return { error: result.error, currentVersion: result.current_version };
     const fields = Array.isArray(result?.fields) ? result.fields : [];
     const fieldIdsFromParents = fields.map((field) => field?.id).filter(Boolean);

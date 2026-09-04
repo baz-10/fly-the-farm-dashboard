@@ -794,7 +794,7 @@ function createOperationalHandler(resource, dependencies = {}) {
       const expectedVersion = Number(body.expectedVersion);
       if (!Number.isInteger(expectedVersion) || expectedVersion < 1) throw apiError(400, 'VALIDATION_ERROR', 'expectedVersion must be a positive integer.');
       if (req.method === 'PATCH' && resource === 'jobs' && Object.prototype.hasOwnProperty.call(body, 'fieldIds')) {
-        if (!hasPermission(context, 'jobs', 'write') && !hasPermission(context, 'jobs', 'update')) {
+        if (!hasPermission(context, 'jobs', 'write')) {
           throw apiError(403, 'FORBIDDEN', 'You do not have permission for this operation.');
         }
         const allowed = new Set(['expectedVersion', 'fieldIds']);
@@ -809,6 +809,7 @@ function createOperationalHandler(resource, dependencies = {}) {
           throw apiError(400, 'VALIDATION_ERROR', 'fieldIds must not contain duplicates.');
         }
         const result = await repository.writeJobScope(context, id, expectedVersion, fieldIds);
+        if (result.forbidden) throw apiError(403, 'FORBIDDEN', 'You do not have permission for this operation.');
         if (result.notFound || result.error === 'JOB_SCOPE_NOT_FOUND') throw apiError(404, 'NOT_FOUND', 'Operational record not found.');
         if (result.error === 'JOB_SCOPE_VERSION_CONFLICT') {
           throw apiError(409, 'JOB_SCOPE_VERSION_CONFLICT', 'This Job scope changed before your update.', { currentVersion: result.currentVersion });
