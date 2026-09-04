@@ -77,6 +77,10 @@ const ids = {
   meterA: 'd0000000-0000-4000-8000-000000000001',
   meterB: 'd0000000-0000-4000-8000-000000000002',
   meterC: 'd0000000-0000-4000-8000-000000000003',
+  chemicalPlan: 'd1000000-0000-4000-8000-000000000001',
+  chemicalPlanLine: 'd1000000-0000-4000-8000-000000000002',
+  chemicalActual: 'd1000000-0000-4000-8000-000000000003',
+  chemicalActualLine: 'd1000000-0000-4000-8000-000000000004',
 };
 
 const scalar = async (db, sql, params = []) => (await db.query(sql, params)).rows[0]?.value;
@@ -142,11 +146,19 @@ if (child) {
       join public.organisation_jsa_policy_versions pv on pv.organisation_id=p.organisation_id and pv.policy_id=p.id
       join public.platform_jsa_template_versions tv on tv.id='b1000000-0000-4000-8000-000000000101'
       where p.organisation_id='${orgA}';
+      insert into public.mission_chemical_plan_revisions(
+        id,organisation_id,operating_location_id,mission_id,version_number,treatment_area_ha,application_volume_l_ha,
+        tank_capacity_l,total_spray_volume_l,water_required_l,hectares_per_batch,batch_count,created_by_internal_user_id
+      ) values('${ids.chemicalPlan}','${orgA}','${baseA}','${ids.mission}',1,10,40,100,400,380,2.5,4,'${actorA}');
+      insert into public.mission_chemical_plan_lines(
+        id,organisation_id,revision_id,mission_id,line_number,match_state,product_name,normalised_product_name,
+        rate,rate_unit,total_product_quantity,total_product_unit,product_per_batch,snapshot
+      ) values('${ids.chemicalPlanLine}','${orgA}','${ids.chemicalPlan}','${ids.mission}',1,'UNMATCHED','Product A','product a',2,'L_HA',20,'L',5,'{}');
       insert into public.mission_pack_revisions(
         id,organisation_id,operating_location_id,mission_id,version_number,pack_snapshot,generated_by_internal_user_id,
         job_id,package_state,jsa_revision_id,evidence_digest,source_manifest
       ) values('${ids.pack}','${orgA}','${baseA}','${ids.mission}',1,'{}','${actorA}','${ids.job}','PREPARING','${ids.jsa}','${'a'.repeat(64)}',
-        '${JSON.stringify({ aircraftAssignments: [
+        '${JSON.stringify({ chemicals: { id: ids.chemicalPlan, version: 1 }, aircraftAssignments: [
           { id: ids.assignmentA, aircraftId: ids.aircraftA, aircraftRowVersion: 1 },
           { id: ids.assignmentB, aircraftId: ids.aircraftB, aircraftRowVersion: 1 },
         ] })}');
@@ -429,6 +441,7 @@ if (child) {
     const signedVersion = await scalar(db, `select row_version as value from public.mission_operating_days where id='${ids.dayA}'`);
     expect(await call('ftf_complete_and_sign_off_mission_operating_day', [orgA, actorA, ids.mission, ids.dayA, signedVersion, '2026-09-05T03:00:00Z', null]))
       .toMatchObject({ fleet_projection: { projected_count: 0, idempotent_count: 2 } });
+    await db.exec(`update public.mission_aircraft_assignments set unassigned_at=null,unassigned_by_internal_user_id=null where id='${ids.assignmentB}'`);
   });
 
   test('multi-day final sign-off fails closed before creating completion or projection authority', async () => {
@@ -472,7 +485,30 @@ if (child) {
       insert into public.mission_operational_events(
         id,organisation_id,operating_location_id,mission_id,batch_version,event_index,event_type,event_details,no_events_declaration,recorded_by_internal_user_id
       ) values('${eventId}','${orgA}','${baseA}','${ids.mission}',1,0,'NO_OPERATIONAL_EVENTS','{}',true,'${actorA}');
+      insert into public.mission_day_chemical_revisions(
+        id,organisation_id,operating_location_id,mission_id,operating_day_id,mission_pack_revision_id,
+        planned_chemical_revision_id,revision_number,changed_from_plan,material_variance,confirmed_by_internal_user_id
+      ) values('${ids.chemicalActual}','${orgA}','${baseA}','${ids.mission}','${ids.dayA}','${ids.pack}',
+        '${ids.chemicalPlan}',1,false,false,'${actorA}');
+      insert into public.mission_day_chemical_lines(
+        id,organisation_id,operating_location_id,mission_id,operating_day_id,revision_id,line_number,field_id,planned_line_id,
+        product_name,normalised_product_name,rate,rate_unit,applied_quantity,quantity_unit,aircraft_id
+      ) values('${ids.chemicalActualLine}','${orgA}','${baseA}','${ids.mission}','${ids.dayA}','${ids.chemicalActual}',1,
+        '${ids.field}','${ids.chemicalPlanLine}','Product A','product a',2,'L_HA',20,'L','${ids.aircraftA}');
     `);
+    await db.exec('begin');
+    await db.exec(`update public.mission_aircraft_assignments set unassigned_at=now(),unassigned_by_internal_user_id='${actorA}'
+      where id='${ids.assignmentC}'`);
+    expect((await call('ftf_build_mission_report_evidence_manifest', [orgA, ids.mission])).aircraft.map((item) => item.id)).toContain(ids.aircraftC);
+    await db.exec('rollback');
+
+    await db.exec('begin');
+    await db.exec(`update public.mission_aircraft_assignments set unassigned_at=(select signed_off_at-interval '1 second'
+        from public.mission_aircraft_day_actuals where mission_aircraft_assignment_id='${ids.assignmentC}' limit 1),
+        unassigned_by_internal_user_id='${actorA}' where id='${ids.assignmentC}'`);
+    await expect(call('ftf_build_mission_report_evidence_manifest', [orgA, ids.mission]))
+      .rejects.toThrow(/MISSION_REPORT_EVIDENCE_INVALID: reference/);
+    await db.exec('rollback');
     await db.exec('begin');
     await db.exec(`insert into public.mission_operational_import_attributions(
       organisation_id,operating_location_id,mission_id,operational_import_id,aircraft_id,attribution_confidence,attributed_by_internal_user_id
@@ -498,6 +534,58 @@ if (child) {
       .rejects.toThrow(/MISSION_REPORT_EVIDENCE_INVALID: reference/);
     await db.exec('rollback');
     expect(await scalar(db, `select count(*)::integer as value from public.mission_operational_imports where id='${foreignImportId}'`)).toBe(0);
+
+    await db.exec('begin');
+    await db.exec(`alter table public.mission_aircraft_day_actuals disable trigger mission_aircraft_day_actuals_mutation_guard;
+      update public.mission_aircraft_day_actuals set mission_aircraft_assignment_id='${ids.assignmentB}'
+        where organisation_id='${orgA}' and mission_id='${ids.mission}' and aircraft_id='${ids.aircraftA}';
+      alter table public.mission_aircraft_day_actuals enable trigger mission_aircraft_day_actuals_mutation_guard`);
+    await expect(call('ftf_build_mission_report_evidence_manifest', [orgA, ids.mission]))
+      .rejects.toThrow(/MISSION_REPORT_EVIDENCE_INVALID: reference/);
+    await db.exec('rollback');
+    expect(await scalar(db, `select count(*)::integer as value from public.mission_aircraft_day_actuals
+      where organisation_id='${orgA}' and mission_id='${ids.mission}' and aircraft_id='${ids.aircraftA}'
+        and mission_aircraft_assignment_id='${ids.assignmentB}'`)).toBe(0);
+
+    await db.exec('begin');
+    await db.exec(`insert into public.mission_operational_import_attributions(
+      organisation_id,operating_location_id,mission_id,operational_import_id,operating_day_id,aircraft_id,
+      attribution_confidence,attributed_by_internal_user_id
+    ) select '${orgA}','${baseA}','${ids.mission}',id,'${ids.dayA}','${ids.aircraftC}','OPERATOR_CONFIRMED','${actorA}'
+      from public.mission_operational_imports where organisation_id='${orgA}' and mission_id='${ids.mission}' limit 1`);
+    await expect(call('ftf_build_mission_report_evidence_manifest', [orgA, ids.mission]))
+      .rejects.toThrow(/MISSION_REPORT_EVIDENCE_INVALID: reference/);
+    await db.exec('rollback');
+    expect(await scalar(db, `select count(*)::integer as value from public.mission_operational_import_attributions
+      where organisation_id='${orgA}' and mission_id='${ids.mission}' and operating_day_id='${ids.dayA}' and aircraft_id='${ids.aircraftC}'`)).toBe(0);
+
+    const unrelatedPlan = 'e1000000-0000-4000-8000-000000000003';
+    const unrelatedPlanLine = 'e1000000-0000-4000-8000-000000000004';
+    await db.exec('begin');
+    await db.exec(`insert into public.mission_chemical_plan_revisions(
+      id,organisation_id,operating_location_id,mission_id,version_number,treatment_area_ha,application_volume_l_ha,
+      tank_capacity_l,total_spray_volume_l,water_required_l,hectares_per_batch,batch_count,created_by_internal_user_id
+    ) values('${unrelatedPlan}','${orgA}','${baseA}','${ids.mission}',2,10,40,100,400,380,2.5,4,'${actorA}');
+      insert into public.mission_chemical_plan_lines(
+        id,organisation_id,revision_id,mission_id,line_number,match_state,product_name,normalised_product_name,
+        rate,rate_unit,total_product_quantity,total_product_unit,product_per_batch,snapshot
+      ) values('${unrelatedPlanLine}','${orgA}','${unrelatedPlan}','${ids.mission}',1,'UNMATCHED','Product B','product b',2,'L_HA',20,'L',5,'{}');
+      alter table public.mission_day_chemical_lines disable trigger mission_day_chemical_lines_immutable;
+      update public.mission_day_chemical_lines set planned_line_id='${unrelatedPlanLine}' where id='${ids.chemicalActualLine}';
+      alter table public.mission_day_chemical_lines enable trigger mission_day_chemical_lines_immutable`);
+    await expect(call('ftf_build_mission_report_evidence_manifest', [orgA, ids.mission]))
+      .rejects.toThrow(/MISSION_REPORT_EVIDENCE_INVALID: reference/);
+    await db.exec('rollback');
+    expect(await scalar(db, `select planned_line_id::text as value from public.mission_day_chemical_lines where id='${ids.chemicalActualLine}'`)).toBe(ids.chemicalPlanLine);
+
+    await db.exec('begin');
+    await db.exec(`alter table public.mission_day_chemical_lines disable trigger mission_day_chemical_lines_immutable;
+      update public.mission_day_chemical_lines set aircraft_id='${ids.aircraftC}' where id='${ids.chemicalActualLine}';
+      alter table public.mission_day_chemical_lines enable trigger mission_day_chemical_lines_immutable`);
+    await expect(call('ftf_build_mission_report_evidence_manifest', [orgA, ids.mission]))
+      .rejects.toThrow(/MISSION_REPORT_EVIDENCE_INVALID: reference/);
+    await db.exec('rollback');
+    expect(await scalar(db, `select aircraft_id::text as value from public.mission_day_chemical_lines where id='${ids.chemicalActualLine}'`)).toBe(ids.aircraftA);
 
     await db.exec('begin');
     const foreignWeather = await call('ftf_create_mission_weather_observation', [orgA, actorA, ids.missionOther, 0, JSON.stringify({

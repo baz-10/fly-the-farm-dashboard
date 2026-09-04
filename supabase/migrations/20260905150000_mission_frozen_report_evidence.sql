@@ -33,19 +33,35 @@ begin
   -- lock rows: clients
   perform client.id from public.clients client where client.organisation_id=p_organisation_id and client.id=v_client.id order by client.id for update;
   -- lock rows: properties
-  perform property.id from public.properties property where property.organisation_id=p_organisation_id and exists(
-    select 1 from public.mission_pack_fields scope where scope.organisation_id=p_organisation_id and scope.mission_id=p_mission_id
-      and scope.pack_revision_id=v_effective_pack.id and scope.property_id=property.id) order by property.id for update;
+  -- lock referenced rows: properties
+  perform property.id from public.properties property where property.organisation_id=p_organisation_id and (
+    exists(select 1 from public.mission_pack_fields scope where scope.organisation_id=p_organisation_id and scope.mission_id=p_mission_id and scope.property_id=property.id)
+    or exists(select 1 from public.fields field where field.organisation_id=p_organisation_id and field.property_id=property.id and (
+      exists(select 1 from public.mission_day_field_activity activity where activity.organisation_id=p_organisation_id and activity.mission_id=p_mission_id and activity.field_id=field.id)
+      or exists(select 1 from public.mission_flight_actuals flight where flight.organisation_id=p_organisation_id and flight.mission_id=p_mission_id and flight.field_id=field.id)
+      or exists(select 1 from public.mission_day_chemical_lines line where line.organisation_id=p_organisation_id and line.mission_id=p_mission_id and line.field_id=field.id)))) order by property.id for update;
   -- lock rows: fields
-  perform field.id from public.fields field where field.organisation_id=p_organisation_id and exists(
-    select 1 from public.mission_pack_fields scope where scope.organisation_id=p_organisation_id and scope.mission_id=p_mission_id
-      and scope.pack_revision_id=v_effective_pack.id and scope.field_id=field.id) order by field.id for update;
+  -- lock referenced rows: fields
+  perform field.id from public.fields field where field.organisation_id=p_organisation_id and (
+    exists(select 1 from public.mission_pack_fields scope where scope.organisation_id=p_organisation_id and scope.mission_id=p_mission_id and scope.field_id=field.id)
+    or exists(select 1 from public.mission_day_field_activity activity where activity.organisation_id=p_organisation_id and activity.mission_id=p_mission_id and activity.field_id=field.id)
+    or exists(select 1 from public.mission_flight_actuals flight where flight.organisation_id=p_organisation_id and flight.mission_id=p_mission_id and flight.field_id=field.id)
+    or exists(select 1 from public.mission_day_chemical_lines line where line.organisation_id=p_organisation_id and line.mission_id=p_mission_id and line.field_id=field.id)) order by field.id for update;
   -- lock rows: aircraft
-  perform aircraft.id from public.aircraft aircraft where aircraft.organisation_id=p_organisation_id and exists(
-    select 1 from public.mission_aircraft_day_actuals actual where actual.organisation_id=p_organisation_id
-      and actual.mission_id=p_mission_id and actual.aircraft_id=aircraft.id) order by aircraft.id for update;
+  -- lock referenced rows: aircraft
+  perform aircraft.id from public.aircraft aircraft where aircraft.organisation_id=p_organisation_id and (
+    exists(select 1 from public.mission_aircraft_day_actuals actual where actual.organisation_id=p_organisation_id
+      and actual.mission_id=p_mission_id and actual.aircraft_id=aircraft.id)
+    or exists(select 1 from public.mission_day_chemical_lines line where line.organisation_id=p_organisation_id
+      and line.mission_id=p_mission_id and line.aircraft_id=aircraft.id)
+    or exists(select 1 from public.mission_operational_import_attributions attribution where attribution.organisation_id=p_organisation_id
+      and attribution.mission_id=p_mission_id and attribution.aircraft_id=aircraft.id)) order by aircraft.id for update;
   -- lock rows: mission_aircraft_assignments
-  perform assignment.id from public.mission_aircraft_assignments assignment where assignment.organisation_id=p_organisation_id and assignment.mission_id=p_mission_id order by assignment.id for update;
+  -- lock referenced rows: mission_aircraft_assignments
+  perform assignment.id from public.mission_aircraft_assignments assignment where assignment.organisation_id=p_organisation_id and (
+    assignment.mission_id=p_mission_id or exists(select 1 from public.mission_aircraft_day_actuals actual
+      where actual.organisation_id=p_organisation_id and actual.mission_id=p_mission_id
+        and actual.mission_aircraft_assignment_id=assignment.id)) order by assignment.id for update;
   -- lock rows: mission_pack_revisions
   perform pack.id from public.mission_pack_revisions pack where pack.organisation_id=p_organisation_id and pack.mission_id=p_mission_id order by pack.id for update;
   -- lock rows: mission_pack_fields
@@ -79,11 +95,22 @@ begin
   -- lock rows: mission_operational_import_attributions
   perform attribution.id from public.mission_operational_import_attributions attribution where attribution.organisation_id=p_organisation_id and attribution.mission_id=p_mission_id order by attribution.id for update;
   -- lock rows: mission_operational_imports
-  perform import.id from public.mission_operational_imports import where import.organisation_id=p_organisation_id and import.mission_id=p_mission_id order by import.id for update;
+  -- lock referenced rows: mission_operational_imports
+  perform import.id from public.mission_operational_imports import where import.organisation_id=p_organisation_id and (
+    import.mission_id=p_mission_id or exists(select 1 from public.mission_flight_actuals flight where flight.organisation_id=p_organisation_id
+      and flight.mission_id=p_mission_id and flight.source_import_id=import.id)
+    or exists(select 1 from public.mission_operational_import_attributions attribution where attribution.organisation_id=p_organisation_id
+      and attribution.mission_id=p_mission_id and attribution.operational_import_id=import.id)) order by import.id for update;
   -- lock rows: mission_chemical_plan_revisions
-  perform revision.id from public.mission_chemical_plan_revisions revision where revision.organisation_id=p_organisation_id and revision.mission_id=p_mission_id order by revision.id for update;
+  -- lock referenced rows: mission_chemical_plan_revisions
+  perform revision.id from public.mission_chemical_plan_revisions revision where revision.organisation_id=p_organisation_id and (
+    revision.mission_id=p_mission_id or exists(select 1 from public.mission_day_chemical_revisions actual where actual.organisation_id=p_organisation_id
+      and actual.mission_id=p_mission_id and actual.planned_chemical_revision_id=revision.id)) order by revision.id for update;
   -- lock rows: mission_chemical_plan_lines
-  perform line.id from public.mission_chemical_plan_lines line where line.organisation_id=p_organisation_id and line.mission_id=p_mission_id order by line.id for update;
+  -- lock referenced rows: mission_chemical_plan_lines
+  perform line.id from public.mission_chemical_plan_lines line where line.organisation_id=p_organisation_id and (
+    line.mission_id=p_mission_id or exists(select 1 from public.mission_day_chemical_lines actual where actual.organisation_id=p_organisation_id
+      and actual.mission_id=p_mission_id and actual.planned_line_id=line.id)) order by line.id for update;
   -- lock rows: mission_package_amendments
   perform amendment.id from public.mission_package_amendments amendment where amendment.organisation_id=p_organisation_id and amendment.mission_id=p_mission_id order by amendment.id for update;
 
@@ -119,7 +146,45 @@ begin
   end if;
 
   -- reference: field_activity_field
-  if exists(select 1 from public.mission_day_field_activity activity join public.mission_operating_days day
+  if exists(select 1 from public.mission_operating_days day where day.organisation_id=p_organisation_id and day.mission_id=p_mission_id
+      and (not exists(select 1 from public.mission_pack_revisions pack where pack.organisation_id=p_organisation_id and pack.mission_id=p_mission_id
+          and pack.id=day.mission_pack_revision_id and pack.operating_location_id=v_mission.operating_location_id)
+        or not exists(select 1 from public.mission_jsa_revisions jsa where jsa.organisation_id=p_organisation_id and jsa.mission_id=p_mission_id
+          and jsa.id=day.jsa_revision_id and jsa.operating_location_id=v_mission.operating_location_id)))
+    or exists(select 1 from public.mission_pack_fields scope join public.fields field
+        on field.organisation_id=scope.organisation_id and field.id=scope.field_id
+      join public.properties property on property.organisation_id=field.organisation_id and property.id=field.property_id
+      where scope.organisation_id=p_organisation_id and scope.mission_id=p_mission_id
+        and (scope.job_id<>v_job.id or scope.property_id<>property.id or property.client_id<>v_client.id
+          or not exists(select 1 from public.job_fields job_scope where job_scope.organisation_id=p_organisation_id
+            and job_scope.job_id=v_job.id and job_scope.property_id=property.id and job_scope.field_id=field.id)))
+    or exists(select 1 from public.mission_aircraft_day_actuals actual join public.mission_operating_days day
+        on day.organisation_id=actual.organisation_id and day.mission_id=actual.mission_id and day.id=actual.operating_day_id
+      where actual.organisation_id=p_organisation_id and actual.mission_id=p_mission_id
+        and actual.mission_pack_revision_id<>day.mission_pack_revision_id)
+    or exists(select 1 from public.mission_day_chemical_revisions revision join public.mission_operating_days day
+        on day.organisation_id=revision.organisation_id and day.mission_id=revision.mission_id and day.id=revision.operating_day_id
+      where revision.organisation_id=p_organisation_id and revision.mission_id=p_mission_id
+        and (revision.mission_pack_revision_id<>day.mission_pack_revision_id
+          or revision.planned_chemical_revision_id<>public.ftf_mission_day_planned_chemical_revision_id(p_organisation_id,p_mission_id,day.id)))
+    or exists(select 1 from public.mission_day_weather_reports weather join public.mission_operating_days day
+        on day.organisation_id=weather.organisation_id and day.mission_id=weather.mission_id and day.id=weather.operating_day_id
+      where weather.organisation_id=p_organisation_id and weather.mission_id=p_mission_id
+        and weather.mission_pack_revision_id<>day.mission_pack_revision_id)
+    or exists(select 1 from public.mission_authorisation_revisions decision where decision.organisation_id=p_organisation_id
+      and decision.mission_id=p_mission_id and decision.mission_pack_revision_id is not null
+      and not exists(select 1 from public.mission_pack_revisions pack where pack.organisation_id=p_organisation_id
+        and pack.mission_id=p_mission_id and pack.id=decision.mission_pack_revision_id))
+    or exists(select 1 from public.mission_aircraft_day_actuals actual where actual.organisation_id=p_organisation_id and actual.mission_id=p_mission_id
+      and (actual.mission_aircraft_assignment_id is null or not exists(select 1 from public.mission_aircraft_assignments assignment
+        where assignment.organisation_id=p_organisation_id and assignment.id=actual.mission_aircraft_assignment_id
+          and assignment.mission_id=p_mission_id and assignment.operating_location_id=v_mission.operating_location_id
+          and assignment.aircraft_id=actual.aircraft_id and (
+            (actual.signed_off_at is null and assignment.unassigned_at is null)
+            or (actual.signed_off_at is not null and assignment.assigned_at<=actual.signed_off_at
+              and (assignment.unassigned_at is null or assignment.unassigned_at>=actual.signed_off_at))))))
+    -- reference: aircraft_day_assignment
+    or exists(select 1 from public.mission_day_field_activity activity join public.mission_operating_days day
       on day.organisation_id=activity.organisation_id and day.mission_id=activity.mission_id and day.id=activity.operating_day_id
       where activity.organisation_id=p_organisation_id and activity.mission_id=p_mission_id
       and not exists(select 1 from public.mission_pack_fields scope where scope.organisation_id=p_organisation_id and scope.mission_id=p_mission_id
@@ -150,6 +215,11 @@ begin
         on aircraft.organisation_id=actual.organisation_id and aircraft.id=actual.aircraft_id
         where actual.organisation_id=p_organisation_id and actual.mission_id=p_mission_id and actual.aircraft_id=attribution.aircraft_id
           and aircraft.operating_location_id=v_mission.operating_location_id))
+    or exists(select 1 from public.mission_operational_import_attributions attribution where attribution.organisation_id=p_organisation_id
+      and attribution.mission_id=p_mission_id and attribution.operating_day_id is not null and attribution.aircraft_id is not null
+      and not exists(select 1 from public.mission_aircraft_day_actuals actual where actual.organisation_id=p_organisation_id
+        and actual.mission_id=p_mission_id and actual.operating_day_id=attribution.operating_day_id
+        and actual.aircraft_id=attribution.aircraft_id))
     -- reference: weather_source_observation
     or exists(select 1 from public.mission_day_weather_reports weather where weather.organisation_id=p_organisation_id and weather.mission_id=p_mission_id
       and not exists(select 1 from public.mission_weather_observations observation where observation.organisation_id=p_organisation_id
@@ -169,6 +239,24 @@ begin
         on revision.organisation_id=line.organisation_id and revision.id=line.revision_id
       where line.organisation_id=p_organisation_id and line.mission_id=p_mission_id
         and (revision.mission_id<>p_mission_id or revision.operating_day_id<>line.operating_day_id))
+    -- reference: chemical_planned_line
+    or exists(select 1 from public.mission_day_chemical_lines line join public.mission_day_chemical_revisions revision
+        on revision.organisation_id=line.organisation_id and revision.id=line.revision_id
+      join public.mission_operating_days day on day.organisation_id=line.organisation_id and day.mission_id=line.mission_id and day.id=line.operating_day_id
+      where line.organisation_id=p_organisation_id and line.mission_id=p_mission_id and (
+        revision.mission_pack_revision_id<>day.mission_pack_revision_id
+        or revision.planned_chemical_revision_id<>public.ftf_mission_day_planned_chemical_revision_id(p_organisation_id,p_mission_id,day.id)
+        or (line.planned_line_id is not null and not exists(select 1 from public.mission_chemical_plan_lines planned
+          where planned.organisation_id=p_organisation_id and planned.id=line.planned_line_id and planned.mission_id=p_mission_id
+            and planned.revision_id=revision.planned_chemical_revision_id))))
+    -- reference: chemical_aircraft_participation
+    or exists(select 1 from public.mission_day_chemical_lines line where line.organisation_id=p_organisation_id
+      and line.mission_id=p_mission_id and line.aircraft_id is not null and not exists(
+        select 1 from public.mission_aircraft_day_actuals actual join public.aircraft aircraft
+          on aircraft.organisation_id=actual.organisation_id and aircraft.id=actual.aircraft_id
+        where actual.organisation_id=p_organisation_id and actual.mission_id=p_mission_id
+          and actual.operating_day_id=line.operating_day_id and actual.aircraft_id=line.aircraft_id
+          and aircraft.operating_location_id=v_mission.operating_location_id))
     or exists(select 1 from public.mission_chemical_plan_lines line join public.mission_chemical_plan_revisions revision
         on revision.organisation_id=line.organisation_id and revision.id=line.revision_id
       where line.organisation_id=p_organisation_id and line.mission_id=p_mission_id

@@ -96,3 +96,32 @@ test('locks mutable referenced identities before reference validation', () => {
     sql.indexOf('reference: weather_source_observation'),
   );
 });
+
+test('correlates aircraft-day assignments and preserves governed historical unassignment semantics', () => {
+  const sql = migration();
+  expect(sql).toContain('reference: aircraft_day_assignment');
+  expect(sql).toContain('assignment.id=actual.mission_aircraft_assignment_id');
+  expect(sql).toContain('assignment.aircraft_id=actual.aircraft_id');
+  expect(sql).toContain('assignment.unassigned_at>=actual.signed_off_at');
+  expect(sql).toContain('assignment.assigned_at<=actual.signed_off_at');
+});
+
+test('correlates chemical actual lines to the day plan and same-day aircraft participation', () => {
+  const sql = migration();
+  expect(sql).toContain('reference: chemical_planned_line');
+  expect(sql).toContain('line.planned_line_id');
+  expect(sql).toContain('revision.planned_chemical_revision_id');
+  expect(sql).toContain('reference: chemical_aircraft_participation');
+  expect(sql).toMatch(/actual\.operating_day_id=line\.operating_day_id/);
+});
+
+test('locks referenced parents even when their own Mission identity is corrupt', () => {
+  const sql = migration();
+  for (const marker of [
+    'lock referenced rows: mission_operational_imports',
+    'lock referenced rows: mission_chemical_plan_revisions',
+    'lock referenced rows: mission_chemical_plan_lines',
+    'lock referenced rows: mission_aircraft_assignments',
+    'lock referenced rows: aircraft',
+  ]) expect(sql).toContain(marker);
+});

@@ -52,19 +52,28 @@
 - The deterministic lock catalogue now includes referenced `mission_weather_observations` and `mission_aircraft_assignments`, ahead of reference validation and manifest construction.
 - Executable PostgreSQL corruption tests retain correct row-level Base values while wiring an attribution to another Mission's import and a weather report to another Mission's observation. Both fail with `MISSION_REPORT_EVIDENCE_INVALID: reference`, and each transaction rolls back completely.
 
+## Task 11B review round 3
+
+- Every aircraft-day actual now resolves its exact assignment identity and verifies Mission, Base and aircraft equality. Unsigned evidence requires an active assignment; signed evidence preserves the existing Task 8 historical rule only when assignment start precedes sign-off and any unassignment occurred at or after sign-off.
+- Chemical actual revisions must retain the day's exact package and planned revision. A non-null `planned_line_id` must belong to that exact planned revision/Mission, and a non-null chemical aircraft must belong to the Mission Base and have authoritative participation on the same operating day.
+- Day-specific flight-line attribution now requires the attributed aircraft to participate on that exact operating day, rather than merely somewhere in the Mission.
+- The deterministic parent-lock phase follows child references even when corrupt: foreign Mission imports, referenced planned revisions/lines, exact assignments, chemical-only/attribution-only aircraft, referenced Fields/Properties, and source weather observations are locked by table then UUID before validation/build.
+- The related-reference audit also verifies each day's package/JSA, package Field→Job/Property/Client and `job_fields` membership, aircraft actual→day package, chemical/weather→day package, chemical revision→day plan, and CRP decision→Mission package.
+- Executable PostgreSQL transactions prove valid post-sign-off assignment retirement remains historical authority, pre-sign-off retirement fails closed, and corrupt assignment, wrong-day attribution, wrong planned-line revision and non-participating chemical aircraft all fail with complete rollback.
+
 ## RED evidence
 
 The first focused run failed for the intended missing migration, absent `MissionFinalSignoff` component and unsupported API actions. The lifecycle refinement also identified and corrected the existing-closeout compatibility case: revision 1 may already exist, so final sign-off must append rather than overwrite or falsely return it.
 
 ## Verification
 
-- Focused Task 11/11B authority/API/decoder/UI/Financial/Fleet/migration suite: 10 suites / 91 tests PASS.
+- Focused Task 11/11B authority/API/decoder/UI/Financial/Fleet/migration suite: 10 suites / 94 tests PASS.
 - Full-chain PGlite migration execution and Fleet behavior: PASS, including an executable multi-day final-sign-off fail-closed/zero-mutation assertion.
 - Production build: PASS with the repository's pre-existing Browserslist, lint-warning and bundle-size warning backlog.
 - Targeted ESLint: zero errors; six pre-existing unused-import warnings remain in `JobDetail.tsx`.
 - `git diff --check`: PASS.
 - Migration SHA-256: `7586956d1652e8ca5b4a20da86113a64cec41dd4dcd17a522f82b540d057c743`.
-- Task 11B migration SHA-256: `7e428fbdc5a0b21829f82d309caae839f66e0d00dc8eeef1fb1d114e0300a10a`.
+- Task 11B migration SHA-256: `331c266ee50ddf704246d845b709d04cd61b831d39836b201d7357e6858459a8`.
 
 ## Files
 
