@@ -11,6 +11,12 @@ import type {
   MissionOperatingDay,
   MissionOperatingDays,
   MissionOperatingDayState,
+  MissionAircraftDayActual,
+  MissionAircraftDayActualsRecord,
+  MissionAircraftDayActualsSaveInput,
+  MissionAircraftDayReconciliationStatus,
+  MissionAircraftDayTotalSource,
+  MissionFlightActual,
 } from '../types/missionOperations';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -22,6 +28,9 @@ const REVIEW_OUTCOMES: readonly MissionJsaDayReviewOutcome[] = ['CONDITIONS_COVE
 const ACTIVITY_STATUSES: readonly MissionFieldActivityStatus[] = ['PLANNED', 'IN_PROGRESS', 'COMPLETED', 'NOT_WORKED'];
 const HECTARES = /^(?:0|[1-9]\d{0,11})\.\d{6}$/;
 const TIMESTAMPTZ = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})$/;
+const HOURS = /^(?:0|[1-9]\d{0,5})\.\d{4}$/;
+const AIRCRAFT_TOTAL_SOURCES: readonly MissionAircraftDayTotalSource[] = ['DECLARED', 'DERIVED_FROM_FLIGHTS'];
+const AIRCRAFT_RECONCILIATION_STATES: readonly MissionAircraftDayReconciliationStatus[] = ['TOTAL_ONLY', 'FLIGHTS_ONLY', 'RECONCILED', 'MISMATCH'];
 
 export class MissionOperationsApiError extends Error {
   constructor(
@@ -104,6 +113,17 @@ function timezone(value: unknown): string {
 function hectares(value: unknown): string {
   if (typeof value !== 'string' || !HECTARES.test(value)) return malformed();
   return value;
+}
+
+function hours(value: unknown): string {
+  if (typeof value !== 'string' || !HOURS.test(value)) return malformed();
+  return value;
+}
+
+function sumHours(values: string[]): string {
+  const units = values.reduce((sum, value) => sum + Number(value.replace('.', '')), 0);
+  if (!Number.isSafeInteger(units) || units > 9_999_999_999) return malformed();
+  return `${Math.floor(units / 10_000)}.${String(units % 10_000).padStart(4, '0')}`;
 }
 
 function declaration(value: unknown): string {
@@ -271,6 +291,104 @@ export function decodeMissionOperatingDays(value: unknown): MissionOperatingDays
   return { missionId, days };
 }
 
+function decodeMissionFlightActual(value: unknown): MissionFlightActual {
+  const source = exact(object(value), [
+    'id', 'aircraftDayActualId', 'missionId', 'operatingDayId', 'aircraftId', 'flightIndex',
+    'durationHours', 'startedAt', 'finishedAt', 'fieldId', 'sourceImportId',
+  ]);
+  const startedAt = nullable(source.startedAt, exactTimestamp);
+  const finishedAt = nullable(source.finishedAt, exactTimestamp);
+  if (finishedAt !== null && (startedAt === null || Date.parse(finishedAt) < Date.parse(startedAt))) return malformed();
+  return {
+    id: uuid(source.id),
+    aircraftDayActualId: uuid(source.aircraftDayActualId),
+    missionId: uuid(source.missionId),
+    operatingDayId: uuid(source.operatingDayId),
+    aircraftId: uuid(source.aircraftId),
+    flightIndex: positiveInteger(source.flightIndex),
+    durationHours: hours(source.durationHours),
+    startedAt,
+    finishedAt,
+    fieldId: nullable(source.fieldId, uuid),
+    sourceImportId: nullable(source.sourceImportId, uuid),
+  };
+}
+
+function decodeMissionAircraftDayActual(value: unknown): MissionAircraftDayActual {
+  const source = exact(object(value), [
+    'id', 'missionId', 'operatingDayId', 'packageRevisionId', 'aircraftId', 'missionAircraftAssignmentId',
+    'declaredTotalHours', 'totalFlightHours', 'flightsTotalHours', 'totalSource', 'reconciliationStatus',
+    'rowVersion', 'signedOffAt', 'signedOffByInternalUserId', 'flights',
+  ]);
+  if (typeof source.totalSource !== 'string' || !AIRCRAFT_TOTAL_SOURCES.includes(source.totalSource as MissionAircraftDayTotalSource)
+    || typeof source.reconciliationStatus !== 'string' || !AIRCRAFT_RECONCILIATION_STATES.includes(source.reconciliationStatus as MissionAircraftDayReconciliationStatus)
+    || !Array.isArray(source.flights) || source.flights.length > 500) return malformed();
+  const id = uuid(source.id);
+  const missionId = uuid(source.missionId);
+  const operatingDayId = uuid(source.operatingDayId);
+  const aircraftId = uuid(source.aircraftId);
+  const declaredTotalHours = nullable(source.declaredTotalHours, hours);
+  const totalFlightHours = hours(source.totalFlightHours);
+  const flightsTotalHours = hours(source.flightsTotalHours);
+  const flights = source.flights.map(decodeMissionFlightActual);
+  const signedOffAt = nullable(source.signedOffAt, exactTimestamp);
+  const signedOffByInternalUserId = nullable(source.signedOffByInternalUserId, uuid);
+  if ((signedOffAt === null) !== (signedOffByInternalUserId === null)
+    || flights.some((flight) => flight.aircraftDayActualId !== id || flight.missionId !== missionId || flight.operatingDayId !== operatingDayId || flight.aircraftId !== aircraftId)
+    || new Set(flights.map((flight) => flight.id)).size !== flights.length
+    || new Set(flights.map((flight) => flight.flightIndex)).size !== flights.length
+    || sumHours(flights.map((flight) => flight.durationHours)) !== flightsTotalHours) return malformed();
+  const expectedStatus = declaredTotalHours === null
+    ? 'FLIGHTS_ONLY'
+    : flights.length === 0 ? 'TOTAL_ONLY' : declaredTotalHours === flightsTotalHours ? 'RECONCILED' : 'MISMATCH';
+  if (source.reconciliationStatus !== expectedStatus
+    || (declaredTotalHours === null && (source.totalSource !== 'DERIVED_FROM_FLIGHTS' || totalFlightHours !== flightsTotalHours || flights.length === 0))
+    || (declaredTotalHours !== null && (source.totalSource !== 'DECLARED' || totalFlightHours !== declaredTotalHours))) return malformed();
+  return {
+    id,
+    missionId,
+    operatingDayId,
+    packageRevisionId: uuid(source.packageRevisionId),
+    aircraftId,
+    missionAircraftAssignmentId: nullable(source.missionAircraftAssignmentId, uuid),
+    declaredTotalHours,
+    totalFlightHours,
+    flightsTotalHours,
+    totalSource: source.totalSource as MissionAircraftDayTotalSource,
+    reconciliationStatus: source.reconciliationStatus as MissionAircraftDayReconciliationStatus,
+    rowVersion: positiveInteger(source.rowVersion),
+    signedOffAt,
+    signedOffByInternalUserId,
+    flights,
+  };
+}
+
+export function decodeMissionAircraftDayActuals(value: unknown): MissionAircraftDayActualsRecord {
+  const source = exact(object(value), [
+    'missionId', 'operatingDayId', 'packageRevisionId', 'dayVersion', 'totalAircraftHours', 'readyForSignOff', 'actuals',
+  ]);
+  if (typeof source.readyForSignOff !== 'boolean' || !Array.isArray(source.actuals) || source.actuals.length > 50) return malformed();
+  const missionId = uuid(source.missionId);
+  const operatingDayId = uuid(source.operatingDayId);
+  const packageRevisionId = uuid(source.packageRevisionId);
+  const actuals = source.actuals.map(decodeMissionAircraftDayActual);
+  const totalAircraftHours = hours(source.totalAircraftHours);
+  if (actuals.some((actual) => actual.missionId !== missionId || actual.operatingDayId !== operatingDayId || actual.packageRevisionId !== packageRevisionId)
+    || new Set(actuals.map((actual) => actual.id)).size !== actuals.length
+    || new Set(actuals.map((actual) => actual.aircraftId)).size !== actuals.length
+    || sumHours(actuals.map((actual) => actual.totalFlightHours)) !== totalAircraftHours
+    || source.readyForSignOff !== (actuals.length > 0 && actuals.every((actual) => actual.reconciliationStatus !== 'MISMATCH'))) return malformed();
+  return {
+    missionId,
+    operatingDayId,
+    packageRevisionId,
+    dayVersion: positiveInteger(source.dayVersion),
+    totalAircraftHours,
+    readyForSignOff: source.readyForSignOff,
+    actuals,
+  };
+}
+
 async function parseResponse(response: Response): Promise<unknown> {
   const envelope: any = await response.json().catch(() => ({}));
   const correlationId = response.headers.get('X-Correlation-ID') || envelope?.error?.correlationId || undefined;
@@ -293,9 +411,10 @@ async function parseResponse(response: Response): Promise<unknown> {
 }
 
 export function createMissionOperationsApi(fetcher: typeof fetch = fetch) {
-  async function request(action: string, init: RequestInit, missionId?: string): Promise<unknown> {
+  async function request(action: string, init: RequestInit, missionId?: string, dayId?: string): Promise<unknown> {
     const query = new URLSearchParams({ action });
     if (missionId) query.set('missionId', missionId);
+    if (dayId) query.set('dayId', dayId);
     return parseResponse(await fetcher(`/api/v1/mission-operations?${query.toString()}`, {
       credentials: 'same-origin',
       ...init,
@@ -317,6 +436,9 @@ export function createMissionOperationsApi(fetcher: typeof fetch = fetch) {
     saveFieldActivity: async (missionId: string, dayId: string, activityId: string | null, expectedVersion: number, input: MissionFieldActivityInput) => decodeMissionOperatingDay(await write('field-activity-save', { missionId, dayId, activityId, expectedVersion, ...input })),
     completeDay: async (missionId: string, dayId: string, expectedVersion: number, finishedAt: string, notes: string | null) => decodeMissionOperatingDay(await write('day-complete', { missionId, dayId, expectedVersion, finishedAt, notes })),
     readDays: async (missionId: string) => decodeMissionOperatingDays(await request('days', { method: 'GET' }, missionId)),
+    saveAircraftActuals: async (dayId: string, input: MissionAircraftDayActualsSaveInput) => decodeMissionAircraftDayActuals(await write('aircraft-actuals-save', { ...input, dayId })),
+    readAircraftActuals: async (missionId: string, dayId: string) => decodeMissionAircraftDayActuals(await request('aircraft-actuals', { method: 'GET' }, missionId, dayId)),
+    reconcileAircraftActuals: async (missionId: string, dayId: string) => decodeMissionAircraftDayActuals(await write('aircraft-actuals-reconcile', { missionId, dayId })),
   };
 }
 

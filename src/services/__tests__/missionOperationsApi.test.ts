@@ -5,6 +5,7 @@ import {
   decodeMissionPackageRevision,
   decodeMissionOperatingDay,
   decodeMissionOperatingDays,
+  decodeMissionAircraftDayActuals,
 } from '../missionOperationsApi';
 
 const MISSION_ID = '11111111-1111-4111-8111-111111111111';
@@ -18,6 +19,9 @@ const DIGEST = 'a'.repeat(64);
 const DAY_ID = '88888888-8888-4888-8888-888888888888';
 const REVIEW_ID = '99999999-9999-4999-8999-999999999999';
 const ACTIVITY_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+const AIRCRAFT_ID = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+const AIRCRAFT_ACTUAL_ID = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+const FLIGHT_ID = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
 
 const packageRevision = {
   id: PACKAGE_ID,
@@ -82,6 +86,44 @@ const operatingDay = {
   updatedAt: '2026-09-04T15:30:00.000Z',
   jsaReview,
   fieldActivities: [fieldActivity],
+};
+
+const aircraftActuals = {
+  missionId: MISSION_ID,
+  operatingDayId: DAY_ID,
+  packageRevisionId: PACKAGE_ID,
+  dayVersion: 4,
+  totalAircraftHours: '10.0000',
+  readyForSignOff: true,
+  actuals: [{
+    id: AIRCRAFT_ACTUAL_ID,
+    missionId: MISSION_ID,
+    operatingDayId: DAY_ID,
+    packageRevisionId: PACKAGE_ID,
+    aircraftId: AIRCRAFT_ID,
+    missionAircraftAssignmentId: null,
+    declaredTotalHours: null,
+    totalFlightHours: '10.0000',
+    flightsTotalHours: '10.0000',
+    totalSource: 'DERIVED_FROM_FLIGHTS',
+    reconciliationStatus: 'FLIGHTS_ONLY',
+    rowVersion: 1,
+    signedOffAt: null,
+    signedOffByInternalUserId: null,
+    flights: [{
+      id: FLIGHT_ID,
+      aircraftDayActualId: AIRCRAFT_ACTUAL_ID,
+      missionId: MISSION_ID,
+      operatingDayId: DAY_ID,
+      aircraftId: AIRCRAFT_ID,
+      flightIndex: 1,
+      durationHours: '10.0000',
+      startedAt: null,
+      finishedAt: null,
+      fieldId: null,
+      sourceImportId: null,
+    }],
+  }],
 };
 
 function response(data: unknown, status = 200) {
@@ -241,5 +283,33 @@ describe('Mission Operations strict contracts', () => {
       status: 'IN_PROGRESS',
       notes: null,
     });
+  });
+
+  test('decodes aircraft-day totals and optional flights without numeric conversion', () => {
+    expect(decodeMissionAircraftDayActuals(aircraftActuals)).toEqual(aircraftActuals);
+    expect(() => decodeMissionAircraftDayActuals({ ...aircraftActuals, totalAircraftHours: 10 })).toThrow(expect.objectContaining({ code: 'MALFORMED_RESPONSE' }));
+    expect(() => decodeMissionAircraftDayActuals({ ...aircraftActuals, totalAircraftHours: '10.00001' })).toThrow(expect.objectContaining({ code: 'MALFORMED_RESPONSE' }));
+    expect(() => decodeMissionAircraftDayActuals({ ...aircraftActuals, actuals: [{ ...aircraftActuals.actuals[0], reconciliationStatus: 'CLOSE_ENOUGH' }] })).toThrow(expect.objectContaining({ code: 'MALFORMED_RESPONSE' }));
+    expect(() => decodeMissionAircraftDayActuals({ ...aircraftActuals, hiddenAuthority: true })).toThrow(expect.objectContaining({ code: 'MALFORMED_RESPONSE' }));
+  });
+
+  test('sends exact aircraft actual commands and preserves null declared totals for flights-only entry', async () => {
+    const fetcher = jest.fn().mockImplementation(() => response(aircraftActuals));
+    const api = createMissionOperationsApi(fetcher as typeof fetch);
+    const input = {
+      missionId: MISSION_ID,
+      expectedVersion: 4,
+      totalAircraftHours: '10.0000',
+      aircraftTotals: [{ aircraftId: AIRCRAFT_ID, totalFlightHours: null }],
+      flights: [{ aircraftId: AIRCRAFT_ID, durationHours: '10.0000', startedAt: null, finishedAt: null, fieldId: null, sourceImportId: null }],
+    };
+    await api.saveAircraftActuals(DAY_ID, input);
+    await api.readAircraftActuals(MISSION_ID, DAY_ID);
+    await api.reconcileAircraftActuals(MISSION_ID, DAY_ID);
+    expect(fetcher.mock.calls).toEqual([
+      ['/api/v1/mission-operations?action=aircraft-actuals-save', expect.objectContaining({ method: 'POST', body: JSON.stringify({ ...input, dayId: DAY_ID }) })],
+      [`/api/v1/mission-operations?action=aircraft-actuals&missionId=${MISSION_ID}&dayId=${DAY_ID}`, expect.objectContaining({ method: 'GET' })],
+      ['/api/v1/mission-operations?action=aircraft-actuals-reconcile', expect.objectContaining({ method: 'POST', body: JSON.stringify({ missionId: MISSION_ID, dayId: DAY_ID }) })],
+    ]);
   });
 });

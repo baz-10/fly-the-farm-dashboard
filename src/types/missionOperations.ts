@@ -90,3 +90,65 @@ export interface MissionFieldActivityInput {
   status: MissionFieldActivityStatus;
   notes: string | null;
 }
+
+export type MissionAircraftDayTotalSource = 'DECLARED' | 'DERIVED_FROM_FLIGHTS';
+export type MissionAircraftDayReconciliationStatus = 'TOTAL_ONLY' | 'FLIGHTS_ONLY' | 'RECONCILED' | 'MISMATCH';
+
+export interface MissionFlightActual {
+  id: string;
+  aircraftDayActualId: string;
+  missionId: string;
+  operatingDayId: string;
+  aircraftId: string;
+  flightIndex: number;
+  durationHours: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+  fieldId: string | null;
+  sourceImportId: string | null;
+}
+
+export interface MissionAircraftDayActual {
+  id: string;
+  missionId: string;
+  operatingDayId: string;
+  packageRevisionId: string;
+  aircraftId: string;
+  missionAircraftAssignmentId: string | null;
+  declaredTotalHours: string | null;
+  totalFlightHours: string;
+  flightsTotalHours: string;
+  totalSource: MissionAircraftDayTotalSource;
+  reconciliationStatus: MissionAircraftDayReconciliationStatus;
+  rowVersion: number;
+  signedOffAt: string | null;
+  signedOffByInternalUserId: string | null;
+  flights: MissionFlightActual[];
+}
+
+export interface MissionAircraftDayActualsRecord {
+  missionId: string;
+  operatingDayId: string;
+  packageRevisionId: string;
+  dayVersion: number;
+  totalAircraftHours: string;
+  readyForSignOff: boolean;
+  actuals: MissionAircraftDayActual[];
+}
+
+export interface MissionFlightActualInput {
+  aircraftId: string;
+  durationHours: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+  fieldId: string | null;
+  sourceImportId: string | null;
+}
+
+export interface MissionAircraftDayActualsSaveInput {
+  missionId: string;
+  expectedVersion: number;
+  totalAircraftHours: string;
+  aircraftTotals: Array<{ aircraftId: string; totalFlightHours: string | null }>;
+  flights: MissionFlightActualInput[];
+}

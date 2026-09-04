@@ -98,6 +98,56 @@ function operatingDay(result) {
   };
 }
 
+function flightActual(record) {
+  return {
+    id: record.id,
+    aircraftDayActualId: record.aircraft_day_actual_id,
+    missionId: record.mission_id,
+    operatingDayId: record.operating_day_id,
+    aircraftId: record.aircraft_id,
+    flightIndex: record.flight_index,
+    durationHours: record.duration_hours,
+    startedAt: record.started_at,
+    finishedAt: record.finished_at,
+    fieldId: record.field_id,
+    sourceImportId: record.source_import_id,
+  };
+}
+
+function aircraftDayActual(record) {
+  return {
+    id: record.id,
+    missionId: record.mission_id,
+    operatingDayId: record.operating_day_id,
+    packageRevisionId: record.package_revision_id,
+    aircraftId: record.aircraft_id,
+    missionAircraftAssignmentId: record.mission_aircraft_assignment_id,
+    declaredTotalHours: record.declared_total_hours,
+    totalFlightHours: record.total_flight_hours,
+    flightsTotalHours: record.flights_total_hours,
+    totalSource: record.total_source,
+    reconciliationStatus: record.reconciliation_status,
+    rowVersion: record.row_version,
+    signedOffAt: record.signed_off_at,
+    signedOffByInternalUserId: record.signed_off_by_internal_user_id,
+    flights: (record.flights || []).map(flightActual),
+  };
+}
+
+function aircraftDayActuals(result) {
+  const failed = failure(result);
+  if (failed) return failed;
+  return {
+    missionId: result.mission_id,
+    operatingDayId: result.operating_day_id,
+    packageRevisionId: result.package_revision_id,
+    dayVersion: result.day_version,
+    totalAircraftHours: result.total_aircraft_hours,
+    readyForSignOff: result.ready_for_sign_off,
+    actuals: (result.actuals || []).map(aircraftDayActual),
+  };
+}
+
 class MissionOperationsRepository {
   constructor(request = supabaseRequest) { this.request = request; }
 
@@ -227,6 +277,34 @@ class MissionOperationsRepository {
       missionId: result.mission_id,
       days: (result.days || []).map((record) => operatingDay(record)),
     };
+  }
+
+  async saveAircraftActuals(context, input) {
+    return aircraftDayActuals(await this.rpc('ftf_save_mission_aircraft_day_actuals', {
+      ...this.trusted(context),
+      p_mission_id: input.missionId,
+      p_operating_day_id: input.dayId,
+      p_expected_version: input.expectedVersion,
+      p_total_aircraft_hours: input.totalAircraftHours,
+      p_aircraft_totals: input.aircraftTotals,
+      p_flights: input.flights,
+    }, 'Mission aircraft-day actuals could not be saved.'));
+  }
+
+  async readAircraftActuals(context, missionId, dayId) {
+    return aircraftDayActuals(await this.rpc('ftf_read_mission_aircraft_day_actuals', {
+      ...this.trusted(context),
+      p_mission_id: missionId,
+      p_operating_day_id: dayId,
+    }, 'Mission aircraft-day actuals could not be loaded.'));
+  }
+
+  async reconcileAircraftActuals(context, missionId, dayId) {
+    return aircraftDayActuals(await this.rpc('ftf_reconcile_mission_aircraft_day_actuals', {
+      ...this.trusted(context),
+      p_mission_id: missionId,
+      p_operating_day_id: dayId,
+    }, 'Mission aircraft-day actuals could not be reconciled.'));
   }
 }
 

@@ -15,6 +15,9 @@ const ACTIONS = Object.freeze({
   'field-activity-save': { method: 'POST', permission: 'mission.operational.write' },
   'day-complete': { method: 'POST', permission: 'mission.operational.write' },
   days: { method: 'GET', permission: 'mission.operational.read' },
+  'aircraft-actuals-save': { method: 'POST', permission: 'mission.operational.write' },
+  'aircraft-actuals-reconcile': { method: 'POST', permission: 'mission.operational.write' },
+  'aircraft-actuals': { method: 'GET', permission: 'mission.operational.read' },
 });
 
 function fail(statusCode, code, message) {
@@ -85,6 +88,51 @@ function decimalHectares(value) {
     fail(400, 'MISSION_OPERATIONS_REQUEST_INVALID', 'Hectares are invalid.');
   }
   return value;
+}
+
+function decimalHours(value, nullable = false) {
+  if (nullable && value === null) return null;
+  if (typeof value !== 'string' || !/^(?:0|[1-9]\d{0,5})\.\d{4}$/.test(value)) {
+    fail(400, 'MISSION_OPERATIONS_REQUEST_INVALID', 'Aircraft hours are invalid.');
+  }
+  return value;
+}
+
+function aircraftTotals(value) {
+  if (!Array.isArray(value) || value.length < 1 || value.length > 50) {
+    fail(400, 'MISSION_OPERATIONS_REQUEST_INVALID', 'Aircraft totals are invalid.');
+  }
+  const totals = value.map((candidate) => {
+    const item = exactObject(candidate, ['aircraftId', 'totalFlightHours']);
+    return { aircraftId: uuid(item.aircraftId, 'Aircraft'), totalFlightHours: decimalHours(item.totalFlightHours, true) };
+  });
+  if (new Set(totals.map((item) => item.aircraftId.toLowerCase())).size !== totals.length) {
+    fail(400, 'MISSION_OPERATIONS_REQUEST_INVALID', 'Aircraft totals contain duplicates.');
+  }
+  return totals;
+}
+
+function flightActuals(value, totals) {
+  if (!Array.isArray(value) || value.length > 500) fail(400, 'MISSION_OPERATIONS_REQUEST_INVALID', 'Flight actuals are invalid.');
+  const aircraft = new Set(totals.map((item) => item.aircraftId.toLowerCase()));
+  return value.map((candidate) => {
+    const item = exactObject(candidate, ['aircraftId', 'durationHours', 'startedAt', 'finishedAt', 'fieldId', 'sourceImportId']);
+    const aircraftId = uuid(item.aircraftId, 'Aircraft');
+    if (!aircraft.has(aircraftId.toLowerCase())) fail(400, 'MISSION_OPERATIONS_REQUEST_INVALID', 'Flight Aircraft is not included in daily totals.');
+    const startedAt = optionalTimestamp(item.startedAt, 'Flight start timestamp');
+    const finishedAt = optionalTimestamp(item.finishedAt, 'Flight finish timestamp');
+    if (finishedAt !== null && (startedAt === null || Date.parse(finishedAt) < Date.parse(startedAt))) {
+      fail(400, 'MISSION_OPERATIONS_REQUEST_INVALID', 'Flight timestamps are invalid.');
+    }
+    return {
+      aircraftId,
+      durationHours: decimalHours(item.durationHours),
+      startedAt,
+      finishedAt,
+      fieldId: optionalUuid(item.fieldId, 'Field'),
+      sourceImportId: optionalUuid(item.sourceImportId, 'Operational import'),
+    };
+  });
 }
 
 function reviewOutcome(value) {
@@ -167,7 +215,10 @@ function checkedFailure(req, result) {
     'MISSION_OPERATING_DAY_VERSION_CONFLICT', 'MISSION_OPERATING_DATE_CONFLICT',
     'MISSION_OPERATING_DAY_STATE_INVALID', 'MISSION_OPERATING_DAY_SIGNED_OFF',
     'MISSION_FIELD_ACTIVITY_VERSION_CONFLICT', 'MISSION_FIELD_ACTIVITY_CONFLICT',
-    'JSA_DAY_REVIEW_CONFLICT', 'MISSION_DAY_FIELD_ACTIVITY_REQUIRED'].includes(code)) {
+    'JSA_DAY_REVIEW_CONFLICT', 'MISSION_DAY_FIELD_ACTIVITY_REQUIRED',
+    'MISSION_AIRCRAFT_DAY_REQUIRED', 'MISSION_OPERATING_DAY_NOT_SIGNED_OFF',
+    'AIRCRAFT_FLIGHT_HOURS_METER_REQUIRED', 'AIRCRAFT_FLIGHT_TOTAL_MISMATCH',
+    'AIRCRAFT_DAY_TOTAL_MISMATCH'].includes(code)) {
     const messages = {
       MISSION_NOT_AUTHORISED: 'The Mission requires current CRP authority.',
       JSA_DAY_REVIEW_REQUIRED: 'Review the effective Mission JSA before starting this operating day.',
@@ -178,7 +229,9 @@ function checkedFailure(req, result) {
   }
   if (['MISSION_DAY_FIELD_NOT_AUTHORISED', 'MISSION_OPERATING_DAY_INPUT_INVALID',
     'MISSION_DAY_JSA_REVIEW_INVALID', 'MISSION_OPERATING_TIME_INVALID',
-    'MISSION_FIELD_ACTIVITY_INPUT_INVALID'].includes(code)) {
+    'MISSION_FIELD_ACTIVITY_INPUT_INVALID', 'MISSION_DAY_AIRCRAFT_NOT_AUTHORISED',
+    'MISSION_AIRCRAFT_DAY_INPUT_INVALID', 'MISSION_FLIGHT_FIELD_NOT_AUTHORISED',
+    'MISSION_FLIGHT_IMPORT_NOT_FOUND'].includes(code)) {
     return errorResponse(req, 400, code, 'Mission operating-day input is invalid.');
   }
   if (['MISSION_SCOPE_EMPTY', 'MISSION_SCOPE_FIELD_INVALID', 'MISSION_SCOPE_FIELD_DUPLICATE', 'MISSION_SCOPE_FIELD_NOT_IN_JOB', 'MISSION_PACKAGE_JSA_REQUIRED', 'MISSION_PACKAGE_DECISION_INVALID', 'MISSION_PACKAGE_DECLARATION_INVALID'].includes(code)) {
@@ -218,6 +271,12 @@ function createMissionOperationsHandler(dependencies = {}) {
         result = await repository.readPackageHistory(context, uuid(req.query?.missionId, 'Mission'));
       } else if (action === 'days') {
         result = await repository.readDays(context, uuid(req.query?.missionId, 'Mission'));
+      } else if (action === 'aircraft-actuals') {
+        result = await repository.readAircraftActuals(
+          context,
+          uuid(req.query?.missionId, 'Mission'),
+          uuid(req.query?.dayId, 'Operating day'),
+        );
       } else if (action === 'scope') {
         const body = exactObject(req.body, ['missionId', 'expectedRevision', 'fieldIds']);
         result = await repository.saveScope(context, {
@@ -288,6 +347,26 @@ function createMissionOperationsHandler(dependencies = {}) {
           status: activityStatus(body.status),
           notes: optionalNotes(body.notes),
         });
+      } else if (action === 'aircraft-actuals-save') {
+        const body = exactObject(req.body, [
+          'missionId', 'dayId', 'expectedVersion', 'totalAircraftHours', 'aircraftTotals', 'flights',
+        ]);
+        const totals = aircraftTotals(body.aircraftTotals);
+        result = await repository.saveAircraftActuals(context, {
+          missionId: uuid(body.missionId, 'Mission'),
+          dayId: uuid(body.dayId, 'Operating day'),
+          expectedVersion: revision(body.expectedVersion),
+          totalAircraftHours: decimalHours(body.totalAircraftHours),
+          aircraftTotals: totals,
+          flights: flightActuals(body.flights, totals),
+        });
+      } else if (action === 'aircraft-actuals-reconcile') {
+        const body = exactObject(req.body, ['missionId', 'dayId']);
+        result = await repository.reconcileAircraftActuals(
+          context,
+          uuid(body.missionId, 'Mission'),
+          uuid(body.dayId, 'Operating day'),
+        );
       } else {
         const body = exactObject(req.body, ['missionId', 'dayId', 'expectedVersion', 'finishedAt', 'notes']);
         result = await repository.completeDay(context, {

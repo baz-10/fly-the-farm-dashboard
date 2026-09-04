@@ -14,6 +14,7 @@ const DECISION = '99999999-9999-4999-8999-999999999999';
 const DIGEST = 'b'.repeat(64);
 const DAY = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const ACTIVITY = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+const AIRCRAFT = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
 
 const context = (permissions) => ({
   organisation: { id: ORG }, internalUser: { id: ACTOR },
@@ -49,6 +50,9 @@ const repository = () => ({
   saveFieldActivity: jest.fn().mockResolvedValue({ id: DAY }),
   completeDay: jest.fn().mockResolvedValue({ id: DAY }),
   readDays: jest.fn().mockResolvedValue({ missionId: MISSION, days: [] }),
+  saveAircraftActuals: jest.fn().mockResolvedValue({ missionId: MISSION, operatingDayId: DAY, actuals: [] }),
+  readAircraftActuals: jest.fn().mockResolvedValue({ missionId: MISSION, operatingDayId: DAY, actuals: [] }),
+  reconcileAircraftActuals: jest.fn().mockResolvedValue({ missionId: MISSION, operatingDayId: DAY, actuals: [] }),
 });
 
 test('registers only the focused mission-operations resource name', () => {
@@ -177,6 +181,72 @@ test('maps operating-day authority and concurrency failures to stable statuses',
     await handler(request('POST', 'day-start', { missionId: MISSION, dayId: DAY, expectedVersion: 2, startedAt: '2026-09-04T15:30:00.000Z' }), res);
     expect(res.statusCode).toBe(status);
     expect(res.body.error).toEqual(expect.objectContaining({ code, correlationId: 'mission-ops-request-123' }));
+  }
+});
+
+test('routes exact aircraft-day save, read and reconcile commands with canonical hour strings', async () => {
+  const repo = repository();
+  const handler = createMissionOperationsHandler({
+    repository: repo,
+    resolveContext: async () => context(['mission.operational.read', 'mission.operational.write']),
+  });
+  const payload = {
+    missionId: MISSION,
+    dayId: DAY,
+    expectedVersion: 4,
+    totalAircraftHours: '10.0000',
+    aircraftTotals: [{ aircraftId: AIRCRAFT, totalFlightHours: null }],
+    flights: [{ aircraftId: AIRCRAFT, durationHours: '10.0000', startedAt: null, finishedAt: null, fieldId: null, sourceImportId: null }],
+  };
+  let res = response();
+  await handler(request('POST', 'aircraft-actuals-save', payload), res);
+  expect(res.statusCode).toBe(200);
+  expect(repo.saveAircraftActuals).toHaveBeenCalledWith(expect.anything(), payload);
+  res = response();
+  await handler(request('GET', 'aircraft-actuals', {}, { missionId: MISSION, dayId: DAY }), res);
+  expect(res.statusCode).toBe(200);
+  expect(repo.readAircraftActuals).toHaveBeenCalledWith(expect.anything(), MISSION, DAY);
+  res = response();
+  await handler(request('POST', 'aircraft-actuals-reconcile', { missionId: MISSION, dayId: DAY }), res);
+  expect(res.statusCode).toBe(200);
+  expect(repo.reconcileAircraftActuals).toHaveBeenCalledWith(expect.anything(), MISSION, DAY);
+});
+
+test('rejects excess aircraft-hour precision and duplicate aircraft before repository access', async () => {
+  const repo = repository();
+  const handler = createMissionOperationsHandler({ repository: repo, resolveContext: async () => context(['mission.operational.write']) });
+  const base = {
+    missionId: MISSION, dayId: DAY, expectedVersion: 4, totalAircraftHours: '1.0000',
+    aircraftTotals: [{ aircraftId: AIRCRAFT, totalFlightHours: '1.0000' }], flights: [],
+  };
+  for (const body of [
+    { ...base, totalAircraftHours: '1.00001' },
+    { ...base, aircraftTotals: [{ aircraftId: AIRCRAFT, totalFlightHours: '1.00001' }] },
+    { ...base, aircraftTotals: [...base.aircraftTotals, ...base.aircraftTotals] },
+    { ...base, flights: [{ aircraftId: AIRCRAFT, durationHours: 1, startedAt: null, finishedAt: null, fieldId: null, sourceImportId: null }] },
+  ]) {
+    const res = response();
+    await handler(request('POST', 'aircraft-actuals-save', body), res);
+    expect(res.statusCode).toBe(400);
+  }
+  expect(repo.saveAircraftActuals).not.toHaveBeenCalled();
+});
+
+test('maps aircraft reconciliation and scope failures without broadening authority', async () => {
+  const cases = [
+    ['AIRCRAFT_FLIGHT_TOTAL_MISMATCH', 409],
+    ['AIRCRAFT_DAY_TOTAL_MISMATCH', 409],
+    ['MISSION_DAY_AIRCRAFT_NOT_AUTHORISED', 400],
+    ['MISSION_OPERATING_DAY_SIGNED_OFF', 409],
+  ];
+  for (const [error, status] of cases) {
+    const repo = repository();
+    repo.reconcileAircraftActuals.mockResolvedValueOnce({ error });
+    const handler = createMissionOperationsHandler({ repository: repo, resolveContext: async () => context(['mission.operational.write']) });
+    const res = response();
+    await handler(request('POST', 'aircraft-actuals-reconcile', { missionId: MISSION, dayId: DAY }), res);
+    expect(res.statusCode).toBe(status);
+    expect(res.body.error).toEqual(expect.objectContaining({ code: error }));
   }
 });
 
