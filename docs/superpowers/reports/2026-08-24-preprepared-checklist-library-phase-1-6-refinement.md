@@ -18,9 +18,9 @@ Aircraft-specific applicability requires authoritative Aircraft identity. Config
 
 Fitted-configuration assignment mutation and composed start use the same organisation/Base advisory transaction lock, preventing a new assignment from appearing between resolution and execution creation. Browser decoding also enforces a global authority budget of eight levels, 10,000 nodes and 262,144 text/key characters in addition to narrower field/container bounds.
 
-**Status:** design refinement only; no content implemented, seeded, or published  
-**Priority:** DJI AGRAS T100  
-**Decision:** approved Founder direction incorporated  
+**Status:** design refinement only; no content implemented, seeded, or published
+**Priority:** DJI AGRAS T100
+**Decision:** approved Founder direction incorporated
 **Principle:** ask what the pilot must inspect or decide; project authoritative system facts as evidence
 
 ## Classification and response contract
