@@ -119,13 +119,15 @@ if (child) describe('maintenance requirements PostgreSQL behavior', () => {
     const version = (await db.query(`select id from public.maintenance_requirement_versions where requirement_name='FTF-10K'`)).rows[0].id;
     const threshold = (await db.query(`select id from public.maintenance_requirement_thresholds where maintenance_requirement_version_id='${version}'`)).rows[0].id;
     await db.query(`select public.ftf_record_asset_maintenance_requirement_baseline('${ids.org1}','${ids.actor1}','${ids.asset1}','${threshold}','METER',0,null,'{"source":"commissioning"}')`);
+    const anchor = new Date((await db.query("select now() + interval '1 minute' anchor")).rows[0].anchor);
+    const at = (offsetMilliseconds) => new Date(anchor.getTime() + offsetMilliseconds).toISOString();
     await db.exec(`insert into public.asset_meter_readings(id,organisation_id,meter_definition_id,recorded_at,value,source,source_system,source_record_id,evidence,recorded_by_internal_user_id,supersedes_reading_id,correction_reason) values
-      ('11111111-1111-4111-8111-111111115001','${ids.org1}','${ids.meter1}','2026-09-01 00:00+00',9999,'MANUAL','test','r1','{}','${ids.actor1}',null,null),
-      ('11111111-1111-4111-8111-111111115002','${ids.org1}','${ids.meter1}','2026-09-02 00:00+00',10000,'MANUAL','test','r2','{}','${ids.actor1}',null,null),
-      ('11111111-1111-4111-8111-111111115003','${ids.org1}','${ids.meter1}','2026-09-03 00:00+00',10001,'MANUAL','test','r3','{}','${ids.actor1}',null,null),
-      ('11111111-1111-4111-8111-111111115004','${ids.org1}','${ids.meter1}','2026-09-04 00:00+00',9990,'CORRECTION','test','r4','{"corrects":"r3"}','${ids.actor1}','11111111-1111-4111-8111-111111115003','entry error');`);
+      ('11111111-1111-4111-8111-111111115001','${ids.org1}','${ids.meter1}','${at(0)}',9999,'MANUAL','test','r1','{}','${ids.actor1}',null,null),
+      ('11111111-1111-4111-8111-111111115002','${ids.org1}','${ids.meter1}','${at(1000)}',10000,'MANUAL','test','r2','{}','${ids.actor1}',null,null),
+      ('11111111-1111-4111-8111-111111115003','${ids.org1}','${ids.meter1}','${at(2000)}',10001,'MANUAL','test','r3','{}','${ids.actor1}',null,null),
+      ('11111111-1111-4111-8111-111111115004','${ids.org1}','${ids.meter1}','${at(3000)}',9990,'CORRECTION','test','r4','{"corrects":"r3"}','${ids.actor1}','11111111-1111-4111-8111-111111115003','entry error');`);
     const statuses = [];
-    for (const asOf of ['2026-09-01 12:00+00','2026-09-02 12:00+00','2026-09-03 12:00+00','2026-09-04 12:00+00']) {
+    for (const asOf of [at(500), at(1500), at(2500), at(3500)]) {
       const result = (await db.query(`select public.ftf_read_asset_maintenance_due_state('${ids.org1}','${ids.actor1}','${ids.asset1}','${asOf}') result`)).rows[0].result;
       statuses.push(result.requirements.find((row) => row.requirementCode === 'FTF-10K').state);
     }

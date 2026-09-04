@@ -26,6 +26,7 @@ const { createChecklistsHandler } = require('./checklists-api');
 const { createOperationsBriefHandler } = require('./operations-brief-api');
 const { createCommercialOnboardingHandler } = require('./commercial-onboarding-api');
 const { createGettingStartedHandler } = require('./getting-started-api');
+const { createFinancialActualsHandler } = require('./financial-actuals-api');
 const { createFleetMaintenanceHandler } = require('./fleet-maintenance-api');
 const { createTechnicalCatalogueHandler } = require('./technical-catalogue-api');
 const ASSET_MAINTENANCE_RESOURCE = 'asset-maintenance';
@@ -66,6 +67,7 @@ function createDefaultHandlers() {
     'operations-brief': createOperationsBriefHandler(),
     'commercial-onboarding': createCommercialOnboardingHandler(),
     'getting-started': createGettingStartedHandler(),
+    'financial-actuals': createFinancialActualsHandler(),
     [ASSET_MAINTENANCE_RESOURCE]: createFleetMaintenanceHandler(),
     'technical-catalogue': createTechnicalCatalogueHandler(),
   });
