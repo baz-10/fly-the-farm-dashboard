@@ -1,680 +1,189 @@
-import React, { useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
-import {
-  Typography,
-  Box,
-  Card,
-  CardContent,
-  Button,
-  Stack,
-  Alert,
-  Chip,
-  Dialog,
-  DialogTitle,
-  DialogContent,
-  DialogActions,
-  IconButton,
-  Table,
-  TableBody,
-  TableCell,
-  TableContainer,
-  TableHead,
-  TableRow,
-  alpha,
-  useTheme,
-} from '@mui/material';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Accordion, AccordionDetails, AccordionSummary, Alert, Box, Button, Card, CardContent, Chip, CircularProgress, Divider, Stack, TextField, Typography } from '@mui/material';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
-import DeleteIcon from '@mui/icons-material/Delete';
-import PictureAsPdfIcon from '@mui/icons-material/PictureAsPdf';
-import DescriptionIcon from '@mui/icons-material/Description';
-import AssessmentIcon from '@mui/icons-material/Assessment';
-import FlightTakeoffIcon from '@mui/icons-material/FlightTakeoff';
-import PeopleIcon from '@mui/icons-material/People';
-import DirectionsCarIcon from '@mui/icons-material/DirectionsCar';
-import ScienceIcon from '@mui/icons-material/Science';
-import BuildIcon from '@mui/icons-material/Build';
-import MoreHorizIcon from '@mui/icons-material/MoreHoriz';
-import CheckCircleIcon from '@mui/icons-material/CheckCircle';
-import { getActualById, updateActual, deleteActual } from '../services/financialsStore';
-import { getClientById } from '../services/fieldManagementStore';
-import { getQuoteById, getKitById } from '../services/quoteStore';
-import { formatCurrency } from '../utils/quoteCalculator';
+import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
+import { useNavigate, useParams } from 'react-router-dom';
+import { calculateFinancialActualV1 } from '../domain/financialActuals/calculation';
+import { createFinancialActualsApi, FinancialActualApiError } from '../services/financialActualsApi';
+import type { FinancialActualDetail, FinancialDraft, FinancialHistoricalRevision, FinancialRevisionHistory } from '../types/financialActuals';
+import { FinancialDraftEditor } from '../components/financialActuals/FinancialDraftEditor';
+import { FinancialPrefillReview } from '../components/financialActuals/FinancialPrefillReview';
+import { RevisionHistory } from '../components/financialActuals/RevisionHistory';
 import { useAuth } from '../contexts/AuthContext';
-import { JobActual, CostLineItem } from '../types/financials';
-import { Quote } from '../types/quote';
-import { generateActualReport } from '../utils/actualReportPdf';
-import { WorkflowMaturityBoundary } from '../components/productMaturity/WorkflowMaturityBoundary';
+import { authorityScopeKey } from '../services/authorityScope';
 
-// ─── Helper components (defined outside main component) ─────────
+const api = createFinancialActualsApi();
+const money = (value: string | null | undefined) => value == null ? '—' : new Intl.NumberFormat('en-AU', { style: 'currency', currency: 'AUD' }).format(Number(value));
+const reasonValid = (value: string, maxLength = 1000) => value.trim().length > 0 && value.trim().length <= maxLength && !Array.from(value).some(character => { const code = character.charCodeAt(0); return code <= 31 || code === 127; });
 
-const InfoRow = ({ label, value }: { label: string; value: string | null | undefined }) => {
-  if (!value) return null;
-  return (
-    <Box sx={{ display: 'flex', gap: 2, py: 0.75 }}>
-      <Typography variant="body2" color="text.secondary" sx={{ minWidth: 150, fontWeight: 600 }}>
-        {label}
-      </Typography>
-      <Typography variant="body2">{value}</Typography>
-    </Box>
-  );
-};
-
-const LineItemRows = ({ items }: { items: CostLineItem[] }) => {
-  if (!items || items.length === 0) return null;
-  return (
-    <Box sx={{ mt: 1 }}>
-      {items.map((item) => (
-        <Box key={item.id} sx={{ display: 'flex', justifyContent: 'space-between', py: 0.5 }}>
-          <Typography variant="body2" color="text.secondary">
-            {item.description}
-            {item.quantity > 1 ? ` (${item.quantity} ${item.unitLabel})` : ''}
-          </Typography>
-          <Typography variant="body2" fontWeight={600}>
-            {formatCurrency(item.total)}
-          </Typography>
-        </Box>
-      ))}
-    </Box>
-  );
-};
-
-const getMarginColor = (margin: number) => {
-  if (margin >= 40) return '#2e7d32';
-  if (margin >= 20) return '#e65100';
-  return '#c62828';
-};
-
-const getVarianceColor = (variance: number, higherIsBetter: boolean) => {
-  if (variance === 0) return 'text.secondary';
-  const isBetter = higherIsBetter ? variance > 0 : variance < 0;
-  return isBetter ? '#2e7d32' : '#c62828';
-};
-
-const MarginAnalysis = ({ actual, quote, border }: { actual: JobActual; quote?: Quote; border: string }) => {
-  const rows = quote?.margin ? [
-    { label: 'Revenue', quoted: quote.margin.revenue, actual: actual.revenue, higherIsBetter: true, isPercent: false },
-    { label: 'Total Cost', quoted: quote.margin.totalCost, actual: actual.totalCost, higherIsBetter: false, isPercent: false },
-    { label: 'Margin %', quoted: quote.margin.grossMarginPercent, actual: actual.grossMarginPercent, higherIsBetter: true, isPercent: true },
-  ] : [];
-  return (
-    <Card elevation={0} sx={{ border, borderRadius: '16px' }}>
-      <CardContent sx={{ p: 3 }}>
-        <Typography variant="subtitle1" fontWeight={700} color="primary.dark" sx={{ mb: 2 }}>Margin Analysis</Typography>
-        <Typography variant="h5" sx={{ fontWeight: 800, color: getMarginColor(actual.grossMarginPercent), mb: rows.length ? 2 : 0 }}>
-          {actual.grossMarginPercent.toFixed(1)}%
-        </Typography>
-        {rows.length > 0 && <TableContainer><Table size="small"><TableHead><TableRow><TableCell>Category</TableCell><TableCell align="right">Quoted</TableCell><TableCell align="right">Actual</TableCell><TableCell align="right">Variance</TableCell></TableRow></TableHead><TableBody>{rows.map(row=>{const variance=row.actual-row.quoted;return <TableRow key={row.label}><TableCell>{row.label}</TableCell><TableCell align="right">{row.isPercent?`${row.quoted.toFixed(1)}%`:formatCurrency(row.quoted)}</TableCell><TableCell align="right">{row.isPercent?`${row.actual.toFixed(1)}%`:formatCurrency(row.actual)}</TableCell><TableCell align="right"><Typography variant="body2" fontWeight={700} sx={{color:getVarianceColor(variance,row.higherIsBetter)}}>{variance>=0?'+':''}{row.isPercent?`${variance.toFixed(1)}%`:formatCurrency(variance)}</Typography></TableCell></TableRow>})}</TableBody></Table></TableContainer>}
-      </CardContent>
-    </Card>
-  );
-};
-
-// ─── Main component ─────────────────────────────────────────────
+function preview(draft: FinancialDraft) {
+  const inputs = draft.revenueInputs as Record<string, unknown>;
+  const mode = String(inputs['revenue/mode'] || 'HOURLY');
+  const revenue = mode === 'AREA'
+    ? { mode: 'AREA' as const, actualHectares: String(inputs['revenue/actualHectares'] || '0.000000'), ratePerHectare: String(inputs['revenue/ratePerHectare'] || '0.000000') }
+    : { mode: 'HOURLY' as const, hourlyRate: String(inputs['revenue/hourlyRate'] || '0.000000') };
+  return calculateFinancialActualV1({ formulaVersion: 'FINANCIAL_ACTUAL_V1', currencyCode: 'AUD', revenue, workEntries: draft.workEntries, costLines: draft.costLines });
+}
 
 export default function ActualDetail() {
-  const { actualId } = useParams<{ actualId: string }>();
+  const { actualId = '' } = useParams();
   const navigate = useNavigate();
-  const theme = useTheme();
   const { user } = useAuth();
+  const scopeKey = `${actualId}:${authorityScopeKey(user)}`;
+  const scopeRef = useRef(scopeKey);
+  const generation = useRef(0);
+  const historyGeneration = useRef(0);
+  const [resolved, setResolved] = useState<{ scope: string; value: FinancialActualDetail } | null>(null);
+  const [historyState, setHistoryState] = useState<{ scope: string; value: FinancialRevisionHistory } | null>(null);
+  const [historicalState, setHistoricalState] = useState<{ scope: string; value: FinancialHistoricalRevision } | null>(null);
+  const [historyBusyScope, setHistoryBusyScope] = useState<string | null>(null);
+  const [loadingScope, setLoadingScope] = useState(scopeKey);
+  const [busyScope, setBusyScope] = useState<string | null>(null);
+  const [errorState, setErrorState] = useState<{ scope: string; message: string } | null>(null);
+  const [conflictScope, setConflictScope] = useState<string | null>(null);
+  const [prefillState, setPrefillState] = useState<{ scope: string; value: any } | null>(null);
+  const [correctionOpenScope, setCorrectionOpenScope] = useState<string | null>(null);
+  const [correctionReason, setCorrectionReason] = useState('');
+  const [archiveOpenScope, setArchiveOpenScope] = useState<string | null>(null);
+  const [archiveReason, setArchiveReason] = useState('');
+  const [exportBusyScope, setExportBusyScope] = useState<string | null>(null);
+  scopeRef.current = scopeKey;
 
-  const [actual, setActual] = useState<JobActual | undefined>(() => getActualById(actualId || ''));
-  const [deleteConfirm, setDeleteConfirm] = useState(false);
-  const [pdfDialogOpen, setPdfDialogOpen] = useState(false);
+  const detail = resolved?.scope === scopeKey ? resolved.value : null;
+  const history = historyState?.scope === scopeKey ? historyState.value : null;
+  const historical = historicalState?.scope === scopeKey ? historicalState.value : null;
+  const historyBusy = historyBusyScope === scopeKey;
+  const loading = loadingScope === scopeKey;
+  const busy = busyScope === scopeKey;
+  const error = errorState?.scope === scopeKey ? errorState.message : '';
+  const conflict = conflictScope === scopeKey;
+  const prefill = prefillState?.scope === scopeKey ? prefillState.value : null;
+  const permissions = new Set<string>(Array.isArray((user as any)?.permissions) ? (user as any).permissions : []);
+  const privilegedRole = ['admin', 'organisation_admin'].includes(String((user as any)?.role || '').toLowerCase());
+  const canUpdate = privilegedRole || permissions.has('*') || permissions.has('financial_actuals.update');
+  const canArchive = privilegedRole || permissions.has('*') || permissions.has('financial_actuals.archive');
+  const canExport = permissions.has('*') || (permissions.has('financial_actuals.read') && permissions.has('financial_actuals.export'));
 
-  if (!actual) {
-    return (
-      <Box>
-        <Button startIcon={<ArrowBackIcon />} onClick={() => navigate('/financials')} sx={{ mb: 2 }}>
-          Back
-        </Button>
-        <Alert severity="error">Actual not found.</Alert>
-      </Box>
-    );
-  }
+  const load = useCallback(async (requestScope = scopeKey) => {
+    const active = ++generation.current;
+    historyGeneration.current++;
+    setLoadingScope(requestScope);
+    setErrorState(null);
+    setHistoricalState(null);
+    try {
+      const next = await api.read(actualId);
+      if (active === generation.current && scopeRef.current === requestScope) setResolved({ scope: requestScope, value: next });
+      const historyReader = (api as any).revisionHistory;
+      if (typeof historyReader === 'function') {
+        const nextHistory = await historyReader({ actualId, pageSize: 100 });
+        if (active === generation.current && scopeRef.current === requestScope) setHistoryState({ scope: requestScope, value: nextHistory });
+      }
+    } catch (caught) {
+      if (active === generation.current && scopeRef.current === requestScope) setErrorState({ scope: requestScope, message: caught instanceof Error ? caught.message : 'Financial Actual could not be loaded.' });
+    } finally {
+      if (active === generation.current && scopeRef.current === requestScope) setLoadingScope('');
+    }
+  }, [actualId, scopeKey]);
 
-  const client = actual.clientId ? getClientById(actual.clientId) : undefined;
-  const quote: Quote | undefined = actual.quoteId ? getQuoteById(actual.quoteId) : undefined;
+  useEffect(() => {
+    setCorrectionOpenScope(null); setCorrectionReason(''); setArchiveOpenScope(null); setArchiveReason('');
+    void load(scopeKey);
+    const detailRequest = generation.current;
+    const historyRequest = historyGeneration.current;
+    return () => { if (generation.current === detailRequest) generation.current++; if (historyGeneration.current === historyRequest) historyGeneration.current++; };
+  }, [load, scopeKey]);
 
-  const handleDelete = () => {
-    deleteActual(actual.id);
-    navigate('/financials');
+  const draft = detail?.draft;
+  const calculation = useMemo(() => { try { return draft ? preview(draft) : null; } catch { return null; } }, [draft]);
+
+  const command = async (work: () => Promise<unknown>) => {
+    const commandScope = scopeKey;
+    setBusyScope(commandScope); setErrorState(null); setConflictScope(null);
+    try {
+      await work();
+      if (scopeRef.current === commandScope) await load(commandScope);
+    } catch (caught) {
+      if (scopeRef.current === commandScope) {
+        if (caught instanceof FinancialActualApiError && caught.code === 'FINANCIAL_ACTUAL_CONFLICT') setConflictScope(commandScope);
+        else setErrorState({ scope: commandScope, message: caught instanceof Error ? caught.message : 'Financial Actual request failed.' });
+      }
+    } finally {
+      if (scopeRef.current === commandScope) setBusyScope(null);
+    }
   };
 
-  const handleToggleStatus = () => {
-    const newStatus = actual.status === 'draft' ? 'finalised' : 'draft';
-    const updated = updateActual(actual.id, { status: newStatus });
-    if (updated) setActual(updated);
+  const selectRevision = async (revisionId: string) => {
+    const selected = history?.rows.find(row => row.id === revisionId);
+    if (!selected || selected.status !== 'FINAL') return;
+    const requestScope = scopeKey;
+    const active = ++historyGeneration.current;
+    setHistoricalState(null); setErrorState(null);
+    try {
+      const value = await api.historicalRevision({ actualId, revisionId });
+      if (active === historyGeneration.current && scopeRef.current === requestScope) setHistoricalState({ scope: requestScope, value });
+    } catch (caught) {
+      if (active === historyGeneration.current && scopeRef.current === requestScope) setErrorState({ scope: requestScope, message: caught instanceof Error ? caught.message : 'Historical revision could not be loaded.' });
+    }
   };
 
-  // Build kit names for display
-  const kitNames = actual.equipment.kitSelections
-    .map((sel) => {
-      const kit = getKitById(sel.kitId);
-      return kit ? `${kit.name} x${sel.quantity}` : `Unknown kit x${sel.quantity}`;
-    })
-    .join(', ');
+  const loadOlderRevisions = async () => {
+    if (!history?.nextBeforeRevisionNumber || historyBusy) return;
+    const requestScope = scopeKey;
+    const active = ++historyGeneration.current;
+    setHistoryBusyScope(requestScope); setErrorState(null);
+    try {
+      const page = await api.revisionHistory({ actualId, beforeRevisionNumber: history.nextBeforeRevisionNumber, pageSize: 100 });
+      if (active !== historyGeneration.current || scopeRef.current !== requestScope) return;
+      if (page.financialActualId !== history.financialActualId || page.reference !== history.reference || page.currentFinalRevisionId !== history.currentFinalRevisionId || page.activeDraftRevisionId !== history.activeDraftRevisionId || page.archivedAt !== history.archivedAt) throw new Error('Revision history authority changed while loading.');
+      const existing = new Set(history.rows.map(row => row.id));
+      if (page.rows.some(row => existing.has(row.id))) throw new Error('Revision history continuation overlapped an earlier page.');
+      setHistoryState({ scope: requestScope, value: { ...history, rows: [...history.rows, ...page.rows], nextBeforeRevisionNumber: page.nextBeforeRevisionNumber } });
+    } catch (caught) {
+      if (active === historyGeneration.current && scopeRef.current === requestScope) setErrorState({ scope: requestScope, message: caught instanceof Error ? caught.message : 'Older revisions could not be loaded.' });
+    } finally {
+      if (active === historyGeneration.current && scopeRef.current === requestScope) setHistoryBusyScope(null);
+    }
+  };
 
-  // Labour totals
-  const pilotTotal = actual.labour.pilotCount * actual.labour.pilotHours * actual.labour.pilotRatePerHour;
-  const chemOpTotal = actual.labour.hasChemOperator
-    ? actual.labour.chemOpHours * actual.labour.chemOpRatePerHour
-    : 0;
-  const labourTotal = pilotTotal + chemOpTotal + actual.labour.additionalLabour.reduce((s, i) => s + i.total, 0);
+  const exportRevision = async (revisionId: string) => {
+    const requestScope = `${scopeKey}:${revisionId}`;
+    setExportBusyScope(requestScope); setErrorState(null);
+    try {
+      const output = await api.exportFinal({ actualId, revisionId });
+      if (scopeRef.current !== scopeKey) return;
+      const url = URL.createObjectURL(output.blob), anchor = document.createElement('a');
+      try { anchor.href = url; anchor.download = output.filename; anchor.click(); } finally { URL.revokeObjectURL(url); }
+    } catch (caught) {
+      if (scopeRef.current === scopeKey) setErrorState({ scope: scopeKey, message: caught instanceof Error ? caught.message : 'Financial Actual export failed.' });
+    } finally { if (scopeRef.current === scopeKey) setExportBusyScope(null); }
+  };
 
-  // Travel totals
-  const travelTotal =
-    actual.travel.vehicleTotal + actual.travel.accommodation + actual.travel.meals;
+  if (!detail && loading) return <CircularProgress aria-label="Loading Financial Actual" />;
+  if (error && !detail) return <Alert severity="error">{error}</Alert>;
+  if (!detail) return <CircularProgress aria-label="Loading Financial Actual" />;
+  const hierarchy = detail.hierarchy as any;
 
-  const cardBorder = `1.5px solid ${alpha(theme.palette.primary.main, 0.1)}`;
+  return <Box sx={{ maxWidth: 1100, mx: 'auto' }}>
+    <Button startIcon={<ArrowBackIcon />} onClick={() => navigate('/financials')} sx={{ mb: 2 }}>Financial Actuals</Button>
+    <Stack direction={{ xs: 'column', sm: 'row' }} justifyContent="space-between" gap={2} mb={3}>
+      <Box><Typography variant="h4" component="h1" fontWeight={800} color="primary.dark">{detail.record.reference}</Typography><Typography color="text.secondary">{hierarchy.client?.label} · {hierarchy.job?.label}</Typography></Box>
+      <Stack direction="row" gap={1}><Chip label={detail.record.archivedAt ? 'ARCHIVED' : draft ? 'CORRECTION DRAFT' : 'FINAL'} color={detail.record.archivedAt ? 'default' : draft ? 'warning' : 'success'} />{draft && detail.final && <Chip label="CURRENT FINAL RETAINED" color="success" variant="outlined" />}</Stack>
+    </Stack>
+    {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
+    {conflict && <Alert severity="warning" sx={{ mb: 2 }} action={<Button onClick={() => load(scopeKey)}>Reload authoritative Draft</Button>}>This Financial Actual changed in another session. Your changes were not written.</Alert>}
+    {detail.record.archivedAt && <Alert severity="info" sx={{ mb: 2 }}>Archived Financial Actual. Immutable revision evidence remains available below.</Alert>}
 
-  return (
-    <Box>
-      {/* Back button */}
-      <Button
-        startIcon={<ArrowBackIcon />}
-        onClick={() => navigate('/financials')}
-        sx={{ mb: 3, color: 'text.secondary', fontWeight: 600, '&:hover': { color: 'primary.main' } }}
-      >
-        Financials
-      </Button>
+    {draft && detail.final && <><Alert severity="info" sx={{ mb: 2 }}>A correction Draft is in progress. The existing FINAL remains authoritative until the correction finalises successfully.</Alert><Final detail={detail} />{canExport&&<Button sx={{mt:2}} variant="outlined" disabled={exportBusyScope===`${scopeKey}:${detail.final.id}`} onClick={()=>exportRevision(detail.final!.id)}>Export current FINAL</Button>}</>}
+    {draft && <Box sx={{ mt: detail.final ? 2 : 0 }}><Card variant="outlined" sx={{ mb: 2 }}><CardContent><Typography variant="h6">Correction Draft</Typography><Typography variant="body2" color="text.secondary">Revision {draft.revisionNumber} · version {draft.rowVersion}</Typography><Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} mt={2}><TextField type="date" label="Start date" value={draft.startDate} InputLabelProps={{ shrink: true }} disabled fullWidth /><TextField type="date" label="End date" value={draft.endDate} InputLabelProps={{ shrink: true }} disabled fullWidth /></Stack><Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} mt={2}><Button variant="outlined" disabled={busy || !detail.record.missionId} onClick={async () => { const requestScope = scopeKey; setErrorState(null); try { const value = await api.prefill(detail.record.id); if (scopeRef.current === requestScope) setPrefillState({ scope: requestScope, value }); } catch (caught) { if (scopeRef.current === requestScope) setErrorState({ scope: requestScope, message: caught instanceof Error ? caught.message : 'Operational prefill unavailable.' }); } }}>Review operational prefill</Button><Button color="success" variant="contained" disabled={busy || !calculation} onClick={() => command(() => api.finalise({ actualId: detail.record.id, revisionId: draft.id, expectedAggregateVersion: detail.record.rowVersion, expectedRevisionVersion: draft.rowVersion }))}>Finalise correction</Button></Stack></CardContent></Card><FinancialDraftEditor draft={draft} busy={busy} onSave={payload => command(() => api.updateDraft({ actualId: detail.record.id, revisionId: draft.id, expectedVersion: draft.rowVersion, payload }))} />{prefill && <FinancialPrefillReview prefill={prefill} busy={busy} onSubmit={payload => command(() => api.acceptPrefill({ actualId: detail.record.id, revisionId: draft.id, expectedVersion: draft.rowVersion, payload }))} />}<Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: '1fr 1fr' }, gap: 2 }}>{['Revenue', 'Labour', 'Products', 'Aircraft & Equipment', 'Travel', 'Other Costs'].map(section => <Box key={section}><Accordion variant="outlined"><AccordionSummary expandIcon={<ExpandMoreIcon />}><Typography fontWeight={700}>{section}</Typography></AccordionSummary><AccordionDetails><Typography color="text.secondary">Authoritative entries are retained in this Draft.</Typography></AccordionDetails></Accordion></Box>)}</Box>{calculation && <Card variant="outlined" sx={{ mt: 2, borderTop: 4, borderTopColor: 'primary.main' }}><CardContent><Typography variant="h6">Calculation Preview</Typography><Alert severity="info" sx={{ my: 1 }}>Preview uses TypeScript FINANCIAL_ACTUAL_V1. PostgreSQL becomes authoritative only when finalised.</Alert><Metrics calculation={calculation} /></CardContent></Card>}</Box>}
+    {!draft && detail.final && <><Final detail={detail} />{canExport&&<Button sx={{mt:2}} variant="outlined" disabled={exportBusyScope===`${scopeKey}:${detail.final.id}`} onClick={()=>exportRevision(detail.final!.id)}>Export current FINAL</Button>}</>}
 
-      {/* Header */}
-      <Box
-        sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 3 }}
-        className="ftf-animate-in"
-      >
-        <Box>
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 0.5 }}>
-            <Typography
-              variant="h4"
-              sx={{
-                fontWeight: 800,
-                color: 'primary.dark',
-                fontSize: { xs: '1.4rem', md: '1.75rem' },
-              }}
-            >
-              {actual.title}
-            </Typography>
-            <Chip
-              label={actual.status}
-              size="small"
-              color={actual.status === 'finalised' ? 'success' : 'default'}
-              sx={{ fontWeight: 700, textTransform: 'capitalize' }}
-            />
-          </Box>
-          <Typography variant="body2" color="text.secondary">
-            {new Date(actual.startDate + 'T00:00:00').toLocaleDateString('en-AU', {
-              day: 'numeric',
-              month: 'short',
-              year: 'numeric',
-            })}
-            {actual.startDate !== actual.endDate && (
-              <> &ndash; {new Date(actual.endDate + 'T00:00:00').toLocaleDateString('en-AU', {
-                day: 'numeric',
-                month: 'short',
-                year: 'numeric',
-              })}</>
-            )}
-            {` \u2022 ${actual.totalDays} day${actual.totalDays !== 1 ? 's' : ''} \u2022 ${actual.totalHours} hrs`}
-            {client ? ` \u2022 ${client.name}` : ''}
-          </Typography>
-        </Box>
-        <Stack direction="row" spacing={1} alignItems="center">
-          <Button
-            size="small"
-            variant="contained"
-            onClick={() => setPdfDialogOpen(true)}
-            startIcon={<PictureAsPdfIcon />}
-            sx={{ borderRadius: '10px', fontWeight: 700, textTransform: 'none' }}
-          >
-            Export PDF
-          </Button>
-          <Button
-            size="small"
-            variant="outlined"
-            onClick={handleToggleStatus}
-            startIcon={<CheckCircleIcon />}
-            sx={{ borderRadius: '10px', fontWeight: 700, textTransform: 'none' }}
-          >
-            {actual.status === 'draft' ? 'Finalise' : 'Revert to Draft'}
-          </Button>
-          <IconButton
-            size="small"
-            onClick={() => setDeleteConfirm(true)}
-            sx={{ color: 'error.main' }}
-          >
-            <DeleteIcon fontSize="small" />
-          </IconButton>
-        </Stack>
-      </Box>
+    {!detail.record.archivedAt && detail.final && <Card variant="outlined" sx={{ mt: 2 }}><CardContent><Typography variant="h6">Governed actions</Typography>{!draft && canUpdate && <>{correctionOpenScope !== scopeKey ? <Button variant="outlined" onClick={() => setCorrectionOpenScope(scopeKey)}>Correct Financial Actual</Button> : <Stack spacing={1.5} mt={1}><Alert severity="info">This creates a numbered correction Draft. The current FINAL remains authoritative until successful finalisation.</Alert><TextField label="Correction reason" value={correctionReason} onChange={event => setCorrectionReason(event.target.value)} multiline minRows={2} inputProps={{ maxLength: 1000 }} /><Stack direction="row" gap={1}><Button variant="contained" disabled={busy || !reasonValid(correctionReason)} onClick={() => command(() => api.createCorrection({ actualId, expectedAggregateVersion: detail.record.rowVersion, expectedFinalRevisionId: detail.final!.id, expectedFinalRevisionVersion: detail.final!.rowVersion, correctionReason: correctionReason.trim() }))}>Create correction Draft</Button><Button onClick={() => { setCorrectionOpenScope(null); setCorrectionReason(''); }}>Cancel</Button></Stack></Stack>}</>}{draft && <Alert severity="warning" sx={{ mt: 1 }}>Archive unavailable while correction Draft exists.</Alert>}{!draft && canArchive && <Box sx={{ mt: 2 }}>{archiveOpenScope !== scopeKey ? <Button color="warning" variant="outlined" onClick={() => setArchiveOpenScope(scopeKey)}>Archive Financial Actual</Button> : <Stack spacing={1.5}><TextField label="Archive reason" value={archiveReason} onChange={event => setArchiveReason(event.target.value)} multiline minRows={2} inputProps={{ maxLength: 500 }} /><Stack direction="row" gap={1}><Button color="warning" variant="contained" disabled={busy || !reasonValid(archiveReason, 500)} onClick={() => command(() => api.archive({ actualId, expectedAggregateVersion: detail.record.rowVersion, archiveReason: archiveReason.trim() }))}>Confirm archive</Button><Button onClick={() => { setArchiveOpenScope(null); setArchiveReason(''); }}>Cancel</Button></Stack></Stack>}</Box>}</CardContent></Card>}
 
-      {/* Link chips */}
-      <Stack direction="row" spacing={1} sx={{ mb: 3 }}>
-        {actual.jobId && (
-          <Chip
-            label="View Job"
-            size="small"
-            color="primary"
-            variant="outlined"
-            onClick={() => {
-              if (actual.clientId && actual.propertyId && actual.fieldId) {
-                navigate(
-                  `/jobs/client/${actual.clientId}/property/${actual.propertyId}/field/${actual.fieldId}/job/${actual.jobId}`,
-                );
-              }
-            }}
-            sx={{ cursor: 'pointer', fontWeight: 700 }}
-          />
-        )}
-        {actual.quoteId && (
-          <Chip
-            label="View Quote"
-            size="small"
-            color="secondary"
-            variant="outlined"
-            onClick={() => navigate(`/quotes/${actual.quoteId}`)}
-            sx={{ cursor: 'pointer', fontWeight: 700 }}
-          />
-        )}
-      </Stack>
-
-      <WorkflowMaturityBoundary moduleCode="financials" workflowCode="invoice-export">
-        <Card variant="outlined" sx={{ mb: 3, borderRadius: '16px' }}>
-          <CardContent>
-            <Typography variant="h6" fontWeight={800}>Invoice Export</Typography>
-            <Typography color="text.secondary">Invoice export availability is separate from the operational PDF report.</Typography>
-          </CardContent>
-        </Card>
-      </WorkflowMaturityBoundary>
-
-      <Stack spacing={3} className="ftf-animate-in-delay-1">
-        {/* ─── P&L Summary ─────────────────────────────────────── */}
-        <Card
-          elevation={0}
-          sx={{
-            border: `1.5px solid ${alpha(theme.palette.primary.main, 0.15)}`,
-            borderRadius: '16px',
-            bgcolor: alpha(theme.palette.primary.main, 0.02),
-          }}
-        >
-          <CardContent sx={{ p: 3 }}>
-            <Typography variant="subtitle1" fontWeight={700} color="primary.dark" sx={{ mb: 2.5 }}>
-              Profit & Loss Summary
-            </Typography>
-            <Stack direction="row" spacing={4} flexWrap="wrap" useFlexGap>
-              {[
-                { label: 'Revenue', value: formatCurrency(actual.revenue), color: '#1976d2' },
-                { label: 'Total Cost', value: formatCurrency(actual.totalCost), color: '#e65100' },
-                {
-                  label: 'Gross Profit',
-                  value: formatCurrency(actual.grossProfit),
-                  color: actual.grossProfit >= 0 ? '#2e7d32' : '#c62828',
-                },
-              ].map((item) => (
-                <Box key={item.label}>
-                  <Typography variant="caption" color="text.secondary">
-                    {item.label}
-                  </Typography>
-                  <Typography
-                    variant="h5"
-                    sx={{
-                      fontWeight: 800,
-                      color: item.color,
-                      fontFamily: '"Outfit", system-ui',
-                      lineHeight: 1.2,
-                    }}
-                  >
-                    {item.value}
-                  </Typography>
-                </Box>
-              ))}
-              {actual.rate > 0 && (
-                <Box>
-                  <Typography variant="caption" color="text.secondary">
-                    Rate
-                  </Typography>
-                  <Typography
-                    variant="h5"
-                    sx={{
-                      fontWeight: 800,
-                      color: '#6a1b9a',
-                      fontFamily: '"Outfit", system-ui',
-                      lineHeight: 1.2,
-                    }}
-                  >
-                    {formatCurrency(actual.rate)}/{actual.rateType === 'hourly' ? 'hr' : 'ha'}
-                  </Typography>
-                </Box>
-              )}
-              {actual.effectiveHourlyRate > 0 && (
-                <Box>
-                  <Typography variant="caption" color="text.secondary">
-                    Effective $/hr
-                  </Typography>
-                  <Typography
-                    variant="h5"
-                    sx={{
-                      fontWeight: 800,
-                      color: '#00695c',
-                      fontFamily: '"Outfit", system-ui',
-                      lineHeight: 1.2,
-                    }}
-                  >
-                    {formatCurrency(actual.effectiveHourlyRate)}
-                  </Typography>
-                </Box>
-              )}
-            </Stack>
-            {actual.rateType === 'hectare' && actual.hectares && actual.hectares > 0 && (
-              <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-                {actual.hectares} ha @ {formatCurrency(actual.rate)}/ha = {formatCurrency(actual.revenue)} revenue
-                {actual.totalHours > 0 && ` \u00F7 ${actual.totalHours} hrs = ${formatCurrency(actual.effectiveHourlyRate)}/hr`}
-              </Typography>
-            )}
-          </CardContent>
-        </Card>
-
-        <WorkflowMaturityBoundary moduleCode="financials" workflowCode="margin-analysis">
-          <MarginAnalysis actual={actual} quote={quote} border={cardBorder} />
-        </WorkflowMaturityBoundary>
-
-        {/* ─── Daily Hours ────────────────────────────────────── */}
-        {actual.dailyHours && actual.dailyHours.length > 1 && (
-          <Card elevation={0} sx={{ border: cardBorder, borderRadius: '16px' }}>
-            <CardContent sx={{ p: 3 }}>
-              <Typography variant="subtitle1" fontWeight={700} color="primary.dark" sx={{ mb: 2 }}>
-                Daily Hours ({actual.totalDays} days)
-              </Typography>
-              {actual.dailyHours.map((entry) => (
-                <Box key={entry.date} sx={{ display: 'flex', justifyContent: 'space-between', py: 0.5 }}>
-                  <Typography variant="body2" color="text.secondary">
-                    {new Date(entry.date + 'T00:00:00').toLocaleDateString('en-AU', {
-                      weekday: 'short',
-                      day: 'numeric',
-                      month: 'short',
-                    })}
-                  </Typography>
-                  <Typography variant="body2" fontWeight={600}>
-                    {entry.hours} hrs
-                  </Typography>
-                </Box>
-              ))}
-              <Box sx={{ display: 'flex', justifyContent: 'space-between', pt: 1, mt: 1, borderTop: `1px solid ${alpha(theme.palette.primary.main, 0.1)}` }}>
-                <Typography variant="body2" fontWeight={700}>Total</Typography>
-                <Typography variant="body2" fontWeight={800} color="primary.main">
-                  {actual.totalHours} hrs
-                </Typography>
-              </Box>
-            </CardContent>
-          </Card>
-        )}
-
-        {/* ─── Equipment ───────────────────────────────────────── */}
-        <Card elevation={0} sx={{ border: cardBorder, borderRadius: '16px' }}>
-          <CardContent sx={{ p: 3 }}>
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
-              <FlightTakeoffIcon sx={{ color: 'primary.main', fontSize: 20 }} />
-              <Typography variant="subtitle1" fontWeight={700} color="primary.dark">
-                Equipment
-              </Typography>
-              <Box sx={{ flex: 1 }} />
-              <Typography variant="subtitle1" fontWeight={700} color="primary.dark">
-                {formatCurrency(actual.equipment.fuelTotal)}
-              </Typography>
-            </Box>
-            {kitNames && <InfoRow label="Kits" value={kitNames} />}
-            <InfoRow
-              label="Flight Hours"
-              value={
-                actual.equipment.actualFlightHours > 0
-                  ? `${actual.equipment.actualFlightHours} hrs`
-                  : undefined
-              }
-            />
-            <InfoRow label="Fuel Total" value={formatCurrency(actual.equipment.fuelTotal)} />
-            <LineItemRows items={actual.equipment.fuelBreakdown} />
-          </CardContent>
-        </Card>
-
-        {/* ─── Labour ──────────────────────────────────────────── */}
-        <Card elevation={0} sx={{ border: cardBorder, borderRadius: '16px' }}>
-          <CardContent sx={{ p: 3 }}>
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
-              <PeopleIcon sx={{ color: 'primary.main', fontSize: 20 }} />
-              <Typography variant="subtitle1" fontWeight={700} color="primary.dark">
-                Labour
-              </Typography>
-              <Box sx={{ flex: 1 }} />
-              <Typography variant="subtitle1" fontWeight={700} color="primary.dark">
-                {formatCurrency(labourTotal)}
-              </Typography>
-            </Box>
-            <InfoRow
-              label="Pilots"
-              value={`${actual.labour.pilotCount} x ${actual.labour.pilotHours} hrs @ ${formatCurrency(actual.labour.pilotRatePerHour)}/hr = ${formatCurrency(pilotTotal)}`}
-            />
-            {actual.labour.hasChemOperator && (
-              <InfoRow
-                label="Chem Operator"
-                value={`${actual.labour.chemOpHours} hrs @ ${formatCurrency(actual.labour.chemOpRatePerHour)}/hr = ${formatCurrency(chemOpTotal)}`}
-              />
-            )}
-            <LineItemRows items={actual.labour.additionalLabour} />
-          </CardContent>
-        </Card>
-
-        {/* ─── Travel & Accommodation ──────────────────────────── */}
-        <Card elevation={0} sx={{ border: cardBorder, borderRadius: '16px' }}>
-          <CardContent sx={{ p: 3 }}>
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
-              <DirectionsCarIcon sx={{ color: 'primary.main', fontSize: 20 }} />
-              <Typography variant="subtitle1" fontWeight={700} color="primary.dark">
-                Travel & Accommodation
-              </Typography>
-              <Box sx={{ flex: 1 }} />
-              <Typography variant="subtitle1" fontWeight={700} color="primary.dark">
-                {formatCurrency(travelTotal)}
-              </Typography>
-            </Box>
-            <InfoRow
-              label="Vehicle"
-              value={
-                actual.travel.kilometres > 0
-                  ? `${actual.travel.kilometres} km @ ${formatCurrency(actual.travel.vehicleCostPerKm)}/km = ${formatCurrency(actual.travel.vehicleTotal)}`
-                  : undefined
-              }
-            />
-            <InfoRow
-              label="Accommodation"
-              value={actual.travel.accommodation > 0 ? formatCurrency(actual.travel.accommodation) : undefined}
-            />
-            <LineItemRows items={actual.travel.accommodationBreakdown} />
-            <InfoRow
-              label="Meals"
-              value={actual.travel.meals > 0 ? formatCurrency(actual.travel.meals) : undefined}
-            />
-            <LineItemRows items={actual.travel.mealsBreakdown} />
-          </CardContent>
-        </Card>
-
-        {/* ─── Chemicals ───────────────────────────────────────── */}
-        {actual.chemicalCost > 0 && (
-          <Card elevation={0} sx={{ border: cardBorder, borderRadius: '16px' }}>
-            <CardContent sx={{ p: 3 }}>
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
-                <ScienceIcon sx={{ color: 'primary.main', fontSize: 20 }} />
-                <Typography variant="subtitle1" fontWeight={700} color="primary.dark">
-                  Chemicals
-                </Typography>
-                <Box sx={{ flex: 1 }} />
-                <Typography variant="subtitle1" fontWeight={700} color="primary.dark">
-                  {formatCurrency(actual.chemicalCost)}
-                </Typography>
-              </Box>
-              <InfoRow label="Chemical Cost" value={formatCurrency(actual.chemicalCost)} />
-            </CardContent>
-          </Card>
-        )}
-
-        {/* ─── Repairs ─────────────────────────────────────────── */}
-        {actual.repairs.items.length > 0 && (
-          <Card elevation={0} sx={{ border: cardBorder, borderRadius: '16px' }}>
-            <CardContent sx={{ p: 3 }}>
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
-                <BuildIcon sx={{ color: 'primary.main', fontSize: 20 }} />
-                <Typography variant="subtitle1" fontWeight={700} color="primary.dark">
-                  Repairs
-                </Typography>
-                <Box sx={{ flex: 1 }} />
-                <Typography variant="subtitle1" fontWeight={700} color="primary.dark">
-                  {formatCurrency(actual.repairs.items.reduce((s, i) => s + i.total, 0))}
-                </Typography>
-              </Box>
-              <LineItemRows items={actual.repairs.items} />
-            </CardContent>
-          </Card>
-        )}
-
-        {/* ─── Other ───────────────────────────────────────────── */}
-        {actual.otherCosts.items.length > 0 && (
-          <Card elevation={0} sx={{ border: cardBorder, borderRadius: '16px' }}>
-            <CardContent sx={{ p: 3 }}>
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
-                <MoreHorizIcon sx={{ color: 'primary.main', fontSize: 20 }} />
-                <Typography variant="subtitle1" fontWeight={700} color="primary.dark">
-                  Other
-                </Typography>
-                <Box sx={{ flex: 1 }} />
-                <Typography variant="subtitle1" fontWeight={700} color="primary.dark">
-                  {formatCurrency(actual.otherCosts.items.reduce((s, i) => s + i.total, 0))}
-                </Typography>
-              </Box>
-              <LineItemRows items={actual.otherCosts.items} />
-            </CardContent>
-          </Card>
-        )}
-
-        {/* ─── Notes ───────────────────────────────────────────── */}
-        {(actual.notes || actual.lessonsLearned) && (
-          <Card elevation={0} sx={{ border: cardBorder, borderRadius: '16px' }}>
-            <CardContent sx={{ p: 3 }}>
-              <Typography variant="subtitle1" fontWeight={700} color="primary.dark" sx={{ mb: 2 }}>
-                Notes
-              </Typography>
-              {actual.notes && (
-                <Box sx={{ mb: actual.lessonsLearned ? 2 : 0 }}>
-                  <Typography variant="body2" color="text.secondary" fontWeight={600} sx={{ mb: 0.5 }}>
-                    Notes
-                  </Typography>
-                  <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap' }}>
-                    {actual.notes}
-                  </Typography>
-                </Box>
-              )}
-              {actual.lessonsLearned && (
-                <Box>
-                  <Typography variant="body2" color="text.secondary" fontWeight={600} sx={{ mb: 0.5 }}>
-                    Lessons Learned
-                  </Typography>
-                  <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap' }}>
-                    {actual.lessonsLearned}
-                  </Typography>
-                </Box>
-              )}
-            </CardContent>
-          </Card>
-        )}
-      </Stack>
-
-      {/* PDF Export Choice Dialog */}
-      <Dialog
-        open={pdfDialogOpen}
-        onClose={() => setPdfDialogOpen(false)}
-        PaperProps={{ sx: { borderRadius: '16px', maxWidth: 400 } }}
-      >
-        <DialogTitle sx={{ fontWeight: 700 }}>Export PDF Report</DialogTitle>
-        <DialogContent>
-          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-            Would you like a summary or complete report with P&L?
-          </Typography>
-          <Stack spacing={1.5}>
-            <Button
-              fullWidth
-              variant="outlined"
-              startIcon={<DescriptionIcon />}
-              onClick={() => {
-                generateActualReport(actual, { includePnL: false });
-                setPdfDialogOpen(false);
-              }}
-              sx={{
-                borderRadius: '12px',
-                py: 1.5,
-                textTransform: 'none',
-                justifyContent: 'flex-start',
-                textAlign: 'left',
-              }}
-            >
-              <Box>
-                <Typography variant="body2" fontWeight={700}>Job Summary</Typography>
-                <Typography variant="caption" color="text.secondary">
-                  Clean report — no financial numbers
-                </Typography>
-              </Box>
-            </Button>
-            <Button
-              fullWidth
-              variant="outlined"
-              startIcon={<AssessmentIcon />}
-              onClick={() => {
-                generateActualReport(actual, { includePnL: true });
-                setPdfDialogOpen(false);
-              }}
-              sx={{
-                borderRadius: '12px',
-                py: 1.5,
-                textTransform: 'none',
-                justifyContent: 'flex-start',
-                textAlign: 'left',
-              }}
-            >
-              <Box>
-                <Typography variant="body2" fontWeight={700}>Complete with P&L</Typography>
-                <Typography variant="caption" color="text.secondary">
-                  Includes costs, margins & quote comparison
-                </Typography>
-              </Box>
-            </Button>
-          </Stack>
-        </DialogContent>
-        <DialogActions sx={{ px: 3, pb: 2.5 }}>
-          <Button onClick={() => setPdfDialogOpen(false)}>Cancel</Button>
-        </DialogActions>
-      </Dialog>
-
-      {/* Delete Confirm Dialog */}
-      <Dialog
-        open={deleteConfirm}
-        onClose={() => setDeleteConfirm(false)}
-        PaperProps={{ sx: { borderRadius: '16px' } }}
-      >
-        <DialogTitle sx={{ fontWeight: 700 }}>Delete Actual?</DialogTitle>
-        <DialogContent>
-          <Typography variant="body2">
-            This will permanently delete this actual record. This action cannot be undone.
-          </Typography>
-        </DialogContent>
-        <DialogActions sx={{ px: 3, pb: 2.5 }}>
-          <Button onClick={() => setDeleteConfirm(false)}>Cancel</Button>
-          <Button
-            variant="contained"
-            color="error"
-            onClick={handleDelete}
-            sx={{ borderRadius: '10px', fontWeight: 700 }}
-          >
-            Delete
-          </Button>
-        </DialogActions>
-      </Dialog>
-    </Box>
-  );
+    {history && <Box sx={{ mt: 2 }}><RevisionHistory history={history} selectedRevisionId={historical?.revision.id || null} onSelect={selectRevision} onLoadMore={loadOlderRevisions} loadingMore={historyBusy} /></Box>}
+    {historical && <Card variant="outlined" sx={{ mt: 2, borderTop: 4, borderTopColor: historical.current ? 'success.main' : 'grey.500' }}><CardContent><Typography variant="h5">Historical frozen authority</Typography><Typography color="text.secondary">Revision {historical.revision.revisionNumber} · {historical.current ? 'Current FINAL' : 'Superseded FINAL'} · {historical.revision.correctionReason || 'Original'}</Typography><Alert severity="info" sx={{ my: 2 }}>Rendered from the immutable frozen snapshot. It is not recalculated using current code.</Alert><Metrics calculation={historical.revision.calculation} />{canExport&&<Button sx={{mt:2}} variant="outlined" disabled={exportBusyScope===`${scopeKey}:${historical.revision.id}`} onClick={()=>exportRevision(historical.revision.id)}>Export revision {historical.revision.revisionNumber}</Button>}</CardContent></Card>}
+  </Box>;
 }
+
+function Metric({ label, value }: { label: string; value: string }) { return <Box><Typography variant="caption" color="text.secondary">{label}</Typography><Typography variant="h6">{value}</Typography></Box>; }
+function Metrics({ calculation }: { calculation: any }) { return <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: '1fr 1fr' }, gap: 2 }}><Metric label="Operational days" value={String(calculation.operationalDays)} /><Metric label="Total hours" value={String(calculation.totalHours)} /><Metric label="Revenue" value={money(calculation.revenue)} /><Metric label="Total cost" value={money(calculation.totalCost)} /><Metric label="Gross profit" value={money(calculation.grossProfit)} /><Metric label="Gross margin" value={calculation.grossMarginPercentage ? `${calculation.grossMarginPercentage}%` : '—'} /></Box>; }
+function Final({ detail }: { detail: FinancialActualDetail }) { const final = detail.final!; return <Card variant="outlined" sx={{ borderTop: 4, borderTopColor: 'success.main' }}><CardContent><Typography variant="h5">Frozen FINAL result</Typography><Typography color="text.secondary">Revision {final.revisionNumber} · finalised {new Date(final.finalisedAt).toLocaleString('en-AU')}</Typography><Alert severity="success" sx={{ my: 2 }}>FINAL is immutable and rendered from the authoritative PostgreSQL snapshot.</Alert><Metrics calculation={final.calculation} /><Divider sx={{ my: 2 }} /><Typography variant="body2">Evidence digest: {final.inputDigest.slice(0, 12)}…</Typography></CardContent></Card>; }

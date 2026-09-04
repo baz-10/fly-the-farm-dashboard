@@ -1,5 +1,6 @@
 import registryManifest from './product-maturity-registry.json';
 import { ProductMaturity, ProductMaturityEntry } from './types';
+import { financialActualsAcceptanceEnabled } from './financialActualsAcceptance';
 
 const VALID_MATURITIES: ReadonlySet<ProductMaturity> = new Set<ProductMaturity>([
   'COMMERCIALLY_READY',
@@ -131,7 +132,9 @@ export function getMaturityEntry(moduleCode: string, workflowCode?: string): Pro
   const moduleEntry = PRODUCT_MATURITY_REGISTRY.find(entry =>
     entry.moduleCode === moduleCode && entry.workflowCode === null
   );
-  if (moduleEntry) return moduleEntry;
+  if (moduleEntry) return moduleCode === 'financials' && financialActualsAcceptanceEnabled()
+    ? { ...moduleEntry, maturity: 'BETA' }
+    : moduleEntry;
 
   throw new ProductMaturityConfigurationError(`Missing product maturity registry metadata for module ${moduleCode}.`);
 }

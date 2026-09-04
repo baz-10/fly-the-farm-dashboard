@@ -57,7 +57,6 @@ import {
   saveOutcome,
   updateOutcome,
 } from '../services/fieldManagementStore';
-import { getActualByJobId } from '../services/financialsStore';
 import { getReportsForJob, AskFtfReportRecord } from '../services/askFtfReportStore';
 import { JobOutcome, EfficacyRating, PhotoRef } from '../types/fieldManagement';
 import PhotoUpload from '../components/PhotoUpload';
@@ -182,7 +181,9 @@ function LocalJobDetail() {
   const property = getPropertyById(propertyId || '');
   const client = getClientById(clientId || '');
 
-  const existingActual = getActualByJobId(jobId || '');
+  // Financial Actuals are server-authoritative and intentionally unavailable to this
+  // browser-local compatibility workspace.
+  const existingActual = null as { id: string } | null;
   const [outcome, setOutcome] = useState(() => getOutcomeByJob(jobId || ''));
   const [ftfReports] = useState<AskFtfReportRecord[]>(() => getReportsForJob(jobId || ''));
   const [expandedReportId, setExpandedReportId] = useState<string | null>(null);
