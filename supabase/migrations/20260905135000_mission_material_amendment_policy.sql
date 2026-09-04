@@ -76,7 +76,7 @@ begin
   foreach v_key in array v_changed loop
     if v_key = any(array[
       'actualFlightHours','flightBreakdown','actualHectares','actualChemicalQuantity',
-      'actualWeatherEvidence','flightLineEvidenceId','receipts','completionNotes','nonSafetyCorrections'
+      'actualWeatherEvidence','flightLineEvidenceId','completionNotes'
     ]) then continue; end if;
     v_reason := case v_key
       when 'fieldIds' then 'FIELD_SCOPE_CHANGED'
@@ -102,6 +102,46 @@ end;
 $$;
 
 revoke all on function public.ftf_classify_mission_amendment(jsonb,jsonb) from public, anon, authenticated, service_role;
+
+create function public.ftf_derive_mission_material_changed_keys(p_before_manifest jsonb, p_after_manifest jsonb)
+returns text[]
+language plpgsql
+immutable
+security invoker
+set search_path = public, pg_temp
+as $$
+declare v_keys text[] := '{}'::text[]; v_dimension text;
+begin
+  if p_before_manifest is null or p_after_manifest is null
+    or jsonb_typeof(p_before_manifest) <> 'object' or jsonb_typeof(p_after_manifest) <> 'object' then
+    raise exception 'MISSION_AMENDMENT_INPUT_INVALID' using errcode = '22023';
+  end if;
+  if p_before_manifest->'schemaVersion' is distinct from p_after_manifest->'schemaVersion' then v_keys := array_append(v_keys,'sourceManifestSchema'); end if;
+  if (p_before_manifest->'mission') - 'rowVersion' is distinct from (p_after_manifest->'mission') - 'rowVersion' then v_keys := array_append(v_keys,'missionAuthority'); end if;
+  if p_before_manifest->'job' is distinct from p_after_manifest->'job' then v_keys := array_append(v_keys,'jobAuthority'); end if;
+  if p_before_manifest->'fieldIds' is distinct from p_after_manifest->'fieldIds' then v_keys := array_append(v_keys,'fieldIds'); end if;
+  if p_before_manifest->'fieldScope' is distinct from p_after_manifest->'fieldScope' then v_keys := array_append(v_keys,'targetAreaHectares'); end if;
+  if p_before_manifest->'jsa' is distinct from p_after_manifest->'jsa' then v_keys := v_keys || array['jsaControls','jsaHazards']; end if;
+  if p_before_manifest->'personnel' is distinct from p_after_manifest->'personnel' then v_keys := array_append(v_keys,'regulatedCrewIds'); end if;
+  if p_before_manifest->'chemicals' is distinct from p_after_manifest->'chemicals' then v_keys := v_keys || array['applicationMethod','chemicalProductIds','governedRate']; end if;
+  if p_before_manifest->'map' is distinct from p_after_manifest->'map' then v_keys := array_append(v_keys,'safetyMapFeatures'); end if;
+  if p_before_manifest->'weather' is distinct from p_after_manifest->'weather' then v_keys := array_append(v_keys,'weatherAuthority'); end if;
+  if p_before_manifest->'aircraftAssignments' is distinct from p_after_manifest->'aircraftAssignments' then v_keys := array_append(v_keys,'aircraftIds'); end if;
+  if p_before_manifest->'equipmentAssignments' is distinct from p_after_manifest->'equipmentAssignments' then v_keys := array_append(v_keys,'equipmentAssignments'); end if;
+  if p_before_manifest->'readiness' is distinct from p_after_manifest->'readiness' then v_keys := array_append(v_keys,'operationalPermissions'); end if;
+  for v_dimension in select jsonb_object_keys(p_before_manifest || p_after_manifest) loop
+    if not v_dimension = any(array['schemaVersion','mission','job','fieldIds','fieldScope','jsa','personnel','chemicals','map','weather','aircraftAssignments','equipmentAssignments','readiness'])
+      and ((p_before_manifest ? v_dimension) is distinct from (p_after_manifest ? v_dimension)
+        or p_before_manifest->v_dimension is distinct from p_after_manifest->v_dimension) then
+      v_keys := array_append(v_keys,'sourceManifest.' || v_dimension);
+    end if;
+  end loop;
+  select coalesce(array_agg(key order by key), '{}'::text[]) into v_keys from unnest(v_keys) key;
+  return v_keys;
+end;
+$$;
+
+revoke all on function public.ftf_derive_mission_material_changed_keys(jsonb,jsonb) from public, anon, authenticated, service_role;
 
 create function public.ftf_project_mission_amendment_values(p_manifest jsonb, p_keys text[])
 returns jsonb
@@ -200,6 +240,7 @@ declare
   v_created jsonb;
   v_fresh_manifest jsonb;
   v_authoritative_source_changed boolean;
+  v_derived_material_keys text[];
   v_preparing public.mission_pack_revisions%rowtype;
   v_amendment public.mission_package_amendments%rowtype;
 begin
@@ -253,11 +294,16 @@ begin
   -- operational amendment. Compare all other frozen authority inputs.
   v_authoritative_source_changed := (coalesce(v_predecessor.source_manifest, '{}'::jsonb) #- '{mission,rowVersion}')
     is distinct from (v_fresh_manifest #- '{mission,rowVersion}');
-  if v_policy->>'classification' = 'MATERIAL' then
-    v_authoritative_before := public.ftf_project_mission_amendment_values(v_predecessor.source_manifest, v_changed_keys);
-    v_authoritative_after := public.ftf_project_mission_amendment_values(v_fresh_manifest, v_changed_keys);
+  if v_authoritative_source_changed then
+    v_derived_material_keys := public.ftf_derive_mission_material_changed_keys(v_predecessor.source_manifest,v_fresh_manifest);
+    if v_changed_keys is distinct from v_derived_material_keys then
+      return jsonb_build_object('error', 'MISSION_AMENDMENT_KEY_SET_MISMATCH');
+    end if;
+    v_authoritative_before := public.ftf_project_mission_amendment_values(v_predecessor.source_manifest, v_derived_material_keys);
+    v_authoritative_after := public.ftf_project_mission_amendment_values(v_fresh_manifest, v_derived_material_keys);
     if p_before <> v_authoritative_before then return jsonb_build_object('error', 'MISSION_AMENDMENT_BEFORE_MISMATCH'); end if;
     if p_after <> v_authoritative_after then return jsonb_build_object('error', 'MISSION_AMENDMENT_AFTER_MISMATCH'); end if;
+    v_policy := public.ftf_classify_mission_amendment(v_authoritative_before,v_authoritative_after);
     v_created := public.ftf_save_mission_package_scope(
       p_organisation_id, p_actor_internal_user_id, p_mission_id, v_current, to_jsonb(v_field_ids)
     );
@@ -268,7 +314,9 @@ begin
     if not found then return jsonb_build_object('error', 'MISSION_AMENDMENT_AFTER_MISMATCH'); end if;
     if v_preparing.source_manifest <> v_fresh_manifest then return jsonb_build_object('error', 'MISSION_AMENDMENT_AFTER_MISMATCH'); end if;
   else
-    if v_authoritative_source_changed then return jsonb_build_object('error', 'MISSION_AMENDMENT_AFTER_MISMATCH'); end if;
+    if v_policy->>'classification' <> 'ADMINISTRATIVE' then
+      return jsonb_build_object('error', 'MISSION_AMENDMENT_KEY_SET_MISMATCH');
+    end if;
     foreach v_key in array v_changed_keys loop
       v_evidence := public.ftf_validate_mission_administrative_evidence(
         p_organisation_id,p_mission_id,v_key,p_before->v_key,true

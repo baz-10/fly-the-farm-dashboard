@@ -33,9 +33,17 @@ test('serializes amendment creation with day start and fails stale or forged aut
     'mission_amendment_after_mismatch', 'mission_amendment_reason_invalid',
     'mission.pack.generate', 'ftf_operational_location_allowed',
     'ftf_build_mission_package_source_manifest', 'v_authoritative_source_changed',
+    'ftf_derive_mission_material_changed_keys', 'mission_amendment_key_set_mismatch',
     'ftf_project_mission_amendment_values', 'ftf_validate_mission_administrative_evidence',
     'mission_amendment_evidence_invalid', 'before_values', 'after_values',
   ]) expect(sql).toContain(token);
+});
+
+test('does not classify unsupported receipt or correction claims as administrative evidence', () => {
+  const sql = migration();
+  const administrativeList = sql.match(/if v_key = any\(array\[(.*?)\]\) then continue/s)?.[1] || '';
+  expect(administrativeList).not.toContain("'receipts'");
+  expect(administrativeList).not.toContain("'nonsafetycorrections'");
 });
 
 test('bounds the combined key union and exposes only checked scoped history', () => {

@@ -364,12 +364,13 @@ function checkedFailure(req, result) {
     return errorResponse(req, 404, 'NOT_FOUND', 'Mission operating-day record was not found.');
   }
   if (code === 'MISSION_CRP_INELIGIBLE') return errorResponse(req, 403, 'CRP_INELIGIBLE', 'The signed-in user is not an eligible CRP for this Mission Base.');
-  if (['MISSION_PACKAGE_VERSION_CONFLICT', 'MISSION_PACKAGE_EVIDENCE_STALE', 'MISSION_PACKAGE_DECISION_CONFLICT', 'MISSION_AMENDMENT_BEFORE_MISMATCH'].includes(code)) {
+  if (['MISSION_PACKAGE_VERSION_CONFLICT', 'MISSION_PACKAGE_EVIDENCE_STALE', 'MISSION_PACKAGE_DECISION_CONFLICT',
+    'MISSION_AMENDMENT_BEFORE_MISMATCH', 'MISSION_AMENDMENT_KEY_SET_MISMATCH'].includes(code)) {
     const message = code === 'MISSION_PACKAGE_EVIDENCE_STALE'
       ? 'Mission package evidence changed. Reload before continuing.'
       : code === 'MISSION_PACKAGE_DECISION_CONFLICT'
         ? 'A CRP decision already exists for this package revision.'
-        : code === 'MISSION_AMENDMENT_BEFORE_MISMATCH'
+        : ['MISSION_AMENDMENT_BEFORE_MISMATCH', 'MISSION_AMENDMENT_KEY_SET_MISMATCH'].includes(code)
           ? 'Mission amendment predecessor changed. Reload before continuing.'
           : 'Mission package revision changed in another session.';
     return errorResponse(req, 409, code, message, result);

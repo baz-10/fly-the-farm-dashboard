@@ -18,8 +18,7 @@ type AmendmentValues = Record<string, unknown>;
 
 const ADMINISTRATIVE_KEYS = new Set([
   'actualFlightHours', 'flightBreakdown', 'actualHectares', 'actualChemicalQuantity',
-  'actualWeatherEvidence', 'flightLineEvidenceId', 'receipts', 'completionNotes',
-  'nonSafetyCorrections',
+  'actualWeatherEvidence', 'flightLineEvidenceId', 'completionNotes',
 ]);
 
 const MATERIAL_REASONS: Readonly<Record<string, MissionAmendmentReason>> = Object.freeze({

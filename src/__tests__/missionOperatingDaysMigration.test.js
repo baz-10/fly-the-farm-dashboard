@@ -268,7 +268,7 @@ if (child) {
       JSON.stringify({ chemicalProductIds: chemicals }),
       JSON.stringify({ chemicalProductIds: { id: 'browser-forged' } }),
       'Claimed chemical change.',
-    ])).toMatchObject({ error: 'MISSION_AMENDMENT_AFTER_MISMATCH' });
+    ])).toMatchObject({ error: 'MISSION_AMENDMENT_KEY_SET_MISMATCH' });
     expect(await call('ftf_create_mission_amendment', [
       orgA, actorA, ids.mission, 2,
       JSON.stringify({ completionNotes: null }),
@@ -286,13 +286,21 @@ if (child) {
   });
 
   test('creates a prospective material revision while preserving completed-day authority', async () => {
+    const beforeManifest = await scalar(db, `select source_manifest as value from public.mission_pack_revisions where organisation_id='${orgA}' and id='${pack.id}'`);
+    const afterManifest = await scalar(db, `select public.ftf_build_mission_package_source_manifest('${orgA}','${ids.mission}',array['${ids.fieldA}'::uuid,'${ids.fieldB}'::uuid]) as value`);
+    expect(await call('ftf_create_mission_amendment', [
+      orgA, actorA, ids.mission, 3,
+      JSON.stringify({ fieldIds: beforeManifest.fieldIds }),
+      JSON.stringify({ fieldIds: afterManifest.fieldIds }),
+      'Incomplete Field authority declaration.',
+    ])).toMatchObject({ error: 'MISSION_AMENDMENT_KEY_SET_MISMATCH' });
     const amended = await call('ftf_create_mission_amendment', [
       orgA, actorA, ids.mission, 3,
-      JSON.stringify({ fieldIds: [ids.fieldA] }),
-      JSON.stringify({ fieldIds: [ids.fieldA, ids.fieldB] }),
+      JSON.stringify({ fieldIds: beforeManifest.fieldIds, targetAreaHectares: beforeManifest.fieldScope }),
+      JSON.stringify({ fieldIds: afterManifest.fieldIds, targetAreaHectares: afterManifest.fieldScope }),
       'Second Field added after site review.',
     ]);
-    expect(amended).toMatchObject({ classification: 'MATERIAL', reasons: ['FIELD_SCOPE_CHANGED'], changed_keys: ['fieldIds'] });
+    expect(amended).toMatchObject({ classification: 'MATERIAL', reasons: ['FIELD_SCOPE_CHANGED', 'TARGET_AREA_CHANGED'], changed_keys: ['fieldIds', 'targetAreaHectares'] });
     expect(amended.package_revision.record).toMatchObject({ version_number: 4, package_state: 'PREPARING' });
     expect(await scalar(db, `select current_authorised_pack_revision_id::text as value from public.missions where organisation_id='${orgA}' and id='${ids.mission}'`)).toBe(pack.id);
     expect(await scalar(db, `select mission_pack_revision_id::text as value from public.mission_operating_days where id='${day.day.id}'`)).toBe(pack.id);
@@ -304,7 +312,9 @@ if (child) {
     expect(history.records).toHaveLength(2);
     expect(history.records.map((record) => record.classification)).toEqual(['MATERIAL', 'ADMINISTRATIVE']);
     expect(history.records[0]).toMatchObject({
-      beforeValues: { fieldIds: [ids.fieldA] }, afterValues: { fieldIds: [ids.fieldA, ids.fieldB] },
+      changedKeys: ['fieldIds', 'targetAreaHectares'],
+      beforeValues: { fieldIds: [ids.fieldA], targetAreaHectares: expect.any(Array) },
+      afterValues: { fieldIds: [ids.fieldA, ids.fieldB], targetAreaHectares: expect.any(Array) },
     });
     expect(await call('ftf_read_mission_amendment_history', [orgB, actorB, ids.mission])).toMatchObject({ error: 'MISSION_PACKAGE_NOT_FOUND' });
   });

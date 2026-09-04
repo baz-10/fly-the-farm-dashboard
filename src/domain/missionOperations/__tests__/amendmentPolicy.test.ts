@@ -17,6 +17,8 @@ describe('Mission amendment policy', () => {
     ['flightLineEvidenceId', undefined, 'file-a', 'ADMINISTRATIVE', undefined],
     ['actualWeatherEvidence', undefined, { reportId: 'weather-a' }, 'ADMINISTRATIVE', undefined],
     ['completionNotes', undefined, 'Completed as planned.', 'ADMINISTRATIVE', undefined],
+    ['receipts', undefined, ['receipt-a'], 'MATERIAL', 'UNRECOGNISED_CHANGE'],
+    ['nonSafetyCorrections', undefined, { note: 'typo' }, 'MATERIAL', 'UNRECOGNISED_CHANGE'],
   ])('%s changes classify deterministically', (field, before, after, expected, reason) => {
     const result = classifyMissionAmendment({ before: { [field]: before }, after: { [field]: after } });
     expect(result.classification).toBe(expected);

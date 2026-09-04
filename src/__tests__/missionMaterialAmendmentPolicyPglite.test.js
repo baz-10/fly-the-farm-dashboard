@@ -18,6 +18,9 @@ if (child) {
     const db = new PGlite();
     try {
       await db.exec(source.slice(start, end));
+      const deriveStart = source.indexOf('create function public.ftf_derive_mission_material_changed_keys');
+      const deriveEnd = source.indexOf('revoke all on function public.ftf_derive_mission_material_changed_keys');
+      await db.exec(source.slice(deriveStart, deriveEnd));
       const classify = async (before, after) => (await db.query(
         'select public.ftf_classify_mission_amendment($1::jsonb,$2::jsonb) value',
         [JSON.stringify(before), JSON.stringify(after)],
@@ -27,6 +30,10 @@ if (child) {
         await classify({}, { actualFlightHours: '2.5000' }),
         await classify({}, { futureSafetySetting: true }),
       ];
+      results.push((await db.query(
+        'select public.ftf_derive_mission_material_changed_keys($1::jsonb,$2::jsonb) value',
+        [JSON.stringify({ chemicals: { version: 1 } }), JSON.stringify({ chemicals: { version: 2 }, futureAuthority: true })],
+      )).rows[0].value);
       try {
         await classify(
           Object.fromEntries(Array.from({ length: 40 }, (_, index) => [`before${index}`, index])),
@@ -50,6 +57,7 @@ if (child) {
       { classification: 'MATERIAL', reasons: ['FIELD_SCOPE_CHANGED'], changed_keys: ['fieldIds'] },
       { classification: 'ADMINISTRATIVE', reasons: [], changed_keys: ['actualFlightHours'] },
       { classification: 'MATERIAL', reasons: ['UNRECOGNISED_CHANGE'], changed_keys: ['futureSafetySetting'] },
+      ['applicationMethod', 'chemicalProductIds', 'governedRate', 'sourceManifest.futureAuthority'],
       'BOUNDED',
     ]);
   });
