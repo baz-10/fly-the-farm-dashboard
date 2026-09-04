@@ -46,19 +46,25 @@
 - Executable PostgreSQL transactions prove a cross-Base attribution and an over-bound 367-day input both fail with zero retained mutation. A permitted post-final Client rename proves the frozen Client identity and digest remain unchanged.
 - PGlite cannot run two independent sessions to measure blocking time. Serialization is therefore evidenced by full migration execution, the explicit lock-order catalogue, shared aggregate lock participation, and transactional failure/rollback tests; real two-session lock timing remains an integration-level check.
 
+## Task 11B review round 2
+
+- Reference validation now follows identities rather than trusting matching Base columns. Daily Field activity, optional flight Fields and chemical-line Fields must belong to each day's governing package; flight source imports and attribution imports must belong to the exact Mission/Base; attributed aircraft must have authoritative participation in the Mission and belong to its Base; weather reports must reference an observation for the exact Mission/Base; and daily JSA, chemical revision, planned chemical and aircraft relationships are cross-checked before freezing.
+- The deterministic lock catalogue now includes referenced `mission_weather_observations` and `mission_aircraft_assignments`, ahead of reference validation and manifest construction.
+- Executable PostgreSQL corruption tests retain correct row-level Base values while wiring an attribution to another Mission's import and a weather report to another Mission's observation. Both fail with `MISSION_REPORT_EVIDENCE_INVALID: reference`, and each transaction rolls back completely.
+
 ## RED evidence
 
 The first focused run failed for the intended missing migration, absent `MissionFinalSignoff` component and unsupported API actions. The lifecycle refinement also identified and corrected the existing-closeout compatibility case: revision 1 may already exist, so final sign-off must append rather than overwrite or falsely return it.
 
 ## Verification
 
-- Focused Task 11/11B authority/API/decoder/UI/Financial/Fleet/migration suite: 10 suites / 89 tests PASS.
+- Focused Task 11/11B authority/API/decoder/UI/Financial/Fleet/migration suite: 10 suites / 91 tests PASS.
 - Full-chain PGlite migration execution and Fleet behavior: PASS, including an executable multi-day final-sign-off fail-closed/zero-mutation assertion.
 - Production build: PASS with the repository's pre-existing Browserslist, lint-warning and bundle-size warning backlog.
 - Targeted ESLint: zero errors; six pre-existing unused-import warnings remain in `JobDetail.tsx`.
 - `git diff --check`: PASS.
 - Migration SHA-256: `7586956d1652e8ca5b4a20da86113a64cec41dd4dcd17a522f82b540d057c743`.
-- Task 11B migration SHA-256: `8762f93e6d56f95681acdb7575a936135f0e07243aca6872e55f3fd6060ed7cc`.
+- Task 11B migration SHA-256: `7e428fbdc5a0b21829f82d309caae839f66e0d00dc8eeef1fb1d114e0300a10a`.
 
 ## Files
 

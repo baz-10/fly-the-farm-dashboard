@@ -483,6 +483,44 @@ if (child) {
     await db.exec('rollback');
     expect(await scalar(db, `select count(*)::integer as value from public.mission_operational_import_attributions where operating_location_id='${ids.baseAlt}'`)).toBe(0);
 
+    const foreignImportId = 'e1000000-0000-4000-8000-000000000001';
+    await db.exec('begin');
+    await db.exec(`insert into public.mission_operational_imports(
+      id,organisation_id,operating_location_id,mission_id,version_number,storage_provider,storage_bucket,storage_object_key,
+      original_filename,source_format,content_type,file_size_bytes,sha256_checksum,evidence_type,parse_status,
+      imported_by_internal_user_id
+    ) values('${foreignImportId}','${orgA}','${baseA}','${ids.missionOther}',1,'supabase','mission-operational-evidence',
+      'foreign/flight.kml','foreign.kml','KML','application/vnd.google-earth.kml+xml',100,'${'f'.repeat(64)}','FLIGHT_LINES','PARSED','${actorA}');
+      insert into public.mission_operational_import_attributions(
+        organisation_id,operating_location_id,mission_id,operational_import_id,operating_day_id,aircraft_id,attribution_confidence,attributed_by_internal_user_id
+      ) values('${orgA}','${baseA}','${ids.mission}','${foreignImportId}','${ids.dayA}','${ids.aircraftA}','OPERATOR_CONFIRMED','${actorA}')`);
+    await expect(call('ftf_build_mission_report_evidence_manifest', [orgA, ids.mission]))
+      .rejects.toThrow(/MISSION_REPORT_EVIDENCE_INVALID: reference/);
+    await db.exec('rollback');
+    expect(await scalar(db, `select count(*)::integer as value from public.mission_operational_imports where id='${foreignImportId}'`)).toBe(0);
+
+    await db.exec('begin');
+    const foreignWeather = await call('ftf_create_mission_weather_observation', [orgA, actorA, ids.missionOther, 0, JSON.stringify({
+      source: 'OPEN_METEO', providerIdentifier: 'foreign-provider', observationLocation: 'Base A',
+      latitude: '-27.000000', longitude: '153.000000', locationSource: 'PROVIDER_LOCATION',
+      locationCapturedAt: '2026-09-05T00:00:00Z', observedAt: '2026-09-05T00:00:00Z', retrievedAt: '2026-09-05T00:01:00Z',
+      temperatureC: '25.00', relativeHumidity: '50.00', windSpeedKmh: '10.00', windDirectionDegrees: '90.0',
+      inversionAssessment: 'UNLIKELY', inversionAssessmentSource: 'OPEN_METEO', inversionAssessedAt: '2026-09-05T00:00:00Z',
+    })]);
+    expect(foreignWeather.record.id).toBeTruthy();
+    await db.exec(`insert into public.mission_day_weather_reports(
+      organisation_id,operating_location_id,mission_id,operating_day_id,mission_pack_revision_id,coverage,
+      interval_start_at,interval_end_at,timezone,source,source_weather_observation_id,latitude,longitude,
+      provider_identifier,provider_retrieved_at,hourly_observations,inversion_inputs,inversion_results,coverage_gaps,
+      source_metadata,source_digest,recorded_by_internal_user_id
+    ) values('${orgA}','${baseA}','${ids.mission}','${ids.dayA}','${ids.pack}','ACTUAL_INTERVAL',
+      '2026-09-05T00:00:00Z','2026-09-05T01:00:00Z','Australia/Brisbane','OPEN_METEO','${foreignWeather.record.id}',
+      -27.0,153.0,'foreign-provider','2026-09-05T00:01:00Z','[{}]','{}','{}','[]','{}','${'1'.repeat(64)}','${actorA}')`);
+    await expect(call('ftf_build_mission_report_evidence_manifest', [orgA, ids.mission]))
+      .rejects.toThrow(/MISSION_REPORT_EVIDENCE_INVALID: reference/);
+    await db.exec('rollback');
+    expect(await scalar(db, `select count(*)::integer as value from public.mission_weather_observations where id='${foreignWeather.record.id}'`)).toBe(0);
+
     await db.exec('begin');
     await db.exec(`insert into public.mission_operating_days(
       id,organisation_id,operating_location_id,mission_id,work_date,timezone,mission_pack_revision_id,jsa_revision_id,state,

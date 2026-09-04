@@ -44,6 +44,8 @@ begin
   perform aircraft.id from public.aircraft aircraft where aircraft.organisation_id=p_organisation_id and exists(
     select 1 from public.mission_aircraft_day_actuals actual where actual.organisation_id=p_organisation_id
       and actual.mission_id=p_mission_id and actual.aircraft_id=aircraft.id) order by aircraft.id for update;
+  -- lock rows: mission_aircraft_assignments
+  perform assignment.id from public.mission_aircraft_assignments assignment where assignment.organisation_id=p_organisation_id and assignment.mission_id=p_mission_id order by assignment.id for update;
   -- lock rows: mission_pack_revisions
   perform pack.id from public.mission_pack_revisions pack where pack.organisation_id=p_organisation_id and pack.mission_id=p_mission_id order by pack.id for update;
   -- lock rows: mission_pack_fields
@@ -70,6 +72,10 @@ begin
   perform line.id from public.mission_day_chemical_lines line where line.organisation_id=p_organisation_id and line.mission_id=p_mission_id order by line.id for update;
   -- lock rows: mission_day_weather_reports
   perform weather.id from public.mission_day_weather_reports weather where weather.organisation_id=p_organisation_id and weather.mission_id=p_mission_id order by weather.id for update;
+  -- lock rows: mission_weather_observations
+  perform observation.id from public.mission_weather_observations observation where observation.organisation_id=p_organisation_id and exists(
+    select 1 from public.mission_day_weather_reports weather where weather.organisation_id=p_organisation_id
+      and weather.mission_id=p_mission_id and weather.source_weather_observation_id=observation.id) order by observation.id for update;
   -- lock rows: mission_operational_import_attributions
   perform attribution.id from public.mission_operational_import_attributions attribution where attribution.organisation_id=p_organisation_id and attribution.mission_id=p_mission_id order by attribution.id for update;
   -- lock rows: mission_operational_imports
@@ -105,11 +111,69 @@ begin
     or exists(select 1 from public.mission_operational_import_attributions attribution join public.mission_operational_imports import
       on import.organisation_id=attribution.organisation_id and import.id=attribution.operational_import_id
       where attribution.organisation_id=p_organisation_id and attribution.mission_id=p_mission_id
-        and (import.mission_id<>p_mission_id or import.operating_location_id<>v_mission.operating_location_id))
+        and import.operating_location_id<>v_mission.operating_location_id)
     or v_effective_pack.jsa_revision_id is null
     or not exists(select 1 from public.mission_jsa_revisions jsa where jsa.organisation_id=p_organisation_id and jsa.mission_id=p_mission_id
       and jsa.id=v_effective_pack.jsa_revision_id and jsa.operating_location_id=v_mission.operating_location_id) then
     raise exception 'MISSION_REPORT_EVIDENCE_INVALID: base' using errcode='22023';
+  end if;
+
+  -- reference: field_activity_field
+  if exists(select 1 from public.mission_day_field_activity activity join public.mission_operating_days day
+      on day.organisation_id=activity.organisation_id and day.mission_id=activity.mission_id and day.id=activity.operating_day_id
+      where activity.organisation_id=p_organisation_id and activity.mission_id=p_mission_id
+      and not exists(select 1 from public.mission_pack_fields scope where scope.organisation_id=p_organisation_id and scope.mission_id=p_mission_id
+        and scope.pack_revision_id=day.mission_pack_revision_id and scope.field_id=activity.field_id))
+    -- reference: flight_field
+    or exists(select 1 from public.mission_flight_actuals flight join public.mission_operating_days day
+        on day.organisation_id=flight.organisation_id and day.mission_id=flight.mission_id and day.id=flight.operating_day_id
+      where flight.organisation_id=p_organisation_id and flight.mission_id=p_mission_id and flight.field_id is not null
+      and not exists(select 1 from public.mission_pack_fields scope where scope.organisation_id=p_organisation_id and scope.mission_id=p_mission_id
+        and scope.pack_revision_id=day.mission_pack_revision_id and scope.field_id=flight.field_id))
+    -- reference: chemical_line_field
+    or exists(select 1 from public.mission_day_chemical_lines line join public.mission_operating_days day
+        on day.organisation_id=line.organisation_id and day.mission_id=line.mission_id and day.id=line.operating_day_id
+      where line.organisation_id=p_organisation_id and line.mission_id=p_mission_id
+      and not exists(select 1 from public.mission_pack_fields scope where scope.organisation_id=p_organisation_id and scope.mission_id=p_mission_id
+        and scope.pack_revision_id=day.mission_pack_revision_id and scope.field_id=line.field_id))
+    -- reference: flight_source_import
+    or exists(select 1 from public.mission_flight_actuals flight where flight.organisation_id=p_organisation_id and flight.mission_id=p_mission_id and flight.source_import_id is not null
+      and not exists(select 1 from public.mission_operational_imports import where import.organisation_id=p_organisation_id and import.mission_id=p_mission_id
+        and import.operating_location_id=v_mission.operating_location_id and import.id=flight.source_import_id))
+    -- reference: attribution_import
+    or exists(select 1 from public.mission_operational_import_attributions attribution where attribution.organisation_id=p_organisation_id and attribution.mission_id=p_mission_id
+      and not exists(select 1 from public.mission_operational_imports import where import.organisation_id=p_organisation_id and import.mission_id=p_mission_id
+        and import.operating_location_id=v_mission.operating_location_id and import.id=attribution.operational_import_id))
+    -- reference: attribution_aircraft
+    or exists(select 1 from public.mission_operational_import_attributions attribution where attribution.organisation_id=p_organisation_id and attribution.mission_id=p_mission_id
+      and attribution.aircraft_id is not null and not exists(select 1 from public.mission_aircraft_day_actuals actual join public.aircraft aircraft
+        on aircraft.organisation_id=actual.organisation_id and aircraft.id=actual.aircraft_id
+        where actual.organisation_id=p_organisation_id and actual.mission_id=p_mission_id and actual.aircraft_id=attribution.aircraft_id
+          and aircraft.operating_location_id=v_mission.operating_location_id))
+    -- reference: weather_source_observation
+    or exists(select 1 from public.mission_day_weather_reports weather where weather.organisation_id=p_organisation_id and weather.mission_id=p_mission_id
+      and not exists(select 1 from public.mission_weather_observations observation where observation.organisation_id=p_organisation_id
+        and observation.mission_id=p_mission_id and observation.operating_location_id=v_mission.operating_location_id
+        and observation.id=weather.source_weather_observation_id))
+    -- reference: aircraft_identity
+    or exists(select 1 from public.mission_aircraft_day_actuals actual where actual.organisation_id=p_organisation_id and actual.mission_id=p_mission_id
+      and not exists(select 1 from public.aircraft aircraft where aircraft.organisation_id=p_organisation_id and aircraft.id=actual.aircraft_id
+        and aircraft.operating_location_id=v_mission.operating_location_id))
+    or exists(select 1 from public.mission_day_jsa_reviews review join public.mission_operating_days day
+        on day.organisation_id=review.organisation_id and day.mission_id=review.mission_id and day.id=review.operating_day_id
+      where review.organisation_id=p_organisation_id and review.mission_id=p_mission_id
+        and (review.jsa_revision_id<>day.jsa_revision_id or not exists(select 1 from public.mission_jsa_revisions jsa
+          where jsa.organisation_id=p_organisation_id and jsa.mission_id=p_mission_id and jsa.id=review.jsa_revision_id
+            and jsa.operating_location_id=v_mission.operating_location_id)))
+    or exists(select 1 from public.mission_day_chemical_lines line join public.mission_day_chemical_revisions revision
+        on revision.organisation_id=line.organisation_id and revision.id=line.revision_id
+      where line.organisation_id=p_organisation_id and line.mission_id=p_mission_id
+        and (revision.mission_id<>p_mission_id or revision.operating_day_id<>line.operating_day_id))
+    or exists(select 1 from public.mission_chemical_plan_lines line join public.mission_chemical_plan_revisions revision
+        on revision.organisation_id=line.organisation_id and revision.id=line.revision_id
+      where line.organisation_id=p_organisation_id and line.mission_id=p_mission_id
+        and (revision.mission_id<>p_mission_id or line.mission_id<>revision.mission_id)) then
+    raise exception 'MISSION_REPORT_EVIDENCE_INVALID: reference' using errcode='22023';
   end if;
 
   -- Preconstruction collection bounds. The one-mebibyte final check below is

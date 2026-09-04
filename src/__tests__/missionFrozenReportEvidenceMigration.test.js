@@ -76,3 +76,23 @@ test('checks explicit preconstruction bounds for each frozen collection and nest
   ]) expect(sql).toContain(`bound: ${bound}`);
   expect(sql).toContain('mission_report_evidence_bound_exceeded');
 });
+
+test('validates referenced identities within the governing Mission package', () => {
+  const sql = migration();
+  for (const marker of [
+    'reference: field_activity_field', 'reference: flight_field',
+    'reference: chemical_line_field', 'reference: flight_source_import',
+    'reference: attribution_import', 'reference: attribution_aircraft',
+    'reference: weather_source_observation', 'reference: aircraft_identity',
+  ]) expect(sql).toContain(marker);
+  expect(sql).toContain('mission_report_evidence_invalid: reference');
+});
+
+test('locks mutable referenced identities before reference validation', () => {
+  const sql = migration();
+  expect(sql).toContain('lock rows: mission_weather_observations');
+  expect(sql).toContain('lock rows: mission_aircraft_assignments');
+  expect(sql.indexOf('lock rows: mission_weather_observations')).toBeLessThan(
+    sql.indexOf('reference: weather_source_observation'),
+  );
+});
