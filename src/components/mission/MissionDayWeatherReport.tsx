@@ -25,14 +25,55 @@ function sourceLabel(report: MissionDayWeatherReportRecord): string {
   return report.source === 'OPEN_METEO' ? 'Open-Meteo archive' : 'Manual evidence';
 }
 
+type ManualHour = {
+  observedAt: string;
+  kind: '' | 'OBSERVATION' | 'GAP';
+  temperatureC: string;
+  gapReason: string;
+};
+
+const HOUR_MS = 60 * 60 * 1000;
+
+function zonedMidnightUtc(workDate: string, timezone: string): string {
+  const [year, month, date] = workDate.split('-').map(Number);
+  const target = Date.UTC(year, month - 1, date);
+  let candidate = target;
+  const formatter = new Intl.DateTimeFormat('en-CA', {
+    timeZone: timezone,
+    year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit',
+    hourCycle: 'h23',
+  });
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const parts = Object.fromEntries(formatter.formatToParts(new Date(candidate))
+      .filter((part) => part.type !== 'literal').map((part) => [part.type, Number(part.value)]));
+    const represented = Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute, parts.second);
+    candidate += target - represented;
+  }
+  return new Date(candidate).toISOString();
+}
+
+function nextDate(workDate: string): string {
+  const [year, month, date] = workDate.split('-').map(Number);
+  return new Date(Date.UTC(year, month - 1, date + 1)).toISOString().slice(0, 10);
+}
+
+function expectedBuckets(day: MissionOperatingDay, coverage: MissionDayWeatherCoverage): string[] {
+  const start = coverage === 'ACTUAL_INTERVAL' ? day.actualStartedAt : zonedMidnightUtc(day.workDate, day.timezone);
+  const end = coverage === 'ACTUAL_INTERVAL' ? day.actualFinishedAt : zonedMidnightUtc(nextDate(day.workDate), day.timezone);
+  if (!start || !end) return [];
+  const result: string[] = [];
+  for (let value = Math.ceil(Date.parse(start) / HOUR_MS) * HOUR_MS; value < Date.parse(end); value += HOUR_MS) {
+    result.push(new Date(value).toISOString());
+  }
+  return result;
+}
+
 export default function MissionDayWeatherReport({ day, report, api, readOnly = false, onCaptured }: Props) {
   const [current, setCurrent] = React.useState(report);
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState('');
   const [manual, setManual] = React.useState(false);
   const [manualReason, setManualReason] = React.useState('');
-  const [observedAt, setObservedAt] = React.useState(day.actualStartedAt || '');
-  const [temperatureC, setTemperatureC] = React.useState('');
 
   React.useEffect(() => setCurrent(report), [report]);
 
@@ -40,6 +81,21 @@ export default function MissionDayWeatherReport({ day, report, api, readOnly = f
     captureWeather: (dayId, input) => missionOperationsApi.captureWeather(dayId, { missionId: day.missionId, ...input }),
     saveManualWeather: (dayId, input) => missionOperationsApi.saveManualWeather(dayId, { missionId: day.missionId, ...input }),
   }, [api, day.missionId]);
+
+  const hasActualInterval = Boolean(day.actualStartedAt && day.actualFinishedAt);
+  const coverage: MissionDayWeatherCoverage = hasActualInterval ? 'ACTUAL_INTERVAL' : 'FULL_DAY';
+  const buckets = React.useMemo(() => expectedBuckets(day, coverage), [coverage, day]);
+  const [manualHours, setManualHours] = React.useState<ManualHour[]>(() => buckets.map((observedAt) => ({
+    observedAt, kind: '', temperatureC: '', gapReason: '',
+  })));
+
+  React.useEffect(() => setManualHours(buckets.map((observedAt) => ({
+    observedAt, kind: '', temperatureC: '', gapReason: '',
+  }))), [buckets]);
+
+  const updateManualHour = (index: number, patch: Partial<ManualHour>) => {
+    setManualHours((current) => current.map((entry, entryIndex) => entryIndex === index ? { ...entry, ...patch } : entry));
+  };
 
   const finish = (saved: MissionDayWeatherReportRecord) => {
     setCurrent(saved);
@@ -61,28 +117,33 @@ export default function MissionDayWeatherReport({ day, report, api, readOnly = f
 
   const saveManual = async (coverage: MissionDayWeatherCoverage) => {
     setError('');
-    const temperature = temperatureC === '' ? null : Number(temperatureC);
-    if (!observedAt || !Number.isFinite(Date.parse(observedAt)) || !manualReason.trim()
-      || (temperatureC !== '' && !Number.isFinite(temperature))) {
-      setError('Enter a timestamp with an offset, a reason, and valid observed values.');
+    const invalid = !manualReason.trim() || !manualHours.length || !manualHours.some((entry) => entry.kind === 'OBSERVATION')
+      || manualHours.some((entry) => entry.kind === ''
+        || (entry.kind === 'OBSERVATION' && (entry.temperatureC.trim() === '' || !Number.isFinite(Number(entry.temperatureC))))
+        || (entry.kind === 'GAP' && !entry.gapReason.trim()));
+    if (invalid) {
+      setError('Every measured hour needs at least one observed value; every gap needs a truthful reason.');
       return;
     }
     const evidence: MissionDayWeatherEvidence = {
       source: 'MANUAL',
       providerIdentifier: null,
       providerRetrievedAt: null,
-      hourlyObservations: [{
-        observedAt,
-        temperatureC: temperature,
+      hourlyObservations: manualHours.filter((entry) => entry.kind === 'OBSERVATION').map((entry) => ({
+        observedAt: entry.observedAt,
+        temperatureC: Number(entry.temperatureC),
         relativeHumidity: null,
         dewPointC: null,
         windSpeedKmh: null,
         windDirectionDegrees: null,
         precipitationMm: null,
-      }],
+      })),
       inversionInputs: { method: 'MANUAL_OBSERVATION_V1', inputsAvailable: false },
       inversionResults: { assessment: 'UNABLE_TO_DETERMINE' },
-      coverageGaps: [],
+      coverageGaps: manualHours.filter((entry) => entry.kind === 'GAP').map((entry) => ({
+        observedAt: entry.observedAt,
+        reason: entry.gapReason.trim(),
+      })),
       manualReason: manualReason.trim(),
       sourceMetadata: { entryMethod: 'MISSION_DAY_MANUAL_FALLBACK' },
     };
@@ -109,8 +170,6 @@ export default function MissionDayWeatherReport({ day, report, api, readOnly = f
     </Stack>
   </Stack>;
 
-  const hasActualInterval = Boolean(day.actualStartedAt && day.actualFinishedAt);
-  const coverage: MissionDayWeatherCoverage = hasActualInterval ? 'ACTUAL_INTERVAL' : 'FULL_DAY';
   return <Stack spacing={1.5}>
     <Typography variant="h6">Daily weather report</Typography>
     <Typography variant="body2">
@@ -124,20 +183,38 @@ export default function MissionDayWeatherReport({ day, report, api, readOnly = f
     {!readOnly && !manual && <Button disabled={busy} onClick={() => setManual(true)}>Enter manual evidence</Button>}
     {!readOnly && manual && <Stack spacing={1}>
       <Alert severity="info">Manual evidence fallback will be frozen with the same authoritative interval and coordinates.</Alert>
-      <TextField
-        required
-        label="Observation timestamp (ISO 8601)"
-        value={observedAt}
-        disabled={busy}
-        onChange={(event) => setObservedAt(event.target.value)}
-      />
-      <TextField
-        label="Observed temperature (°C)"
-        value={temperatureC}
-        disabled={busy}
-        inputProps={{ inputMode: 'decimal' }}
-        onChange={(event) => setTemperatureC(event.target.value)}
-      />
+      <Typography variant="body2">Declare measured evidence or a truthful coverage gap for every UTC hour bucket.</Typography>
+      {manualHours.map((entry, index) => <Stack key={entry.observedAt} spacing={1}>
+        <Typography variant="subtitle2">{entry.observedAt}</Typography>
+        <TextField
+          select
+          required
+          label={`Evidence for ${entry.observedAt}`}
+          value={entry.kind}
+          disabled={busy}
+          SelectProps={{ native: true }}
+          onChange={(event) => updateManualHour(index, { kind: event.target.value as ManualHour['kind'] })}
+        >
+          <option value="">Select evidence</option>
+          <option value="OBSERVATION">Measured observation</option>
+          <option value="GAP">Coverage gap</option>
+        </TextField>
+        {entry.kind === 'OBSERVATION' && <TextField
+          required
+          label={`Observed temperature at ${entry.observedAt} (°C)`}
+          value={entry.temperatureC}
+          disabled={busy}
+          inputProps={{ inputMode: 'decimal' }}
+          onChange={(event) => updateManualHour(index, { temperatureC: event.target.value })}
+        />}
+        {entry.kind === 'GAP' && <TextField
+          required
+          label={`Gap reason at ${entry.observedAt}`}
+          value={entry.gapReason}
+          disabled={busy}
+          onChange={(event) => updateManualHour(index, { gapReason: event.target.value })}
+        />}
+      </Stack>)}
       <TextField
         required
         multiline

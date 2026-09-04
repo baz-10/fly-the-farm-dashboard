@@ -302,6 +302,7 @@ begin
   for v_item in select value from jsonb_array_elements(p_lines) loop
     if jsonb_typeof(v_item) <> 'object' or (select count(*) from jsonb_object_keys(v_item)) <> 12
       or not (v_item ?& array['fieldId','plannedLineId','platformProductId','platformProductVersionId','registerEntryId','productName','rate','rateUnit','appliedQuantity','quantityUnit','batchLot','aircraftId'])
+      or jsonb_typeof(v_item->'batchLot') not in ('string','null')
       or coalesce(v_item->>'rate', '') !~ '^(0|[1-9][0-9]{0,11})\.[0-9]{6}$'
       or coalesce(v_item->>'appliedQuantity', '') !~ '^(0|[1-9][0-9]{0,11})\.[0-9]{6}$' then
       return jsonb_build_object('error', 'MISSION_DAY_CHEMICAL_INPUT_INVALID');
@@ -319,11 +320,11 @@ begin
     v_product_name := btrim(coalesce(v_item->>'productName', ''));
     v_rate := (v_item->>'rate')::numeric(18,6); v_quantity := (v_item->>'appliedQuantity')::numeric(18,6);
     v_rate_unit := upper(coalesce(v_item->>'rateUnit', '')); v_quantity_unit := upper(coalesce(v_item->>'quantityUnit', ''));
-    v_batch_lot := nullif(v_item->>'batchLot', ''); v_aircraft_id := nullif(v_item->>'aircraftId', '')::uuid;
+    v_batch_lot := nullif(btrim(v_item->>'batchLot'), ''); v_aircraft_id := nullif(v_item->>'aircraftId', '')::uuid;
     if v_product_name = '' or length(v_product_name) > 500 or v_rate <= 0 or v_quantity <= 0
       or v_rate_unit not in ('L_HA','ML_HA','KG_HA','G_HA')
       or v_quantity_unit <> (case v_rate_unit when 'L_HA' then 'L' when 'ML_HA' then 'ML' when 'KG_HA' then 'KG' else 'G' end)
-      or (v_batch_lot is not null and (v_batch_lot <> btrim(v_batch_lot) or length(v_batch_lot) > 200))
+      or (v_batch_lot is not null and length(v_batch_lot) > 200)
       or ((v_platform_product_id is null) <> (v_platform_product_version_id is null)) then
       return jsonb_build_object('error', 'MISSION_DAY_CHEMICAL_INPUT_INVALID');
     end if;
@@ -392,7 +393,7 @@ begin
     v_register_entry_id := nullif(v_item->>'registerEntryId', '')::uuid;
     v_product_name := btrim(v_item->>'productName'); v_rate := (v_item->>'rate')::numeric(18,6);
     v_quantity := (v_item->>'appliedQuantity')::numeric(18,6); v_rate_unit := upper(v_item->>'rateUnit');
-    v_quantity_unit := upper(v_item->>'quantityUnit'); v_batch_lot := nullif(v_item->>'batchLot', '');
+    v_quantity_unit := upper(v_item->>'quantityUnit'); v_batch_lot := nullif(btrim(v_item->>'batchLot'), '');
     v_aircraft_id := nullif(v_item->>'aircraftId', '')::uuid;
     if v_planned_line_id is not null then
       select * into v_planned from public.mission_chemical_plan_lines where organisation_id = p_organisation_id and id = v_planned_line_id;
@@ -446,7 +447,7 @@ create function public.ftf_mission_day_weather_context(
 )
 returns jsonb language plpgsql stable security definer set search_path = public, pg_temp as $$
 declare v_day public.mission_operating_days%rowtype; v_observation public.mission_weather_observations%rowtype;
-  v_observation_id uuid; v_start timestamptz; v_end timestamptz; v_coverage text;
+  v_observation_id uuid; v_start timestamptz; v_end timestamptz; v_coverage text; v_context jsonb;
 begin
   select * into v_day from public.mission_operating_days
     where organisation_id = p_organisation_id and mission_id = p_mission_id and id = p_operating_day_id;
@@ -470,13 +471,17 @@ begin
   if not found or v_observation.operating_location_id <> v_day.operating_location_id then
     return jsonb_build_object('error', 'MISSION_DAY_WEATHER_LOCATION_REQUIRED');
   end if;
-  return jsonb_build_object('mission_id', v_day.mission_id, 'operating_day_id', v_day.id,
+  v_context := jsonb_build_object('mission_id', v_day.mission_id, 'operating_day_id', v_day.id,
     'package_revision_id', v_day.mission_pack_revision_id, 'day_version', v_day.row_version,
     'coverage', v_coverage,
     'interval_start_at', to_char(v_start at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
     'interval_end_at', to_char(v_end at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'), 'timezone', v_day.timezone,
-    'source_weather_observation_id', v_observation.id, 'latitude', v_observation.latitude::numeric(9,6)::text,
+    'source_weather_observation_id', v_observation.id, 'source_weather_observation_version', v_observation.version_number,
+    'source_weather_observation_source', v_observation.source,
+    'latitude', v_observation.latitude::numeric(9,6)::text,
     'longitude', v_observation.longitude::numeric(9,6)::text);
+  return v_context || jsonb_build_object('context_digest',
+    encode(digest(convert_to(v_context::text, 'UTF8'), 'sha256'), 'hex'));
 end;
 $$;
 
@@ -548,6 +553,7 @@ create function public.ftf_freeze_mission_day_weather_report(
   p_mission_id uuid,
   p_operating_day_id uuid,
   p_expected_day_version integer,
+  p_expected_context_digest text,
   p_coverage text,
   p_evidence jsonb
 )
@@ -555,7 +561,7 @@ returns jsonb language plpgsql security definer set search_path = public, pg_tem
 declare v_mission public.missions%rowtype; v_day public.mission_operating_days%rowtype; v_context jsonb;
   v_existing public.mission_day_weather_reports%rowtype; v_report public.mission_day_weather_reports%rowtype;
   v_source text; v_digest_payload jsonb; v_digest text; v_observation jsonb; v_observed_at timestamptz;
-  v_gap jsonb; v_gap_at timestamptz;
+  v_gap jsonb; v_gap_at timestamptz; v_bucket_start timestamptz; v_expected_count integer; v_covered_count integer;
 begin
   perform public.ftf_lock_mission_package_aggregate(p_organisation_id, p_mission_id);
   if not public.ftf_actor_has_active_beta_seat(p_organisation_id, p_actor_internal_user_id)
@@ -579,6 +585,12 @@ begin
   if found then return jsonb_build_object('error', 'MISSION_DAY_WEATHER_ALREADY_FROZEN', 'current_digest', v_existing.source_digest); end if;
   v_context := public.ftf_mission_day_weather_context(p_organisation_id, p_mission_id, p_operating_day_id, p_coverage);
   if v_context ? 'error' then return v_context; end if;
+  if p_expected_context_digest is null or p_expected_context_digest !~ '^[a-f0-9]{64}$'
+    or p_expected_context_digest <> v_context->>'context_digest' then
+    return jsonb_build_object('error', 'MISSION_DAY_WEATHER_CONTEXT_CONFLICT', 'current_digest', v_context->>'context_digest');
+  end if;
+  v_bucket_start := date_trunc('hour', (v_context->>'interval_start_at')::timestamptz);
+  if v_bucket_start < (v_context->>'interval_start_at')::timestamptz then v_bucket_start := v_bucket_start + interval '1 hour'; end if;
   if jsonb_typeof(p_evidence) <> 'object' or (select count(*) from jsonb_object_keys(p_evidence)) <> 9
     or not (p_evidence ?& array['source','providerIdentifier','providerRetrievedAt','hourlyObservations','inversionInputs','inversionResults','coverageGaps','manualReason','sourceMetadata'])
     or jsonb_typeof(p_evidence->'hourlyObservations') <> 'array'
@@ -609,7 +621,13 @@ begin
       or jsonb_typeof(v_observation->'dewPointC') not in ('number','null')
       or jsonb_typeof(v_observation->'windSpeedKmh') not in ('number','null')
       or jsonb_typeof(v_observation->'windDirectionDegrees') not in ('number','null')
-      or jsonb_typeof(v_observation->'precipitationMm') not in ('number','null') then
+      or jsonb_typeof(v_observation->'precipitationMm') not in ('number','null')
+      or (jsonb_typeof(v_observation->'temperatureC') = 'null'
+        and jsonb_typeof(v_observation->'relativeHumidity') = 'null'
+        and jsonb_typeof(v_observation->'dewPointC') = 'null'
+        and jsonb_typeof(v_observation->'windSpeedKmh') = 'null'
+        and jsonb_typeof(v_observation->'windDirectionDegrees') = 'null'
+        and jsonb_typeof(v_observation->'precipitationMm') = 'null') then
       return jsonb_build_object('error', 'MISSION_DAY_WEATHER_INPUT_INVALID');
     end if;
     if (jsonb_typeof(v_observation->'temperatureC') = 'number' and (v_observation->>'temperatureC')::numeric not between -100 and 100)
@@ -621,8 +639,8 @@ begin
       return jsonb_build_object('error', 'MISSION_DAY_WEATHER_INPUT_INVALID');
     end if;
     v_observed_at := (v_observation->>'observedAt')::timestamptz;
-    if v_observed_at < (v_context->>'interval_start_at')::timestamptz
-      or v_observed_at >= (v_context->>'interval_end_at')::timestamptz then
+    if v_observed_at < v_bucket_start or v_observed_at >= (v_context->>'interval_end_at')::timestamptz
+      or date_trunc('hour', v_observed_at) <> v_observed_at then
       return jsonb_build_object('error', 'MISSION_DAY_WEATHER_OBSERVATION_OUTSIDE_INTERVAL');
     end if;
   end loop;
@@ -634,11 +652,36 @@ begin
       return jsonb_build_object('error', 'MISSION_DAY_WEATHER_INPUT_INVALID');
     end if;
     v_gap_at := (v_gap->>'observedAt')::timestamptz;
-    if v_gap_at < (v_context->>'interval_start_at')::timestamptz
-      or v_gap_at >= (v_context->>'interval_end_at')::timestamptz then
+    if v_gap_at < v_bucket_start or v_gap_at >= (v_context->>'interval_end_at')::timestamptz
+      or date_trunc('hour', v_gap_at) <> v_gap_at then
       return jsonb_build_object('error', 'MISSION_DAY_WEATHER_INPUT_INVALID');
     end if;
   end loop;
+  if exists (select 1 from (
+      select (item->>'observedAt')::timestamptz as bucket
+      from jsonb_array_elements(p_evidence->'hourlyObservations') item
+    ) observations group by bucket having count(*) > 1)
+    or exists (select 1 from (
+      select (item->>'observedAt')::timestamptz as bucket
+      from jsonb_array_elements(p_evidence->'coverageGaps') item
+    ) gaps group by bucket having count(*) > 1)
+    or exists (
+      select 1 from jsonb_array_elements(p_evidence->'hourlyObservations') observation
+      join jsonb_array_elements(p_evidence->'coverageGaps') gap
+        on (gap->>'observedAt')::timestamptz = (observation->>'observedAt')::timestamptz
+    ) then
+    return jsonb_build_object('error', 'MISSION_DAY_WEATHER_INPUT_INVALID');
+  end if;
+  select count(*)::integer into v_expected_count
+  from generate_series(v_bucket_start, (v_context->>'interval_end_at')::timestamptz - interval '1 microsecond', interval '1 hour');
+  select count(*)::integer into v_covered_count from (
+    select (item->>'observedAt')::timestamptz as bucket from jsonb_array_elements(p_evidence->'hourlyObservations') item
+    union all
+    select (item->>'observedAt')::timestamptz as bucket from jsonb_array_elements(p_evidence->'coverageGaps') item
+  ) covered;
+  if v_expected_count = 0 or v_covered_count <> v_expected_count then
+    return jsonb_build_object('error', 'MISSION_DAY_WEATHER_INPUT_INVALID');
+  end if;
   v_digest_payload := jsonb_build_object(
     'schemaVersion', 'MISSION_DAY_WEATHER_REPORT_V1', 'missionId', p_mission_id, 'operatingDayId', p_operating_day_id,
     'packageRevisionId', v_day.mission_pack_revision_id, 'coverage', v_context->>'coverage',
@@ -684,9 +727,9 @@ revoke all on function public.ftf_read_mission_day_chemical_actuals(uuid,uuid,uu
 revoke all on function public.ftf_confirm_mission_day_chemical_actuals(uuid,uuid,uuid,uuid,integer,integer,jsonb,text) from public,anon,authenticated;
 revoke all on function public.ftf_prepare_mission_day_weather_capture(uuid,uuid,uuid,uuid,text) from public,anon,authenticated;
 revoke all on function public.ftf_read_mission_day_weather_report(uuid,uuid,uuid,uuid) from public,anon,authenticated;
-revoke all on function public.ftf_freeze_mission_day_weather_report(uuid,uuid,uuid,uuid,integer,text,jsonb) from public,anon,authenticated;
+revoke all on function public.ftf_freeze_mission_day_weather_report(uuid,uuid,uuid,uuid,integer,text,text,jsonb) from public,anon,authenticated;
 grant execute on function public.ftf_read_mission_day_chemical_actuals(uuid,uuid,uuid,uuid) to service_role;
 grant execute on function public.ftf_confirm_mission_day_chemical_actuals(uuid,uuid,uuid,uuid,integer,integer,jsonb,text) to service_role;
 grant execute on function public.ftf_prepare_mission_day_weather_capture(uuid,uuid,uuid,uuid,text) to service_role;
 grant execute on function public.ftf_read_mission_day_weather_report(uuid,uuid,uuid,uuid) to service_role;
-grant execute on function public.ftf_freeze_mission_day_weather_report(uuid,uuid,uuid,uuid,integer,text,jsonb) to service_role;
+grant execute on function public.ftf_freeze_mission_day_weather_report(uuid,uuid,uuid,uuid,integer,text,text,jsonb) to service_role;

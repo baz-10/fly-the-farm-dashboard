@@ -152,6 +152,17 @@ function boundedText(value, name, maxLength, nullable = false) {
   return value;
 }
 
+function optionalTrimmedText(value, name, maxLength) {
+  if (value === null) return null;
+  if (typeof value !== 'string') fail(400, 'MISSION_OPERATIONS_REQUEST_INVALID', `${name} is invalid.`);
+  const trimmed = value.trim();
+  const hasControlCharacter = trimmed.split('').some((character) => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127);
+  if (!trimmed || trimmed.length > maxLength || hasControlCharacter) {
+    fail(400, 'MISSION_OPERATIONS_REQUEST_INVALID', `${name} is invalid.`);
+  }
+  return trimmed;
+}
+
 function chemicalActualLines(value) {
   if (!Array.isArray(value) || value.length < 1 || value.length > 500) {
     fail(400, 'MISSION_OPERATIONS_REQUEST_INVALID', 'Chemical actual lines are invalid.');
@@ -177,7 +188,7 @@ function chemicalActualLines(value) {
         : fail(400, 'MISSION_OPERATIONS_REQUEST_INVALID', 'Applied quantity is invalid.'),
       quantityUnit: ['L', 'ML', 'KG', 'G'].includes(item.quantityUnit) ? item.quantityUnit
         : fail(400, 'MISSION_OPERATIONS_REQUEST_INVALID', 'Quantity unit is invalid.'),
-      batchLot: boundedText(item.batchLot, 'Batch or lot', 200, true),
+      batchLot: optionalTrimmedText(item.batchLot, 'Batch or lot', 200),
       aircraftId: optionalUuid(item.aircraftId, 'Aircraft'),
     };
   });
@@ -228,6 +239,10 @@ function manualWeatherEvidence(value) {
       || !within(observation.precipitationMm, 0, 10000)) {
       fail(400, 'MISSION_OPERATIONS_REQUEST_INVALID', 'Manual weather observations are invalid.');
     }
+    if (['temperatureC', 'relativeHumidity', 'dewPointC', 'windSpeedKmh', 'windDirectionDegrees', 'precipitationMm']
+      .every((key) => observation[key] === null)) {
+      fail(400, 'MISSION_OPERATIONS_REQUEST_INVALID', 'Manual weather observations require at least one measured value.');
+    }
     return { ...observation, observedAt: timestamp(observation.observedAt, 'Weather observation timestamp') };
   });
   const coverageGaps = evidence.coverageGaps.map((candidate) => {
@@ -248,6 +263,17 @@ function manualWeatherEvidence(value) {
     manualReason: boundedText(evidence.manualReason, 'Manual weather reason', 4000),
     sourceMetadata: plainJsonObject(evidence.sourceMetadata, 'Weather source metadata'),
   };
+}
+
+function providerEvidenceMatchesPreparedContext(prepared, evidence) {
+  const metadata = evidence?.sourceMetadata;
+  return evidence?.source === 'OPEN_METEO'
+    && evidence?.providerIdentifier === 'OPEN_METEO_ARCHIVE_V1'
+    && metadata && typeof metadata === 'object' && !Array.isArray(metadata)
+    && metadata.requestedLatitude === Number(prepared.latitude)
+    && metadata.requestedLongitude === Number(prepared.longitude)
+    && metadata.requestedIntervalStart === prepared.intervalStartAt
+    && metadata.requestedIntervalEnd === prepared.intervalEndAt;
 }
 
 function reviewOutcome(value) {
@@ -339,6 +365,7 @@ function checkedFailure(req, result) {
     'METER_SOURCE_NOT_ALLOWED', 'METER_VALUE_REQUIRES_CORRECTION',
     'MISSION_REAUTHORISATION_REQUIRED', 'MISSION_DAY_CHEMICAL_REVISION_CONFLICT',
     'MISSION_DAY_WEATHER_ALREADY_FROZEN', 'MISSION_DAY_ACTUAL_INTERVAL_REQUIRED',
+    'MISSION_DAY_WEATHER_CONTEXT_CONFLICT',
     'MISSION_DAY_CHEMICAL_PLAN_NOT_FOUND', 'MISSION_DAY_WEATHER_LOCATION_REQUIRED'].includes(code)) {
     const messages = {
       MISSION_NOT_AUTHORISED: 'The Mission requires current CRP authority.',
@@ -542,6 +569,9 @@ function createMissionOperationsHandler(dependencies = {}) {
               intervalStart: prepared.intervalStartAt,
               intervalEnd: prepared.intervalEndAt,
             });
+            if (!providerEvidenceMatchesPreparedContext(prepared, evidence)) {
+              fail(503, 'MISSION_DAY_WEATHER_PROVIDER_UNAVAILABLE', 'Historical weather is temporarily unavailable. Enter manual evidence to continue.');
+            }
           } catch {
             fail(503, 'MISSION_DAY_WEATHER_PROVIDER_UNAVAILABLE', 'Historical weather is temporarily unavailable. Enter manual evidence to continue.');
           }
@@ -549,6 +579,7 @@ function createMissionOperationsHandler(dependencies = {}) {
         result = await repository.freezeWeatherReport(context, {
           ...input,
           expectedDayVersion: prepared.dayVersion,
+          expectedContextDigest: prepared.contextDigest,
           evidence,
         });
         status = 201;

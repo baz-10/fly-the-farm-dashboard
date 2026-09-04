@@ -11,6 +11,17 @@ export interface MissionDayChemicalOption {
   label: string;
 }
 
+export interface MissionDayChemicalProductOption extends MissionDayChemicalOption {
+  platformProductId: string;
+  platformProductVersionId: string;
+  registerEntryId: string | null;
+  productName: string;
+  rate: string;
+  rateUnit: MissionDayChemicalActualLineInput['rateUnit'];
+  appliedQuantity: string;
+  quantityUnit: MissionDayChemicalActualLineInput['quantityUnit'];
+}
+
 interface Confirmation {
   lines: MissionDayChemicalActualLineInput[];
   notes: string | null;
@@ -21,14 +32,16 @@ interface Props {
   actual: MissionDayChemicalActualRevision | null;
   fieldOptions: MissionDayChemicalOption[];
   aircraftOptions?: MissionDayChemicalOption[];
+  productOptions?: MissionDayChemicalProductOption[];
   readOnly?: boolean;
   onConfirm: (confirmation: Confirmation) => Promise<unknown>;
 }
 
-type Draft = MissionDayChemicalActualLineInput;
+type Draft = MissionDayChemicalActualLineInput & { draftKey: string };
 
-function draftFromProposal(proposal: MissionDayChemicalProposal): Draft {
+function draftFromProposal(proposal: MissionDayChemicalProposal, draftKey: string): Draft {
   return {
+    draftKey,
     fieldId: '',
     plannedLineId: proposal.plannedLineId,
     platformProductId: proposal.platformProductId,
@@ -44,23 +57,63 @@ function draftFromProposal(proposal: MissionDayChemicalProposal): Draft {
   };
 }
 
+function draftFromActual(line: MissionDayChemicalActualRevision['lines'][number]): Draft {
+  const { id, productSnapshot, ...input } = line;
+  return { ...input, draftKey: `actual-${id}` };
+}
+
+function draftFromProduct(option: MissionDayChemicalProductOption, draftKey: string): Draft {
+  return {
+    draftKey,
+    fieldId: '',
+    plannedLineId: null,
+    platformProductId: option.platformProductId,
+    platformProductVersionId: option.platformProductVersionId,
+    registerEntryId: option.registerEntryId,
+    productName: option.productName,
+    rate: option.rate,
+    rateUnit: option.rateUnit,
+    appliedQuantity: option.appliedQuantity,
+    quantityUnit: option.quantityUnit,
+    batchLot: null,
+    aircraftId: null,
+  };
+}
+
 export default function MissionDayChemicalActuals({
   plan,
   actual,
   fieldOptions,
   aircraftOptions = [],
+  productOptions = [],
   readOnly = false,
   onConfirm,
 }: Props) {
-  const [drafts, setDrafts] = React.useState<Draft[]>(() => plan.map(draftFromProposal));
-  const [notes, setNotes] = React.useState('');
+  const nextDraftKey = React.useRef(0);
+  const makeDraftKey = React.useCallback(() => `new-${nextDraftKey.current++}`, []);
+  const initialDrafts = React.useCallback(() => actual
+    ? actual.lines.map(draftFromActual)
+    : plan.map((proposal) => draftFromProposal(proposal, makeDraftKey())), [actual, makeDraftKey, plan]);
+  const [drafts, setDrafts] = React.useState<Draft[]>(initialDrafts);
+  const [notes, setNotes] = React.useState(actual?.notes || '');
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState('');
 
-  React.useEffect(() => setDrafts(plan.map(draftFromProposal)), [plan]);
+  React.useEffect(() => {
+    setDrafts(initialDrafts());
+    setNotes(actual?.notes || '');
+  }, [actual, initialDrafts]);
 
   const update = (index: number, patch: Partial<Draft>) => {
     setDrafts((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, ...patch } : item));
+  };
+
+  const addPlannedApplication = (proposal: MissionDayChemicalProposal) => {
+    setDrafts((current) => [...current, draftFromProposal(proposal, makeDraftKey())]);
+  };
+
+  const addProductApplication = (option: MissionDayChemicalProductOption) => {
+    setDrafts((current) => [...current, draftFromProduct(option, makeDraftKey())]);
   };
 
   const confirm = async () => {
@@ -74,9 +127,19 @@ export default function MissionDayChemicalActuals({
       setError('Rates and quantities require exactly six decimal places.');
       return;
     }
+    if (drafts.some((line) => (line.batchLot?.trim().length || 0) > 200)) {
+      setError('Batch or lot provenance cannot exceed 200 characters.');
+      return;
+    }
     setBusy(true);
     try {
-      await onConfirm({ lines: drafts, notes: notes.trim() || null });
+      await onConfirm({
+        lines: drafts.map(({ draftKey, ...line }) => ({
+          ...line,
+          batchLot: line.batchLot?.trim() || null,
+        })),
+        notes: notes.trim() || null,
+      });
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'Chemical actuals could not be confirmed.');
     } finally {
@@ -96,6 +159,9 @@ export default function MissionDayChemicalActuals({
     {plan.map((proposal) => <Stack key={proposal.plannedLineId} spacing={0.25}>
       <Typography fontWeight={700}>{proposal.productName}</Typography>
       <Typography variant="body2">{proposal.rate} {proposal.rateUnit} · proposed {proposal.plannedQuantity} {proposal.quantityUnit}</Typography>
+      {!readOnly && <Button size="small" sx={{ alignSelf: 'flex-start' }} onClick={() => addPlannedApplication(proposal)}>
+        Add another application for {proposal.productName}
+      </Button>}
     </Stack>)}
 
     {actual && <Stack spacing={1}>
@@ -110,9 +176,26 @@ export default function MissionDayChemicalActuals({
       </Stack>)}
     </Stack>}
 
-    {!actual && !readOnly && <Stack spacing={1.5}>
-      {drafts.map((line, index) => <Stack key={`${line.plannedLineId}-${index}`} spacing={1}>
+    {!readOnly && <Stack spacing={1.5}>
+      {productOptions.map((option) => <Button
+        key={option.id}
+        size="small"
+        variant="outlined"
+        sx={{ alignSelf: 'flex-start' }}
+        onClick={() => addProductApplication(option)}
+      >
+        Add substituted product {option.label}
+      </Button>)}
+      {drafts.map((line, index) => <Stack key={line.draftKey} spacing={1}>
         <Typography variant="subtitle2">Confirm {line.productName}</Typography>
+        {drafts.length > 1 && <Button
+          size="small"
+          color="inherit"
+          sx={{ alignSelf: 'flex-start' }}
+          onClick={() => setDrafts((current) => current.filter((item) => item.draftKey !== line.draftKey))}
+        >
+          Remove {line.productName} application
+        </Button>}
         <TextField
           select
           required
@@ -146,7 +229,8 @@ export default function MissionDayChemicalActuals({
             label={`Batch or lot for ${line.productName}`}
             value={line.batchLot || ''}
             disabled={busy}
-            onChange={(event) => update(index, { batchLot: event.target.value.trimStart() || null })}
+            inputProps={{ maxLength: 200 }}
+            onChange={(event) => update(index, { batchLot: event.target.value || null })}
           />
           {aircraftOptions.length > 0 && <TextField
             select
@@ -171,7 +255,7 @@ export default function MissionDayChemicalActuals({
         onChange={(event) => setNotes(event.target.value)}
       />
       <Button variant="contained" disabled={busy || !drafts.length} onClick={() => void confirm()}>
-        Confirm chemical actuals
+        {actual ? 'Record chemical revision' : 'Confirm chemical actuals'}
       </Button>
     </Stack>}
   </Stack>;

@@ -365,10 +365,26 @@ describe('Mission Operations strict contracts', () => {
     expect(decodeMissionDayWeatherReport(null)).toBeNull();
     expect(() => decodeMissionDayChemicalActuals({ ...chemicalActuals, proposals: [{ ...chemicalActuals.proposals[0], rate: 2 }] }))
       .toThrow(expect.objectContaining({ code: 'MALFORMED_RESPONSE' }));
+    expect(() => decodeMissionDayChemicalActuals({ ...chemicalActuals, proposals: [{ ...chemicalActuals.proposals[0], rateUnit: 'GAL_HA' }] }))
+      .toThrow(expect.objectContaining({ code: 'MALFORMED_RESPONSE' }));
+    expect(() => decodeMissionDayChemicalActuals({ ...chemicalActuals, actual: {
+      ...chemicalActuals.actual,
+      lines: [{ ...chemicalActuals.actual.lines[0], quantityUnit: 'KG' }],
+    } })).toThrow(expect.objectContaining({ code: 'MALFORMED_RESPONSE' }));
+    expect(() => decodeMissionDayChemicalActuals({ ...chemicalActuals, actual: {
+      ...chemicalActuals.actual,
+      lines: [{ ...chemicalActuals.actual.lines[0], batchLot: 'x'.repeat(201) }],
+    } })).toThrow(expect.objectContaining({ code: 'MALFORMED_RESPONSE' }));
     expect(() => decodeMissionDayWeatherReport({ ...weatherReport, sourceDigest: 'unsafe' }))
       .toThrow(expect.objectContaining({ code: 'MALFORMED_RESPONSE' }));
     expect(() => decodeMissionDayWeatherReport({ ...weatherReport, hourlyObservations: [{ ...weatherReport.hourlyObservations[0], relativeHumidity: 120 }] }))
       .toThrow(expect.objectContaining({ code: 'MALFORMED_RESPONSE' }));
+    expect(() => decodeMissionDayWeatherReport({ ...weatherReport, coverageGaps: [{
+      observedAt: '2026-09-06T04:00:00.000Z', reason: 'Outside interval',
+    }] })).toThrow(expect.objectContaining({ code: 'MALFORMED_RESPONSE' }));
+    expect(() => decodeMissionDayWeatherReport({ ...weatherReport, coverageGaps: [{
+      observedAt: '2026-09-04T22:30:00.000Z', reason: 'Not an hourly bucket',
+    }] })).toThrow(expect.objectContaining({ code: 'MALFORMED_RESPONSE' }));
     expect(() => decodeMissionDayWeatherReport({ ...weatherReport, providerSecret: true }))
       .toThrow(expect.objectContaining({ code: 'MALFORMED_RESPONSE' }));
   });

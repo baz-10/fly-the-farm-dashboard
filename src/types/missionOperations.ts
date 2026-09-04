@@ -153,6 +153,9 @@ export interface MissionAircraftDayActualsSaveInput {
   flights: MissionFlightActualInput[];
 }
 
+export type MissionDayChemicalRateUnit = 'L_HA' | 'ML_HA' | 'KG_HA' | 'G_HA';
+export type MissionDayChemicalQuantityUnit = 'L' | 'ML' | 'KG' | 'G';
+
 export interface MissionDayChemicalProposal {
   plannedLineId: string;
   platformProductId: string | null;
@@ -160,9 +163,9 @@ export interface MissionDayChemicalProposal {
   registerEntryId: string | null;
   productName: string;
   rate: string;
-  rateUnit: string;
+  rateUnit: MissionDayChemicalRateUnit;
   plannedQuantity: string;
-  quantityUnit: string;
+  quantityUnit: MissionDayChemicalQuantityUnit;
   productSnapshot: Record<string, unknown>;
 }
 
@@ -174,9 +177,9 @@ export interface MissionDayChemicalActualLineInput {
   registerEntryId: string | null;
   productName: string;
   rate: string;
-  rateUnit: string;
+  rateUnit: MissionDayChemicalRateUnit;
   appliedQuantity: string;
-  quantityUnit: string;
+  quantityUnit: MissionDayChemicalQuantityUnit;
   batchLot: string | null;
   aircraftId: string | null;
 }

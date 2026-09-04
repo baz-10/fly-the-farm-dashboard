@@ -62,6 +62,16 @@ const scalar = async (db, sql, params = []) => (await db.query(sql, params)).row
 if (child) {
   let db; let orgA; let orgB; let actorA; let actorB; let baseA;
   const call = async (name, args) => scalar(db, `select public.${name}(${args.map((_, index) => `$${index + 1}`).join(',')}) as value`, args);
+  const hourMs = 60 * 60 * 1000;
+  const expectedHours = (start, end) => {
+    const values = [];
+    for (let at = Math.ceil(Date.parse(start) / hourMs) * hourMs; at < Date.parse(end); at += hourMs) values.push(new Date(at).toISOString());
+    return values;
+  };
+  const completeObservations = (start, end) => expectedHours(start, end).map((observedAt) => ({
+    observedAt, temperatureC: 24, relativeHumidity: 60, dewPointC: 16,
+    windSpeedKmh: 10, windDirectionDegrees: 90, precipitationMm: 0,
+  }));
   const chemicalLine = (overrides = {}) => ({
     fieldId: ids.fieldA, plannedLineId: ids.planLine, platformProductId: null, platformProductVersionId: null,
     registerEntryId: null, productName: 'Test Product', rate: '2.000000', rateUnit: 'L_HA',
@@ -70,7 +80,7 @@ if (child) {
   const weatherEvidence = (source, overrides = {}) => ({
     source, providerIdentifier: source === 'OPEN_METEO' ? 'OPEN_METEO_ARCHIVE_V1' : null,
     providerRetrievedAt: source === 'OPEN_METEO' ? '2026-09-06T00:00:00.000Z' : null,
-    hourlyObservations: [{ observedAt: '2026-09-04T22:00:00.000Z', temperatureC: 24, relativeHumidity: 60, dewPointC: 16, windSpeedKmh: 10, windDirectionDegrees: 90, precipitationMm: 0 }],
+    hourlyObservations: completeObservations('2026-09-04T21:30:00.000Z', '2026-09-05T03:15:00.000Z'),
     inversionInputs: { method: 'OPEN_METEO_HOURLY_PROXY_V1', inputsAvailable: false },
     inversionResults: { assessment: 'UNABLE_TO_DETERMINE', reason: 'No vertical profile.' }, coverageGaps: [],
     manualReason: source === 'MANUAL' ? 'Provider unavailable; copied from the on-site station log.' : null,
@@ -114,7 +124,9 @@ if (child) {
         ('${ids.assignmentOther}','${orgA}','${baseA}','${ids.mission}','${ids.aircraftOther}','${actorA}');
       insert into public.mission_pack_revisions(id,organisation_id,operating_location_id,mission_id,version_number,pack_snapshot,generated_by_internal_user_id,job_id,package_state,jsa_revision_id,evidence_digest,source_manifest)
         values('${ids.pack}','${orgA}','${baseA}','${ids.mission}',1,'{}','${actorA}','${ids.job}','PREPARING','${ids.jsa}','${'a'.repeat(64)}','${JSON.stringify({ chemicals: { id: ids.plan, version: 1 }, weather: { observationId: ids.weather, observationVersion: 1 }, aircraftAssignments: [{ id: ids.assignment, aircraftId: ids.aircraft, aircraftRowVersion: 1 }] })}');
-      insert into public.mission_pack_fields(organisation_id,operating_location_id,mission_id,job_id,pack_revision_id,property_id,field_id,field_order) values('${orgA}','${baseA}','${ids.mission}','${ids.job}','${ids.pack}','${ids.property}','${ids.fieldA}',1);
+      insert into public.mission_pack_fields(organisation_id,operating_location_id,mission_id,job_id,pack_revision_id,property_id,field_id,field_order) values
+        ('${orgA}','${baseA}','${ids.mission}','${ids.job}','${ids.pack}','${ids.property}','${ids.fieldA}',1),
+        ('${orgA}','${baseA}','${ids.mission}','${ids.job}','${ids.pack}','${ids.property}','${ids.fieldB}',2);
       insert into public.mission_operating_days(id,organisation_id,operating_location_id,mission_id,work_date,timezone,mission_pack_revision_id,jsa_revision_id,state,actual_started_at,actual_finished_at,created_by_internal_user_id,updated_by_internal_user_id) values
         ('${ids.dayDraft}','${orgA}','${baseA}','${ids.mission}','2026-09-04','Australia/Brisbane','${ids.pack}','${ids.jsa}','DRAFT',null,null,'${actorA}','${actorA}'),
         ('${ids.dayActual}','${orgA}','${baseA}','${ids.mission}','2026-09-05','Australia/Brisbane','${ids.pack}','${ids.jsa}','COMPLETED','2026-09-04T21:30:00Z','2026-09-05T03:15:00Z','${actorA}','${actorA}'),
@@ -135,12 +147,23 @@ if (child) {
     expect(await scalar(db, `select count(*)::integer as value from public.mission_day_chemical_revisions where operating_day_id='${ids.dayDraft}'`)).toBe(0);
   });
 
-  test('rejects cross-Field actuals and confirms exact planned evidence explicitly', async () => {
-    expect(await call('ftf_confirm_mission_day_chemical_actuals', [orgA, actorA, ids.mission, ids.dayDraft, 1, 0, JSON.stringify([chemicalLine({ fieldId: ids.fieldB })]), null]))
+  test('rejects out-of-package Fields and appends multi-Field chemical revisions with optional batch provenance', async () => {
+    expect(await call('ftf_confirm_mission_day_chemical_actuals', [orgA, actorA, ids.mission, ids.dayDraft, 1, 0, JSON.stringify([chemicalLine({ fieldId: '40000000-0000-4000-8000-000000000099' })]), null]))
       .toMatchObject({ error: 'MISSION_DAY_FIELD_INVALID' });
-    const confirmed = await call('ftf_confirm_mission_day_chemical_actuals', [orgA, actorA, ids.mission, ids.dayDraft, 1, 0, JSON.stringify([chemicalLine()]), 'Checked against the plan.']);
+    const confirmed = await call('ftf_confirm_mission_day_chemical_actuals', [orgA, actorA, ids.mission, ids.dayDraft, 1, 0, JSON.stringify([
+      chemicalLine({ fieldId: ids.fieldA, batchLot: null }),
+      chemicalLine({ fieldId: ids.fieldB, batchLot: '  LOT-FIELD-B  ' }),
+    ]), 'Checked against the plan.']);
     expect(confirmed).toMatchObject({ current_revision: 1, actual: { changed_from_plan: false, confirmation_state: 'CONFIRMED' } });
-    expect(confirmed.actual.lines[0]).toMatchObject({ field_id: ids.fieldA, product_name: 'Test Product', applied_quantity: '20.000000', batch_lot: 'LOT-001', aircraft_id: ids.aircraft });
+    expect(confirmed.actual.lines).toEqual(expect.arrayContaining([
+      expect.objectContaining({ field_id: ids.fieldA, batch_lot: null }),
+      expect.objectContaining({ field_id: ids.fieldB, batch_lot: 'LOT-FIELD-B' }),
+    ]));
+    const revised = await call('ftf_confirm_mission_day_chemical_actuals', [orgA, actorA, ids.mission, ids.dayDraft, 1, 1, JSON.stringify([
+      chemicalLine({ fieldId: ids.fieldA, batchLot: 'LOT-REVISION-2' }),
+    ]), 'Corrected actual evidence.']);
+    expect(revised).toMatchObject({ current_revision: 2, actual: { revision_number: 2 } });
+    expect(await scalar(db, `select count(*)::integer as value from public.mission_day_chemical_revisions where operating_day_id='${ids.dayDraft}'`)).toBe(2);
   });
 
   test('retains post-operation variance without rewriting the approved plan', async () => {
@@ -169,11 +192,12 @@ if (child) {
 
   test('freezes provider evidence once with a canonical digest and never refreshes reads', async () => {
     const prepared = await call('ftf_prepare_mission_day_weather_capture', [orgA, actorA, ids.mission, ids.dayActual, 'ACTUAL_INTERVAL']);
-    const frozen = await call('ftf_freeze_mission_day_weather_report', [orgA, actorA, ids.mission, ids.dayActual, prepared.day_version, 'ACTUAL_INTERVAL', JSON.stringify(weatherEvidence('OPEN_METEO'))]);
+    expect(prepared.context_digest).toMatch(/^[a-f0-9]{64}$/);
+    const frozen = await call('ftf_freeze_mission_day_weather_report', [orgA, actorA, ids.mission, ids.dayActual, prepared.day_version, prepared.context_digest, 'ACTUAL_INTERVAL', JSON.stringify(weatherEvidence('OPEN_METEO'))]);
     expect(frozen.report).toMatchObject({ coverage: 'ACTUAL_INTERVAL', source: 'OPEN_METEO', timezone: 'Australia/Brisbane', interval_start_at: '2026-09-04T21:30:00.000Z', interval_end_at: '2026-09-05T03:15:00.000Z' });
     expect(frozen.report.source_digest).toMatch(/^[a-f0-9]{64}$/);
     const originalDigest = frozen.report.source_digest;
-    expect(await call('ftf_freeze_mission_day_weather_report', [orgA, actorA, ids.mission, ids.dayActual, prepared.day_version, 'ACTUAL_INTERVAL', JSON.stringify(weatherEvidence('OPEN_METEO', { providerRetrievedAt: '2026-09-07T00:00:00.000Z' }))]))
+    expect(await call('ftf_freeze_mission_day_weather_report', [orgA, actorA, ids.mission, ids.dayActual, prepared.day_version, prepared.context_digest, 'ACTUAL_INTERVAL', JSON.stringify(weatherEvidence('OPEN_METEO', { providerRetrievedAt: '2026-09-07T00:00:00.000Z' }))]))
       .toMatchObject({ error: 'MISSION_DAY_WEATHER_ALREADY_FROZEN', current_digest: originalDigest });
     expect((await call('ftf_read_mission_day_weather_report', [orgA, actorA, ids.mission, ids.dayActual])).report.source_digest).toBe(originalDigest);
     await expect(db.exec(`update public.mission_day_weather_reports set provider_identifier='changed' where operating_day_id='${ids.dayActual}'`)).rejects.toThrow();
@@ -181,30 +205,69 @@ if (child) {
 
   test('accepts explicit manual evidence fallback and rejects foreign tenant reads', async () => {
     const prepared = await call('ftf_prepare_mission_day_weather_capture', [orgA, actorA, ids.mission, ids.dayFull, 'FULL_DAY']);
-    const frozen = await call('ftf_freeze_mission_day_weather_report', [orgA, actorA, ids.mission, ids.dayFull, prepared.day_version, 'FULL_DAY', JSON.stringify(weatherEvidence('MANUAL', { hourlyObservations: [{ observedAt: '2026-09-05T22:00:00.000Z', temperatureC: 23, relativeHumidity: 65, dewPointC: 16, windSpeedKmh: 8, windDirectionDegrees: 100, precipitationMm: 0 }] }))]);
+    const frozen = await call('ftf_freeze_mission_day_weather_report', [orgA, actorA, ids.mission, ids.dayFull, prepared.day_version, prepared.context_digest, 'FULL_DAY', JSON.stringify(weatherEvidence('MANUAL', {
+      hourlyObservations: completeObservations('2026-09-05T14:00:00.000Z', '2026-09-06T14:00:00.000Z'),
+    }))]);
     expect(frozen.report).toMatchObject({ source: 'MANUAL', coverage: 'FULL_DAY', manual_reason: 'Provider unavailable; copied from the on-site station log.' });
     expect(await call('ftf_read_mission_day_weather_report', [orgB, actorB, ids.mission, ids.dayFull])).toMatchObject({ error: 'MISSION_OPERATING_DAY_NOT_FOUND' });
   });
 
   test('rejects malformed hourly weather evidence before freezing any report', async () => {
+    const prepared = await call('ftf_prepare_mission_day_weather_capture', [orgA, actorA, ids.mission, ids.dayDraft, 'FULL_DAY']);
     const evidence = weatherEvidence('MANUAL', { hourlyObservations: [{
       observedAt: '2026-09-03T16:00:00.000Z', temperatureC: 23, relativeHumidity: 120,
       dewPointC: 16, windSpeedKmh: 8, windDirectionDegrees: 100, precipitationMm: 0,
     }] });
-    expect(await call('ftf_freeze_mission_day_weather_report', [orgA, actorA, ids.mission, ids.dayDraft, 1, 'FULL_DAY', JSON.stringify(evidence)]))
+    expect(await call('ftf_freeze_mission_day_weather_report', [orgA, actorA, ids.mission, ids.dayDraft, 1, prepared.context_digest, 'FULL_DAY', JSON.stringify(evidence)]))
       .toMatchObject({ error: 'MISSION_DAY_WEATHER_INPUT_INVALID' });
     expect(await scalar(db, `select count(*)::integer as value from public.mission_day_weather_reports where operating_day_id='${ids.dayDraft}'`)).toBe(0);
-    expect(await call('ftf_freeze_mission_day_weather_report', [orgA, actorA, ids.mission, ids.dayDraft, 1, 'FULL_DAY', JSON.stringify(weatherEvidence('MANUAL', {
+    expect(await call('ftf_freeze_mission_day_weather_report', [orgA, actorA, ids.mission, ids.dayDraft, 1, prepared.context_digest, 'FULL_DAY', JSON.stringify(weatherEvidence('MANUAL', {
       providerRetrievedAt: '2026-09-06T00:00:00.000Z',
       hourlyObservations: [{ observedAt: '2026-09-03T16:00:00.000Z', temperatureC: 23, relativeHumidity: 60, dewPointC: 16, windSpeedKmh: 8, windDirectionDegrees: 100, precipitationMm: 0 }],
     }))])).toMatchObject({ error: 'MISSION_DAY_WEATHER_INPUT_INVALID' });
     expect(await scalar(db, `select count(*)::integer as value from public.mission_day_weather_reports where operating_day_id='${ids.dayDraft}'`)).toBe(0);
   });
 
+  test('requires one measured value per observation and exact non-overlapping coverage of every UTC hour bucket', async () => {
+    const prepared = await call('ftf_prepare_mission_day_weather_capture', [orgA, actorA, ids.mission, ids.dayDraft, 'FULL_DAY']);
+    const allNull = { observedAt: '2026-09-03T14:00:00.000Z', temperatureC: null, relativeHumidity: null,
+      dewPointC: null, windSpeedKmh: null, windDirectionDegrees: null, precipitationMm: null };
+    expect(await call('ftf_freeze_mission_day_weather_report', [orgA, actorA, ids.mission, ids.dayDraft, 1, prepared.context_digest, 'FULL_DAY', JSON.stringify(weatherEvidence('MANUAL', {
+      hourlyObservations: [allNull], coverageGaps: expectedHours('2026-09-03T15:00:00.000Z', '2026-09-04T14:00:00.000Z').map((observedAt) => ({ observedAt, reason: 'No station record.' })),
+    }))])).toMatchObject({ error: 'MISSION_DAY_WEATHER_INPUT_INVALID' });
+    const one = completeObservations('2026-09-03T14:00:00.000Z', '2026-09-03T15:00:00.000Z');
+    const gaps = expectedHours('2026-09-03T15:00:00.000Z', '2026-09-04T14:00:00.000Z').map((observedAt) => ({ observedAt, reason: 'No station record.' }));
+    for (const coverageGaps of [
+      gaps.slice(1),
+      [{ observedAt: one[0].observedAt, reason: 'Overlaps observation.' }, ...gaps],
+      [{ ...gaps[0] }, { ...gaps[0] }, ...gaps.slice(1)],
+      [{ observedAt: '2026-09-04T14:00:00.000Z', reason: 'Outside interval.' }, ...gaps],
+    ]) {
+      expect(await call('ftf_freeze_mission_day_weather_report', [orgA, actorA, ids.mission, ids.dayDraft, 1, prepared.context_digest, 'FULL_DAY', JSON.stringify(weatherEvidence('MANUAL', {
+        hourlyObservations: one, coverageGaps,
+      }))])).toMatchObject({ error: 'MISSION_DAY_WEATHER_INPUT_INVALID' });
+    }
+    expect(await call('ftf_freeze_mission_day_weather_report', [orgA, actorA, ids.mission, ids.dayDraft, 1, prepared.context_digest, 'FULL_DAY', JSON.stringify(weatherEvidence('MANUAL', {
+      hourlyObservations: [one[0], one[0]], coverageGaps: gaps,
+    }))])).toMatchObject({ error: 'MISSION_DAY_WEATHER_INPUT_INVALID' });
+    expect(await scalar(db, `select count(*)::integer as value from public.mission_day_weather_reports where operating_day_id='${ids.dayDraft}'`)).toBe(0);
+  });
+
+  test('rejects a stale prepared weather context digest before freezing provider results', async () => {
+    const prepared = await call('ftf_prepare_mission_day_weather_capture', [orgA, actorA, ids.mission, ids.dayDraft, 'FULL_DAY']);
+    await db.exec(`update public.mission_weather_observations set latitude=-28,version_number=2 where id='${ids.weather}'`);
+    const raced = await call('ftf_freeze_mission_day_weather_report', [orgA, actorA, ids.mission, ids.dayDraft, prepared.day_version, prepared.context_digest, 'FULL_DAY', JSON.stringify(weatherEvidence('MANUAL', {
+      hourlyObservations: completeObservations('2026-09-03T14:00:00.000Z', '2026-09-04T14:00:00.000Z'),
+    }))]);
+    expect(raced).toMatchObject({ error: 'MISSION_DAY_WEATHER_CONTEXT_CONFLICT' });
+    expect(raced.current_digest).not.toBe(prepared.context_digest);
+    expect(await scalar(db, `select count(*)::integer as value from public.mission_day_weather_reports where operating_day_id='${ids.dayDraft}'`)).toBe(0);
+  });
+
   test('enforces revision and day concurrency and writes audit and outbox evidence', async () => {
     expect(await call('ftf_confirm_mission_day_chemical_actuals', [orgA, actorA, ids.mission, ids.dayActual, 1, 0, JSON.stringify([chemicalLine()]), null]))
       .toMatchObject({ error: 'MISSION_DAY_CHEMICAL_REVISION_CONFLICT', current_version: 1 });
-    expect(await call('ftf_freeze_mission_day_weather_report', [orgA, actorA, ids.mission, ids.dayDraft, 0, 'FULL_DAY', JSON.stringify(weatherEvidence('MANUAL'))]))
+    expect(await call('ftf_freeze_mission_day_weather_report', [orgA, actorA, ids.mission, ids.dayDraft, 0, 'f'.repeat(64), 'FULL_DAY', JSON.stringify(weatherEvidence('MANUAL'))]))
       .toMatchObject({ error: 'MISSION_OPERATING_DAY_VERSION_CONFLICT', current_version: 1 });
     expect(await scalar(db, `select count(*)::integer as value from public.audit_events where organisation_id='${orgA}' and event_type like 'mission.day_%'`)).toBeGreaterThan(1);
     expect(await scalar(db, `select count(*)::integer as value from public.transactional_outbox where organisation_id='${orgA}' and topic like 'operational.mission.day_%'`)).toBeGreaterThan(1);

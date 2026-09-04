@@ -66,7 +66,7 @@ test('requires an exact Field and explicit confirmation before recording propose
   />);
 
   await user.selectOptions(screen.getByRole('combobox', { name: 'Field for Example Herbicide' }), actual.lines[0].fieldId);
-  await user.type(screen.getByLabelText('Batch or lot for Example Herbicide'), 'LOT-42');
+  await user.type(screen.getByLabelText('Batch or lot for Example Herbicide'), '  LOT-42  ');
   await user.click(screen.getByRole('button', { name: 'Confirm chemical actuals' }));
 
   await waitFor(() => expect(onConfirm).toHaveBeenCalledWith({
@@ -80,6 +80,110 @@ test('requires an exact Field and explicit confirmation before recording propose
     })],
     notes: null,
   }));
+});
+
+test('models applications independently so one planned chemical can be recorded on multiple authorised Fields', async () => {
+  const user = userEvent.setup();
+  const onConfirm = jest.fn().mockResolvedValue(undefined);
+  render(<MissionDayChemicalActuals
+    plan={plan}
+    actual={null}
+    fieldOptions={[
+      { id: actual.lines[0].fieldId, label: 'North Field' },
+      { id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', label: 'South Field' },
+    ]}
+    onConfirm={onConfirm}
+  />);
+
+  await user.click(screen.getByRole('button', { name: 'Add another application for Example Herbicide' }));
+  const fields = screen.getAllByRole('combobox', { name: 'Field for Example Herbicide' });
+  expect(fields).toHaveLength(2);
+  await user.selectOptions(fields[0], actual.lines[0].fieldId);
+  await user.selectOptions(fields[1], 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');
+  await user.click(screen.getByRole('button', { name: 'Confirm chemical actuals' }));
+
+  await waitFor(() => expect(onConfirm).toHaveBeenCalledWith(expect.objectContaining({
+    lines: [
+      expect.objectContaining({ fieldId: actual.lines[0].fieldId, plannedLineId: plan[0].plannedLineId }),
+      expect.objectContaining({ fieldId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', plannedLineId: plan[0].plannedLineId }),
+    ],
+  })));
+});
+
+test('adds and removes canonical substituted-product rows without rewriting the proposal', async () => {
+  const user = userEvent.setup();
+  const onConfirm = jest.fn().mockResolvedValue(undefined);
+  render(<MissionDayChemicalActuals
+    plan={plan}
+    actual={null}
+    fieldOptions={[{ id: actual.lines[0].fieldId, label: 'North Field' }]}
+    productOptions={[{
+      id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+      label: 'Replacement Herbicide',
+      platformProductId: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+      platformProductVersionId: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+      registerEntryId: null,
+      productName: 'Replacement Herbicide',
+      rate: '1.000000',
+      rateUnit: 'L_HA',
+      appliedQuantity: '10.000000',
+      quantityUnit: 'L',
+    }]}
+    onConfirm={onConfirm}
+  />);
+
+  await user.click(screen.getByRole('button', { name: 'Add substituted product Replacement Herbicide' }));
+  expect(screen.getByText('Confirm Replacement Herbicide')).toBeVisible();
+  await user.click(screen.getByRole('button', { name: 'Remove Example Herbicide application' }));
+  await user.selectOptions(screen.getByRole('combobox', { name: 'Field for Replacement Herbicide' }), actual.lines[0].fieldId);
+  await user.click(screen.getByRole('button', { name: 'Confirm chemical actuals' }));
+
+  await waitFor(() => expect(onConfirm).toHaveBeenCalledWith(expect.objectContaining({
+    lines: [expect.objectContaining({
+      plannedLineId: null,
+      platformProductId: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+      platformProductVersionId: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+      productName: 'Replacement Herbicide',
+    })],
+  })));
+  expect(screen.getByText('Proposed from Mission plan')).toBeVisible();
+});
+
+test('starts from the persisted actual and appends a new revision even when evidence already exists', async () => {
+  const user = userEvent.setup();
+  const onConfirm = jest.fn().mockResolvedValue(undefined);
+  render(<MissionDayChemicalActuals
+    plan={plan}
+    actual={actual}
+    fieldOptions={[{ id: actual.lines[0].fieldId, label: 'North Field' }]}
+    onConfirm={onConfirm}
+  />);
+
+  const quantity = screen.getByRole('textbox', { name: /Applied quantity for Example Herbicide/ });
+  await user.clear(quantity);
+  await user.type(quantity, '17.000000');
+  await user.click(screen.getByRole('button', { name: 'Record chemical revision' }));
+  await waitFor(() => expect(onConfirm).toHaveBeenCalledWith(expect.objectContaining({
+    lines: [expect.objectContaining({ appliedQuantity: '17.000000', batchLot: 'LOT-42' })],
+  })));
+});
+
+test('keeps batch or lot optional and bounds supplied provenance to 200 characters', async () => {
+  const user = userEvent.setup();
+  const onConfirm = jest.fn().mockResolvedValue(undefined);
+  render(<MissionDayChemicalActuals
+    plan={plan}
+    actual={null}
+    fieldOptions={[{ id: actual.lines[0].fieldId, label: 'North Field' }]}
+    onConfirm={onConfirm}
+  />);
+  const batch = screen.getByLabelText('Batch or lot for Example Herbicide');
+  expect(batch).toHaveAttribute('maxlength', '200');
+  await user.selectOptions(screen.getByRole('combobox', { name: 'Field for Example Herbicide' }), actual.lines[0].fieldId);
+  await user.click(screen.getByRole('button', { name: 'Confirm chemical actuals' }));
+  await waitFor(() => expect(onConfirm).toHaveBeenCalledWith(expect.objectContaining({
+    lines: [expect.objectContaining({ batchLot: null })],
+  })));
 });
 
 test('renders persisted actual evidence and its post-operation variance without relabelling the plan', () => {

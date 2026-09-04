@@ -16,11 +16,40 @@ async function fetchOpenMeteoHistoricalWeather({latitude,longitude,intervalStart
   const response=await fetchImpl(`https://archive-api.open-meteo.com/v1/archive?${query.toString()}`,{headers:{Accept:'application/json'}});
   if(!response.ok)throw new Error(`Open-Meteo historical weather failed (${response.status}).`);
   const snapshot=await response.json(),hourly=snapshot?.hourly||{},times=Array.isArray(hourly.time)?hourly.time:[];
-  const observations=times.map((value,index)=>{const parsed=new Date(/[zZ]|[+-]\d\d:\d\d$/.test(String(value))?String(value):`${value}Z`);return{observedAt:parsed.toISOString(),temperatureC:hourly.temperature_2m?.[index]??null,relativeHumidity:hourly.relative_humidity_2m?.[index]??null,dewPointC:hourly.dew_point_2m?.[index]??null,windSpeedKmh:hourly.wind_speed_10m?.[index]??null,windDirectionDegrees:hourly.wind_direction_10m?.[index]??null,precipitationMm:hourly.precipitation?.[index]??null};}).filter(item=>{const value=Date.parse(item.observedAt);return value>=start.getTime()&&value<end.getTime();});
+  if(!['GMT','UTC'].includes(snapshot?.timezone)||snapshot?.utc_offset_seconds!==0){
+    throw new Error('Open-Meteo historical timestamps must use an explicit UTC/GMT zero offset.');
+  }
+  const responseLatitude=Number(snapshot.latitude),responseLongitude=Number(snapshot.longitude);
+  if(!Number.isFinite(responseLatitude)||responseLatitude < -90||responseLatitude > 90
+    ||!Number.isFinite(responseLongitude)||responseLongitude < -180||responseLongitude > 180){
+    throw new Error('Open-Meteo returned invalid historical coordinates.');
+  }
+  const arrays=['temperature_2m','relative_humidity_2m','dew_point_2m','wind_speed_10m','wind_direction_10m','precipitation'];
+  if(!arrays.every((key)=>Array.isArray(hourly[key])&&hourly[key].length===times.length)){
+    throw new Error('Open-Meteo must return aligned finite hourly observations.');
+  }
+  const ranges={temperature_2m:[-100,100],relative_humidity_2m:[0,100],dew_point_2m:[-150,100],wind_speed_10m:[0,500],wind_direction_10m:[0,359.999999],precipitation:[0,10000]};
+  if(!arrays.every((key)=>hourly[key].every((value)=>Number.isFinite(value)&&value>=ranges[key][0]&&value<=ranges[key][1]))){
+    throw new Error('Open-Meteo must return aligned finite hourly observations.');
+  }
+  let previous=-Infinity;
+  const allObservations=times.map((value,index)=>{
+    const timestamp=String(value);
+    if(!/^\d{4}-\d{2}-\d{2}T\d{2}:00(?::00(?:\.0{1,3})?)?(?:Z|\+00:00)?$/.test(timestamp)){
+      throw new Error('Open-Meteo historical timestamps must be unambiguous UTC hourly buckets.');
+    }
+    const parsed=new Date(/[zZ]|\+00:00$/.test(timestamp)?timestamp:`${timestamp}Z`),at=parsed.getTime();
+    if(!Number.isFinite(at)||at%hourMs!==0||at<=previous){
+      throw new Error('Open-Meteo historical timestamps must be unique ordered UTC hourly buckets.');
+    }
+    previous=at;
+    return{observedAt:parsed.toISOString(),temperatureC:hourly.temperature_2m[index],relativeHumidity:hourly.relative_humidity_2m[index],dewPointC:hourly.dew_point_2m[index],windSpeedKmh:hourly.wind_speed_10m[index],windDirectionDegrees:hourly.wind_direction_10m[index],precipitationMm:hourly.precipitation[index]};
+  });
+  const observations=allObservations.filter(item=>{const value=Date.parse(item.observedAt);return value>=Math.ceil(start.getTime()/hourMs)*hourMs&&value<end.getTime();});
   if(!observations.length)throw new Error('Open-Meteo returned no historical observations for the operating interval.');
   const present=new Set(observations.map(item=>item.observedAt)),coverageGaps=[];
   for(let value=Math.ceil(start.getTime()/hourMs)*hourMs;value<end.getTime();value+=hourMs){const observedAt=new Date(value).toISOString();if(!present.has(observedAt))coverageGaps.push({observedAt,reason:'PROVIDER_HOUR_MISSING'});}
-  return{source:'OPEN_METEO',providerIdentifier:'OPEN_METEO_ARCHIVE_V1',providerRetrievedAt:now().toISOString(),hourlyObservations:observations,inversionInputs:{method:'OPEN_METEO_HOURLY_PROXY_V1',inputsAvailable:false,temperatureAndWindHours:observations.length},inversionResults:{assessment:'UNABLE_TO_DETERMINE',reason:'Open-Meteo hourly surface observations do not provide an authoritative vertical temperature profile.'},coverageGaps,manualReason:null,sourceMetadata:{requestedLatitude:Number(latitude),requestedLongitude:Number(longitude),responseLatitude:Number(snapshot.latitude??latitude),responseLongitude:Number(snapshot.longitude??longitude),providerTimezone:String(snapshot.timezone||'GMT'),utcOffsetSeconds:Number(snapshot.utc_offset_seconds||0),attribution:'Weather data by Open-Meteo.com (CC BY 4.0)'}};
+  return{source:'OPEN_METEO',providerIdentifier:'OPEN_METEO_ARCHIVE_V1',providerRetrievedAt:now().toISOString(),hourlyObservations:observations,inversionInputs:{method:'OPEN_METEO_HOURLY_PROXY_V1',inputsAvailable:false,temperatureAndWindHours:observations.length},inversionResults:{assessment:'UNABLE_TO_DETERMINE',reason:'Open-Meteo hourly surface observations do not provide an authoritative vertical temperature profile.'},coverageGaps,manualReason:null,sourceMetadata:{requestedLatitude:Number(latitude),requestedLongitude:Number(longitude),requestedIntervalStart:start.toISOString(),requestedIntervalEnd:end.toISOString(),responseLatitude,responseLongitude,providerTimezone:snapshot.timezone,utcOffsetSeconds:snapshot.utc_offset_seconds,attribution:'Weather data by Open-Meteo.com (CC BY 4.0)'}};
 }
 const AU_STATE_ABBREVIATIONS={
   'Australian Capital Territory':'ACT','New South Wales':'NSW','Northern Territory':'NT',

@@ -57,7 +57,7 @@ const repository = () => ({
   reconcileAircraftActuals: jest.fn().mockResolvedValue({ missionId: MISSION, operatingDayId: DAY, actuals: [] }),
   readChemicalActuals: jest.fn().mockResolvedValue({ missionId: MISSION, operatingDayId: DAY, currentRevision: 0, proposals: [], actual: null }),
   confirmChemicalActuals: jest.fn().mockResolvedValue({ missionId: MISSION, operatingDayId: DAY, currentRevision: 1, proposals: [], actual: {} }),
-  prepareWeatherCapture: jest.fn().mockResolvedValue({ missionId: MISSION, operatingDayId: DAY, dayVersion: 4, coverage: 'ACTUAL_INTERVAL', intervalStartAt: '2026-09-04T21:30:00.000Z', intervalEndAt: '2026-09-05T03:15:00.000Z', timezone: 'Australia/Brisbane', latitude: '-27.500000', longitude: '153.100000' }),
+  prepareWeatherCapture: jest.fn().mockResolvedValue({ missionId: MISSION, operatingDayId: DAY, dayVersion: 4, contextDigest: 'c'.repeat(64), coverage: 'ACTUAL_INTERVAL', intervalStartAt: '2026-09-04T21:30:00.000Z', intervalEndAt: '2026-09-05T03:15:00.000Z', timezone: 'Australia/Brisbane', latitude: '-27.500000', longitude: '153.100000' }),
   freezeWeatherReport: jest.fn().mockResolvedValue({ id: WEATHER_REPORT, missionId: MISSION, operatingDayId: DAY, sourceDigest: DIGEST }),
   readWeatherReport: jest.fn().mockResolvedValue(null),
 });
@@ -296,12 +296,42 @@ test('routes exact daily chemical proposal reads and explicit confirmation comma
   expect(repo.confirmChemicalActuals).toHaveBeenCalledWith(expect.anything(), chemicalInput);
 });
 
+test('keeps batch or lot optional while trimming and bounding supplied provenance', async () => {
+  const repo = repository();
+  const handler = createMissionOperationsHandler({ repository: repo, resolveContext: async () => context(['mission.operational.write']) });
+  let res = response();
+  await handler(request('POST', 'chemical-actuals-confirm', {
+    ...chemicalInput,
+    lines: [{ ...chemicalInput.lines[0], batchLot: '  LOT-TRIMMED  ' }],
+  }), res);
+  expect(res.statusCode).toBe(201);
+  expect(repo.confirmChemicalActuals).toHaveBeenLastCalledWith(expect.anything(), expect.objectContaining({
+    lines: [expect.objectContaining({ batchLot: 'LOT-TRIMMED' })],
+  }));
+  res = response();
+  await handler(request('POST', 'chemical-actuals-confirm', {
+    ...chemicalInput,
+    lines: [{ ...chemicalInput.lines[0], batchLot: null }],
+  }), res);
+  expect(res.statusCode).toBe(201);
+  res = response();
+  await handler(request('POST', 'chemical-actuals-confirm', {
+    ...chemicalInput,
+    lines: [{ ...chemicalInput.lines[0], batchLot: 'x'.repeat(201) }],
+  }), res);
+  expect(res.statusCode).toBe(400);
+  expect(repo.confirmChemicalActuals).toHaveBeenCalledTimes(2);
+});
+
 test('captures provider weather for the database-resolved interval and freezes its evidence', async () => {
   const repo = repository();
   const weatherProvider = { fetchHistoricalWeather: jest.fn().mockResolvedValue({
     source: 'OPEN_METEO', providerIdentifier: 'OPEN_METEO_ARCHIVE_V1', providerRetrievedAt: '2026-09-06T00:00:00.000Z',
     hourlyObservations: [{ observedAt: '2026-09-04T22:00:00.000Z' }], inversionInputs: {}, inversionResults: {},
-    coverageGaps: [], manualReason: null, sourceMetadata: {},
+    coverageGaps: [], manualReason: null, sourceMetadata: {
+      requestedLatitude: -27.5, requestedLongitude: 153.1,
+      requestedIntervalStart: '2026-09-04T21:30:00.000Z', requestedIntervalEnd: '2026-09-05T03:15:00.000Z',
+    },
   }) };
   const handler = createMissionOperationsHandler({ repository: repo, weatherProvider, resolveContext: async () => context(['mission.operational.write']) });
   const res = response();
@@ -312,8 +342,64 @@ test('captures provider weather for the database-resolved interval and freezes i
     intervalStart: '2026-09-04T21:30:00.000Z', intervalEnd: '2026-09-05T03:15:00.000Z',
   });
   expect(repo.freezeWeatherReport).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
-    missionId: MISSION, dayId: DAY, expectedDayVersion: 4, coverage: 'ACTUAL_INTERVAL', evidence: expect.objectContaining({ source: 'OPEN_METEO' }),
+    missionId: MISSION, dayId: DAY, expectedDayVersion: 4, expectedContextDigest: 'c'.repeat(64),
+    coverage: 'ACTUAL_INTERVAL', evidence: expect.objectContaining({ source: 'OPEN_METEO' }),
   }));
+});
+
+test('binds a provider result to the exact prepared context so a concurrent context change fails closed', async () => {
+  const repo = repository();
+  repo.freezeWeatherReport.mockResolvedValueOnce({ error: 'MISSION_DAY_WEATHER_CONTEXT_CONFLICT' });
+  const weatherProvider = { fetchHistoricalWeather: jest.fn().mockResolvedValue({
+    source: 'OPEN_METEO', providerIdentifier: 'OPEN_METEO_ARCHIVE_V1', providerRetrievedAt: '2026-09-06T00:00:00.000Z',
+    hourlyObservations: [{ observedAt: '2026-09-04T22:00:00.000Z' }], inversionInputs: {}, inversionResults: {},
+    coverageGaps: [], manualReason: null, sourceMetadata: {
+      requestedLatitude: -27.5, requestedLongitude: 153.1,
+      requestedIntervalStart: '2026-09-04T21:30:00.000Z', requestedIntervalEnd: '2026-09-05T03:15:00.000Z',
+    },
+  }) };
+  const handler = createMissionOperationsHandler({ repository: repo, weatherProvider, resolveContext: async () => context(['mission.operational.write']) });
+  const res = response();
+  await handler(request('POST', 'day-weather-capture', { missionId: MISSION, dayId: DAY, coverage: 'ACTUAL_INTERVAL' }), res);
+  expect(res.statusCode).toBe(409);
+  expect(res.body.error.code).toBe('MISSION_DAY_WEATHER_CONTEXT_CONFLICT');
+  expect(repo.freezeWeatherReport).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+    expectedContextDigest: 'c'.repeat(64),
+  }));
+});
+
+test('does not freeze a provider result that does not attest the prepared coordinates and interval', async () => {
+  const repo = repository();
+  const weatherProvider = { fetchHistoricalWeather: jest.fn().mockResolvedValue({
+    source: 'OPEN_METEO', providerIdentifier: 'OPEN_METEO_ARCHIVE_V1', providerRetrievedAt: '2026-09-06T00:00:00.000Z',
+    hourlyObservations: [{ observedAt: '2026-09-04T22:00:00.000Z' }], inversionInputs: {}, inversionResults: {},
+    coverageGaps: [], manualReason: null, sourceMetadata: {
+      requestedLatitude: -28, requestedLongitude: 153.1,
+      requestedIntervalStart: '2026-09-04T21:30:00.000Z', requestedIntervalEnd: '2026-09-05T03:15:00.000Z',
+    },
+  }) };
+  const handler = createMissionOperationsHandler({ repository: repo, weatherProvider, resolveContext: async () => context(['mission.operational.write']) });
+  const res = response();
+  await handler(request('POST', 'day-weather-capture', { missionId: MISSION, dayId: DAY, coverage: 'ACTUAL_INTERVAL' }), res);
+  expect(res.statusCode).toBe(503);
+  expect(res.body.error.code).toBe('MISSION_DAY_WEATHER_PROVIDER_UNAVAILABLE');
+  expect(repo.freezeWeatherReport).not.toHaveBeenCalled();
+});
+
+test('rejects all-null manual observations before asking the database to freeze evidence', async () => {
+  const repo = repository();
+  const handler = createMissionOperationsHandler({ repository: repo, resolveContext: async () => context(['mission.operational.write']) });
+  const res = response();
+  await handler(request('POST', 'day-weather-manual', {
+    missionId: MISSION, dayId: DAY, coverage: 'ACTUAL_INTERVAL', evidence: {
+      ...manualEvidence,
+      hourlyObservations: [{ observedAt: '2026-09-04T22:00:00.000Z', temperatureC: null, relativeHumidity: null,
+        dewPointC: null, windSpeedKmh: null, windDirectionDegrees: null, precipitationMm: null }],
+      coverageGaps: [{ observedAt: '2026-09-04T23:00:00.000Z', reason: 'Logger offline.' }],
+    },
+  }), res);
+  expect(res.statusCode).toBe(400);
+  expect(repo.freezeWeatherReport).not.toHaveBeenCalled();
 });
 
 test('fails provider capture safely and accepts explicit manual evidence fallback', async () => {
@@ -340,6 +426,7 @@ test('maps daily chemical and frozen weather authority failures without broadeni
     ['MISSION_DAY_CHEMICAL_PLAN_NOT_FOUND', 409], ['MISSION_DAY_WEATHER_LOCATION_REQUIRED', 409],
     ['MISSION_DAY_FIELD_INVALID', 400], ['MISSION_DAY_AIRCRAFT_INVALID', 400],
     ['MISSION_DAY_WEATHER_INPUT_INVALID', 400], ['MISSION_DAY_WEATHER_OBSERVATION_OUTSIDE_INTERVAL', 400],
+    ['MISSION_DAY_WEATHER_CONTEXT_CONFLICT', 409],
   ];
   for (const [error, status] of cases) {
     const repo = repository();
@@ -358,12 +445,13 @@ test('maps trusted daily actual and weather RPC parameters and projections', asy
     proposals: [{ planned_line_id: PLAN_LINE, product_name: 'Test Product', platform_product_id: null, platform_product_version_id: null,
       register_entry_id: null, rate: '2.000000', rate_unit: 'L_HA', planned_quantity: '20.000000', quantity_unit: 'L', product_snapshot: {} }], actual: null };
   const rawWeatherContext = { mission_id: MISSION, operating_day_id: DAY, package_revision_id: PACKAGE, day_version: 4,
+    context_digest: 'c'.repeat(64),
     coverage: 'ACTUAL_INTERVAL', interval_start_at: '2026-09-04T21:30:00.000Z', interval_end_at: '2026-09-05T03:15:00.000Z',
     timezone: 'Australia/Brisbane', source_weather_observation_id: PLAN_LINE, latitude: '-27.500000', longitude: '153.100000' };
   const rpc = jest.fn().mockResolvedValueOnce(rawChemical).mockResolvedValueOnce(rawWeatherContext).mockResolvedValueOnce({ report: null });
   const repo = new MissionOperationsRepository(rpc);
   await expect(repo.readChemicalActuals(context(['mission.operational.read']), MISSION, DAY)).resolves.toMatchObject({ plannedChemicalRevisionId: PACKAGE, proposals: [{ plannedLineId: PLAN_LINE }] });
-  await expect(repo.prepareWeatherCapture(context(['mission.operational.write']), { missionId: MISSION, dayId: DAY, coverage: 'ACTUAL_INTERVAL' })).resolves.toMatchObject({ intervalStartAt: '2026-09-04T21:30:00.000Z', latitude: '-27.500000' });
+  await expect(repo.prepareWeatherCapture(context(['mission.operational.write']), { missionId: MISSION, dayId: DAY, coverage: 'ACTUAL_INTERVAL' })).resolves.toMatchObject({ intervalStartAt: '2026-09-04T21:30:00.000Z', latitude: '-27.500000', contextDigest: 'c'.repeat(64) });
   await expect(repo.readWeatherReport(context(['mission.operational.read']), MISSION, DAY)).resolves.toBeNull();
   expect(rpc.mock.calls.map(([url]) => url)).toEqual([
     'rest/v1/rpc/ftf_read_mission_day_chemical_actuals',

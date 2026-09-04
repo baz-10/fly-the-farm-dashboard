@@ -79,17 +79,54 @@ test('shows frozen provenance and never refreshes a historical report', () => {
 test('submits explicit manual evidence against the same authoritative interval', async () => {
   const user = userEvent.setup();
   const api = { captureWeather: jest.fn(), saveManualWeather: jest.fn().mockResolvedValue({ ...frozen, source: 'MANUAL' }) };
-  render(<MissionDayWeatherReport day={day} report={null} api={api} />);
+  const shortDay = { ...day, actualFinishedAt: '2026-09-04T23:15:00.000Z' };
+  render(<MissionDayWeatherReport day={shortDay} report={null} api={api} />);
   await user.click(screen.getByRole('button', { name: 'Enter manual evidence' }));
-  await user.type(screen.getByLabelText('Observed temperature (°C)'), '23');
+  expect(screen.getByText('2026-09-04T22:00:00.000Z')).toBeVisible();
+  expect(screen.getByText('2026-09-04T23:00:00.000Z')).toBeVisible();
+  await user.selectOptions(screen.getByRole('combobox', { name: 'Evidence for 2026-09-04T22:00:00.000Z' }), 'OBSERVATION');
+  await user.type(screen.getByRole('textbox', { name: /Observed temperature at 2026-09-04T22:00:00.000Z/ }), '23');
+  await user.selectOptions(screen.getByRole('combobox', { name: 'Evidence for 2026-09-04T23:00:00.000Z' }), 'GAP');
+  await user.type(screen.getByRole('textbox', { name: /Gap reason at 2026-09-04T23:00:00/ }), 'Station logger was offline.');
   await user.type(screen.getByRole('textbox', { name: 'Reason for manual evidence' }), 'Copied from the on-site station log.');
   await user.click(screen.getByRole('button', { name: 'Freeze manual weather evidence' }));
   await waitFor(() => expect(api.saveManualWeather).toHaveBeenCalledWith(day.id, expect.objectContaining({
     coverage: 'ACTUAL_INTERVAL',
     evidence: expect.objectContaining({
       source: 'MANUAL', providerIdentifier: null, providerRetrievedAt: null,
-      manualReason: 'Copied from the on-site station log.',
-      hourlyObservations: [expect.objectContaining({ observedAt: day.actualStartedAt, temperatureC: 23 })],
+      manualReason: 'Copied from the on-site station log.', coverageGaps: [{
+        observedAt: '2026-09-04T23:00:00.000Z', reason: 'Station logger was offline.',
+      }],
+      hourlyObservations: [expect.objectContaining({ observedAt: '2026-09-04T22:00:00.000Z', temperatureC: 23 })],
     }),
   })));
+});
+
+test('does not invent empty gaps or accept an all-null manual observation', async () => {
+  const user = userEvent.setup();
+  const api = { captureWeather: jest.fn(), saveManualWeather: jest.fn() };
+  const oneHourDay = { ...day, actualStartedAt: '2026-09-04T21:30:00.000Z', actualFinishedAt: '2026-09-04T22:30:00.000Z' };
+  render(<MissionDayWeatherReport day={oneHourDay} report={null} api={api} />);
+  await user.click(screen.getByRole('button', { name: 'Enter manual evidence' }));
+  await user.selectOptions(screen.getByRole('combobox', { name: 'Evidence for 2026-09-04T22:00:00.000Z' }), 'OBSERVATION');
+  await user.type(screen.getByRole('textbox', { name: 'Reason for manual evidence' }), 'Checked station log.');
+  await user.click(screen.getByRole('button', { name: 'Freeze manual weather evidence' }));
+  expect(await screen.findByText('Every measured hour needs at least one observed value; every gap needs a truthful reason.')).toBeVisible();
+  expect(api.saveManualWeather).not.toHaveBeenCalled();
+});
+
+test('derives manual full-day UTC buckets from the Base timezone and work date', async () => {
+  const user = userEvent.setup();
+  const api = { captureWeather: jest.fn(), saveManualWeather: jest.fn() };
+  render(<MissionDayWeatherReport day={{
+    ...day,
+    workDate: '2026-09-06',
+    state: 'DRAFT',
+    actualStartedAt: null,
+    actualFinishedAt: null,
+  }} report={null} api={api} />);
+  await user.click(screen.getByRole('button', { name: 'Enter manual evidence' }));
+  expect(screen.getByText('2026-09-05T14:00:00.000Z')).toBeVisible();
+  expect(screen.getByText('2026-09-06T13:00:00.000Z')).toBeVisible();
+  expect(screen.getAllByRole('combobox', { name: /Evidence for/ })).toHaveLength(24);
 });

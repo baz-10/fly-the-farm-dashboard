@@ -440,6 +440,9 @@ function decodeMissionDayChemicalProposal(value: unknown): MissionDayChemicalPro
     'plannedLineId', 'platformProductId', 'platformProductVersionId', 'registerEntryId',
     'productName', 'rate', 'rateUnit', 'plannedQuantity', 'quantityUnit', 'productSnapshot',
   ]);
+  const rateUnit = chemicalRateUnit(source.rateUnit);
+  const quantityUnit = chemicalQuantityUnit(source.quantityUnit);
+  if (quantityUnit !== quantityUnitForRate(rateUnit)) return malformed();
   return {
     plannedLineId: uuid(source.plannedLineId),
     platformProductId: nullable(source.platformProductId, uuid),
@@ -447,9 +450,9 @@ function decodeMissionDayChemicalProposal(value: unknown): MissionDayChemicalPro
     registerEntryId: nullable(source.registerEntryId, uuid),
     productName: boundedText(source.productName, 500),
     rate: decimal6(source.rate),
-    rateUnit: boundedText(source.rateUnit, 64),
+    rateUnit,
     plannedQuantity: decimal6(source.plannedQuantity),
-    quantityUnit: boundedText(source.quantityUnit, 64),
+    quantityUnit,
     productSnapshot: jsonObject(source.productSnapshot),
   };
 }
@@ -460,6 +463,9 @@ function decodeMissionDayChemicalActualLine(value: unknown): MissionDayChemicalA
     'registerEntryId', 'productName', 'rate', 'rateUnit', 'appliedQuantity', 'quantityUnit',
     'batchLot', 'aircraftId', 'productSnapshot',
   ]);
+  const rateUnit = chemicalRateUnit(source.rateUnit);
+  const quantityUnit = chemicalQuantityUnit(source.quantityUnit);
+  if (quantityUnit !== quantityUnitForRate(rateUnit)) return malformed();
   return {
     id: uuid(source.id),
     fieldId: uuid(source.fieldId),
@@ -469,13 +475,27 @@ function decodeMissionDayChemicalActualLine(value: unknown): MissionDayChemicalA
     registerEntryId: nullable(source.registerEntryId, uuid),
     productName: boundedText(source.productName, 500),
     rate: decimal6(source.rate),
-    rateUnit: boundedText(source.rateUnit, 64),
+    rateUnit,
     appliedQuantity: decimal6(source.appliedQuantity),
-    quantityUnit: boundedText(source.quantityUnit, 64),
-    batchLot: nullable(source.batchLot, (candidate) => boundedText(candidate, 500)),
+    quantityUnit,
+    batchLot: nullable(source.batchLot, (candidate) => boundedText(candidate, 200)),
     aircraftId: nullable(source.aircraftId, uuid),
     productSnapshot: jsonObject(source.productSnapshot),
   };
+}
+
+function chemicalRateUnit(value: unknown): 'L_HA' | 'ML_HA' | 'KG_HA' | 'G_HA' {
+  if (value !== 'L_HA' && value !== 'ML_HA' && value !== 'KG_HA' && value !== 'G_HA') return malformed();
+  return value;
+}
+
+function chemicalQuantityUnit(value: unknown): 'L' | 'ML' | 'KG' | 'G' {
+  if (value !== 'L' && value !== 'ML' && value !== 'KG' && value !== 'G') return malformed();
+  return value;
+}
+
+function quantityUnitForRate(value: 'L_HA' | 'ML_HA' | 'KG_HA' | 'G_HA'): 'L' | 'ML' | 'KG' | 'G' {
+  return ({ L_HA: 'L', ML_HA: 'ML', KG_HA: 'KG', G_HA: 'G' } as const)[value];
 }
 
 function decodeMissionDayChemicalActualRevision(value: unknown): MissionDayChemicalActualRevision {
@@ -550,7 +570,7 @@ function decodeWeatherObservation(value: unknown): MissionDayWeatherHourlyObserv
     'observedAt', 'temperatureC', 'relativeHumidity', 'dewPointC', 'windSpeedKmh',
     'windDirectionDegrees', 'precipitationMm',
   ]);
-  return {
+  const observation = {
     observedAt: exactTimestamp(source.observedAt),
     temperatureC: finiteWithin(source.temperatureC, -100, 100),
     relativeHumidity: finiteWithin(source.relativeHumidity, 0, 100),
@@ -559,6 +579,8 @@ function decodeWeatherObservation(value: unknown): MissionDayWeatherHourlyObserv
     windDirectionDegrees: finiteWithin(source.windDirectionDegrees, 0, 359.999999),
     precipitationMm: finiteWithin(source.precipitationMm, 0, 10000),
   };
+  if (Object.entries(observation).every(([key, candidate]) => key === 'observedAt' || candidate === null)) return malformed();
+  return observation;
 }
 
 function decodeWeatherGap(value: unknown): MissionDayWeatherCoverageGap {
@@ -591,8 +613,15 @@ export function decodeMissionDayWeatherReport(value: unknown): MissionDayWeather
     || (weather === 'OPEN_METEO' && (!providerIdentifier || !providerRetrievedAt || manualReason !== null))
     || (weather === 'MANUAL' && (providerIdentifier !== null || providerRetrievedAt !== null || manualReason === null))) return malformed();
   const hourlyObservations = source.hourlyObservations.map(decodeWeatherObservation);
+  const coverageGaps = source.coverageGaps.map(decodeWeatherGap);
+  const start = Date.parse(intervalStartAt);
+  const end = Date.parse(intervalEndAt);
   if (hourlyObservations.some((entry) => Date.parse(entry.observedAt) < Date.parse(intervalStartAt)
-    || Date.parse(entry.observedAt) >= Date.parse(intervalEndAt))) return malformed();
+    || Date.parse(entry.observedAt) >= Date.parse(intervalEndAt))
+    || coverageGaps.some((gap) => {
+      const at = Date.parse(gap.observedAt);
+      return at < start || at >= end || at % (60 * 60 * 1000) !== 0;
+    })) return malformed();
   return {
     id: uuid(source.id),
     missionId: uuid(source.missionId),
@@ -611,7 +640,7 @@ export function decodeMissionDayWeatherReport(value: unknown): MissionDayWeather
     hourlyObservations,
     inversionInputs: jsonObject(source.inversionInputs),
     inversionResults: jsonObject(source.inversionResults),
-    coverageGaps: source.coverageGaps.map(decodeWeatherGap),
+    coverageGaps,
     sourceMetadata: jsonObject(source.sourceMetadata),
     manualReason,
     sourceDigest: digest(source.sourceDigest),

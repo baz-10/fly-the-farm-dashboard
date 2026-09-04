@@ -41,3 +41,19 @@ Implemented in the supplied isolated worktree. No Production application, databa
 - Surface-hourly Open-Meteo data cannot establish a vertical inversion profile, so the adapter retains its inputs and records that inversion cannot be determined.
 - PGlite provides executable transaction and stale-version behavior but cannot prove real two-session blocking timing. All writers participate in the established Mission aggregate lock and recheck optimistic versions while locked.
 - The build retains the repository's existing lint-warning backlog and stale Browserslist notice. No Task 9 file is reported by the build warnings.
+
+## Review round 1 closure — 2026-09-05
+
+- Kept batch/lot provenance optional. When supplied it is trimmed and bounded to 200 characters at the UI, HTTP validation, SQL authority, persisted constraint, and response decoder; supplied values remain present in the frozen revision.
+- Separated editable application rows from Mission-plan proposals. Operators can duplicate a planned application across authorised Fields, remove rows, add a canonical verified substituted-product row, and submit a further append-only revision when an actual already exists. The plan remains visibly labelled as a proposal.
+- Replaced the single sparse manual-weather form with exact expected UTC hour buckets derived from the authoritative actual interval or Base-local full day. Each bucket must be explicitly declared as a measured observation or a truthful gap; the UI never invents empty gaps.
+- Made the database the final hourly-coverage authority. It rejects all-null observations, unaligned/out-of-range timestamps, duplicate observation or gap buckets, observation/gap overlap, and any missing expected bucket before insertion.
+- Added a canonical prepared-context digest covering the exact Mission/day/package/day version, coverage, UTC interval, timezone, source weather observation identity/version/source, and coordinates. Freeze recomputes it under the Mission aggregate lock and rejects a provider result when the context changed during the fetch.
+- The server also requires provider evidence to attest the exact requested coordinates and interval before freeze. The historical adapter now requires explicit UTC/GMT with zero offset, aligned hourly arrays, unique ordered hour timestamps, finite bounded values, and finite response coordinates; invalid provider evidence falls back safely to manual entry.
+- Tightened strict client decoding to the exact chemical rate/quantity unit enums and pairings, a 200-character batch/lot, non-empty measured observations, and in-range aligned coverage gaps.
+
+### Review TDD evidence
+
+- The review RED run failed 6 suites and 18 tests across the intended seams: multi-Field/revision editing, optional/supplied batch handling, explicit manual gap coverage, all-null observations, context binding, provider timezone/array validation, and strict decoding.
+- The executable PostgreSQL race regression prepares a weather context, changes the selected source observation's version and coordinates before freeze, then proves the stale digest is rejected without a report insert.
+- The final review verification passed the nine-suite focused/adjacent matrix, targeted ESLint, Node syntax checks, `git diff --check`, and `npm run build`. The build continues to report only the repository's pre-existing warning backlog and Browserslist notice; no Task 9 file is named.

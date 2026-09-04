@@ -255,6 +255,7 @@ function weatherCaptureContext(result) {
     operatingDayId: result.operating_day_id,
     packageRevisionId: result.package_revision_id,
     dayVersion: result.day_version,
+    contextDigest: result.context_digest,
     coverage: result.coverage,
     intervalStartAt: result.interval_start_at,
     intervalEndAt: result.interval_end_at,
@@ -459,6 +460,7 @@ class MissionOperationsRepository {
       p_mission_id: input.missionId,
       p_operating_day_id: input.dayId,
       p_expected_day_version: input.expectedDayVersion,
+      p_expected_context_digest: input.expectedContextDigest,
       p_coverage: input.coverage,
       p_evidence: input.evidence,
     }, 'Mission day weather report could not be frozen.');
