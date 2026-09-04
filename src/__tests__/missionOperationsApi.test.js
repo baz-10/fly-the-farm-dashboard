@@ -42,6 +42,7 @@ const crpDecision = {
   decidedByInternalUserId: ACTOR, decidedAt: '2026-09-04T11:00:00.000Z', declaration: 'Reviewed.',
 };
 const repository = () => ({
+  createAmendment: jest.fn().mockResolvedValue({ classification: 'MATERIAL', reasons: ['FIELD_SCOPE_CHANGED'], changedKeys: ['fieldIds'], packageRevision }),
   saveScope: jest.fn().mockResolvedValue(packageRevision),
   submitForApproval: jest.fn().mockResolvedValue(packageRevision),
   decide: jest.fn().mockResolvedValue(crpDecision),
@@ -60,6 +61,30 @@ const repository = () => ({
   prepareWeatherCapture: jest.fn().mockResolvedValue({ missionId: MISSION, operatingDayId: DAY, dayVersion: 4, contextDigest: 'c'.repeat(64), coverage: 'ACTUAL_INTERVAL', intervalStartAt: '2026-09-04T21:30:00.000Z', intervalEndAt: '2026-09-05T03:15:00.000Z', timezone: 'Australia/Brisbane', latitude: '-27.500000', longitude: '153.100000' }),
   freezeWeatherReport: jest.fn().mockResolvedValue({ id: WEATHER_REPORT, missionId: MISSION, operatingDayId: DAY, sourceDigest: DIGEST }),
   readWeatherReport: jest.fn().mockResolvedValue(null),
+});
+
+test('routes a strictly decoded amendment through checked package authority', async () => {
+  const repo = repository();
+  const handler = createMissionOperationsHandler({
+    repository: repo,
+    resolveContext: async () => context(['mission.pack.generate']),
+  });
+  const body = {
+    missionId: MISSION,
+    expectedRevision: 4,
+    before: { fieldIds: [FIELD_A] },
+    after: { fieldIds: [FIELD_A, FIELD_B] },
+    reason: 'Second Field added after site review.',
+  };
+  const res = response();
+  await handler(request('POST', 'amend', body), res);
+  expect(res.statusCode).toBe(201);
+  expect(repo.createAmendment).toHaveBeenCalledWith(expect.anything(), body);
+
+  const invalid = response();
+  await handler(request('POST', 'amend', { ...body, before: [], injected: true }), invalid);
+  expect(invalid.statusCode).toBe(400);
+  expect(repo.createAmendment).toHaveBeenCalledTimes(1);
 });
 
 const chemicalInput = {
@@ -204,6 +229,7 @@ test('maps operating-day authority and concurrency failures to stable statuses',
     ['MISSION_PACKAGE_STALE', 409, 'MISSION_PACKAGE_STALE'],
     ['MISSION_OPERATING_DAY_VERSION_CONFLICT', 409, 'MISSION_OPERATING_DAY_VERSION_CONFLICT'],
     ['MISSION_OPERATING_DATE_CONFLICT', 409, 'MISSION_OPERATING_DATE_CONFLICT'],
+    ['MISSION_AMENDMENT_BEFORE_MISMATCH', 409, 'MISSION_AMENDMENT_BEFORE_MISMATCH'],
     ['MISSION_DAY_FIELD_NOT_AUTHORISED', 400, 'MISSION_DAY_FIELD_NOT_AUTHORISED'],
   ];
   for (const [error, status, code] of cases) {
@@ -215,6 +241,18 @@ test('maps operating-day authority and concurrency failures to stable statuses',
     expect(res.statusCode).toBe(status);
     expect(res.body.error).toEqual(expect.objectContaining({ code, correlationId: 'mission-ops-request-123' }));
   }
+});
+
+test('rejects an amendment after-scope mismatch as safe invalid input', async () => {
+  const repo = repository();
+  repo.createAmendment.mockResolvedValueOnce({ error: 'MISSION_AMENDMENT_AFTER_MISMATCH' });
+  const handler = createMissionOperationsHandler({ repository: repo, resolveContext: async () => context(['mission.pack.generate']) });
+  const res = response();
+  await handler(request('POST', 'amend', {
+    missionId: MISSION, expectedRevision: 4, before: { fieldIds: [FIELD_A] }, after: { fieldIds: ['not-a-uuid'] }, reason: 'Field scope changed.',
+  }), res);
+  expect(res.statusCode).toBe(400);
+  expect(res.body.error.code).toBe('MISSION_AMENDMENT_AFTER_MISMATCH');
 });
 
 test('routes exact aircraft-day save, read and reconcile commands with canonical hour strings', async () => {
@@ -623,4 +661,31 @@ test('maps operating-day RPCs with trusted organisation and actor identities onl
     p_status: 'PLANNED',
     p_notes: null,
   });
+});
+
+test('maps amendment RPC authority without accepting organisation or actor identities from the browser', async () => {
+  const rpc = jest.fn().mockResolvedValue({
+    classification: 'MATERIAL', reasons: ['FIELD_SCOPE_CHANGED'], changed_keys: ['fieldIds'],
+    package_revision: { record: {
+      id: PACKAGE, mission_id: MISSION, version_number: 5, jsa_revision_id: JSA,
+      evidence_digest: DIGEST, package_state: 'PREPARING', created_at: '2026-09-04T12:00:00.000Z',
+    }, field_ids: [FIELD_A, FIELD_B], effective_state: 'PREPARING' },
+  });
+  const repo = new MissionOperationsRepository(rpc);
+  await expect(repo.createAmendment(context(['mission.pack.generate']), {
+    missionId: MISSION, expectedRevision: 4,
+    before: { fieldIds: [FIELD_A] }, after: { fieldIds: [FIELD_A, FIELD_B] },
+    reason: 'Second Field added after site review.',
+  })).resolves.toMatchObject({
+    classification: 'MATERIAL', reasons: ['FIELD_SCOPE_CHANGED'], changedKeys: ['fieldIds'],
+    packageRevision: { id: PACKAGE, revisionNumber: 5, fieldIds: [FIELD_A, FIELD_B], state: 'PREPARING' },
+  });
+  expect(rpc).toHaveBeenCalledWith('rest/v1/rpc/ftf_create_mission_amendment', expect.objectContaining({
+    method: 'POST',
+    body: JSON.stringify({
+      p_organisation_id: ORG, p_actor_internal_user_id: ACTOR, p_mission_id: MISSION,
+      p_expected_revision: 4, p_before: { fieldIds: [FIELD_A] }, p_after: { fieldIds: [FIELD_A, FIELD_B] },
+      p_reason: 'Second Field added after site review.',
+    }),
+  }));
 });

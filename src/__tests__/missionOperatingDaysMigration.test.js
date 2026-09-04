@@ -247,12 +247,38 @@ if (child) {
     expect(await scalar(db, `select state as value from public.mission_operating_days where id='${day.day.id}'`)).toBe('COMPLETED');
   });
 
+  test('records administrative actual evidence without invalidating the effective package', async () => {
+    const recorded = await call('ftf_create_mission_amendment', [
+      orgA, actorA, ids.mission, 2,
+      JSON.stringify({ actualFlightHours: '1.0000' }),
+      JSON.stringify({ actualFlightHours: '2.0000' }),
+      'Corrected aircraft time from the daily log.',
+    ]);
+    expect(recorded).toMatchObject({ classification: 'ADMINISTRATIVE', reasons: [], changed_keys: ['actualFlightHours'], package_revision: null });
+    expect(await scalar(db, `select max(version_number)::integer as value from public.mission_pack_revisions where organisation_id='${orgA}' and mission_id='${ids.mission}'`)).toBe(2);
+    expect(await scalar(db, `select current_authorised_pack_revision_id::text as value from public.missions where organisation_id='${orgA}' and id='${ids.mission}'`)).toBe(pack.id);
+  });
+
   test('fails closed when a newer unapproved package makes a reviewed day stale', async () => {
     const next = await call('ftf_create_mission_operating_day', [orgA, actorA, ids.mission, '2026-09-06', null]);
     const reviewed = await call('ftf_review_mission_day_jsa', [orgA, actorA, ids.mission, next.day.id, 1, 'CONDITIONS_COVERED', null]);
     const newer = await call('ftf_save_mission_package_scope', [orgA, actorA, ids.mission, 2, JSON.stringify([ids.fieldA, ids.fieldB])]);
     expect(newer.record.version_number).toBe(3);
     expect(await call('ftf_start_mission_operating_day', [orgA, actorA, ids.mission, next.day.id, reviewed.day.row_version, '2026-09-05T15:30:00.000Z'])).toMatchObject({ error: 'MISSION_PACKAGE_STALE' });
+  });
+
+  test('creates a prospective material revision while preserving completed-day authority', async () => {
+    const amended = await call('ftf_create_mission_amendment', [
+      orgA, actorA, ids.mission, 3,
+      JSON.stringify({ fieldIds: [ids.fieldA] }),
+      JSON.stringify({ fieldIds: [ids.fieldA, ids.fieldB] }),
+      'Second Field added after site review.',
+    ]);
+    expect(amended).toMatchObject({ classification: 'MATERIAL', reasons: ['FIELD_SCOPE_CHANGED'], changed_keys: ['fieldIds'] });
+    expect(amended.package_revision.record).toMatchObject({ version_number: 4, package_state: 'PREPARING' });
+    expect(await scalar(db, `select current_authorised_pack_revision_id::text as value from public.missions where organisation_id='${orgA}' and id='${ids.mission}'`)).toBe(pack.id);
+    expect(await scalar(db, `select mission_pack_revision_id::text as value from public.mission_operating_days where id='${day.day.id}'`)).toBe(pack.id);
+    expect(await call('ftf_create_mission_operating_day', [orgA, actorA, ids.mission, '2026-09-07', null])).toMatchObject({ error: 'MISSION_PACKAGE_STALE' });
   });
 
   test('returns bounded day aggregates and writes audit plus outbox events', async () => {

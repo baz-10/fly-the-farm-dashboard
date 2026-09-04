@@ -5,6 +5,7 @@ import { missionOperationsApi } from '../../services/missionOperationsApi';
 
 type CrpApi = Pick<typeof missionOperationsApi, 'authorise' | 'reject'>;
 const staleCodes = new Set(['MISSION_PACKAGE_VERSION_CONFLICT', 'MISSION_PACKAGE_EVIDENCE_STALE', 'MISSION_PACKAGE_DECISION_CONFLICT']);
+const amendmentReasonLabel = (reason: string) => reason.split('_').map((part, index) => part === 'JSA' ? part : index === 0 ? `${part[0]}${part.slice(1).toLowerCase()}` : part.toLowerCase()).join(' ');
 
 export default function MissionCrpReview({
   missionId,
@@ -14,6 +15,7 @@ export default function MissionCrpReview({
   decision,
   onDecision,
   onReload,
+  amendmentReasons = [],
 }: {
   missionId: string;
   packageRevision: MissionPackageRevision;
@@ -22,6 +24,7 @@ export default function MissionCrpReview({
   decision?: CrpDecision | null;
   onDecision?: (decision: CrpDecision) => void;
   onReload?: () => void;
+  amendmentReasons?: string[];
 }) {
   const [authorisationDeclaration, setAuthorisationDeclaration] = React.useState('I confirm I have reviewed this exact Mission package and authorise it to proceed.');
   const [rejectionReason, setRejectionReason] = React.useState('');
@@ -68,6 +71,13 @@ export default function MissionCrpReview({
       <Stack spacing={0.25}><Typography variant="h6" fontWeight={900}>CRP package review</Typography><Typography variant="body2" color="text.secondary">Review and decide on this immutable revision only.</Typography></Stack>
       <Chip label={`Revision ${packageRevision.revisionNumber}`} color="primary" variant="outlined" />
     </Stack>
+    {amendmentReasons.length > 0 && <Alert severity="warning">
+      <Stack spacing={0.5}>
+        <Typography variant="body2">Further operating-day starts are on hold pending CRP approval.</Typography>
+        <Typography variant="body2">Completed and already-started days retain their governing package and JSA revisions.</Typography>
+        <Typography variant="caption">{amendmentReasons.map(amendmentReasonLabel).join(' · ')}</Typography>
+      </Stack>
+    </Alert>}
     <Stack spacing={0.5} divider={<Divider flexItem />}>
       <Typography variant="body2"><strong>Package state:</strong> {packageRevision.state.replaceAll('_', ' ')}</Typography>
       <Typography variant="body2"><strong>JSA revision:</strong> {packageRevision.jsaRevisionId}</Typography>

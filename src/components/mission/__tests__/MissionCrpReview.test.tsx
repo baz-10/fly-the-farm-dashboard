@@ -82,6 +82,20 @@ describe('MissionCrpReview', () => {
     expect(screen.queryByRole('button', { name: 'Authorise Mission' })).not.toBeInTheDocument();
   });
 
+  test('explains the prospective hold without implying completed days changed authority', () => {
+    render(<MissionCrpReview
+      missionId={missionId}
+      packageRevision={{ ...packageRevision, state: 'PREPARING' }}
+      api={{ authorise: jest.fn(), reject: jest.fn() }}
+      amendmentReasons={['FIELD_SCOPE_CHANGED', 'JSA_CONTROLS_CHANGED']}
+    />);
+
+    expect(screen.getByText('Further operating-day starts are on hold pending CRP approval.')).toBeVisible();
+    expect(screen.getByText('Completed and already-started days retain their governing package and JSA revisions.')).toBeVisible();
+    expect(screen.getByText(/Field scope changed/)).toBeVisible();
+    expect(screen.getByText(/JSA controls changed/)).toBeVisible();
+  });
+
   test('removes the decision action when the server finds the operator ineligible as CRP', async () => {
     const user = userEvent.setup();
     const api = {

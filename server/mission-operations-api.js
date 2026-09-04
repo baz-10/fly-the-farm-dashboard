@@ -8,6 +8,7 @@ const DECIMAL6 = /^(?:0|[1-9]\d{0,11})\.\d{6}$/;
 const ACTIONS = Object.freeze({
   scope: { method: 'POST', permission: 'mission.pack.generate' },
   submit: { method: 'POST', permission: 'mission.pack.generate' },
+  amend: { method: 'POST', permission: 'mission.pack.generate' },
   authorise: { method: 'POST', permission: 'mission.authorisation.authorise' },
   reject: { method: 'POST', permission: 'mission.authorisation.authorise' },
   history: { method: 'GET', permissionsAny: ['mission.pack.read', 'mission.authorisation.read'] },
@@ -311,6 +312,14 @@ function declaration(value) {
   return value.trim();
 }
 
+function amendmentValues(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+    || Object.keys(value).length > 64 || JSON.stringify(value).length > 65536) {
+    fail(400, 'MISSION_OPERATIONS_REQUEST_INVALID', 'Mission amendment values are invalid.');
+  }
+  return value;
+}
+
 function permitted(context, definition) {
   const permissions = context.permissions || [];
   if (permissions.includes('*')) return true;
@@ -345,12 +354,14 @@ function checkedFailure(req, result) {
     return errorResponse(req, 404, 'NOT_FOUND', 'Mission operating-day record was not found.');
   }
   if (code === 'MISSION_CRP_INELIGIBLE') return errorResponse(req, 403, 'CRP_INELIGIBLE', 'The signed-in user is not an eligible CRP for this Mission Base.');
-  if (['MISSION_PACKAGE_VERSION_CONFLICT', 'MISSION_PACKAGE_EVIDENCE_STALE', 'MISSION_PACKAGE_DECISION_CONFLICT'].includes(code)) {
+  if (['MISSION_PACKAGE_VERSION_CONFLICT', 'MISSION_PACKAGE_EVIDENCE_STALE', 'MISSION_PACKAGE_DECISION_CONFLICT', 'MISSION_AMENDMENT_BEFORE_MISMATCH'].includes(code)) {
     const message = code === 'MISSION_PACKAGE_EVIDENCE_STALE'
       ? 'Mission package evidence changed. Reload before continuing.'
       : code === 'MISSION_PACKAGE_DECISION_CONFLICT'
         ? 'A CRP decision already exists for this package revision.'
-        : 'Mission package revision changed in another session.';
+        : code === 'MISSION_AMENDMENT_BEFORE_MISMATCH'
+          ? 'Mission amendment predecessor changed. Reload before continuing.'
+          : 'Mission package revision changed in another session.';
     return errorResponse(req, 409, code, message, result);
   }
   if (['MISSION_NOT_AUTHORISED', 'JSA_DAY_REVIEW_REQUIRED', 'MISSION_PACKAGE_STALE',
@@ -385,7 +396,7 @@ function checkedFailure(req, result) {
     'MISSION_DAY_WEATHER_COVERAGE_INVALID'].includes(code)) {
     return errorResponse(req, 400, code, 'Mission operating-day input is invalid.');
   }
-  if (['MISSION_SCOPE_EMPTY', 'MISSION_SCOPE_FIELD_INVALID', 'MISSION_SCOPE_FIELD_DUPLICATE', 'MISSION_SCOPE_FIELD_NOT_IN_JOB', 'MISSION_PACKAGE_JSA_REQUIRED', 'MISSION_PACKAGE_DECISION_INVALID', 'MISSION_PACKAGE_DECLARATION_INVALID'].includes(code)) {
+  if (['MISSION_SCOPE_EMPTY', 'MISSION_SCOPE_FIELD_INVALID', 'MISSION_SCOPE_FIELD_DUPLICATE', 'MISSION_SCOPE_FIELD_NOT_IN_JOB', 'MISSION_PACKAGE_JSA_REQUIRED', 'MISSION_PACKAGE_DECISION_INVALID', 'MISSION_PACKAGE_DECLARATION_INVALID', 'MISSION_AMENDMENT_INPUT_INVALID', 'MISSION_AMENDMENT_REASON_INVALID', 'MISSION_AMENDMENT_NO_CHANGE', 'MISSION_AMENDMENT_AFTER_MISMATCH'].includes(code)) {
     return errorResponse(req, 400, code, 'Mission package input is invalid.');
   }
   return errorResponse(req, 500, 'MISSION_OPERATIONS_UNAVAILABLE', 'Mission Operations are temporarily unavailable.');
@@ -457,6 +468,16 @@ function createMissionOperationsHandler(dependencies = {}) {
           packageRevisionId: uuid(body.packageRevisionId, 'Package revision'),
           expectedRevision: revision(body.expectedRevision),
           evidenceDigest: digest(body.evidenceDigest),
+        });
+        status = 201;
+      } else if (action === 'amend') {
+        const body = exactObject(req.body, ['missionId', 'expectedRevision', 'before', 'after', 'reason']);
+        result = await repository.createAmendment(context, {
+          missionId: uuid(body.missionId, 'Mission'),
+          expectedRevision: revision(body.expectedRevision),
+          before: amendmentValues(body.before),
+          after: amendmentValues(body.after),
+          reason: boundedText(body.reason, 'Amendment reason', 2000),
         });
         status = 201;
       } else if (action === 'authorise' || action === 'reject') {

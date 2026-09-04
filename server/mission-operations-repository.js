@@ -29,6 +29,17 @@ function packageRevision(result) {
   };
 }
 
+function amendment(result) {
+  const failed = failure(result);
+  if (failed) return failed;
+  return {
+    classification: result.classification,
+    reasons: result.reasons || [],
+    changedKeys: result.changed_keys || [],
+    packageRevision: result.package_revision ? packageRevision(result.package_revision) : null,
+  };
+}
+
 function crpDecision(result) {
   const failed = failure(result);
   if (failed) return failed;
@@ -297,6 +308,17 @@ class MissionOperationsRepository {
       p_expected_revision: expectedRevision,
       p_evidence_digest: evidenceDigest,
     }, 'Mission package could not be submitted.'));
+  }
+
+  async createAmendment(context, { missionId, expectedRevision, before, after, reason }) {
+    return amendment(await this.rpc('ftf_create_mission_amendment', {
+      ...this.trusted(context),
+      p_mission_id: missionId,
+      p_expected_revision: expectedRevision,
+      p_before: before,
+      p_after: after,
+      p_reason: reason,
+    }, 'Mission amendment could not be recorded.'));
   }
 
   async decide(context, { missionId, packageRevisionId, expectedRevision, evidenceDigest, decision, declaration }) {
