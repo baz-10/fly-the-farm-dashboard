@@ -38,3 +38,41 @@ test('derives the snapshot server-side under canonical final-signoff locks', () 
   expect(sql).not.toMatch(/grant execute[\s\S]+ftf_build_mission_report_evidence_manifest[\s\S]+authenticated/);
   expect(sql).toContain('from public,anon,authenticated,service_role');
 });
+
+test('validates every included Base-scoped source before freezing evidence', () => {
+  const sql = migration();
+  for (const table of [
+    'mission_pack_fields', 'mission_jsa_revisions', 'mission_day_jsa_reviews',
+    'mission_day_field_activity', 'mission_aircraft_day_actuals', 'mission_flight_actuals',
+    'mission_day_chemical_revisions', 'mission_day_chemical_lines', 'mission_day_weather_reports',
+    'mission_operational_import_attributions', 'mission_operational_imports',
+  ]) expect(sql).toMatch(new RegExp(`${table}[\\s\\S]{0,240}operating_location_id`));
+  expect(sql).toContain('mission_report_evidence_invalid: base');
+});
+
+test('locks display and evidence rows in a documented deterministic order before either manifest is built', () => {
+  const sql = migration();
+  expect(sql).toContain('mission_report_evidence_lock_order_v1');
+  for (const table of [
+    'clients', 'properties', 'fields', 'aircraft', 'jobs', 'mission_pack_revisions',
+    'mission_operating_days', 'mission_day_jsa_reviews', 'mission_day_field_activity',
+    'mission_aircraft_day_actuals', 'mission_flight_actuals', 'mission_day_chemical_revisions',
+    'mission_day_chemical_lines', 'mission_day_weather_reports',
+    'mission_operational_import_attributions', 'mission_operational_imports',
+  ]) expect(sql).toMatch(new RegExp(`lock rows: ${table}`));
+  expect(sql.indexOf('v_report:=public.ftf_build_mission_report_evidence_manifest')).toBeLessThan(
+    sql.indexOf('v_daily:=public.ftf_build_mission_daily_evidence_manifest_before_report_evidence'),
+  );
+});
+
+test('checks explicit preconstruction bounds for each frozen collection and nested array', () => {
+  const sql = migration();
+  for (const bound of [
+    'operating_days', 'field_activities', 'aircraft_day_actuals', 'flight_actuals',
+    'chemical_revisions', 'chemical_lines', 'weather_reports', 'weather_observations',
+    'weather_gaps', 'import_attributions', 'package_history', 'decision_history',
+    'jsa_history', 'planned_chemical_revisions', 'planned_chemical_lines',
+    'flight_line_imports', 'exception_history',
+  ]) expect(sql).toContain(`bound: ${bound}`);
+  expect(sql).toContain('mission_report_evidence_bound_exceeded');
+});

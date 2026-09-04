@@ -51,6 +51,7 @@ test('flight-line evidence keeps one immutable artefact with bounded explicit at
 const ids = {
   authA: '10000000-0000-4000-8000-000000000001',
   authB: '10000000-0000-4000-8000-000000000002',
+  baseAlt: '10000000-0000-4000-8000-000000000003',
   client: '20000000-0000-4000-8000-000000000001',
   property: '30000000-0000-4000-8000-000000000001',
   field: '40000000-0000-4000-8000-000000000001',
@@ -120,6 +121,8 @@ if (child) {
     orgA = a.organisation_id; actorA = a.internal_user_id; baseA = a.operating_location_id;
     orgB = b.organisation_id; actorB = b.internal_user_id;
     await db.exec(`
+      insert into public.operating_locations(id,organisation_id,name,timezone)
+        values('${ids.baseAlt}','${orgA}','Base A alternate','Australia/Brisbane');
       insert into public.clients(id,organisation_id,name) values('${ids.client}','${orgA}','Client A');
       insert into public.properties(id,organisation_id,client_id,name) values('${ids.property}','${orgA}','${ids.client}','Property A');
       insert into public.fields(id,organisation_id,property_id,name,area_hectares) values('${ids.field}','${orgA}','${ids.property}','Field A',10);
@@ -469,6 +472,29 @@ if (child) {
       insert into public.mission_operational_events(
         id,organisation_id,operating_location_id,mission_id,batch_version,event_index,event_type,event_details,no_events_declaration,recorded_by_internal_user_id
       ) values('${eventId}','${orgA}','${baseA}','${ids.mission}',1,0,'NO_OPERATIONAL_EVENTS','{}',true,'${actorA}');
+    `);
+    await db.exec('begin');
+    await db.exec(`insert into public.mission_operational_import_attributions(
+      organisation_id,operating_location_id,mission_id,operational_import_id,aircraft_id,attribution_confidence,attributed_by_internal_user_id
+    ) select '${orgA}','${ids.baseAlt}','${ids.mission}',id,'${ids.aircraftC}','OPERATOR_CONFIRMED','${actorA}'
+      from public.mission_operational_imports where organisation_id='${orgA}' and mission_id='${ids.mission}' limit 1`);
+    await expect(call('ftf_build_mission_report_evidence_manifest', [orgA, ids.mission]))
+      .rejects.toThrow(/MISSION_REPORT_EVIDENCE_INVALID: base/);
+    await db.exec('rollback');
+    expect(await scalar(db, `select count(*)::integer as value from public.mission_operational_import_attributions where operating_location_id='${ids.baseAlt}'`)).toBe(0);
+
+    await db.exec('begin');
+    await db.exec(`insert into public.mission_operating_days(
+      id,organisation_id,operating_location_id,mission_id,work_date,timezone,mission_pack_revision_id,jsa_revision_id,state,
+      created_by_internal_user_id,updated_by_internal_user_id
+    ) select gen_random_uuid(),'${orgA}','${baseA}','${ids.mission}',date '2030-01-01'+day_offset,'Australia/Brisbane','${ids.pack}','${ids.jsa}','DRAFT','${actorA}','${actorA}'
+      from generate_series(0,366) day_offset`);
+    await expect(call('ftf_build_mission_report_evidence_manifest', [orgA, ids.mission]))
+      .rejects.toThrow(/MISSION_REPORT_EVIDENCE_BOUND_EXCEEDED/);
+    await db.exec('rollback');
+    expect(await scalar(db, `select count(*)::integer as value from public.mission_operating_days where mission_id='${ids.mission}' and work_date>=date '2030-01-01'`)).toBe(0);
+
+    await db.exec(`
       insert into public.mission_completion_revisions(
         organisation_id,operating_location_id,mission_id,version_number,authorisation_revision_id,operational_revision_id,
         completion_snapshot,declaration,completed_by_internal_user_id,daily_evidence_manifest,daily_evidence_digest
@@ -488,6 +514,9 @@ if (child) {
     const frozenDigest = await scalar(db, `select daily_evidence_digest as value from public.mission_completion_revisions where mission_id='${ids.mission}'`);
     const retry = await call('ftf_final_signoff_mission', [orgA, actorA, ids.mission, 1, 'Final']);
     expect(retry).toMatchObject({ idempotent: true, record: { version_number: 1, daily_evidence_digest: frozenDigest } });
+    await db.exec(`update public.clients set name='Client A renamed after final' where organisation_id='${orgA}' and id='${ids.client}'`);
+    expect(await scalar(db, `select daily_evidence_manifest->'reportEvidence'->'scope'->'client'->>'name' as value from public.mission_completion_revisions where mission_id='${ids.mission}'`)).toBe('Client A');
+    expect(await scalar(db, `select daily_evidence_digest as value from public.mission_completion_revisions where mission_id='${ids.mission}'`)).toBe(frozenDigest);
     expect(await scalar(db, "select count(*)::integer as value from pg_trigger where tgname='aaa_mission_terminal_guard' and not tgisinternal")).toBe(15);
     const before = await scalar(db, `select count(*)::integer as value from public.mission_operational_events where mission_id='${ids.mission}'`);
     await expect(call('ftf_save_mission_operational_events', [orgA, actorA, ids.mission, 0, '[]']))

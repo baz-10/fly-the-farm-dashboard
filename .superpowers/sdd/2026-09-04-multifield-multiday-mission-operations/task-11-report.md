@@ -38,19 +38,27 @@
 - The final digest remains the canonical SHA-256 of the complete `daily_evidence_manifest`, so report evidence cannot be altered without invalidating the completion digest. Exact final-sign-off retries return the already frozen revision and never recalculate it.
 - Executable PostgreSQL coverage proves snapshot content, deterministic aircraft ordering, safe flight-line references, cross-organisation denial, exact-retry identity/digest stability and post-final mutation immutability.
 
+## Task 11B review round 1
+
+- Final freezing now validates every included Base-scoped relationship against the exact Mission organisation/Base: packages, approval/JSA authority, package Fields, days, daily JSA reviews and Field activity, aircraft totals/flights and aircraft identity, chemical actuals/lines and planned revisions, weather/source observations, flight-line imports/attributions, and amendments.
+- A documented `MISSION_REPORT_EVIDENCE_LOCK_ORDER_V1` locks the live display identities and mutable evidence rows in a fixed table and UUID order before construction. The report-evidence half runs first and retains those locks while the canonical daily half is constructed, preventing a mixed snapshot through governed writers.
+- Explicit preconstruction limits now cover days, daily JSA reviews, Field activities, aircraft totals and flights, chemical revisions/lines, weather reports/observations/gaps, import attributions, package/decision/JSA histories, planned chemical revisions/lines, flight-line imports and exception history. The one-mebibyte JSON limit remains defense in depth.
+- Executable PostgreSQL transactions prove a cross-Base attribution and an over-bound 367-day input both fail with zero retained mutation. A permitted post-final Client rename proves the frozen Client identity and digest remain unchanged.
+- PGlite cannot run two independent sessions to measure blocking time. Serialization is therefore evidenced by full migration execution, the explicit lock-order catalogue, shared aggregate lock participation, and transactional failure/rollback tests; real two-session lock timing remains an integration-level check.
+
 ## RED evidence
 
 The first focused run failed for the intended missing migration, absent `MissionFinalSignoff` component and unsupported API actions. The lifecycle refinement also identified and corrected the existing-closeout compatibility case: revision 1 may already exist, so final sign-off must append rather than overwrite or falsely return it.
 
 ## Verification
 
-- Focused Task 11/11B authority/API/decoder/UI/Financial/Fleet/migration suite: 10 suites / 86 tests PASS.
+- Focused Task 11/11B authority/API/decoder/UI/Financial/Fleet/migration suite: 10 suites / 89 tests PASS.
 - Full-chain PGlite migration execution and Fleet behavior: PASS, including an executable multi-day final-sign-off fail-closed/zero-mutation assertion.
 - Production build: PASS with the repository's pre-existing Browserslist, lint-warning and bundle-size warning backlog.
 - Targeted ESLint: zero errors; six pre-existing unused-import warnings remain in `JobDetail.tsx`.
 - `git diff --check`: PASS.
 - Migration SHA-256: `7586956d1652e8ca5b4a20da86113a64cec41dd4dcd17a522f82b540d057c743`.
-- Task 11B migration SHA-256: `f1f5a155fffb443c7115a75d3e805c8eced68c3f1b822eb25b3ea7e1a6ae7acf`.
+- Task 11B migration SHA-256: `8762f93e6d56f95681acdb7575a936135f0e07243aca6872e55f3fd6060ed7cc`.
 
 ## Files
 
