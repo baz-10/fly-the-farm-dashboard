@@ -3,6 +3,8 @@ import {
   decodeCrpDecision,
   decodeMissionPackageHistory,
   decodeMissionPackageRevision,
+  decodeMissionOperatingDay,
+  decodeMissionOperatingDays,
 } from '../missionOperationsApi';
 
 const MISSION_ID = '11111111-1111-4111-8111-111111111111';
@@ -13,6 +15,9 @@ const FIELD_B = '55555555-5555-4555-8555-555555555555';
 const DECISION_ID = '66666666-6666-4666-8666-666666666666';
 const ACTOR_ID = '77777777-7777-4777-8777-777777777777';
 const DIGEST = 'a'.repeat(64);
+const DAY_ID = '88888888-8888-4888-8888-888888888888';
+const REVIEW_ID = '99999999-9999-4999-8999-999999999999';
+const ACTIVITY_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 
 const packageRevision = {
   id: PACKAGE_ID,
@@ -32,6 +37,51 @@ const decision = {
   decidedByInternalUserId: ACTOR_ID,
   decidedAt: '2026-09-04T11:00:00.000Z',
   declaration: 'I confirm this exact operational package.',
+};
+
+const jsaReview = {
+  id: REVIEW_ID,
+  operatingDayId: DAY_ID,
+  missionId: MISSION_ID,
+  jsaRevisionId: JSA_ID,
+  outcome: 'CONDITIONS_COVERED',
+  notes: 'Conditions unchanged.',
+  reviewedByInternalUserId: ACTOR_ID,
+  reviewedAt: '2026-09-04T15:20:00.000Z',
+};
+
+const fieldActivity = {
+  id: ACTIVITY_ID,
+  operatingDayId: DAY_ID,
+  missionId: MISSION_ID,
+  fieldId: FIELD_A,
+  hectaresAttempted: '1.250000',
+  hectaresCompleted: '1.000000',
+  startedAt: '2026-09-04T15:45:00.000Z',
+  finishedAt: null,
+  status: 'IN_PROGRESS',
+  notes: null,
+  rowVersion: 1,
+  createdAt: '2026-09-04T15:40:00.000Z',
+  updatedAt: '2026-09-04T15:40:00.000Z',
+};
+
+const operatingDay = {
+  id: DAY_ID,
+  missionId: MISSION_ID,
+  workDate: '2026-09-05',
+  timezone: 'Australia/Brisbane',
+  packageRevisionId: PACKAGE_ID,
+  jsaRevisionId: JSA_ID,
+  state: 'IN_PROGRESS',
+  actualStartedAt: '2026-09-04T15:30:00.000Z',
+  actualFinishedAt: null,
+  notes: null,
+  rowVersion: 3,
+  createdAt: '2026-09-04T12:00:00.000Z',
+  updatedAt: '2026-09-04T15:30:00.000Z',
+  jsaReview,
+  fieldActivities: [fieldActivity],
 };
 
 function response(data: unknown, status = 200) {
@@ -139,5 +189,57 @@ describe('Mission Operations strict contracts', () => {
       ['/api/v1/mission-operations?action=reject', expect.objectContaining({ method: 'POST', credentials: 'same-origin', body: JSON.stringify({ missionId: MISSION_ID, packageRevisionId: PACKAGE_ID, expectedRevision: 4, evidenceDigest: DIGEST, declaration: 'Operational map requires correction.' }) })],
       [`/api/v1/mission-operations?action=history&missionId=${MISSION_ID}`, expect.objectContaining({ method: 'GET', credentials: 'same-origin' })],
     ]);
+  });
+
+  test('decodes local dates and canonical numeric(18,6) hectares without conversion', () => {
+    expect(decodeMissionOperatingDay(operatingDay)).toEqual(operatingDay);
+    expect(decodeMissionOperatingDays({ missionId: MISSION_ID, days: [operatingDay] })).toEqual({ missionId: MISSION_ID, days: [operatingDay] });
+    expect(() => decodeMissionOperatingDay({ ...operatingDay, workDate: '2026-02-30' })).toThrow(expect.objectContaining({ code: 'MALFORMED_RESPONSE' }));
+    expect(() => decodeMissionOperatingDay({ ...operatingDay, actualStartedAt: '2026-02-30T01:00:00.000Z' })).toThrow(expect.objectContaining({ code: 'MALFORMED_RESPONSE' }));
+    expect(() => decodeMissionOperatingDay({ ...operatingDay, fieldActivities: [{ ...fieldActivity, hectaresAttempted: 1.25 }] })).toThrow(expect.objectContaining({ code: 'MALFORMED_RESPONSE' }));
+    expect(() => decodeMissionOperatingDay({ ...operatingDay, fieldActivities: [{ ...fieldActivity, hectaresAttempted: '1.25' }] })).toThrow(expect.objectContaining({ code: 'MALFORMED_RESPONSE' }));
+    expect(() => decodeMissionOperatingDay({ ...operatingDay, secret: 'must fail closed' })).toThrow(expect.objectContaining({ code: 'MALFORMED_RESPONSE' }));
+  });
+
+  test('sends exact operating-day commands with local dates and decimal strings', async () => {
+    const fetcher = jest.fn().mockImplementation((url: string) => response(
+      url.includes('action=days') ? { missionId: MISSION_ID, days: [operatingDay] } : operatingDay,
+    ));
+    const api = createMissionOperationsApi(fetcher as typeof fetch);
+    await api.createDay(MISSION_ID, '2026-09-05', null);
+    await api.reviewJsa(MISSION_ID, DAY_ID, 1, 'CONDITIONS_COVERED', 'Conditions unchanged.');
+    await api.startDay(MISSION_ID, DAY_ID, 2, '2026-09-04T15:30:00.000Z');
+    await api.saveFieldActivity(MISSION_ID, DAY_ID, null, 0, {
+      fieldId: FIELD_A,
+      hectaresAttempted: '1.250000',
+      hectaresCompleted: '1.000000',
+      startedAt: '2026-09-04T15:45:00.000Z',
+      finishedAt: null,
+      status: 'IN_PROGRESS',
+      notes: null,
+    });
+    await api.completeDay(MISSION_ID, DAY_ID, 4, '2026-09-05T17:00:00.000Z', 'Overnight operation.');
+    await api.readDays(MISSION_ID);
+    expect(fetcher.mock.calls.map(([url]) => url)).toEqual([
+      '/api/v1/mission-operations?action=day-create',
+      '/api/v1/mission-operations?action=day-jsa-review',
+      '/api/v1/mission-operations?action=day-start',
+      '/api/v1/mission-operations?action=field-activity-save',
+      '/api/v1/mission-operations?action=day-complete',
+      `/api/v1/mission-operations?action=days&missionId=${MISSION_ID}`,
+    ]);
+    expect(JSON.parse(String(fetcher.mock.calls[3][1]?.body))).toEqual({
+      missionId: MISSION_ID,
+      dayId: DAY_ID,
+      activityId: null,
+      expectedVersion: 0,
+      fieldId: FIELD_A,
+      hectaresAttempted: '1.250000',
+      hectaresCompleted: '1.000000',
+      startedAt: '2026-09-04T15:45:00.000Z',
+      finishedAt: null,
+      status: 'IN_PROGRESS',
+      notes: null,
+    });
   });
 });

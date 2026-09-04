@@ -9,6 +9,12 @@ const ACTIONS = Object.freeze({
   authorise: { method: 'POST', permission: 'mission.authorisation.authorise' },
   reject: { method: 'POST', permission: 'mission.authorisation.authorise' },
   history: { method: 'GET', permissionsAny: ['mission.pack.read', 'mission.authorisation.read'] },
+  'day-create': { method: 'POST', permission: 'mission.operational.write' },
+  'day-jsa-review': { method: 'POST', permission: 'mission.operational.write' },
+  'day-start': { method: 'POST', permission: 'mission.operational.write' },
+  'field-activity-save': { method: 'POST', permission: 'mission.operational.write' },
+  'day-complete': { method: 'POST', permission: 'mission.operational.write' },
+  days: { method: 'GET', permission: 'mission.operational.read' },
 });
 
 function fail(statusCode, code, message) {
@@ -31,6 +37,67 @@ function uuid(value, name) {
 
 function revision(value) {
   if (!Number.isInteger(value) || value < 0) fail(400, 'MISSION_OPERATIONS_REQUEST_INVALID', 'Expected revision is invalid.');
+  return value;
+}
+
+function optionalUuid(value, name) {
+  return value === null ? null : uuid(value, name);
+}
+
+function canonicalDate(value) {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    fail(400, 'MISSION_OPERATIONS_REQUEST_INVALID', 'Operating date is invalid.');
+  }
+  const [year, month, day] = value.split('-').map(Number);
+  const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const monthLengths = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  if (year < 1 || month < 1 || month > 12 || day < 1 || day > monthLengths[month - 1]) {
+    fail(400, 'MISSION_OPERATIONS_REQUEST_INVALID', 'Operating date is invalid.');
+  }
+  return value;
+}
+
+function timestamp(value, name) {
+  if (typeof value !== 'string'
+    || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})$/.test(value)
+    || !Number.isFinite(Date.parse(value))) {
+    fail(400, 'MISSION_OPERATIONS_REQUEST_INVALID', `${name} is invalid.`);
+  }
+  canonicalDate(value.slice(0, 10));
+  return value;
+}
+
+function optionalTimestamp(value, name) {
+  return value === null ? null : timestamp(value, name);
+}
+
+function optionalNotes(value) {
+  const hasControlCharacter = typeof value === 'string'
+    && value.split('').some((character) => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127);
+  if (value !== null && (typeof value !== 'string' || value.length < 1 || value.length > 4000 || value.trim() !== value || hasControlCharacter)) {
+    fail(400, 'MISSION_OPERATIONS_REQUEST_INVALID', 'Notes are invalid.');
+  }
+  return value;
+}
+
+function decimalHectares(value) {
+  if (value !== null && (typeof value !== 'string' || !/^(?:0|[1-9]\d{0,11})\.\d{6}$/.test(value))) {
+    fail(400, 'MISSION_OPERATIONS_REQUEST_INVALID', 'Hectares are invalid.');
+  }
+  return value;
+}
+
+function reviewOutcome(value) {
+  if (!['CONDITIONS_COVERED', 'CHANGE_DECLARED'].includes(value)) {
+    fail(400, 'MISSION_OPERATIONS_REQUEST_INVALID', 'JSA review outcome is invalid.');
+  }
+  return value;
+}
+
+function activityStatus(value) {
+  if (!['PLANNED', 'IN_PROGRESS', 'COMPLETED', 'NOT_WORKED'].includes(value)) {
+    fail(400, 'MISSION_OPERATIONS_REQUEST_INVALID', 'Field activity status is invalid.');
+  }
   return value;
 }
 
@@ -84,6 +151,9 @@ function checkedFailure(req, result) {
   const code = result.error;
   if (!code) return null;
   if (code === 'MISSION_PACKAGE_NOT_FOUND') return errorResponse(req, 404, 'NOT_FOUND', 'Mission package was not found.');
+  if (['MISSION_OPERATING_DAY_NOT_FOUND', 'MISSION_FIELD_ACTIVITY_NOT_FOUND'].includes(code)) {
+    return errorResponse(req, 404, 'NOT_FOUND', 'Mission operating-day record was not found.');
+  }
   if (code === 'MISSION_CRP_INELIGIBLE') return errorResponse(req, 403, 'CRP_INELIGIBLE', 'The signed-in user is not an eligible CRP for this Mission Base.');
   if (['MISSION_PACKAGE_VERSION_CONFLICT', 'MISSION_PACKAGE_EVIDENCE_STALE', 'MISSION_PACKAGE_DECISION_CONFLICT'].includes(code)) {
     const message = code === 'MISSION_PACKAGE_EVIDENCE_STALE'
@@ -92,6 +162,24 @@ function checkedFailure(req, result) {
         ? 'A CRP decision already exists for this package revision.'
         : 'Mission package revision changed in another session.';
     return errorResponse(req, 409, code, message, result);
+  }
+  if (['MISSION_NOT_AUTHORISED', 'JSA_DAY_REVIEW_REQUIRED', 'MISSION_PACKAGE_STALE',
+    'MISSION_OPERATING_DAY_VERSION_CONFLICT', 'MISSION_OPERATING_DATE_CONFLICT',
+    'MISSION_OPERATING_DAY_STATE_INVALID', 'MISSION_OPERATING_DAY_SIGNED_OFF',
+    'MISSION_FIELD_ACTIVITY_VERSION_CONFLICT', 'MISSION_FIELD_ACTIVITY_CONFLICT',
+    'JSA_DAY_REVIEW_CONFLICT', 'MISSION_DAY_FIELD_ACTIVITY_REQUIRED'].includes(code)) {
+    const messages = {
+      MISSION_NOT_AUTHORISED: 'The Mission requires current CRP authority.',
+      JSA_DAY_REVIEW_REQUIRED: 'Review the effective Mission JSA before starting this operating day.',
+      MISSION_PACKAGE_STALE: 'The operating day is not bound to the current approved Mission package.',
+      MISSION_OPERATING_DATE_CONFLICT: 'An operating day already exists for this Base-local date.',
+    };
+    return errorResponse(req, 409, code, messages[code] || 'The Mission operating day changed in another session.', result);
+  }
+  if (['MISSION_DAY_FIELD_NOT_AUTHORISED', 'MISSION_OPERATING_DAY_INPUT_INVALID',
+    'MISSION_DAY_JSA_REVIEW_INVALID', 'MISSION_OPERATING_TIME_INVALID',
+    'MISSION_FIELD_ACTIVITY_INPUT_INVALID'].includes(code)) {
+    return errorResponse(req, 400, code, 'Mission operating-day input is invalid.');
   }
   if (['MISSION_SCOPE_EMPTY', 'MISSION_SCOPE_FIELD_INVALID', 'MISSION_SCOPE_FIELD_DUPLICATE', 'MISSION_SCOPE_FIELD_NOT_IN_JOB', 'MISSION_PACKAGE_JSA_REQUIRED', 'MISSION_PACKAGE_DECISION_INVALID', 'MISSION_PACKAGE_DECLARATION_INVALID'].includes(code)) {
     return errorResponse(req, 400, code, 'Mission package input is invalid.');
@@ -128,6 +216,8 @@ function createMissionOperationsHandler(dependencies = {}) {
       let status = 200;
       if (action === 'history') {
         result = await repository.readPackageHistory(context, uuid(req.query?.missionId, 'Mission'));
+      } else if (action === 'days') {
+        result = await repository.readDays(context, uuid(req.query?.missionId, 'Mission'));
       } else if (action === 'scope') {
         const body = exactObject(req.body, ['missionId', 'expectedRevision', 'fieldIds']);
         result = await repository.saveScope(context, {
@@ -145,7 +235,7 @@ function createMissionOperationsHandler(dependencies = {}) {
           evidenceDigest: digest(body.evidenceDigest),
         });
         status = 201;
-      } else {
+      } else if (action === 'authorise' || action === 'reject') {
         const body = exactObject(req.body, ['missionId', 'packageRevisionId', 'expectedRevision', 'evidenceDigest', 'declaration']);
         result = await repository.decide(context, {
           missionId: uuid(body.missionId, 'Mission'),
@@ -156,6 +246,57 @@ function createMissionOperationsHandler(dependencies = {}) {
           declaration: declaration(body.declaration),
         });
         status = 201;
+      } else if (action === 'day-create') {
+        const body = exactObject(req.body, ['missionId', 'workDate', 'notes']);
+        result = await repository.createDay(context, {
+          missionId: uuid(body.missionId, 'Mission'),
+          workDate: canonicalDate(body.workDate),
+          notes: optionalNotes(body.notes),
+        });
+      } else if (action === 'day-jsa-review') {
+        const body = exactObject(req.body, ['missionId', 'dayId', 'expectedVersion', 'outcome', 'notes']);
+        result = await repository.reviewJsa(context, {
+          missionId: uuid(body.missionId, 'Mission'),
+          dayId: uuid(body.dayId, 'Operating day'),
+          expectedVersion: revision(body.expectedVersion),
+          outcome: reviewOutcome(body.outcome),
+          notes: optionalNotes(body.notes),
+        });
+      } else if (action === 'day-start') {
+        const body = exactObject(req.body, ['missionId', 'dayId', 'expectedVersion', 'startedAt']);
+        result = await repository.startDay(context, {
+          missionId: uuid(body.missionId, 'Mission'),
+          dayId: uuid(body.dayId, 'Operating day'),
+          expectedVersion: revision(body.expectedVersion),
+          startedAt: timestamp(body.startedAt, 'Start timestamp'),
+        });
+      } else if (action === 'field-activity-save') {
+        const body = exactObject(req.body, [
+          'missionId', 'dayId', 'activityId', 'expectedVersion', 'fieldId',
+          'hectaresAttempted', 'hectaresCompleted', 'startedAt', 'finishedAt', 'status', 'notes',
+        ]);
+        result = await repository.saveFieldActivity(context, {
+          missionId: uuid(body.missionId, 'Mission'),
+          dayId: uuid(body.dayId, 'Operating day'),
+          activityId: optionalUuid(body.activityId, 'Field activity'),
+          expectedVersion: revision(body.expectedVersion),
+          fieldId: uuid(body.fieldId, 'Field'),
+          hectaresAttempted: decimalHectares(body.hectaresAttempted),
+          hectaresCompleted: decimalHectares(body.hectaresCompleted),
+          startedAt: optionalTimestamp(body.startedAt, 'Activity start timestamp'),
+          finishedAt: optionalTimestamp(body.finishedAt, 'Activity finish timestamp'),
+          status: activityStatus(body.status),
+          notes: optionalNotes(body.notes),
+        });
+      } else {
+        const body = exactObject(req.body, ['missionId', 'dayId', 'expectedVersion', 'finishedAt', 'notes']);
+        result = await repository.completeDay(context, {
+          missionId: uuid(body.missionId, 'Mission'),
+          dayId: uuid(body.dayId, 'Operating day'),
+          expectedVersion: revision(body.expectedVersion),
+          finishedAt: timestamp(body.finishedAt, 'Finish timestamp'),
+          notes: optionalNotes(body.notes),
+        });
       }
       const checked = checkedFailure(req, result);
       if (checked) return res.status(checked.status).json({ error: checked.error });

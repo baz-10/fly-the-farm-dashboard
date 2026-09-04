@@ -43,6 +43,61 @@ function crpDecision(result) {
   };
 }
 
+function jsaDayReview(record) {
+  if (!record) return null;
+  return {
+    id: record.id,
+    operatingDayId: record.operating_day_id,
+    missionId: record.mission_id,
+    jsaRevisionId: record.jsa_revision_id,
+    outcome: record.outcome,
+    notes: record.notes,
+    reviewedByInternalUserId: record.reviewed_by_internal_user_id,
+    reviewedAt: record.reviewed_at,
+  };
+}
+
+function fieldActivity(record) {
+  return {
+    id: record.id,
+    operatingDayId: record.operating_day_id,
+    missionId: record.mission_id,
+    fieldId: record.field_id,
+    hectaresAttempted: record.hectares_attempted,
+    hectaresCompleted: record.hectares_completed,
+    startedAt: record.started_at,
+    finishedAt: record.finished_at,
+    status: record.status,
+    notes: record.notes,
+    rowVersion: record.row_version,
+    createdAt: record.created_at,
+    updatedAt: record.updated_at,
+  };
+}
+
+function operatingDay(result) {
+  const failed = failure(result);
+  if (failed) return failed;
+  const record = result?.day || result?.record || result;
+  return {
+    id: record.id,
+    missionId: record.mission_id,
+    workDate: record.work_date,
+    timezone: record.timezone,
+    packageRevisionId: record.package_revision_id,
+    jsaRevisionId: record.jsa_revision_id,
+    state: record.state,
+    actualStartedAt: record.actual_started_at,
+    actualFinishedAt: record.actual_finished_at,
+    notes: record.notes,
+    rowVersion: record.row_version,
+    createdAt: record.created_at,
+    updatedAt: record.updated_at,
+    jsaReview: jsaDayReview(record.jsa_review),
+    fieldActivities: (record.field_activities || []).map(fieldActivity),
+  };
+}
+
 class MissionOperationsRepository {
   constructor(request = supabaseRequest) { this.request = request; }
 
@@ -100,6 +155,77 @@ class MissionOperationsRepository {
       currentRevision: result.current_revision,
       packages: (result.packages || []).map((record) => packageRevision(record)),
       decisions: (result.decisions || []).map((record) => crpDecision(record)),
+    };
+  }
+
+  async createDay(context, { missionId, workDate, notes }) {
+    return operatingDay(await this.rpc('ftf_create_mission_operating_day', {
+      ...this.trusted(context),
+      p_mission_id: missionId,
+      p_work_date: workDate,
+      p_notes: notes,
+    }, 'Mission operating day could not be created.'));
+  }
+
+  async reviewJsa(context, { missionId, dayId, expectedVersion, outcome, notes }) {
+    return operatingDay(await this.rpc('ftf_review_mission_day_jsa', {
+      ...this.trusted(context),
+      p_mission_id: missionId,
+      p_operating_day_id: dayId,
+      p_expected_version: expectedVersion,
+      p_outcome: outcome,
+      p_notes: notes,
+    }, 'Mission day JSA review could not be recorded.'));
+  }
+
+  async startDay(context, { missionId, dayId, expectedVersion, startedAt }) {
+    return operatingDay(await this.rpc('ftf_start_mission_operating_day', {
+      ...this.trusted(context),
+      p_mission_id: missionId,
+      p_operating_day_id: dayId,
+      p_expected_version: expectedVersion,
+      p_started_at: startedAt,
+    }, 'Mission operating day could not be started.'));
+  }
+
+  async saveFieldActivity(context, input) {
+    return operatingDay(await this.rpc('ftf_save_mission_day_field_activity', {
+      ...this.trusted(context),
+      p_mission_id: input.missionId,
+      p_operating_day_id: input.dayId,
+      p_activity_id: input.activityId,
+      p_expected_version: input.expectedVersion,
+      p_field_id: input.fieldId,
+      p_hectares_attempted: input.hectaresAttempted,
+      p_hectares_completed: input.hectaresCompleted,
+      p_started_at: input.startedAt,
+      p_finished_at: input.finishedAt,
+      p_status: input.status,
+      p_notes: input.notes,
+    }, 'Mission day Field activity could not be saved.'));
+  }
+
+  async completeDay(context, { missionId, dayId, expectedVersion, finishedAt, notes }) {
+    return operatingDay(await this.rpc('ftf_complete_mission_operating_day', {
+      ...this.trusted(context),
+      p_mission_id: missionId,
+      p_operating_day_id: dayId,
+      p_expected_version: expectedVersion,
+      p_finished_at: finishedAt,
+      p_notes: notes,
+    }, 'Mission operating day could not be completed.'));
+  }
+
+  async readDays(context, missionId) {
+    const result = await this.rpc('ftf_read_mission_operating_days', {
+      ...this.trusted(context),
+      p_mission_id: missionId,
+    }, 'Mission operating days could not be loaded.');
+    const failed = failure(result);
+    if (failed) return failed;
+    return {
+      missionId: result.mission_id,
+      days: (result.days || []).map((record) => operatingDay(record)),
     };
   }
 }

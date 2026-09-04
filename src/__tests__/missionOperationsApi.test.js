@@ -12,6 +12,8 @@ const FIELD_A = '77777777-7777-4777-8777-777777777777';
 const FIELD_B = '88888888-8888-4888-8888-888888888888';
 const DECISION = '99999999-9999-4999-8999-999999999999';
 const DIGEST = 'b'.repeat(64);
+const DAY = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+const ACTIVITY = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
 
 const context = (permissions) => ({
   organisation: { id: ORG }, internalUser: { id: ACTOR },
@@ -41,6 +43,12 @@ const repository = () => ({
   submitForApproval: jest.fn().mockResolvedValue(packageRevision),
   decide: jest.fn().mockResolvedValue(crpDecision),
   readPackageHistory: jest.fn().mockResolvedValue({ missionId: MISSION, currentRevision: 4, packages: [packageRevision], decisions: [crpDecision] }),
+  createDay: jest.fn().mockResolvedValue({ id: DAY }),
+  reviewJsa: jest.fn().mockResolvedValue({ id: DAY }),
+  startDay: jest.fn().mockResolvedValue({ id: DAY }),
+  saveFieldActivity: jest.fn().mockResolvedValue({ id: DAY }),
+  completeDay: jest.fn().mockResolvedValue({ id: DAY }),
+  readDays: jest.fn().mockResolvedValue({ missionId: MISSION, days: [] }),
 });
 
 test('registers only the focused mission-operations resource name', () => {
@@ -50,7 +58,7 @@ test('registers only the focused mission-operations resource name', () => {
   expect(handlers['mission-crp-decisions']).toBeUndefined();
 });
 
-test('allows only the five focused actions with exact permissions and same-origin writes', async () => {
+test('allows the focused package actions with exact permissions and same-origin writes', async () => {
   const repo = repository();
   const handler = createMissionOperationsHandler({
     repository: repo,
@@ -77,6 +85,99 @@ test('allows only the five focused actions with exact permissions and same-origi
   await handler(crossOrigin, denied);
   expect(denied.statusCode).toBe(403);
   expect(repo.saveScope).toHaveBeenCalledTimes(1);
+});
+
+test('routes exact operating-day commands and derives all authority identities from context', async () => {
+  const repo = repository();
+  const handler = createMissionOperationsHandler({
+    repository: repo,
+    resolveContext: async () => context(['mission.operational.read', 'mission.operational.write']),
+  });
+  const calls = [
+    ['day-create', { missionId: MISSION, workDate: '2026-09-05', notes: null }],
+    ['day-jsa-review', { missionId: MISSION, dayId: DAY, expectedVersion: 1, outcome: 'CONDITIONS_COVERED', notes: 'Conditions unchanged.' }],
+    ['day-start', { missionId: MISSION, dayId: DAY, expectedVersion: 2, startedAt: '2026-09-04T15:30:00.000Z' }],
+    ['field-activity-save', {
+      missionId: MISSION, dayId: DAY, activityId: null, expectedVersion: 0,
+      fieldId: FIELD_A, hectaresAttempted: '1.250000', hectaresCompleted: '1.000000',
+      startedAt: '2026-09-04T15:45:00.000Z', finishedAt: null,
+      status: 'IN_PROGRESS', notes: null,
+    }],
+    ['day-complete', { missionId: MISSION, dayId: DAY, expectedVersion: 4, finishedAt: '2026-09-05T17:00:00.000Z', notes: 'Overnight operation.' }],
+  ];
+  for (const [action, body] of calls) {
+    const res = response();
+    await handler(request('POST', action, body), res);
+    expect(res.statusCode).toBe(200);
+  }
+  const days = response();
+  await handler(request('GET', 'days', {}, { missionId: MISSION }), days);
+  expect(days.statusCode).toBe(200);
+  expect(repo.createDay).toHaveBeenCalledWith(expect.anything(), calls[0][1]);
+  expect(repo.reviewJsa).toHaveBeenCalledWith(expect.anything(), calls[1][1]);
+  expect(repo.startDay).toHaveBeenCalledWith(expect.anything(), calls[2][1]);
+  expect(repo.saveFieldActivity).toHaveBeenCalledWith(expect.anything(), calls[3][1]);
+  expect(repo.completeDay).toHaveBeenCalledWith(expect.anything(), calls[4][1]);
+  expect(repo.readDays).toHaveBeenCalledWith(expect.anything(), MISSION);
+});
+
+test('keeps operating-day read and write permissions distinct', async () => {
+  const repo = repository();
+  let res = response();
+  await createMissionOperationsHandler({ repository: repo, resolveContext: async () => context(['mission.operational.read']) })(
+    request('POST', 'day-create', { missionId: MISSION, workDate: '2026-09-05', notes: null }),
+    res,
+  );
+  expect(res.statusCode).toBe(403);
+  res = response();
+  await createMissionOperationsHandler({ repository: repo, resolveContext: async () => context(['mission.operational.write']) })(
+    request('GET', 'days', {}, { missionId: MISSION }),
+    res,
+  );
+  expect(res.statusCode).toBe(403);
+  expect(repo.createDay).not.toHaveBeenCalled();
+  expect(repo.readDays).not.toHaveBeenCalled();
+});
+
+test('rejects invalid calendar dates, local timestamps and decimal hectare values before repository access', async () => {
+  const repo = repository();
+  const handler = createMissionOperationsHandler({ repository: repo, resolveContext: async () => context(['mission.operational.write']) });
+  const invalid = [
+    request('POST', 'day-create', { missionId: MISSION, workDate: '2026-02-30', notes: null }),
+    request('POST', 'day-start', { missionId: MISSION, dayId: DAY, expectedVersion: 2, startedAt: '2026-09-05T01:00:00' }),
+    request('POST', 'day-start', { missionId: MISSION, dayId: DAY, expectedVersion: 2, startedAt: '2026-02-30T01:00:00.000Z' }),
+    request('POST', 'field-activity-save', { missionId: MISSION, dayId: DAY, activityId: null, expectedVersion: 0, fieldId: FIELD_A, hectaresAttempted: 1.25, hectaresCompleted: null, startedAt: null, finishedAt: null, status: 'PLANNED', notes: null }),
+    request('POST', 'field-activity-save', { missionId: MISSION, dayId: DAY, activityId: ACTIVITY, expectedVersion: 1, fieldId: FIELD_A, hectaresAttempted: '1.25', hectaresCompleted: null, startedAt: null, finishedAt: null, status: 'PLANNED', notes: null }),
+  ];
+  for (const req of invalid) {
+    const res = response();
+    await handler(req, res);
+    expect(res.statusCode).toBe(400);
+  }
+  expect(repo.createDay).not.toHaveBeenCalled();
+  expect(repo.startDay).not.toHaveBeenCalled();
+  expect(repo.saveFieldActivity).not.toHaveBeenCalled();
+});
+
+test('maps operating-day authority and concurrency failures to stable statuses', async () => {
+  const cases = [
+    ['MISSION_OPERATING_DAY_NOT_FOUND', 404, 'NOT_FOUND'],
+    ['MISSION_NOT_AUTHORISED', 409, 'MISSION_NOT_AUTHORISED'],
+    ['JSA_DAY_REVIEW_REQUIRED', 409, 'JSA_DAY_REVIEW_REQUIRED'],
+    ['MISSION_PACKAGE_STALE', 409, 'MISSION_PACKAGE_STALE'],
+    ['MISSION_OPERATING_DAY_VERSION_CONFLICT', 409, 'MISSION_OPERATING_DAY_VERSION_CONFLICT'],
+    ['MISSION_OPERATING_DATE_CONFLICT', 409, 'MISSION_OPERATING_DATE_CONFLICT'],
+    ['MISSION_DAY_FIELD_NOT_AUTHORISED', 400, 'MISSION_DAY_FIELD_NOT_AUTHORISED'],
+  ];
+  for (const [error, status, code] of cases) {
+    const repo = repository();
+    repo.startDay.mockResolvedValueOnce({ error, currentVersion: 3 });
+    const handler = createMissionOperationsHandler({ repository: repo, resolveContext: async () => context(['mission.operational.write']) });
+    const res = response();
+    await handler(request('POST', 'day-start', { missionId: MISSION, dayId: DAY, expectedVersion: 2, startedAt: '2026-09-04T15:30:00.000Z' }), res);
+    expect(res.statusCode).toBe(status);
+    expect(res.body.error).toEqual(expect.objectContaining({ code, correlationId: 'mission-ops-request-123' }));
+  }
 });
 
 test('derives authorise and reject identity from context and sends no browser CRP identity', async () => {
@@ -184,4 +285,61 @@ test('normalises immutable history from the canonical pack and authorisation str
     decisions: [expect.objectContaining({ id: DECISION, decision: 'REJECTED', packageRevisionId: PACKAGE })],
   });
   expect(JSON.parse(rpc.mock.calls[0][1].body)).toEqual({ p_organisation_id: ORG, p_actor_internal_user_id: ACTOR, p_mission_id: MISSION });
+});
+
+test('maps operating-day RPCs with trusted organisation and actor identities only', async () => {
+  const rawDay = {
+    id: DAY, mission_id: MISSION, work_date: '2026-09-05', timezone: 'Australia/Brisbane',
+    package_revision_id: PACKAGE, jsa_revision_id: JSA, state: 'DRAFT',
+    actual_started_at: null, actual_finished_at: null, notes: null, row_version: 1,
+    created_at: '2026-09-04T12:00:00.000Z', updated_at: '2026-09-04T12:00:00.000Z',
+    jsa_review: null, field_activities: [],
+  };
+  const rpc = jest.fn((url) => Promise.resolve(url.endsWith('ftf_read_mission_operating_days')
+    ? { mission_id: MISSION, days: [rawDay] }
+    : { day: rawDay }));
+  const repo = new MissionOperationsRepository(rpc);
+  await repo.createDay(context(['mission.operational.write']), { missionId: MISSION, workDate: '2026-09-05', notes: null });
+  await repo.reviewJsa(context(['mission.operational.write']), { missionId: MISSION, dayId: DAY, expectedVersion: 1, outcome: 'CONDITIONS_COVERED', notes: null });
+  await repo.startDay(context(['mission.operational.write']), { missionId: MISSION, dayId: DAY, expectedVersion: 2, startedAt: '2026-09-04T15:30:00.000Z' });
+  await repo.saveFieldActivity(context(['mission.operational.write']), {
+    missionId: MISSION, dayId: DAY, activityId: null, expectedVersion: 0, fieldId: FIELD_A,
+    hectaresAttempted: '1.250000', hectaresCompleted: null, startedAt: null, finishedAt: null,
+    status: 'PLANNED', notes: null,
+  });
+  await repo.completeDay(context(['mission.operational.write']), { missionId: MISSION, dayId: DAY, expectedVersion: 4, finishedAt: '2026-09-05T17:00:00.000Z', notes: null });
+  await expect(repo.readDays(context(['mission.operational.read']), MISSION)).resolves.toEqual({
+    missionId: MISSION,
+    days: [expect.objectContaining({ id: DAY, workDate: '2026-09-05', fieldActivities: [] })],
+  });
+  expect(rpc.mock.calls.map(([url]) => url)).toEqual([
+    'rest/v1/rpc/ftf_create_mission_operating_day',
+    'rest/v1/rpc/ftf_review_mission_day_jsa',
+    'rest/v1/rpc/ftf_start_mission_operating_day',
+    'rest/v1/rpc/ftf_save_mission_day_field_activity',
+    'rest/v1/rpc/ftf_complete_mission_operating_day',
+    'rest/v1/rpc/ftf_read_mission_operating_days',
+  ]);
+  expect(JSON.parse(rpc.mock.calls[0][1].body)).toEqual({
+    p_organisation_id: ORG,
+    p_actor_internal_user_id: ACTOR,
+    p_mission_id: MISSION,
+    p_work_date: '2026-09-05',
+    p_notes: null,
+  });
+  expect(JSON.parse(rpc.mock.calls[3][1].body)).toEqual({
+    p_organisation_id: ORG,
+    p_actor_internal_user_id: ACTOR,
+    p_mission_id: MISSION,
+    p_operating_day_id: DAY,
+    p_activity_id: null,
+    p_expected_version: 0,
+    p_field_id: FIELD_A,
+    p_hectares_attempted: '1.250000',
+    p_hectares_completed: null,
+    p_started_at: null,
+    p_finished_at: null,
+    p_status: 'PLANNED',
+    p_notes: null,
+  });
 });
