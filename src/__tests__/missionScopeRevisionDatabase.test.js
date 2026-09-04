@@ -34,6 +34,7 @@ const ids = {
   foreignField: '40000000-0000-4000-8000-000000000003',
   job: '50000000-0000-4000-8000-000000000001',
   mission: '60000000-0000-4000-8000-000000000001',
+  mission2: '60000000-0000-4000-8000-000000000002',
   personnel: '70000000-0000-4000-8000-000000000001',
   jsa1: '80000000-0000-4000-8000-000000000001',
   jsa2: '80000000-0000-4000-8000-000000000002',
@@ -102,7 +103,9 @@ if (child) {
       insert into public.job_fields(organisation_id,property_id,job_id,field_id,target_area_hectares) values
         ('${orgA}','${ids.property}','${ids.job}','${ids.fieldA}',9),
         ('${orgA}','${ids.property}','${ids.job}','${ids.fieldB}',19);
-      insert into public.missions(id,organisation_id,job_id,operating_location_id,mission_number) values('${ids.mission}','${orgA}','${ids.job}','${baseA}','MIS-A');
+      insert into public.missions(id,organisation_id,job_id,operating_location_id,mission_number) values
+        ('${ids.mission}','${orgA}','${ids.job}','${baseA}','MIS-A'),
+        ('${ids.mission2}','${orgA}','${ids.job}','${baseA}','MIS-B');
       insert into public.mission_jsa_revisions(
         id,organisation_id,operating_location_id,mission_id,version_number,
         template_id,template_version_id,template_version,policy_id,policy_version_id,policy_version,
@@ -169,14 +172,55 @@ if (child) {
       .toMatchObject({ error: 'MISSION_PACKAGE_NOT_FOUND' });
   });
 
+  const heldAdvisoryLocks = () => scalar(db, `
+    select count(*)::integer as value
+    from pg_locks
+    where pid=pg_backend_pid() and locktype='advisory' and granted
+  `);
+
+  test('preserves one aggregate scope for material evidence inserts and deletes', async () => {
+    await db.exec(`
+      create table public.mission_material_lock_probe(
+        id uuid primary key,
+        organisation_id uuid not null,
+        mission_id uuid not null
+      );
+      create trigger mission_package_aggregate_lock
+        before insert or update or delete on public.mission_material_lock_probe
+        for each row execute function public.ftf_lock_mission_material_evidence();
+    `);
+
+    await db.exec('begin');
+    await db.exec(`insert into public.mission_material_lock_probe values('90000000-0000-4000-8000-000000000001','${orgA}','${ids.mission}')`);
+    expect(await heldAdvisoryLocks()).toBe(2);
+    await db.exec('commit');
+
+    await db.exec('begin');
+    await db.exec(`delete from public.mission_material_lock_probe where id='90000000-0000-4000-8000-000000000001'`);
+    expect(await heldAdvisoryLocks()).toBe(2);
+    await db.exec('rollback');
+  });
+
+  test('locks both old and new Mission aggregates when material evidence is reparented', async () => {
+    await db.exec('begin');
+    await db.exec(`update public.mission_material_lock_probe set mission_id='${ids.mission2}' where id='90000000-0000-4000-8000-000000000001'`);
+    expect(await heldAdvisoryLocks()).toBe(3);
+    expect(await scalar(db, `select mission_id::text as value from public.mission_material_lock_probe where id='90000000-0000-4000-8000-000000000001'`)).toBe(ids.mission2);
+    await db.exec('rollback');
+  });
+
   test('makes the canonical revisions immutable and installs one shared lock trigger protocol', async () => {
     await expect(db.exec(`update public.mission_pack_revisions set generated_at=now() where id='${submitted1.record.id}'`)).rejects.toThrow(/append-only/);
     await expect(db.exec(`update public.mission_authorisation_revisions set declaration='changed' where id='${authorised.record.id}'`)).rejects.toThrow(/append-only/);
     const triggers = await db.query(`select c.relname table_name from pg_trigger t join pg_class c on c.oid=t.tgrelid where not t.tgisinternal and t.tgname='mission_package_aggregate_lock' order by c.relname`);
     const names = triggers.rows.map(row => row.table_name);
-    for (const table of ['missions','jobs','job_fields','fields','properties','mission_jsa_revisions','mission_weather_selections','mission_weather_forecast_selections','mission_aircraft_assignments','mission_equipment_kit_assignments','aircraft','equipment_kits','checklist_executions']) {
+    for (const table of ['missions','jobs','job_fields','fields','properties','mission_jsa_revisions','mission_weather_selections','mission_weather_forecast_selections','mission_aircraft_assignments','mission_equipment_kit_assignments','aircraft','equipment_kits','checklist_executions','checklist_corrective_actions']) {
       expect(names).toContain(table);
     }
+    const triggerDefinition = await scalar(db, `select pg_get_functiondef('public.ftf_lock_mission_material_evidence()'::regprocedure) as value`);
+    expect(triggerDefinition).toMatch(/to_jsonb\(old\)/i);
+    expect(triggerDefinition).toMatch(/to_jsonb\(new\)/i);
+    expect(triggerDefinition).toMatch(/order by[\s\S]*organisation_id[\s\S]*mission_id/i);
     const protectedFunctions = [
       'ftf_save_mission_package_scope','ftf_submit_mission_package','ftf_decide_mission_package',
       'ftf_authorise_mission','ftf_generate_mission_pack','ftf_save_mission_map',

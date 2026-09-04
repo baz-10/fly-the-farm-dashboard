@@ -94,3 +94,32 @@ All round-one findings are addressed without adding a parallel package or CRP-de
 ### Controller-ruling deviation retained
 
 The reviewed fix continues to extend only `public.mission_pack_revisions` and `public.mission_authorisation_revisions`. No `mission_package_revisions` or `mission_crp_decisions` table was introduced. Legacy rows that lack the focused Field/JSA/digest contract are represented in `current_revision` for concurrency, rather than being relabelled as synthetic focused-package revisions.
+
+## Review fix round 2/5 — complete material serialization
+
+- Added `public.checklist_corrective_actions` to the shared material-evidence trigger catalog. These rows have organisation scope through their execution relationship but no direct `mission_id`; the trigger therefore takes the same organisation advisory lock that every package submit/decision takes before evaluating checklist readiness.
+- Reworked `ftf_lock_mission_material_evidence` so UPDATE derives both OLD and NEW `(organisation_id, mission_id)` scopes, removes duplicates, orders the remaining UUID pairs deterministically, and enters the existing aggregate helper for each scope. INSERT still contributes only NEW and DELETE only OLD.
+- Extended the committed PGlite suite with catalog verification for the corrective-action trigger, catalog inspection of the OLD/NEW deterministic-order implementation, and live transaction assertions against `pg_locks`. The behavioral assertions observe two advisory locks for INSERT, three for an A-to-B Mission reparent within one organisation, and two for DELETE.
+
+### Round-two RED evidence
+
+1. `CI=true npm test -- --watchAll=false src/__tests__/missionScopeRevisionDatabase.test.js`
+   - Failed after the migration chain executed because `checklist_corrective_actions` was absent from the installed `mission_package_aggregate_lock` trigger catalog.
+2. The same focused command after adding only that catalog entry:
+   - Failed behaviorally on an A-to-B Mission reparent: expected three held advisory locks (organisation, OLD Mission, NEW Mission), received two (organisation, NEW Mission).
+   - Catalog inspection also showed no deterministic OLD/NEW ordering in the trigger function.
+
+### Round-two GREEN evidence
+
+- Focused authority/API suite:
+  - `CI=true npm test -- --watchAll=false src/__tests__/missionScopeRevisionMigration.test.js src/__tests__/missionScopeRevisionDatabase.test.js src/__tests__/missionOperationsApi.test.js src/services/__tests__/missionOperationsApi.test.ts src/__tests__/missionAuthorisationOperationalApi.test.js`
+  - Passed: 5 suites, 34 tests.
+- Adjacent compatibility suite:
+  - `CI=true npm test -- --watchAll=false src/__tests__/versionedApiDispatcher.test.js src/__tests__/multifieldJobScopeMigration.test.js src/__tests__/multifieldJobScopeOperationalApi.test.js src/services/__tests__/operationalApi.test.ts src/__tests__/authoritativeOperationalCloseoutMigration.test.js src/components/mission/__tests__/MissionAuthorisation.test.tsx src/__tests__/missionSummaryReportMigration.test.js src/__tests__/checklistAuthorityReconciliationPglite.test.js`
+  - Passed: 8 suites, 71 tests.
+- The refactored PGlite behavior test, `node --check`, targeted ESLint, and `git diff --check` passed. ESLint emitted only the repository's stale Browserslist-data notice.
+- `CI=false npm run build` passed with the existing repository-wide lint-warning backlog and no warning in a Task 4 file.
+
+### Concurrency-test limitation
+
+PGlite exposes transaction-scoped advisory locks through `pg_locks`, so this suite verifies that OLD and NEW aggregate keys are both actually held and verifies deterministic ordering through the migrated `pg_proc` definition. PGlite does not provide two independent PostgreSQL backend sessions, so it cannot demonstrate real blocking/interleaving or deadlock absence. That timing property remains dependent on the common ascending UUID lock order exercised by PostgreSQL proper.

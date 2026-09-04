@@ -922,18 +922,34 @@ security definer
 set search_path = public, pg_temp
 as $$
 declare
-  v_row jsonb;
-  v_organisation_id uuid;
-  v_mission_id uuid;
+  v_old_row jsonb;
+  v_new_row jsonb;
+  v_scope record;
 begin
-  v_row := case when tg_op = 'DELETE' then to_jsonb(old) else to_jsonb(new) end;
-  v_organisation_id := nullif(v_row->>'organisation_id', '')::uuid;
-  v_mission_id := nullif(v_row->>'mission_id', '')::uuid;
+  v_old_row := case when tg_op in ('UPDATE', 'DELETE') then to_jsonb(old) end;
+  v_new_row := case when tg_op in ('INSERT', 'UPDATE') then to_jsonb(new) end;
   -- Platform-owned reference rows have no organisation and cannot affect an
   -- organisation-scoped Mission until they are frozen into a local revision.
-  if v_organisation_id is not null then
-    perform public.ftf_lock_mission_package_aggregate(v_organisation_id, v_mission_id);
-  end if;
+  -- UPDATE may move evidence between aggregates, so lock every distinct OLD
+  -- and NEW scope in a stable order. INSERT and DELETE contribute one scope.
+  for v_scope in
+    select distinct scope.organisation_id, scope.mission_id
+    from (
+      select
+        nullif(v_old_row->>'organisation_id', '')::uuid as organisation_id,
+        nullif(v_old_row->>'mission_id', '')::uuid as mission_id
+      where v_old_row is not null
+      union all
+      select
+        nullif(v_new_row->>'organisation_id', '')::uuid as organisation_id,
+        nullif(v_new_row->>'mission_id', '')::uuid as mission_id
+      where v_new_row is not null
+    ) scope
+    where scope.organisation_id is not null
+    order by scope.organisation_id, scope.mission_id nulls first
+  loop
+    perform public.ftf_lock_mission_package_aggregate(v_scope.organisation_id, v_scope.mission_id);
+  end loop;
   if tg_op = 'DELETE' then return old; end if;
   return new;
 end;
@@ -956,6 +972,7 @@ begin
     'aircraft', 'equipment_kits', 'personnel', 'personnel_operating_locations',
     'organisation_weather_policies', 'checklist_templates', 'checklist_template_versions',
     'checklist_template_applicability', 'checklist_executions', 'checklist_execution_evidence',
+    'checklist_corrective_actions',
     'maintainable_asset_registry', 'asset_systems', 'component_positions',
     'internal_users', 'memberships', 'membership_operating_location_assignments',
     'internal_user_seat_assignments', 'organisation_seat_allocations',
