@@ -6,6 +6,8 @@ import {
   decodeMissionOperatingDay,
   decodeMissionOperatingDays,
   decodeMissionAircraftDayActuals,
+  decodeMissionDayChemicalActuals,
+  decodeMissionDayWeatherReport,
 } from '../missionOperationsApi';
 
 const MISSION_ID = '11111111-1111-4111-8111-111111111111';
@@ -22,6 +24,8 @@ const ACTIVITY_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const AIRCRAFT_ID = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
 const AIRCRAFT_ACTUAL_ID = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
 const FLIGHT_ID = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+const CHEMICAL_REVISION_ID = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
+const CHEMICAL_LINE_ID = 'ffffffff-ffff-4fff-8fff-ffffffffffff';
 
 const packageRevision = {
   id: PACKAGE_ID,
@@ -124,6 +128,48 @@ const aircraftActuals = {
       sourceImportId: null,
     }],
   }],
+};
+
+const chemicalActuals = {
+  missionId: MISSION_ID,
+  operatingDayId: DAY_ID,
+  packageRevisionId: PACKAGE_ID,
+  plannedChemicalRevisionId: JSA_ID,
+  dayVersion: 4,
+  currentRevision: 1,
+  proposals: [{
+    plannedLineId: ACTIVITY_ID, platformProductId: null, platformProductVersionId: null,
+    registerEntryId: null, productName: 'Example Herbicide', rate: '2.000000',
+    rateUnit: 'L_HA', plannedQuantity: '20.000000', quantityUnit: 'L', productSnapshot: {},
+  }],
+  actual: {
+    id: CHEMICAL_REVISION_ID, missionId: MISSION_ID, operatingDayId: DAY_ID,
+    packageRevisionId: PACKAGE_ID, plannedChemicalRevisionId: JSA_ID, revisionNumber: 1,
+    confirmationState: 'CONFIRMED', changedFromPlan: false, materialVariance: false,
+    operationStartedAtConfirmation: null, notes: null, confirmedByInternalUserId: ACTOR_ID,
+    confirmedAt: '2026-09-05T00:00:00.000Z',
+    lines: [{
+      id: CHEMICAL_LINE_ID, fieldId: FIELD_A, plannedLineId: ACTIVITY_ID,
+      platformProductId: null, platformProductVersionId: null, registerEntryId: null,
+      productName: 'Example Herbicide', rate: '2.000000', rateUnit: 'L_HA',
+      appliedQuantity: '20.000000', quantityUnit: 'L', batchLot: 'LOT-42',
+      aircraftId: AIRCRAFT_ID, productSnapshot: {},
+    }],
+  },
+};
+
+const weatherReport = {
+  id: REVIEW_ID, missionId: MISSION_ID, operatingDayId: DAY_ID, packageRevisionId: PACKAGE_ID,
+  coverage: 'ACTUAL_INTERVAL', intervalStartAt: '2026-09-04T21:30:00.000Z',
+  intervalEndAt: '2026-09-05T03:15:00.000Z', timezone: 'Australia/Brisbane',
+  source: 'OPEN_METEO', sourceWeatherObservationId: ACTIVITY_ID,
+  latitude: '-27.500000', longitude: '153.100000', providerIdentifier: 'OPEN_METEO_ARCHIVE_V1',
+  providerRetrievedAt: '2026-09-06T00:00:00.000Z',
+  hourlyObservations: [{ observedAt: '2026-09-04T22:00:00.000Z', temperatureC: 24, relativeHumidity: 60,
+    dewPointC: 16, windSpeedKmh: 10, windDirectionDegrees: 90, precipitationMm: 0 }],
+  inversionInputs: {}, inversionResults: { assessment: 'UNABLE_TO_DETERMINE' }, coverageGaps: [],
+  sourceMetadata: {}, manualReason: null, sourceDigest: DIGEST,
+  recordedByInternalUserId: ACTOR_ID, createdAt: '2026-09-06T00:00:00.000Z',
 };
 
 function response(data: unknown, status = 200) {
@@ -311,5 +357,60 @@ describe('Mission Operations strict contracts', () => {
       [`/api/v1/mission-operations?action=aircraft-actuals&missionId=${MISSION_ID}&dayId=${DAY_ID}`, expect.objectContaining({ method: 'GET' })],
       ['/api/v1/mission-operations?action=aircraft-actuals-reconcile', expect.objectContaining({ method: 'POST', body: JSON.stringify({ missionId: MISSION_ID, dayId: DAY_ID }) })],
     ]);
+  });
+
+  test('decodes exact daily chemical revisions and frozen weather evidence', () => {
+    expect(decodeMissionDayChemicalActuals(chemicalActuals)).toEqual(chemicalActuals);
+    expect(decodeMissionDayWeatherReport(weatherReport)).toEqual(weatherReport);
+    expect(decodeMissionDayWeatherReport(null)).toBeNull();
+    expect(() => decodeMissionDayChemicalActuals({ ...chemicalActuals, proposals: [{ ...chemicalActuals.proposals[0], rate: 2 }] }))
+      .toThrow(expect.objectContaining({ code: 'MALFORMED_RESPONSE' }));
+    expect(() => decodeMissionDayWeatherReport({ ...weatherReport, sourceDigest: 'unsafe' }))
+      .toThrow(expect.objectContaining({ code: 'MALFORMED_RESPONSE' }));
+    expect(() => decodeMissionDayWeatherReport({ ...weatherReport, hourlyObservations: [{ ...weatherReport.hourlyObservations[0], relativeHumidity: 120 }] }))
+      .toThrow(expect.objectContaining({ code: 'MALFORMED_RESPONSE' }));
+    expect(() => decodeMissionDayWeatherReport({ ...weatherReport, providerSecret: true }))
+      .toThrow(expect.objectContaining({ code: 'MALFORMED_RESPONSE' }));
+  });
+
+  test('sends exact chemical confirmation and weather capture commands', async () => {
+    const fetcher = jest.fn()
+      .mockImplementationOnce(() => response(chemicalActuals))
+      .mockImplementationOnce(() => response(chemicalActuals))
+      .mockImplementationOnce(() => response(weatherReport))
+      .mockImplementationOnce(() => response(weatherReport))
+      .mockImplementationOnce(() => response(weatherReport));
+    const api = createMissionOperationsApi(fetcher as typeof fetch);
+    const chemicalInput = {
+      missionId: MISSION_ID, expectedDayVersion: 4, expectedRevision: 0,
+      lines: [{
+        fieldId: FIELD_A, plannedLineId: ACTIVITY_ID, platformProductId: null,
+        platformProductVersionId: null, registerEntryId: null, productName: 'Example Herbicide',
+        rate: '2.000000', rateUnit: 'L_HA', appliedQuantity: '20.000000', quantityUnit: 'L',
+        batchLot: 'LOT-42', aircraftId: AIRCRAFT_ID,
+      }],
+      notes: null,
+    };
+    await api.readChemicalActuals(MISSION_ID, DAY_ID);
+    await api.confirmChemicalActuals(DAY_ID, chemicalInput);
+    await api.captureWeather(DAY_ID, { missionId: MISSION_ID, coverage: 'ACTUAL_INTERVAL' });
+    await api.saveManualWeather(DAY_ID, {
+      missionId: MISSION_ID, coverage: 'FULL_DAY', evidence: {
+        source: 'MANUAL', providerIdentifier: null, providerRetrievedAt: null,
+        hourlyObservations: [{ observedAt: '2026-09-04T22:00:00.000Z', temperatureC: 24, relativeHumidity: 60,
+          dewPointC: 16, windSpeedKmh: 10, windDirectionDegrees: 90, precipitationMm: 0 }],
+        inversionInputs: {}, inversionResults: { assessment: 'UNABLE_TO_DETERMINE' }, coverageGaps: [],
+        manualReason: 'Copied from station log.', sourceMetadata: { source: 'station log' },
+      },
+    });
+    await api.readWeatherReport(MISSION_ID, DAY_ID);
+    expect(fetcher.mock.calls.map(([url]) => url)).toEqual([
+      `/api/v1/mission-operations?action=chemical-actuals&missionId=${MISSION_ID}&dayId=${DAY_ID}`,
+      '/api/v1/mission-operations?action=chemical-actuals-confirm',
+      '/api/v1/mission-operations?action=day-weather-capture',
+      '/api/v1/mission-operations?action=day-weather-manual',
+      `/api/v1/mission-operations?action=day-weather&missionId=${MISSION_ID}&dayId=${DAY_ID}`,
+    ]);
+    expect(JSON.parse(String(fetcher.mock.calls[1][1]?.body))).toEqual({ ...chemicalInput, dayId: DAY_ID });
   });
 });

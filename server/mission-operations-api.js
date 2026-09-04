@@ -1,8 +1,10 @@
 const { MissionOperationsRepository } = require('./mission-operations-repository');
 const { resolveOperationalActorContext } = require('./operational-actor-context');
+const { fetchOpenMeteoHistoricalWeather } = require('./weather-provider');
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SHA256 = /^[a-f0-9]{64}$/;
+const DECIMAL6 = /^(?:0|[1-9]\d{0,11})\.\d{6}$/;
 const ACTIONS = Object.freeze({
   scope: { method: 'POST', permission: 'mission.pack.generate' },
   submit: { method: 'POST', permission: 'mission.pack.generate' },
@@ -18,6 +20,11 @@ const ACTIONS = Object.freeze({
   'aircraft-actuals-save': { method: 'POST', permission: 'mission.operational.write' },
   'aircraft-actuals-reconcile': { method: 'POST', permission: 'mission.operational.write' },
   'aircraft-actuals': { method: 'GET', permission: 'mission.operational.read' },
+  'chemical-actuals': { method: 'GET', permission: 'mission.operational.read' },
+  'chemical-actuals-confirm': { method: 'POST', permission: 'mission.operational.write' },
+  'day-weather': { method: 'GET', permission: 'mission.operational.read' },
+  'day-weather-capture': { method: 'POST', permission: 'mission.operational.write' },
+  'day-weather-manual': { method: 'POST', permission: 'mission.operational.write' },
 });
 
 function fail(statusCode, code, message) {
@@ -135,6 +142,114 @@ function flightActuals(value, totals) {
   });
 }
 
+function boundedText(value, name, maxLength, nullable = false) {
+  if (nullable && value === null) return null;
+  const hasControlCharacter = typeof value === 'string'
+    && value.split('').some((character) => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127);
+  if (typeof value !== 'string' || value.length < 1 || value.length > maxLength || value.trim() !== value || hasControlCharacter) {
+    fail(400, 'MISSION_OPERATIONS_REQUEST_INVALID', `${name} is invalid.`);
+  }
+  return value;
+}
+
+function chemicalActualLines(value) {
+  if (!Array.isArray(value) || value.length < 1 || value.length > 500) {
+    fail(400, 'MISSION_OPERATIONS_REQUEST_INVALID', 'Chemical actual lines are invalid.');
+  }
+  return value.map((candidate) => {
+    const item = exactObject(candidate, [
+      'fieldId', 'plannedLineId', 'platformProductId', 'platformProductVersionId',
+      'registerEntryId', 'productName', 'rate', 'rateUnit', 'appliedQuantity',
+      'quantityUnit', 'batchLot', 'aircraftId',
+    ]);
+    return {
+      fieldId: uuid(item.fieldId, 'Field'),
+      plannedLineId: optionalUuid(item.plannedLineId, 'Planned chemical line'),
+      platformProductId: optionalUuid(item.platformProductId, 'Platform product'),
+      platformProductVersionId: optionalUuid(item.platformProductVersionId, 'Platform product version'),
+      registerEntryId: optionalUuid(item.registerEntryId, 'Register entry'),
+      productName: boundedText(item.productName, 'Product name', 500),
+      rate: typeof item.rate === 'string' && DECIMAL6.test(item.rate) && Number(item.rate) > 0 ? item.rate
+        : fail(400, 'MISSION_OPERATIONS_REQUEST_INVALID', 'Chemical rate is invalid.'),
+      rateUnit: ['L_HA', 'ML_HA', 'KG_HA', 'G_HA'].includes(item.rateUnit) ? item.rateUnit
+        : fail(400, 'MISSION_OPERATIONS_REQUEST_INVALID', 'Rate unit is invalid.'),
+      appliedQuantity: typeof item.appliedQuantity === 'string' && DECIMAL6.test(item.appliedQuantity) && Number(item.appliedQuantity) > 0 ? item.appliedQuantity
+        : fail(400, 'MISSION_OPERATIONS_REQUEST_INVALID', 'Applied quantity is invalid.'),
+      quantityUnit: ['L', 'ML', 'KG', 'G'].includes(item.quantityUnit) ? item.quantityUnit
+        : fail(400, 'MISSION_OPERATIONS_REQUEST_INVALID', 'Quantity unit is invalid.'),
+      batchLot: boundedText(item.batchLot, 'Batch or lot', 200, true),
+      aircraftId: optionalUuid(item.aircraftId, 'Aircraft'),
+    };
+  });
+}
+
+function weatherCoverage(value) {
+  if (!['ACTUAL_INTERVAL', 'FULL_DAY'].includes(value)) {
+    fail(400, 'MISSION_OPERATIONS_REQUEST_INVALID', 'Weather coverage is invalid.');
+  }
+  return value;
+}
+
+function plainJsonObject(value, name) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    fail(400, 'MISSION_OPERATIONS_REQUEST_INVALID', `${name} is invalid.`);
+  }
+  try {
+    if (JSON.stringify(value).length > 100000) fail(400, 'MISSION_OPERATIONS_REQUEST_INVALID', `${name} is invalid.`);
+  } catch {
+    fail(400, 'MISSION_OPERATIONS_REQUEST_INVALID', `${name} is invalid.`);
+  }
+  return value;
+}
+
+function manualWeatherEvidence(value) {
+  const evidence = exactObject(value, [
+    'source', 'providerIdentifier', 'providerRetrievedAt', 'hourlyObservations',
+    'inversionInputs', 'inversionResults', 'coverageGaps', 'manualReason', 'sourceMetadata',
+  ]);
+  if (evidence.source !== 'MANUAL' || evidence.providerIdentifier !== null || evidence.providerRetrievedAt !== null
+    || !Array.isArray(evidence.hourlyObservations) || evidence.hourlyObservations.length < 1
+    || evidence.hourlyObservations.length > 1000 || !Array.isArray(evidence.coverageGaps)
+    || evidence.coverageGaps.length > 1000) {
+    fail(400, 'MISSION_OPERATIONS_REQUEST_INVALID', 'Manual weather evidence is invalid.');
+  }
+  const hourlyObservations = evidence.hourlyObservations.map((candidate) => {
+    const observation = exactObject(candidate, [
+      'observedAt', 'temperatureC', 'relativeHumidity', 'dewPointC', 'windSpeedKmh',
+      'windDirectionDegrees', 'precipitationMm',
+    ]);
+    const numbersValid = Object.entries(observation).every(([key, candidateValue]) => key === 'observedAt'
+      || candidateValue === null || (typeof candidateValue === 'number' && Number.isFinite(candidateValue)));
+    const within = (candidateValue, minimum, maximum) => candidateValue === null
+      || (candidateValue >= minimum && candidateValue <= maximum);
+    if (!numbersValid || !within(observation.temperatureC, -100, 100)
+      || !within(observation.relativeHumidity, 0, 100) || !within(observation.dewPointC, -150, 100)
+      || !within(observation.windSpeedKmh, 0, 500) || !within(observation.windDirectionDegrees, 0, 359.999999)
+      || !within(observation.precipitationMm, 0, 10000)) {
+      fail(400, 'MISSION_OPERATIONS_REQUEST_INVALID', 'Manual weather observations are invalid.');
+    }
+    return { ...observation, observedAt: timestamp(observation.observedAt, 'Weather observation timestamp') };
+  });
+  const coverageGaps = evidence.coverageGaps.map((candidate) => {
+    const gap = exactObject(candidate, ['observedAt', 'reason']);
+    return {
+      observedAt: timestamp(gap.observedAt, 'Weather coverage gap timestamp'),
+      reason: boundedText(gap.reason, 'Weather coverage gap reason', 1000),
+    };
+  });
+  return {
+    source: 'MANUAL',
+    providerIdentifier: null,
+    providerRetrievedAt: null,
+    hourlyObservations,
+    inversionInputs: plainJsonObject(evidence.inversionInputs, 'Weather inversion inputs'),
+    inversionResults: plainJsonObject(evidence.inversionResults, 'Weather inversion results'),
+    coverageGaps,
+    manualReason: boundedText(evidence.manualReason, 'Manual weather reason', 4000),
+    sourceMetadata: plainJsonObject(evidence.sourceMetadata, 'Weather source metadata'),
+  };
+}
+
 function reviewOutcome(value) {
   if (!['CONDITIONS_COVERED', 'CHANGE_DECLARED'].includes(value)) {
     fail(400, 'MISSION_OPERATIONS_REQUEST_INVALID', 'JSA review outcome is invalid.');
@@ -221,7 +336,10 @@ function checkedFailure(req, result) {
     'AIRCRAFT_FLIGHT_HOURS_METER_REQUIRED', 'AIRCRAFT_FLIGHT_TOTAL_MISMATCH',
     'AIRCRAFT_DAY_TOTAL_MISMATCH', 'MISSION_AIRCRAFT_DAY_SET_MISMATCH',
     'AIRCRAFT_DAY_PROJECTION_OUT_OF_ORDER', 'AIRCRAFT_DAY_FLEET_PROJECTION_FAILED',
-    'METER_SOURCE_NOT_ALLOWED', 'METER_VALUE_REQUIRES_CORRECTION'].includes(code)) {
+    'METER_SOURCE_NOT_ALLOWED', 'METER_VALUE_REQUIRES_CORRECTION',
+    'MISSION_REAUTHORISATION_REQUIRED', 'MISSION_DAY_CHEMICAL_REVISION_CONFLICT',
+    'MISSION_DAY_WEATHER_ALREADY_FROZEN', 'MISSION_DAY_ACTUAL_INTERVAL_REQUIRED',
+    'MISSION_DAY_CHEMICAL_PLAN_NOT_FOUND', 'MISSION_DAY_WEATHER_LOCATION_REQUIRED'].includes(code)) {
     const messages = {
       MISSION_NOT_AUTHORISED: 'The Mission requires current CRP authority.',
       JSA_DAY_REVIEW_REQUIRED: 'Review the effective Mission JSA before starting this operating day.',
@@ -234,7 +352,10 @@ function checkedFailure(req, result) {
     'MISSION_DAY_JSA_REVIEW_INVALID', 'MISSION_OPERATING_TIME_INVALID',
     'MISSION_FIELD_ACTIVITY_INPUT_INVALID', 'MISSION_DAY_AIRCRAFT_NOT_AUTHORISED',
     'MISSION_AIRCRAFT_DAY_INPUT_INVALID', 'MISSION_FLIGHT_FIELD_NOT_AUTHORISED',
-    'MISSION_FLIGHT_IMPORT_NOT_FOUND'].includes(code)) {
+    'MISSION_FLIGHT_IMPORT_NOT_FOUND', 'MISSION_DAY_FIELD_INVALID',
+    'MISSION_DAY_AIRCRAFT_INVALID', 'MISSION_DAY_CHEMICAL_INPUT_INVALID',
+    'MISSION_DAY_WEATHER_INPUT_INVALID', 'MISSION_DAY_WEATHER_OBSERVATION_OUTSIDE_INTERVAL',
+    'MISSION_DAY_WEATHER_COVERAGE_INVALID'].includes(code)) {
     return errorResponse(req, 400, code, 'Mission operating-day input is invalid.');
   }
   if (['MISSION_SCOPE_EMPTY', 'MISSION_SCOPE_FIELD_INVALID', 'MISSION_SCOPE_FIELD_DUPLICATE', 'MISSION_SCOPE_FIELD_NOT_IN_JOB', 'MISSION_PACKAGE_JSA_REQUIRED', 'MISSION_PACKAGE_DECISION_INVALID', 'MISSION_PACKAGE_DECLARATION_INVALID'].includes(code)) {
@@ -244,7 +365,8 @@ function checkedFailure(req, result) {
 }
 
 function safeError(req, error) {
-  if (['MISSION_OPERATIONS_REQUEST_INVALID', 'SAME_ORIGIN_REQUIRED', 'UNSUPPORTED_ACTION', 'METHOD_NOT_ALLOWED'].includes(error?.code)) {
+  if (['MISSION_OPERATIONS_REQUEST_INVALID', 'SAME_ORIGIN_REQUIRED', 'UNSUPPORTED_ACTION', 'METHOD_NOT_ALLOWED',
+    'MISSION_DAY_WEATHER_PROVIDER_UNAVAILABLE'].includes(error?.code)) {
     return errorResponse(req, error.statusCode, error.code, error.publicMessage);
   }
   if (error?.statusCode === 401) return errorResponse(req, 401, 'UNAUTHENTICATED', 'Authentication is required.');
@@ -256,6 +378,7 @@ function safeError(req, error) {
 function createMissionOperationsHandler(dependencies = {}) {
   const repository = dependencies.repository || new MissionOperationsRepository();
   const resolveContext = dependencies.resolveContext || resolveOperationalActorContext;
+  const fetchHistoricalWeather = dependencies.weatherProvider?.fetchHistoricalWeather || fetchOpenMeteoHistoricalWeather;
   return async function missionOperationsHandler(req, res) {
     res.setHeader('Cache-Control', 'no-store');
     try {
@@ -276,6 +399,18 @@ function createMissionOperationsHandler(dependencies = {}) {
         result = await repository.readDays(context, uuid(req.query?.missionId, 'Mission'));
       } else if (action === 'aircraft-actuals') {
         result = await repository.readAircraftActuals(
+          context,
+          uuid(req.query?.missionId, 'Mission'),
+          uuid(req.query?.dayId, 'Operating day'),
+        );
+      } else if (action === 'chemical-actuals') {
+        result = await repository.readChemicalActuals(
+          context,
+          uuid(req.query?.missionId, 'Mission'),
+          uuid(req.query?.dayId, 'Operating day'),
+        );
+      } else if (action === 'day-weather') {
+        result = await repository.readWeatherReport(
           context,
           uuid(req.query?.missionId, 'Mission'),
           uuid(req.query?.dayId, 'Operating day'),
@@ -370,6 +505,53 @@ function createMissionOperationsHandler(dependencies = {}) {
           uuid(body.missionId, 'Mission'),
           uuid(body.dayId, 'Operating day'),
         );
+      } else if (action === 'chemical-actuals-confirm') {
+        const body = exactObject(req.body, [
+          'missionId', 'dayId', 'expectedDayVersion', 'expectedRevision', 'lines', 'notes',
+        ]);
+        result = await repository.confirmChemicalActuals(context, {
+          missionId: uuid(body.missionId, 'Mission'),
+          dayId: uuid(body.dayId, 'Operating day'),
+          expectedDayVersion: revision(body.expectedDayVersion),
+          expectedRevision: revision(body.expectedRevision),
+          lines: chemicalActualLines(body.lines),
+          notes: optionalNotes(body.notes),
+        });
+        status = 201;
+      } else if (action === 'day-weather-capture' || action === 'day-weather-manual') {
+        const body = exactObject(req.body, action === 'day-weather-manual'
+          ? ['missionId', 'dayId', 'coverage', 'evidence']
+          : ['missionId', 'dayId', 'coverage']);
+        const input = {
+          missionId: uuid(body.missionId, 'Mission'),
+          dayId: uuid(body.dayId, 'Operating day'),
+          coverage: weatherCoverage(body.coverage),
+        };
+        const prepared = await repository.prepareWeatherCapture(context, input);
+        const prepareFailure = checkedFailure(req, prepared);
+        if (prepareFailure) return res.status(prepareFailure.status).json({ error: prepareFailure.error });
+        if (prepared.frozen) return res.status(200).json({ data: prepared.report });
+        let evidence;
+        if (action === 'day-weather-manual') {
+          evidence = manualWeatherEvidence(body.evidence);
+        } else {
+          try {
+            evidence = await fetchHistoricalWeather({
+              latitude: Number(prepared.latitude),
+              longitude: Number(prepared.longitude),
+              intervalStart: prepared.intervalStartAt,
+              intervalEnd: prepared.intervalEndAt,
+            });
+          } catch {
+            fail(503, 'MISSION_DAY_WEATHER_PROVIDER_UNAVAILABLE', 'Historical weather is temporarily unavailable. Enter manual evidence to continue.');
+          }
+        }
+        result = await repository.freezeWeatherReport(context, {
+          ...input,
+          expectedDayVersion: prepared.dayVersion,
+          evidence,
+        });
+        status = 201;
       } else {
         const body = exactObject(req.body, ['missionId', 'dayId', 'expectedVersion', 'finishedAt', 'notes']);
         result = await repository.completeDay(context, {

@@ -148,6 +148,123 @@ function aircraftDayActuals(result) {
   };
 }
 
+function chemicalProposal(record) {
+  return {
+    plannedLineId: record.planned_line_id,
+    platformProductId: record.platform_product_id,
+    platformProductVersionId: record.platform_product_version_id,
+    registerEntryId: record.register_entry_id,
+    productName: record.product_name,
+    rate: record.rate,
+    rateUnit: record.rate_unit,
+    plannedQuantity: record.planned_quantity,
+    quantityUnit: record.quantity_unit,
+    productSnapshot: record.product_snapshot,
+  };
+}
+
+function chemicalActualLine(record) {
+  return {
+    id: record.id,
+    fieldId: record.field_id,
+    plannedLineId: record.planned_line_id,
+    platformProductId: record.platform_product_id,
+    platformProductVersionId: record.platform_product_version_id,
+    registerEntryId: record.register_entry_id,
+    productName: record.product_name,
+    rate: record.rate,
+    rateUnit: record.rate_unit,
+    appliedQuantity: record.applied_quantity,
+    quantityUnit: record.quantity_unit,
+    batchLot: record.batch_lot,
+    aircraftId: record.aircraft_id,
+    productSnapshot: record.product_snapshot,
+  };
+}
+
+function chemicalActualRevision(record) {
+  if (!record) return null;
+  return {
+    id: record.id,
+    missionId: record.mission_id,
+    operatingDayId: record.operating_day_id,
+    packageRevisionId: record.package_revision_id,
+    plannedChemicalRevisionId: record.planned_chemical_revision_id,
+    revisionNumber: record.revision_number,
+    confirmationState: record.confirmation_state,
+    changedFromPlan: record.changed_from_plan,
+    materialVariance: record.material_variance,
+    operationStartedAtConfirmation: record.operation_started_at_confirmation,
+    notes: record.notes,
+    confirmedByInternalUserId: record.confirmed_by_internal_user_id,
+    confirmedAt: record.confirmed_at,
+    lines: (record.lines || []).map(chemicalActualLine),
+  };
+}
+
+function chemicalActuals(result) {
+  const failed = failure(result);
+  if (failed) return failed;
+  return {
+    missionId: result.mission_id,
+    operatingDayId: result.operating_day_id,
+    packageRevisionId: result.package_revision_id,
+    plannedChemicalRevisionId: result.planned_chemical_revision_id,
+    dayVersion: result.day_version,
+    currentRevision: result.current_revision,
+    proposals: (result.proposals || []).map(chemicalProposal),
+    actual: chemicalActualRevision(result.actual),
+  };
+}
+
+function weatherReport(record) {
+  if (!record) return null;
+  return {
+    id: record.id,
+    missionId: record.mission_id,
+    operatingDayId: record.operating_day_id,
+    packageRevisionId: record.package_revision_id,
+    coverage: record.coverage,
+    intervalStartAt: record.interval_start_at,
+    intervalEndAt: record.interval_end_at,
+    timezone: record.timezone,
+    source: record.source,
+    sourceWeatherObservationId: record.source_weather_observation_id,
+    latitude: record.latitude,
+    longitude: record.longitude,
+    providerIdentifier: record.provider_identifier,
+    providerRetrievedAt: record.provider_retrieved_at,
+    hourlyObservations: record.hourly_observations,
+    inversionInputs: record.inversion_inputs,
+    inversionResults: record.inversion_results,
+    coverageGaps: record.coverage_gaps,
+    sourceMetadata: record.source_metadata,
+    manualReason: record.manual_reason,
+    sourceDigest: record.source_digest,
+    recordedByInternalUserId: record.recorded_by_internal_user_id,
+    createdAt: record.created_at,
+  };
+}
+
+function weatherCaptureContext(result) {
+  const failed = failure(result);
+  if (failed) return failed;
+  if (result.frozen) return { frozen: true, report: weatherReport(result.report) };
+  return {
+    missionId: result.mission_id,
+    operatingDayId: result.operating_day_id,
+    packageRevisionId: result.package_revision_id,
+    dayVersion: result.day_version,
+    coverage: result.coverage,
+    intervalStartAt: result.interval_start_at,
+    intervalEndAt: result.interval_end_at,
+    timezone: result.timezone,
+    sourceWeatherObservationId: result.source_weather_observation_id,
+    latitude: result.latitude,
+    longitude: result.longitude,
+  };
+}
+
 class MissionOperationsRepository {
   constructor(request = supabaseRequest) { this.request = request; }
 
@@ -305,6 +422,58 @@ class MissionOperationsRepository {
       p_mission_id: missionId,
       p_operating_day_id: dayId,
     }, 'Mission aircraft-day actuals could not be reconciled.'));
+  }
+
+  async readChemicalActuals(context, missionId, dayId) {
+    return chemicalActuals(await this.rpc('ftf_read_mission_day_chemical_actuals', {
+      ...this.trusted(context),
+      p_mission_id: missionId,
+      p_operating_day_id: dayId,
+    }, 'Mission day chemical actuals could not be loaded.'));
+  }
+
+  async confirmChemicalActuals(context, input) {
+    return chemicalActuals(await this.rpc('ftf_confirm_mission_day_chemical_actuals', {
+      ...this.trusted(context),
+      p_mission_id: input.missionId,
+      p_operating_day_id: input.dayId,
+      p_expected_day_version: input.expectedDayVersion,
+      p_expected_revision: input.expectedRevision,
+      p_lines: input.lines,
+      p_notes: input.notes,
+    }, 'Mission day chemical actuals could not be confirmed.'));
+  }
+
+  async prepareWeatherCapture(context, input) {
+    return weatherCaptureContext(await this.rpc('ftf_prepare_mission_day_weather_capture', {
+      ...this.trusted(context),
+      p_mission_id: input.missionId,
+      p_operating_day_id: input.dayId,
+      p_coverage: input.coverage,
+    }, 'Mission day weather capture could not be prepared.'));
+  }
+
+  async freezeWeatherReport(context, input) {
+    const result = await this.rpc('ftf_freeze_mission_day_weather_report', {
+      ...this.trusted(context),
+      p_mission_id: input.missionId,
+      p_operating_day_id: input.dayId,
+      p_expected_day_version: input.expectedDayVersion,
+      p_coverage: input.coverage,
+      p_evidence: input.evidence,
+    }, 'Mission day weather report could not be frozen.');
+    const failed = failure(result);
+    return failed || weatherReport(result.report);
+  }
+
+  async readWeatherReport(context, missionId, dayId) {
+    const result = await this.rpc('ftf_read_mission_day_weather_report', {
+      ...this.trusted(context),
+      p_mission_id: missionId,
+      p_operating_day_id: dayId,
+    }, 'Mission day weather report could not be loaded.');
+    const failed = failure(result);
+    return failed || weatherReport(result.report);
   }
 }
 

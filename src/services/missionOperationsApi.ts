@@ -17,6 +17,18 @@ import type {
   MissionAircraftDayReconciliationStatus,
   MissionAircraftDayTotalSource,
   MissionFlightActual,
+  MissionDayChemicalActualLine,
+  MissionDayChemicalActualRevision,
+  MissionDayChemicalActualsRecord,
+  MissionDayChemicalConfirmationInput,
+  MissionDayChemicalProposal,
+  MissionDayWeatherCaptureInput,
+  MissionDayWeatherCoverage,
+  MissionDayWeatherCoverageGap,
+  MissionDayWeatherHourlyObservation,
+  MissionDayWeatherManualInput,
+  MissionDayWeatherReportRecord,
+  MissionDayWeatherSource,
 } from '../types/missionOperations';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -29,6 +41,8 @@ const ACTIVITY_STATUSES: readonly MissionFieldActivityStatus[] = ['PLANNED', 'IN
 const HECTARES = /^(?:0|[1-9]\d{0,11})\.\d{6}$/;
 const TIMESTAMPTZ = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})$/;
 const HOURS = /^(?:0|[1-9]\d{0,5})\.\d{4}$/;
+const DECIMAL6 = /^(?:0|[1-9]\d{0,11})\.\d{6}$/;
+const SIGNED_DECIMAL6 = /^-?(?:0|[1-9]\d{0,2})\.\d{6}$/;
 const AIRCRAFT_TOTAL_SOURCES: readonly MissionAircraftDayTotalSource[] = ['DECLARED', 'DERIVED_FROM_FLIGHTS'];
 const AIRCRAFT_RECONCILIATION_STATES: readonly MissionAircraftDayReconciliationStatus[] = ['TOTAL_ONLY', 'FLIGHTS_ONLY', 'RECONCILED', 'MISMATCH'];
 
@@ -135,6 +149,38 @@ function declaration(value: unknown): string {
 function digest(value: unknown): string {
   if (typeof value !== 'string' || !SHA256.test(value)) return malformed();
   return value;
+}
+
+function boolean(value: unknown): boolean {
+  if (typeof value !== 'boolean') return malformed();
+  return value;
+}
+
+function decimal6(value: unknown): string {
+  if (typeof value !== 'string' || !DECIMAL6.test(value)) return malformed();
+  return value;
+}
+
+function jsonObject(value: unknown): Record<string, unknown> {
+  const result = object(value);
+  try {
+    if (JSON.stringify(result).length > 100000) return malformed();
+  } catch {
+    return malformed();
+  }
+  return result;
+}
+
+function finiteNullable(value: unknown): number | null {
+  if (value === null) return null;
+  if (typeof value !== 'number' || !Number.isFinite(value)) return malformed();
+  return value;
+}
+
+function finiteWithin(value: unknown, minimum: number, maximum: number): number | null {
+  const result = finiteNullable(value);
+  if (result !== null && (result < minimum || result > maximum)) return malformed();
+  return result;
 }
 
 function uniqueFieldIds(value: unknown): string[] {
@@ -389,6 +435,197 @@ export function decodeMissionAircraftDayActuals(value: unknown): MissionAircraft
   };
 }
 
+function decodeMissionDayChemicalProposal(value: unknown): MissionDayChemicalProposal {
+  const source = exact(object(value), [
+    'plannedLineId', 'platformProductId', 'platformProductVersionId', 'registerEntryId',
+    'productName', 'rate', 'rateUnit', 'plannedQuantity', 'quantityUnit', 'productSnapshot',
+  ]);
+  return {
+    plannedLineId: uuid(source.plannedLineId),
+    platformProductId: nullable(source.platformProductId, uuid),
+    platformProductVersionId: nullable(source.platformProductVersionId, uuid),
+    registerEntryId: nullable(source.registerEntryId, uuid),
+    productName: boundedText(source.productName, 500),
+    rate: decimal6(source.rate),
+    rateUnit: boundedText(source.rateUnit, 64),
+    plannedQuantity: decimal6(source.plannedQuantity),
+    quantityUnit: boundedText(source.quantityUnit, 64),
+    productSnapshot: jsonObject(source.productSnapshot),
+  };
+}
+
+function decodeMissionDayChemicalActualLine(value: unknown): MissionDayChemicalActualLine {
+  const source = exact(object(value), [
+    'id', 'fieldId', 'plannedLineId', 'platformProductId', 'platformProductVersionId',
+    'registerEntryId', 'productName', 'rate', 'rateUnit', 'appliedQuantity', 'quantityUnit',
+    'batchLot', 'aircraftId', 'productSnapshot',
+  ]);
+  return {
+    id: uuid(source.id),
+    fieldId: uuid(source.fieldId),
+    plannedLineId: nullable(source.plannedLineId, uuid),
+    platformProductId: nullable(source.platformProductId, uuid),
+    platformProductVersionId: nullable(source.platformProductVersionId, uuid),
+    registerEntryId: nullable(source.registerEntryId, uuid),
+    productName: boundedText(source.productName, 500),
+    rate: decimal6(source.rate),
+    rateUnit: boundedText(source.rateUnit, 64),
+    appliedQuantity: decimal6(source.appliedQuantity),
+    quantityUnit: boundedText(source.quantityUnit, 64),
+    batchLot: nullable(source.batchLot, (candidate) => boundedText(candidate, 500)),
+    aircraftId: nullable(source.aircraftId, uuid),
+    productSnapshot: jsonObject(source.productSnapshot),
+  };
+}
+
+function decodeMissionDayChemicalActualRevision(value: unknown): MissionDayChemicalActualRevision {
+  const source = exact(object(value), [
+    'id', 'missionId', 'operatingDayId', 'packageRevisionId', 'plannedChemicalRevisionId',
+    'revisionNumber', 'confirmationState', 'changedFromPlan', 'materialVariance',
+    'operationStartedAtConfirmation', 'notes', 'confirmedByInternalUserId', 'confirmedAt', 'lines',
+  ]);
+  if (source.confirmationState !== 'CONFIRMED' || !Array.isArray(source.lines)
+    || source.lines.length < 1 || source.lines.length > 500) return malformed();
+  return {
+    id: uuid(source.id),
+    missionId: uuid(source.missionId),
+    operatingDayId: uuid(source.operatingDayId),
+    packageRevisionId: uuid(source.packageRevisionId),
+    plannedChemicalRevisionId: uuid(source.plannedChemicalRevisionId),
+    revisionNumber: positiveInteger(source.revisionNumber),
+    confirmationState: 'CONFIRMED',
+    changedFromPlan: boolean(source.changedFromPlan),
+    materialVariance: boolean(source.materialVariance),
+    operationStartedAtConfirmation: nullable(source.operationStartedAtConfirmation, exactTimestamp),
+    notes: nullable(source.notes, (candidate) => boundedText(candidate, 4000)),
+    confirmedByInternalUserId: uuid(source.confirmedByInternalUserId),
+    confirmedAt: exactTimestamp(source.confirmedAt),
+    lines: source.lines.map(decodeMissionDayChemicalActualLine),
+  };
+}
+
+export function decodeMissionDayChemicalActuals(value: unknown): MissionDayChemicalActualsRecord {
+  const source = exact(object(value), [
+    'missionId', 'operatingDayId', 'packageRevisionId', 'plannedChemicalRevisionId',
+    'dayVersion', 'currentRevision', 'proposals', 'actual',
+  ]);
+  if (!Array.isArray(source.proposals) || source.proposals.length > 500) return malformed();
+  const missionId = uuid(source.missionId);
+  const operatingDayId = uuid(source.operatingDayId);
+  const packageRevisionId = uuid(source.packageRevisionId);
+  const plannedChemicalRevisionId = uuid(source.plannedChemicalRevisionId);
+  const currentRevision = nonNegativeInteger(source.currentRevision);
+  const proposals = source.proposals.map(decodeMissionDayChemicalProposal);
+  const actual = nullable(source.actual, decodeMissionDayChemicalActualRevision);
+  if ((actual === null) !== (currentRevision === 0)
+    || (actual && (actual.missionId !== missionId || actual.operatingDayId !== operatingDayId
+      || actual.packageRevisionId !== packageRevisionId || actual.plannedChemicalRevisionId !== plannedChemicalRevisionId
+      || actual.revisionNumber !== currentRevision))
+    || new Set(proposals.map((proposal) => proposal.plannedLineId)).size !== proposals.length
+    || (actual && new Set(actual.lines.map((line) => line.id)).size !== actual.lines.length)) return malformed();
+  return {
+    missionId,
+    operatingDayId,
+    packageRevisionId,
+    plannedChemicalRevisionId,
+    dayVersion: positiveInteger(source.dayVersion),
+    currentRevision,
+    proposals,
+    actual,
+  };
+}
+
+function weatherCoverage(value: unknown): MissionDayWeatherCoverage {
+  if (value !== 'ACTUAL_INTERVAL' && value !== 'FULL_DAY') return malformed();
+  return value;
+}
+
+function weatherSource(value: unknown): MissionDayWeatherSource {
+  if (value !== 'OPEN_METEO' && value !== 'MANUAL') return malformed();
+  return value;
+}
+
+function decodeWeatherObservation(value: unknown): MissionDayWeatherHourlyObservation {
+  const source = exact(object(value), [
+    'observedAt', 'temperatureC', 'relativeHumidity', 'dewPointC', 'windSpeedKmh',
+    'windDirectionDegrees', 'precipitationMm',
+  ]);
+  return {
+    observedAt: exactTimestamp(source.observedAt),
+    temperatureC: finiteWithin(source.temperatureC, -100, 100),
+    relativeHumidity: finiteWithin(source.relativeHumidity, 0, 100),
+    dewPointC: finiteWithin(source.dewPointC, -150, 100),
+    windSpeedKmh: finiteWithin(source.windSpeedKmh, 0, 500),
+    windDirectionDegrees: finiteWithin(source.windDirectionDegrees, 0, 359.999999),
+    precipitationMm: finiteWithin(source.precipitationMm, 0, 10000),
+  };
+}
+
+function decodeWeatherGap(value: unknown): MissionDayWeatherCoverageGap {
+  const source = exact(object(value), ['observedAt', 'reason']);
+  return { observedAt: exactTimestamp(source.observedAt), reason: boundedText(source.reason, 1000) };
+}
+
+export function decodeMissionDayWeatherReport(value: unknown): MissionDayWeatherReportRecord | null {
+  if (value === null) return null;
+  const source = exact(object(value), [
+    'id', 'missionId', 'operatingDayId', 'packageRevisionId', 'coverage', 'intervalStartAt',
+    'intervalEndAt', 'timezone', 'source', 'sourceWeatherObservationId', 'latitude', 'longitude',
+    'providerIdentifier', 'providerRetrievedAt', 'hourlyObservations', 'inversionInputs',
+    'inversionResults', 'coverageGaps', 'sourceMetadata', 'manualReason', 'sourceDigest',
+    'recordedByInternalUserId', 'createdAt',
+  ]);
+  if (!Array.isArray(source.hourlyObservations) || source.hourlyObservations.length < 1
+    || source.hourlyObservations.length > 1000 || !Array.isArray(source.coverageGaps)
+    || source.coverageGaps.length > 1000 || typeof source.latitude !== 'string'
+    || typeof source.longitude !== 'string' || !SIGNED_DECIMAL6.test(source.latitude)
+    || !SIGNED_DECIMAL6.test(source.longitude) || Number(source.latitude) < -90 || Number(source.latitude) > 90
+    || Number(source.longitude) < -180 || Number(source.longitude) > 180) return malformed();
+  const intervalStartAt = exactTimestamp(source.intervalStartAt);
+  const intervalEndAt = exactTimestamp(source.intervalEndAt);
+  const weather = weatherSource(source.source);
+  const providerIdentifier = nullable(source.providerIdentifier, (candidate) => boundedText(candidate, 200));
+  const providerRetrievedAt = nullable(source.providerRetrievedAt, exactTimestamp);
+  const manualReason = nullable(source.manualReason, (candidate) => boundedText(candidate, 4000));
+  if (Date.parse(intervalEndAt) <= Date.parse(intervalStartAt)
+    || (weather === 'OPEN_METEO' && (!providerIdentifier || !providerRetrievedAt || manualReason !== null))
+    || (weather === 'MANUAL' && (providerIdentifier !== null || providerRetrievedAt !== null || manualReason === null))) return malformed();
+  const hourlyObservations = source.hourlyObservations.map(decodeWeatherObservation);
+  if (hourlyObservations.some((entry) => Date.parse(entry.observedAt) < Date.parse(intervalStartAt)
+    || Date.parse(entry.observedAt) >= Date.parse(intervalEndAt))) return malformed();
+  return {
+    id: uuid(source.id),
+    missionId: uuid(source.missionId),
+    operatingDayId: uuid(source.operatingDayId),
+    packageRevisionId: uuid(source.packageRevisionId),
+    coverage: weatherCoverage(source.coverage),
+    intervalStartAt,
+    intervalEndAt,
+    timezone: timezone(source.timezone),
+    source: weather,
+    sourceWeatherObservationId: uuid(source.sourceWeatherObservationId),
+    latitude: source.latitude,
+    longitude: source.longitude,
+    providerIdentifier,
+    providerRetrievedAt,
+    hourlyObservations,
+    inversionInputs: jsonObject(source.inversionInputs),
+    inversionResults: jsonObject(source.inversionResults),
+    coverageGaps: source.coverageGaps.map(decodeWeatherGap),
+    sourceMetadata: jsonObject(source.sourceMetadata),
+    manualReason,
+    sourceDigest: digest(source.sourceDigest),
+    recordedByInternalUserId: uuid(source.recordedByInternalUserId),
+    createdAt: exactTimestamp(source.createdAt),
+  };
+}
+
+function decodeRequiredMissionDayWeatherReport(value: unknown): MissionDayWeatherReportRecord {
+  const report = decodeMissionDayWeatherReport(value);
+  if (!report) return malformed();
+  return report;
+}
+
 async function parseResponse(response: Response): Promise<unknown> {
   const envelope: any = await response.json().catch(() => ({}));
   const correlationId = response.headers.get('X-Correlation-ID') || envelope?.error?.correlationId || undefined;
@@ -439,6 +676,11 @@ export function createMissionOperationsApi(fetcher: typeof fetch = fetch) {
     saveAircraftActuals: async (dayId: string, input: MissionAircraftDayActualsSaveInput) => decodeMissionAircraftDayActuals(await write('aircraft-actuals-save', { ...input, dayId })),
     readAircraftActuals: async (missionId: string, dayId: string) => decodeMissionAircraftDayActuals(await request('aircraft-actuals', { method: 'GET' }, missionId, dayId)),
     reconcileAircraftActuals: async (missionId: string, dayId: string) => decodeMissionAircraftDayActuals(await write('aircraft-actuals-reconcile', { missionId, dayId })),
+    readChemicalActuals: async (missionId: string, dayId: string) => decodeMissionDayChemicalActuals(await request('chemical-actuals', { method: 'GET' }, missionId, dayId)),
+    confirmChemicalActuals: async (dayId: string, input: MissionDayChemicalConfirmationInput) => decodeMissionDayChemicalActuals(await write('chemical-actuals-confirm', { ...input, dayId })),
+    readWeatherReport: async (missionId: string, dayId: string) => decodeMissionDayWeatherReport(await request('day-weather', { method: 'GET' }, missionId, dayId)),
+    captureWeather: async (dayId: string, input: MissionDayWeatherCaptureInput) => decodeRequiredMissionDayWeatherReport(await write('day-weather-capture', { ...input, dayId })),
+    saveManualWeather: async (dayId: string, input: MissionDayWeatherManualInput) => decodeRequiredMissionDayWeatherReport(await write('day-weather-manual', { ...input, dayId })),
   };
 }
 

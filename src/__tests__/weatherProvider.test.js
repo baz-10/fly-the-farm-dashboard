@@ -5,7 +5,63 @@ const {
   deriveAustralianPlaceFromAddress,
   geocodeOpenMeteoLocation,
   mergeAustralianPlace,
+  fetchOpenMeteoHistoricalWeather,
 } = require('../../server/weather-provider');
+
+test('normalises and filters historical observations to the exact frozen UTC interval', async () => {
+  const fetchImpl = jest.fn().mockResolvedValue({
+    ok: true,
+    json: async () => ({
+      latitude: -27.5, longitude: 153.1, timezone: 'GMT', utc_offset_seconds: 0,
+      hourly: {
+        time: ['2026-09-04T21:00', '2026-09-04T22:00', '2026-09-04T23:00', '2026-09-05T00:00', '2026-09-05T01:00', '2026-09-05T02:00', '2026-09-05T03:00', '2026-09-05T04:00'],
+        temperature_2m: [23, 24, 23, 22, 21, 20, 20, 21], relative_humidity_2m: [55, 60, 61, 62, 65, 66, 67, 68],
+        dew_point_2m: [14, 16, 16, 15, 15, 14, 14, 15], wind_speed_10m: [9, 10, 9, 8, 7, 6, 5, 6],
+        wind_direction_10m: [80, 90, 95, 100, 105, 110, 115, 120], precipitation: [0, 0, 0, 0, 0, 0, 0, 0],
+      },
+    }),
+  });
+  const result = await fetchOpenMeteoHistoricalWeather({
+    latitude: -27.5, longitude: 153.1,
+    intervalStart: '2026-09-04T21:30:00.000Z', intervalEnd: '2026-09-05T03:15:00.000Z',
+    fetchImpl, now: () => new Date('2026-09-06T00:00:00.000Z'),
+  });
+  const requested = new URL(fetchImpl.mock.calls[0][0]);
+  expect(requested.hostname).toBe('archive-api.open-meteo.com');
+  expect(requested.searchParams.get('timezone')).toBe('GMT');
+  expect(result.hourlyObservations.map((item) => item.observedAt)).toEqual([
+    '2026-09-04T22:00:00.000Z', '2026-09-04T23:00:00.000Z', '2026-09-05T00:00:00.000Z',
+    '2026-09-05T01:00:00.000Z', '2026-09-05T02:00:00.000Z', '2026-09-05T03:00:00.000Z',
+  ]);
+  expect(result).toEqual(expect.objectContaining({
+    source: 'OPEN_METEO', providerIdentifier: 'OPEN_METEO_ARCHIVE_V1', providerRetrievedAt: '2026-09-06T00:00:00.000Z',
+    coverageGaps: [], inversionResults: expect.objectContaining({ assessment: 'UNABLE_TO_DETERMINE' }), manualReason: null,
+  }));
+});
+
+test('retains provider coverage gaps instead of inventing historical hours', async () => {
+  const fetchImpl = jest.fn().mockResolvedValue({ ok: true, json: async () => ({
+    hourly: {
+      time: ['2026-09-05T00:00', '2026-09-05T02:00'], temperature_2m: [22, 20], relative_humidity_2m: [60, 65],
+      dew_point_2m: [14, 13], wind_speed_10m: [8, 6], wind_direction_10m: [90, 100], precipitation: [0, 0],
+    },
+  }) });
+  const result = await fetchOpenMeteoHistoricalWeather({
+    latitude: -27.5, longitude: 153.1, intervalStart: '2026-09-05T00:00:00.000Z', intervalEnd: '2026-09-05T03:00:00.000Z', fetchImpl,
+  });
+  expect(result.coverageGaps).toEqual([{ observedAt: '2026-09-05T01:00:00.000Z', reason: 'PROVIDER_HOUR_MISSING' }]);
+});
+
+test('fails closed when historical provider evidence is unavailable or empty', async () => {
+  await expect(fetchOpenMeteoHistoricalWeather({
+    latitude: -27.5, longitude: 153.1, intervalStart: '2026-09-05T00:00:00.000Z', intervalEnd: '2026-09-05T03:00:00.000Z',
+    fetchImpl: jest.fn().mockResolvedValue({ ok: false, status: 503 }),
+  })).rejects.toThrow('Open-Meteo historical weather failed (503).');
+  await expect(fetchOpenMeteoHistoricalWeather({
+    latitude: -27.5, longitude: 153.1, intervalStart: '2026-09-05T00:00:00.000Z', intervalEnd: '2026-09-05T03:00:00.000Z',
+    fetchImpl: jest.fn().mockResolvedValue({ ok: true, json: async () => ({ hourly: { time: [] } }) }),
+  })).rejects.toThrow('Open-Meteo returned no historical observations for the operating interval.');
+});
 
 test('requests a padded provider date range so Australian local Mission hours are retained', async () => {
   const fetchImpl = jest.fn().mockResolvedValue({

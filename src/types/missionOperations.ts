@@ -152,3 +152,128 @@ export interface MissionAircraftDayActualsSaveInput {
   aircraftTotals: Array<{ aircraftId: string; totalFlightHours: string | null }>;
   flights: MissionFlightActualInput[];
 }
+
+export interface MissionDayChemicalProposal {
+  plannedLineId: string;
+  platformProductId: string | null;
+  platformProductVersionId: string | null;
+  registerEntryId: string | null;
+  productName: string;
+  rate: string;
+  rateUnit: string;
+  plannedQuantity: string;
+  quantityUnit: string;
+  productSnapshot: Record<string, unknown>;
+}
+
+export interface MissionDayChemicalActualLineInput {
+  fieldId: string;
+  plannedLineId: string | null;
+  platformProductId: string | null;
+  platformProductVersionId: string | null;
+  registerEntryId: string | null;
+  productName: string;
+  rate: string;
+  rateUnit: string;
+  appliedQuantity: string;
+  quantityUnit: string;
+  batchLot: string | null;
+  aircraftId: string | null;
+}
+
+export interface MissionDayChemicalActualLine extends MissionDayChemicalActualLineInput {
+  id: string;
+  productSnapshot: Record<string, unknown>;
+}
+
+export interface MissionDayChemicalActualRevision {
+  id: string;
+  missionId: string;
+  operatingDayId: string;
+  packageRevisionId: string;
+  plannedChemicalRevisionId: string;
+  revisionNumber: number;
+  confirmationState: 'CONFIRMED';
+  changedFromPlan: boolean;
+  materialVariance: boolean;
+  operationStartedAtConfirmation: string | null;
+  notes: string | null;
+  confirmedByInternalUserId: string;
+  confirmedAt: string;
+  lines: MissionDayChemicalActualLine[];
+}
+
+export interface MissionDayChemicalActualsRecord {
+  missionId: string;
+  operatingDayId: string;
+  packageRevisionId: string;
+  plannedChemicalRevisionId: string;
+  dayVersion: number;
+  currentRevision: number;
+  proposals: MissionDayChemicalProposal[];
+  actual: MissionDayChemicalActualRevision | null;
+}
+
+export interface MissionDayChemicalConfirmationInput {
+  missionId: string;
+  expectedDayVersion: number;
+  expectedRevision: number;
+  lines: MissionDayChemicalActualLineInput[];
+  notes: string | null;
+}
+
+export type MissionDayWeatherCoverage = 'ACTUAL_INTERVAL' | 'FULL_DAY';
+export type MissionDayWeatherSource = 'OPEN_METEO' | 'MANUAL';
+
+export interface MissionDayWeatherHourlyObservation {
+  observedAt: string;
+  temperatureC: number | null;
+  relativeHumidity: number | null;
+  dewPointC: number | null;
+  windSpeedKmh: number | null;
+  windDirectionDegrees: number | null;
+  precipitationMm: number | null;
+}
+
+export interface MissionDayWeatherCoverageGap {
+  observedAt: string;
+  reason: string;
+}
+
+export interface MissionDayWeatherEvidence {
+  source: MissionDayWeatherSource;
+  providerIdentifier: string | null;
+  providerRetrievedAt: string | null;
+  hourlyObservations: MissionDayWeatherHourlyObservation[];
+  inversionInputs: Record<string, unknown>;
+  inversionResults: Record<string, unknown>;
+  coverageGaps: MissionDayWeatherCoverageGap[];
+  manualReason: string | null;
+  sourceMetadata: Record<string, unknown>;
+}
+
+export interface MissionDayWeatherReportRecord extends MissionDayWeatherEvidence {
+  id: string;
+  missionId: string;
+  operatingDayId: string;
+  packageRevisionId: string;
+  coverage: MissionDayWeatherCoverage;
+  intervalStartAt: string;
+  intervalEndAt: string;
+  timezone: string;
+  sourceWeatherObservationId: string;
+  latitude: string;
+  longitude: string;
+  sourceDigest: string;
+  recordedByInternalUserId: string;
+  createdAt: string;
+}
+
+export interface MissionDayWeatherCaptureInput {
+  missionId: string;
+  coverage: MissionDayWeatherCoverage;
+}
+
+export interface MissionDayWeatherManualInput extends MissionDayWeatherCaptureInput {
+  evidence: MissionDayWeatherEvidence;
+}
