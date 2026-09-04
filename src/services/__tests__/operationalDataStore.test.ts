@@ -486,4 +486,42 @@ describe('operational data store', () => {
       rowVersion: 2, fieldBoundaryVersionId: 'boundary-1', boundaryCoords: [[-27, 153], [-27, 154], [-28, 154]],
     }));
   });
+
+  test('publishes every paddock as one authoritative MultiPolygon boundary', async () => {
+    const createFieldBoundaryVersion = jest.fn().mockResolvedValue({
+      id: 'boundary-multipart', fieldId: 'field-1', propertyId: 'property-1', versionNumber: 1,
+      boundaryGeojson: { type: 'MultiPolygon', coordinates: [
+        [[[153, -27], [153.01, -27], [153.01, -27.01], [153, -27]]],
+        [[[153.02, -27.02], [153.03, -27.02], [153.03, -27.03], [153.02, -27.02]]],
+      ] },
+      boundaryCoords: [[-27, 153], [-27, 153.01], [-27.01, 153.01]],
+      boundaryPolygons: [
+        [[-27, 153], [-27, 153.01], [-27.01, 153.01]],
+        [[-27.02, 153.02], [-27.02, 153.03], [-27.03, 153.03]],
+      ],
+      fieldVersion: 2, rowVersion: 1,
+      createdAt: '2026-08-01T00:00:00Z', updatedAt: '2026-08-01T00:00:00Z',
+    });
+    const data = gateway({
+      listClients: jest.fn().mockResolvedValue([client('client-1')]),
+      listProperties: jest.fn().mockResolvedValue([property('property-1', 'client-1')]),
+      listFields: jest.fn().mockResolvedValue([field('field-1', 'property-1')]),
+      createFieldBoundaryVersion,
+    });
+    const store = createOperationalDataStore(data);
+    await store.setAuthenticatedUser('user-1');
+    const polygons: Array<Array<[number, number]>> = [
+      [[-27, 153], [-27, 153.01], [-27.01, 153.01]],
+      [[-27.02, 153.02], [-27.02, 153.03], [-27.03, 153.03]],
+    ];
+
+    await store.createFieldBoundaryVersion('field-1', polygons);
+
+    expect(createFieldBoundaryVersion).toHaveBeenCalledWith(expect.objectContaining({
+      boundaryGeojson: { type: 'MultiPolygon', coordinates: [
+        [[[153, -27], [153.01, -27], [153.01, -27.01], [153, -27]]],
+        [[[153.02, -27.02], [153.03, -27.02], [153.03, -27.03], [153.02, -27.02]]],
+      ] },
+    }));
+  });
 });

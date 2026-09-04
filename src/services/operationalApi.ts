@@ -54,6 +54,7 @@ export interface OperationalFieldBoundaryVersion {
   versionNumber: number;
   boundaryGeojson: OperationalBoundaryGeoJson;
   boundaryCoords: LatLng[];
+  boundaryPolygons: LatLng[][];
   capturedAt?: string;
   rowVersion?: number;
   fieldVersion?: number;
@@ -349,9 +350,9 @@ function boundaryGeojson(record: ApiRecord): OperationalBoundaryGeoJson {
 
 export function mapApiFieldBoundaryVersion(record: ApiRecord): OperationalFieldBoundaryVersion {
   const geojson = boundaryGeojson(record);
-  const polygon = geojson.type === 'Polygon' ? geojson.coordinates as number[][][] : (geojson.coordinates as number[][][][])[0];
-  const outerRing = polygon[0];
-  const boundaryCoords = outerRing.slice(0, -1).map((point) => [point[1], point[0]] as LatLng);
+  const polygons = geojson.type === 'Polygon' ? [geojson.coordinates as number[][][]] : geojson.coordinates as number[][][][];
+  const boundaryPolygons = polygons.map((polygon) => polygon[0].slice(0, -1).map((point) => [point[1], point[0]] as LatLng));
+  const boundaryCoords = boundaryPolygons[0];
   const capturedAt = optionalText(record, 'capturedAt', 'captured_at') || undefined;
   if (capturedAt && Number.isNaN(Date.parse(capturedAt))) return malformed('capturedAt');
   const rowVersionRaw = value(record, 'rowVersion', 'row_version');
@@ -361,7 +362,7 @@ export function mapApiFieldBoundaryVersion(record: ApiRecord): OperationalFieldB
   return {
     id: requiredText(record, 'id'), fieldId: requiredText(record, 'fieldId', 'field_id'),
     propertyId: requiredText(record, 'propertyId', 'property_id'), versionNumber: positiveInteger(record, 'versionNumber', 'version_number'),
-    boundaryGeojson: geojson, boundaryCoords, capturedAt,
+    boundaryGeojson: geojson, boundaryCoords, boundaryPolygons, capturedAt,
     rowVersion: rowVersionRaw === undefined ? undefined : Number(rowVersionRaw),
     fieldVersion: fieldVersionRaw === undefined ? undefined : Number(fieldVersionRaw),
     createdAt: timestamp(record, 'createdAt', 'created_at'), updatedAt: timestamp(record, 'updatedAt', 'updated_at'),

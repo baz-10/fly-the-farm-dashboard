@@ -55,6 +55,15 @@ jest.mock('../components/AddressAutocomplete', () => (props: any) => <div>
 jest.mock('../components/FieldBoundaryEditor', () => (props: any) => <div>
   Boundary editor
   <button onClick={() => { props.onCoordsChange?.([[-27, 153], [-27, 154], [-28, 154]]); props.onAreaChange?.(20); }}>Draw test boundary</button>
+  <button onClick={() => {
+    const polygons = [
+      [[-27, 153], [-27, 153.01], [-27.01, 153.01]],
+      [[-27.02, 153.02], [-27.02, 153.03], [-27.03, 153.03]],
+    ];
+    props.onCoordsChange?.(polygons[0]);
+    props.onPolygonsChange?.(polygons);
+    props.onAreaChange?.(105.6);
+  }}>Import multipart boundary</button>
 </div>);
 jest.mock('../components/AddressLocationMap', () => (props: any) => <button onClick={() => props.onLocationChange?.(-26.571, 148.791)}>Move access pin</button>);
 jest.mock('../services/fieldManagementStore', () => ({
@@ -226,6 +235,29 @@ describe('authoritative client/property/field workflow screens', () => {
     expect(mockOperational.updateClient).not.toHaveBeenCalled();
     expect(mockOperational.updateProperty).not.toHaveBeenCalled();
     expect(mockNavigate).toHaveBeenCalledWith('/jobs/client/client-1/property/property-1/field/field-new');
+  });
+
+  test('preserves every imported paddock when creating one multipart Field boundary', async () => {
+    const polygons = [
+      [[-27, 153], [-27, 153.01], [-27.01, 153.01]],
+      [[-27.02, 153.02], [-27.02, 153.03], [-27.03, 153.03]],
+    ];
+    mockOperational.createField.mockResolvedValue({ ...field, id: 'field-multipart', name: 'Fourteen Paddocks', sizeHa: 105.6 });
+    mockSearchParams = new URLSearchParams('view=fields');
+    route('/jobs?view=fields', <ClientList />);
+    fireEvent.click(screen.getByRole('button', { name: 'Add Field' }));
+    fireEvent.mouseDown(screen.getByRole('combobox', { name: 'Select Client' }));
+    fireEvent.click(await screen.findByRole('option', { name: 'North Farm' }));
+    fireEvent.mouseDown(screen.getByRole('combobox', { name: 'Select Property' }));
+    fireEvent.click(await screen.findByRole('option', { name: 'Home Block' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Field name' }), { target: { value: 'Fourteen Paddocks' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Import multipart boundary' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save Field' }));
+
+    await waitFor(() => expect(mockOperational.createField).toHaveBeenCalledWith(expect.objectContaining({
+      name: 'Fourteen Paddocks', sizeHa: 105.6, boundaryCoords: undefined,
+    })));
+    expect(mockOperational.createFieldBoundaryVersion).toHaveBeenCalledWith('field-multipart', polygons);
   });
 
   test('requires explicit confirmation before saving an optional Field access point', async () => {
