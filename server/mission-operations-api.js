@@ -9,6 +9,7 @@ const ACTIONS = Object.freeze({
   scope: { method: 'POST', permission: 'mission.pack.generate' },
   submit: { method: 'POST', permission: 'mission.pack.generate' },
   amend: { method: 'POST', permission: 'mission.pack.generate' },
+  'amendment-history': { method: 'GET', permission: 'mission.pack.read' },
   authorise: { method: 'POST', permission: 'mission.authorisation.authorise' },
   reject: { method: 'POST', permission: 'mission.authorisation.authorise' },
   history: { method: 'GET', permissionsAny: ['mission.pack.read', 'mission.authorisation.read'] },
@@ -320,6 +321,15 @@ function amendmentValues(value) {
   return value;
 }
 
+function amendmentPair(before, after) {
+  const decodedBefore = amendmentValues(before);
+  const decodedAfter = amendmentValues(after);
+  if (new Set([...Object.keys(decodedBefore), ...Object.keys(decodedAfter)]).size > 64) {
+    fail(400, 'MISSION_OPERATIONS_REQUEST_INVALID', 'Mission amendment values are invalid.');
+  }
+  return { before: decodedBefore, after: decodedAfter };
+}
+
 function permitted(context, definition) {
   const permissions = context.permissions || [];
   if (permissions.includes('*')) return true;
@@ -396,7 +406,7 @@ function checkedFailure(req, result) {
     'MISSION_DAY_WEATHER_COVERAGE_INVALID'].includes(code)) {
     return errorResponse(req, 400, code, 'Mission operating-day input is invalid.');
   }
-  if (['MISSION_SCOPE_EMPTY', 'MISSION_SCOPE_FIELD_INVALID', 'MISSION_SCOPE_FIELD_DUPLICATE', 'MISSION_SCOPE_FIELD_NOT_IN_JOB', 'MISSION_PACKAGE_JSA_REQUIRED', 'MISSION_PACKAGE_DECISION_INVALID', 'MISSION_PACKAGE_DECLARATION_INVALID', 'MISSION_AMENDMENT_INPUT_INVALID', 'MISSION_AMENDMENT_REASON_INVALID', 'MISSION_AMENDMENT_NO_CHANGE', 'MISSION_AMENDMENT_AFTER_MISMATCH'].includes(code)) {
+  if (['MISSION_SCOPE_EMPTY', 'MISSION_SCOPE_FIELD_INVALID', 'MISSION_SCOPE_FIELD_DUPLICATE', 'MISSION_SCOPE_FIELD_NOT_IN_JOB', 'MISSION_PACKAGE_JSA_REQUIRED', 'MISSION_PACKAGE_DECISION_INVALID', 'MISSION_PACKAGE_DECLARATION_INVALID', 'MISSION_AMENDMENT_INPUT_INVALID', 'MISSION_AMENDMENT_REASON_INVALID', 'MISSION_AMENDMENT_NO_CHANGE', 'MISSION_AMENDMENT_AFTER_MISMATCH', 'MISSION_AMENDMENT_EVIDENCE_INVALID'].includes(code)) {
     return errorResponse(req, 400, code, 'Mission package input is invalid.');
   }
   return errorResponse(req, 500, 'MISSION_OPERATIONS_UNAVAILABLE', 'Mission Operations are temporarily unavailable.');
@@ -433,6 +443,8 @@ function createMissionOperationsHandler(dependencies = {}) {
       let status = 200;
       if (action === 'history') {
         result = await repository.readPackageHistory(context, uuid(req.query?.missionId, 'Mission'));
+      } else if (action === 'amendment-history') {
+        result = await repository.readAmendmentHistory(context, uuid(req.query?.missionId, 'Mission'));
       } else if (action === 'days') {
         result = await repository.readDays(context, uuid(req.query?.missionId, 'Mission'));
       } else if (action === 'aircraft-actuals') {
@@ -472,11 +484,12 @@ function createMissionOperationsHandler(dependencies = {}) {
         status = 201;
       } else if (action === 'amend') {
         const body = exactObject(req.body, ['missionId', 'expectedRevision', 'before', 'after', 'reason']);
+        const values = amendmentPair(body.before, body.after);
         result = await repository.createAmendment(context, {
           missionId: uuid(body.missionId, 'Mission'),
           expectedRevision: revision(body.expectedRevision),
-          before: amendmentValues(body.before),
-          after: amendmentValues(body.after),
+          before: values.before,
+          after: values.after,
           reason: boundedText(body.reason, 'Amendment reason', 2000),
         });
         status = 201;

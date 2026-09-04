@@ -46,4 +46,10 @@ describe('Mission amendment policy', () => {
     after.completionNotes = 'safe';
     expect(() => classifyMissionAmendment({ before: {}, after })).toThrow('MISSION_AMENDMENT_INPUT_INVALID');
   });
+
+  it('rejects a combined changed-key union above the 64-key contract', () => {
+    const before = Object.fromEntries(Array.from({ length: 40 }, (_, index) => [`before${index}`, index]));
+    const after = Object.fromEntries(Array.from({ length: 40 }, (_, index) => [`after${index}`, index]));
+    expect(() => classifyMissionAmendment({ before, after })).toThrow('MISSION_AMENDMENT_INPUT_INVALID');
+  });
 });

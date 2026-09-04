@@ -11,6 +11,8 @@ create table public.mission_package_amendments (
   classification text not null check (classification in ('ADMINISTRATIVE', 'MATERIAL')),
   changed_keys text[] not null check (cardinality(changed_keys) between 1 and 64),
   reasons text[] not null,
+  before_values jsonb not null check (jsonb_typeof(before_values) = 'object' and octet_length(before_values::text) <= 65536),
+  after_values jsonb not null check (jsonb_typeof(after_values) = 'object' and octet_length(after_values::text) <= 65536),
   before_digest text not null check (before_digest ~ '^[a-f0-9]{64}$'),
   after_digest text not null check (after_digest ~ '^[a-f0-9]{64}$'),
   amendment_reason text not null check (length(amendment_reason) between 1 and 2000 and amendment_reason = btrim(amendment_reason)),
@@ -49,6 +51,7 @@ security invoker
 set search_path = public, pg_temp
 as $$
 declare
+  v_all_keys text[];
   v_changed text[];
   v_reasons text[] := '{}'::text[];
   v_key text;
@@ -58,6 +61,11 @@ begin
     or (select count(*) from jsonb_object_keys(p_before)) > 64
     or (select count(*) from jsonb_object_keys(p_after)) > 64
     or octet_length(p_before::text) > 65536 or octet_length(p_after::text) > 65536 then
+    raise exception 'MISSION_AMENDMENT_INPUT_INVALID' using errcode = '22023';
+  end if;
+  select coalesce(array_agg(key order by key), '{}'::text[]) into v_all_keys
+  from (select jsonb_object_keys(p_before || p_after) key) keys;
+  if cardinality(v_all_keys) > 64 then
     raise exception 'MISSION_AMENDMENT_INPUT_INVALID' using errcode = '22023';
   end if;
   select coalesce(array_agg(key order by key), '{}'::text[]) into v_changed
@@ -95,6 +103,75 @@ $$;
 
 revoke all on function public.ftf_classify_mission_amendment(jsonb,jsonb) from public, anon, authenticated, service_role;
 
+create function public.ftf_project_mission_amendment_values(p_manifest jsonb, p_keys text[])
+returns jsonb
+language plpgsql
+immutable
+security invoker
+set search_path = public, pg_temp
+as $$
+declare v_result jsonb := '{}'::jsonb; v_key text; v_value jsonb;
+begin
+  foreach v_key in array p_keys loop
+    v_value := case v_key
+      when 'fieldIds' then p_manifest->'fieldIds'
+      when 'targetAreaHectares' then p_manifest->'fieldScope'
+      when 'aircraftIds' then p_manifest->'aircraftAssignments'
+      when 'regulatedCrewIds' then p_manifest->'personnel'
+      when 'chemicalProductIds' then p_manifest->'chemicals'
+      when 'applicationMethod' then p_manifest->'chemicals'
+      when 'governedRate' then p_manifest->'chemicals'
+      when 'jsaHazards' then p_manifest->'jsa'
+      when 'jsaControls' then p_manifest->'jsa'
+      when 'safetyMapFeatures' then p_manifest->'map'
+      when 'operationalPermissions' then p_manifest->'readiness'
+      else p_manifest
+    end;
+    v_result := v_result || jsonb_build_object(v_key, coalesce(v_value, 'null'::jsonb));
+  end loop;
+  return v_result;
+end;
+$$;
+
+create function public.ftf_validate_mission_administrative_evidence(
+  p_organisation_id uuid, p_mission_id uuid, p_key text, p_value jsonb, p_allow_null boolean
+)
+returns jsonb
+language plpgsql
+stable
+security definer
+set search_path = public, pg_temp
+as $$
+declare v_event public.audit_events%rowtype; v_event_id uuid; v_allowed text[];
+begin
+  if p_value = 'null'::jsonb and p_allow_null then return 'null'::jsonb; end if;
+  if p_value is null or jsonb_typeof(p_value) <> 'object'
+    or (select array_agg(key order by key) from jsonb_object_keys(p_value) key) <> array['auditEventId']::text[] then
+    return null;
+  end if;
+  begin v_event_id := (p_value->>'auditEventId')::uuid; exception when others then return null; end;
+  v_allowed := case p_key
+    when 'actualFlightHours' then array['mission.aircraft_day.actuals_saved']
+    when 'flightBreakdown' then array['mission.aircraft_day.actuals_saved']
+    when 'actualHectares' then array['mission.operating_day.field_activity_saved']
+    when 'actualChemicalQuantity' then array['mission.day_chemicals.confirmed']
+    when 'actualWeatherEvidence' then array['mission.day_weather.frozen']
+    when 'flightLineEvidenceId' then array['mission.operational_import_created']
+    when 'completionNotes' then array['mission.operating_day.completed']
+    else null
+  end;
+  if v_allowed is null then return null; end if;
+  select * into v_event from public.audit_events
+  where organisation_id = p_organisation_id and id = v_event_id
+    and event_type = any(v_allowed) and event_payload->>'mission_id' = p_mission_id::text;
+  if not found then return null; end if;
+  return jsonb_build_object('auditEventId',v_event.id,'eventType',v_event.event_type,'createdAt',v_event.created_at);
+end;
+$$;
+
+revoke all on function public.ftf_project_mission_amendment_values(jsonb,text[]) from public, anon, authenticated, service_role;
+revoke all on function public.ftf_validate_mission_administrative_evidence(uuid,uuid,text,jsonb,boolean) from public, anon, authenticated, service_role;
+
 create function public.ftf_create_mission_amendment(
   p_organisation_id uuid,
   p_actor_internal_user_id uuid,
@@ -114,6 +191,11 @@ declare
   v_predecessor public.mission_pack_revisions%rowtype;
   v_current integer;
   v_policy jsonb;
+  v_changed_keys text[];
+  v_key text;
+  v_authoritative_before jsonb := '{}'::jsonb;
+  v_authoritative_after jsonb := '{}'::jsonb;
+  v_evidence jsonb;
   v_field_ids uuid[];
   v_created jsonb;
   v_fresh_manifest jsonb;
@@ -152,12 +234,10 @@ begin
   if jsonb_array_length(v_policy->'changed_keys') = 0 then
     return jsonb_build_object('error', 'MISSION_AMENDMENT_NO_CHANGE');
   end if;
+  select array_agg(value order by value) into v_changed_keys from jsonb_array_elements_text(v_policy->'changed_keys') value;
 
   select array_agg(field_id order by field_order) into v_field_ids from public.mission_pack_fields
   where organisation_id = p_organisation_id and mission_id = p_mission_id and pack_revision_id = v_predecessor.id;
-  if p_before ? 'fieldIds' and p_before->'fieldIds' <> to_jsonb(v_field_ids) then
-    return jsonb_build_object('error', 'MISSION_AMENDMENT_BEFORE_MISMATCH');
-  end if;
   if p_after ? 'fieldIds' then
     begin
       select array_agg(value::uuid order by ordinal) into v_field_ids
@@ -173,11 +253,11 @@ begin
   -- operational amendment. Compare all other frozen authority inputs.
   v_authoritative_source_changed := (coalesce(v_predecessor.source_manifest, '{}'::jsonb) #- '{mission,rowVersion}')
     is distinct from (v_fresh_manifest #- '{mission,rowVersion}');
-  if v_authoritative_source_changed and v_policy->>'classification' = 'ADMINISTRATIVE' then
-    v_policy := jsonb_set(v_policy, '{classification}', '"MATERIAL"'::jsonb);
-    v_policy := jsonb_set(v_policy, '{reasons}', '["UNRECOGNISED_CHANGE"]'::jsonb);
-  end if;
   if v_policy->>'classification' = 'MATERIAL' then
+    v_authoritative_before := public.ftf_project_mission_amendment_values(v_predecessor.source_manifest, v_changed_keys);
+    v_authoritative_after := public.ftf_project_mission_amendment_values(v_fresh_manifest, v_changed_keys);
+    if p_before <> v_authoritative_before then return jsonb_build_object('error', 'MISSION_AMENDMENT_BEFORE_MISMATCH'); end if;
+    if p_after <> v_authoritative_after then return jsonb_build_object('error', 'MISSION_AMENDMENT_AFTER_MISMATCH'); end if;
     v_created := public.ftf_save_mission_package_scope(
       p_organisation_id, p_actor_internal_user_id, p_mission_id, v_current, to_jsonb(v_field_ids)
     );
@@ -186,17 +266,33 @@ begin
     where organisation_id = p_organisation_id and mission_id = p_mission_id
       and id = (v_created#>>'{record,id}')::uuid and package_state = 'PREPARING';
     if not found then return jsonb_build_object('error', 'MISSION_AMENDMENT_AFTER_MISMATCH'); end if;
+    if v_preparing.source_manifest <> v_fresh_manifest then return jsonb_build_object('error', 'MISSION_AMENDMENT_AFTER_MISMATCH'); end if;
+  else
+    if v_authoritative_source_changed then return jsonb_build_object('error', 'MISSION_AMENDMENT_AFTER_MISMATCH'); end if;
+    foreach v_key in array v_changed_keys loop
+      v_evidence := public.ftf_validate_mission_administrative_evidence(
+        p_organisation_id,p_mission_id,v_key,p_before->v_key,true
+      );
+      if v_evidence is null then return jsonb_build_object('error', 'MISSION_AMENDMENT_EVIDENCE_INVALID'); end if;
+      v_authoritative_before := v_authoritative_before || jsonb_build_object(v_key,v_evidence);
+      v_evidence := public.ftf_validate_mission_administrative_evidence(
+        p_organisation_id,p_mission_id,v_key,p_after->v_key,false
+      );
+      if v_evidence is null then return jsonb_build_object('error', 'MISSION_AMENDMENT_EVIDENCE_INVALID'); end if;
+      v_authoritative_after := v_authoritative_after || jsonb_build_object(v_key,v_evidence);
+    end loop;
   end if;
 
   insert into public.mission_package_amendments(
     organisation_id, operating_location_id, mission_id, predecessor_pack_revision_id,
-    preparing_pack_revision_id, classification, changed_keys, reasons, before_digest,
+    preparing_pack_revision_id, classification, changed_keys, reasons, before_values, after_values, before_digest,
     after_digest, amendment_reason, created_by_internal_user_id
   ) values (
     p_organisation_id, v_mission.operating_location_id, p_mission_id, v_predecessor.id,
     v_preparing.id, v_policy->>'classification', array(select jsonb_array_elements_text(v_policy->'changed_keys')),
     array(select jsonb_array_elements_text(v_policy->'reasons')),
-    encode(digest(p_before::text, 'sha256'), 'hex'), encode(digest(p_after::text, 'sha256'), 'hex'),
+    v_authoritative_before, v_authoritative_after,
+    encode(digest(v_authoritative_before::text, 'sha256'), 'hex'), encode(digest(v_authoritative_after::text, 'sha256'), 'hex'),
     p_reason, p_actor_internal_user_id
   ) returning * into v_amendment;
   insert into public.audit_events(organisation_id,actor_internal_user_id,event_type,entity_type,entity_id,event_payload)
@@ -208,9 +304,51 @@ begin
   values(p_organisation_id,'operational.mission.amendment_recorded','mission',p_mission_id,
     jsonb_build_object('amendment_id',v_amendment.id,'classification',v_amendment.classification,
       'predecessor_pack_revision_id',v_predecessor.id,'preparing_pack_revision_id',v_preparing.id));
-  return v_policy || jsonb_build_object('package_revision', case when v_preparing.id is null then null else v_created end);
+  return v_policy || jsonb_build_object('before_values',v_authoritative_before,'after_values',v_authoritative_after,
+    'package_revision', case when v_preparing.id is null then null else v_created end);
 end;
 $$;
 
 revoke all on function public.ftf_create_mission_amendment(uuid,uuid,uuid,integer,jsonb,jsonb,text) from public, anon, authenticated;
 grant execute on function public.ftf_create_mission_amendment(uuid,uuid,uuid,integer,jsonb,jsonb,text) to service_role;
+
+create function public.ftf_read_mission_amendment_history(
+  p_organisation_id uuid, p_actor_internal_user_id uuid, p_mission_id uuid
+)
+returns jsonb
+language plpgsql
+stable
+security definer
+set search_path = public, pg_temp
+as $$
+declare v_mission public.missions%rowtype;
+begin
+  if not public.ftf_actor_has_active_beta_seat(p_organisation_id,p_actor_internal_user_id)
+    or not public.ftf_actor_has_permission(p_organisation_id,p_actor_internal_user_id,'mission.pack.read') then
+    return jsonb_build_object('forbidden',true);
+  end if;
+  select * into v_mission from public.missions
+  where organisation_id=p_organisation_id and id=p_mission_id and archived_at is null;
+  if not found then return jsonb_build_object('error','MISSION_PACKAGE_NOT_FOUND'); end if;
+  if not public.ftf_operational_location_allowed(p_organisation_id,p_actor_internal_user_id,v_mission.operating_location_id) then
+    return jsonb_build_object('location_forbidden',true);
+  end if;
+  return jsonb_build_object('records',coalesce((
+    select jsonb_agg(jsonb_build_object(
+      'id',amendment.id,'missionId',amendment.mission_id,
+      'predecessorPackRevisionId',amendment.predecessor_pack_revision_id,
+      'preparingPackRevisionId',amendment.preparing_pack_revision_id,
+      'classification',amendment.classification,'changedKeys',to_jsonb(amendment.changed_keys),
+      'reasons',to_jsonb(amendment.reasons),'beforeValues',amendment.before_values,
+      'afterValues',amendment.after_values,'amendmentReason',amendment.amendment_reason,
+      'createdByInternalUserId',amendment.created_by_internal_user_id,'createdAt',amendment.created_at
+    ) order by amendment.created_at desc,amendment.id desc)
+    from (select * from public.mission_package_amendments
+      where organisation_id=p_organisation_id and mission_id=p_mission_id
+      order by created_at desc,id desc limit 100) amendment
+  ),'[]'::jsonb));
+end;
+$$;
+
+revoke all on function public.ftf_read_mission_amendment_history(uuid,uuid,uuid) from public,anon,authenticated;
+grant execute on function public.ftf_read_mission_amendment_history(uuid,uuid,uuid) to service_role;

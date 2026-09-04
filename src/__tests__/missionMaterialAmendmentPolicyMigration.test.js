@@ -33,7 +33,18 @@ test('serializes amendment creation with day start and fails stale or forged aut
     'mission_amendment_after_mismatch', 'mission_amendment_reason_invalid',
     'mission.pack.generate', 'ftf_operational_location_allowed',
     'ftf_build_mission_package_source_manifest', 'v_authoritative_source_changed',
+    'ftf_project_mission_amendment_values', 'ftf_validate_mission_administrative_evidence',
+    'mission_amendment_evidence_invalid', 'before_values', 'after_values',
   ]) expect(sql).toContain(token);
+});
+
+test('bounds the combined key union and exposes only checked scoped history', () => {
+  const sql = migration();
+  expect(sql).toContain('cardinality(v_all_keys) > 64');
+  expect(sql).toContain('ftf_read_mission_amendment_history');
+  expect(sql).toContain('limit 100');
+  expect(sql).toContain("'mission.pack.read'");
+  expect(sql).toContain('ftf_operational_location_allowed');
 });
 
 test('grants only checked RPC execution and no direct amendment mutation authority', () => {

@@ -248,15 +248,33 @@ if (child) {
   });
 
   test('records administrative actual evidence without invalidating the effective package', async () => {
+    const completionAuditId = await scalar(db, `select id::text as value from public.audit_events where organisation_id='${orgA}' and entity_id='${day.day.id}' and event_type='mission.operating_day.completed' order by created_at desc limit 1`);
     const recorded = await call('ftf_create_mission_amendment', [
       orgA, actorA, ids.mission, 2,
-      JSON.stringify({ actualFlightHours: '1.0000' }),
-      JSON.stringify({ actualFlightHours: '2.0000' }),
-      'Corrected aircraft time from the daily log.',
+      JSON.stringify({ completionNotes: null }),
+      JSON.stringify({ completionNotes: { auditEventId: completionAuditId } }),
+      'Added the completed-day notes evidence.',
     ]);
-    expect(recorded).toMatchObject({ classification: 'ADMINISTRATIVE', reasons: [], changed_keys: ['actualFlightHours'], package_revision: null });
+    expect(recorded).toMatchObject({ classification: 'ADMINISTRATIVE', reasons: [], changed_keys: ['completionNotes'], package_revision: null });
+    expect(recorded.after_values.completionNotes).toMatchObject({ auditEventId: completionAuditId, eventType: 'mission.operating_day.completed' });
     expect(await scalar(db, `select max(version_number)::integer as value from public.mission_pack_revisions where organisation_id='${orgA}' and mission_id='${ids.mission}'`)).toBe(2);
     expect(await scalar(db, `select current_authorised_pack_revision_id::text as value from public.missions where organisation_id='${orgA}' and id='${ids.mission}'`)).toBe(pack.id);
+  });
+
+  test('rejects browser assertions that do not match canonical non-Field authority', async () => {
+    const chemicals = await scalar(db, `select source_manifest->'chemicals' as value from public.mission_pack_revisions where organisation_id='${orgA}' and id='${pack.id}'`);
+    expect(await call('ftf_create_mission_amendment', [
+      orgA, actorA, ids.mission, 2,
+      JSON.stringify({ chemicalProductIds: chemicals }),
+      JSON.stringify({ chemicalProductIds: { id: 'browser-forged' } }),
+      'Claimed chemical change.',
+    ])).toMatchObject({ error: 'MISSION_AMENDMENT_AFTER_MISMATCH' });
+    expect(await call('ftf_create_mission_amendment', [
+      orgA, actorA, ids.mission, 2,
+      JSON.stringify({ completionNotes: null }),
+      JSON.stringify({ completionNotes: { auditEventId: '99999999-9999-4999-8999-999999999999' } }),
+      'Claimed completion evidence.',
+    ])).toMatchObject({ error: 'MISSION_AMENDMENT_EVIDENCE_INVALID' });
   });
 
   test('fails closed when a newer unapproved package makes a reviewed day stale', async () => {
@@ -279,6 +297,16 @@ if (child) {
     expect(await scalar(db, `select current_authorised_pack_revision_id::text as value from public.missions where organisation_id='${orgA}' and id='${ids.mission}'`)).toBe(pack.id);
     expect(await scalar(db, `select mission_pack_revision_id::text as value from public.mission_operating_days where id='${day.day.id}'`)).toBe(pack.id);
     expect(await call('ftf_create_mission_operating_day', [orgA, actorA, ids.mission, '2026-09-07', null])).toMatchObject({ error: 'MISSION_PACKAGE_STALE' });
+  });
+
+  test('returns only bounded checked amendment history with authoritative values', async () => {
+    const history = await call('ftf_read_mission_amendment_history', [orgA, actorA, ids.mission]);
+    expect(history.records).toHaveLength(2);
+    expect(history.records.map((record) => record.classification)).toEqual(['MATERIAL', 'ADMINISTRATIVE']);
+    expect(history.records[0]).toMatchObject({
+      beforeValues: { fieldIds: [ids.fieldA] }, afterValues: { fieldIds: [ids.fieldA, ids.fieldB] },
+    });
+    expect(await call('ftf_read_mission_amendment_history', [orgB, actorB, ids.mission])).toMatchObject({ error: 'MISSION_PACKAGE_NOT_FOUND' });
   });
 
   test('returns bounded day aggregates and writes audit plus outbox events', async () => {

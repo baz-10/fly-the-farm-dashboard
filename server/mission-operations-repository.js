@@ -321,6 +321,14 @@ class MissionOperationsRepository {
     }, 'Mission amendment could not be recorded.'));
   }
 
+  async readAmendmentHistory(context, missionId) {
+    const result = await this.rpc('ftf_read_mission_amendment_history', {
+      ...this.trusted(context), p_mission_id: missionId,
+    }, 'Mission amendment history could not be loaded.');
+    const failed = failure(result);
+    return failed || (result.records || []);
+  }
+
   async decide(context, { missionId, packageRevisionId, expectedRevision, evidenceDigest, decision, declaration }) {
     return crpDecision(await this.rpc('ftf_decide_mission_package', {
       ...this.trusted(context),

@@ -43,6 +43,7 @@ const crpDecision = {
 };
 const repository = () => ({
   createAmendment: jest.fn().mockResolvedValue({ classification: 'MATERIAL', reasons: ['FIELD_SCOPE_CHANGED'], changedKeys: ['fieldIds'], packageRevision }),
+  readAmendmentHistory: jest.fn().mockResolvedValue([]),
   saveScope: jest.fn().mockResolvedValue(packageRevision),
   submitForApproval: jest.fn().mockResolvedValue(packageRevision),
   decide: jest.fn().mockResolvedValue(crpDecision),
@@ -85,6 +86,26 @@ test('routes a strictly decoded amendment through checked package authority', as
   await handler(request('POST', 'amend', { ...body, before: [], injected: true }), invalid);
   expect(invalid.statusCode).toBe(400);
   expect(repo.createAmendment).toHaveBeenCalledTimes(1);
+});
+
+test('rejects a combined amendment key union above 64 before repository access', async () => {
+  const repo = repository();
+  const handler = createMissionOperationsHandler({ repository: repo, resolveContext: async () => context(['mission.pack.generate']) });
+  const before = Object.fromEntries(Array.from({ length: 40 }, (_, index) => [`before${index}`, index]));
+  const after = Object.fromEntries(Array.from({ length: 40 }, (_, index) => [`after${index}`, index]));
+  const res = response();
+  await handler(request('POST', 'amend', { missionId: MISSION, expectedRevision: 4, before, after, reason: 'Bound check.' }), res);
+  expect(res.statusCode).toBe(400);
+  expect(repo.createAmendment).not.toHaveBeenCalled();
+});
+
+test('reads bounded amendment history through package-read authority', async () => {
+  const repo = repository();
+  const handler = createMissionOperationsHandler({ repository: repo, resolveContext: async () => context(['mission.pack.read']) });
+  const res = response();
+  await handler(request('GET', 'amendment-history', {}, { missionId: MISSION }), res);
+  expect(res.statusCode).toBe(200);
+  expect(repo.readAmendmentHistory).toHaveBeenCalledWith(expect.anything(), MISSION);
 });
 
 const chemicalInput = {

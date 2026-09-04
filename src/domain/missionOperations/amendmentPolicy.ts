@@ -48,7 +48,9 @@ export function classifyMissionAmendment(input: { before: AmendmentValues; after
   changedKeys: string[];
 } {
   if (!input || !isPlainObject(input.before) || !isPlainObject(input.after)) throw new Error('MISSION_AMENDMENT_INPUT_INVALID');
-  const changedKeys = Array.from(new Set([...Object.keys(input.before), ...Object.keys(input.after)]))
+  const allKeys = Array.from(new Set([...Object.keys(input.before), ...Object.keys(input.after)]));
+  if (allKeys.length > 64) throw new Error('MISSION_AMENDMENT_INPUT_INVALID');
+  const changedKeys = allKeys
     .filter((key) => canonical(input.before[key]) !== canonical(input.after[key])).sort();
   const reasons = Array.from(new Set(changedKeys.filter((key) => !ADMINISTRATIVE_KEYS.has(key))
     .map((key) => MATERIAL_REASONS[key] || 'UNRECOGNISED_CHANGE' as MissionAmendmentReason)));

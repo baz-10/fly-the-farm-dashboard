@@ -27,6 +27,15 @@ if (child) {
         await classify({}, { actualFlightHours: '2.5000' }),
         await classify({}, { futureSafetySetting: true }),
       ];
+      try {
+        await classify(
+          Object.fromEntries(Array.from({ length: 40 }, (_, index) => [`before${index}`, index])),
+          Object.fromEntries(Array.from({ length: 40 }, (_, index) => [`after${index}`, index])),
+        );
+        results.push('UNEXPECTED_SUCCESS');
+      } catch (error) {
+        results.push(error.message.includes('MISSION_AMENDMENT_INPUT_INVALID') ? 'BOUNDED' : error.message);
+      }
       process.stdout.write(JSON.stringify(results));
     } finally {
       await db.close();
@@ -41,6 +50,7 @@ if (child) {
       { classification: 'MATERIAL', reasons: ['FIELD_SCOPE_CHANGED'], changed_keys: ['fieldIds'] },
       { classification: 'ADMINISTRATIVE', reasons: [], changed_keys: ['actualFlightHours'] },
       { classification: 'MATERIAL', reasons: ['UNRECOGNISED_CHANGE'], changed_keys: ['futureSafetySetting'] },
+      'BOUNDED',
     ]);
   });
 }
