@@ -173,6 +173,10 @@ function mapDatabaseRecord(resource, record) {
     result.aircraftIds = Array.isArray(record.aircraft_ids) ? record.aircraft_ids : [];
     result.equipmentKitIds = Array.isArray(record.equipment_kit_ids) ? record.equipment_kit_ids : [];
   }
+  if (resource === 'jobs') {
+    result.propertyIds = Array.isArray(record.property_ids) && record.property_ids.length
+      ? record.property_ids : (record.property_id ? [record.property_id] : []);
+  }
   if (record.row_version !== undefined) result.rowVersion = record.row_version;
   if (record.created_at !== undefined) result.createdAt = record.created_at;
   if (record.updated_at !== undefined) result.updatedAt = record.updated_at;
@@ -789,6 +793,29 @@ function createOperationalHandler(resource, dependencies = {}) {
       const id = assertUuid(req.query?.id, 'id');
       const expectedVersion = Number(body.expectedVersion);
       if (!Number.isInteger(expectedVersion) || expectedVersion < 1) throw apiError(400, 'VALIDATION_ERROR', 'expectedVersion must be a positive integer.');
+      if (req.method === 'PATCH' && resource === 'jobs' && Object.prototype.hasOwnProperty.call(body, 'fieldIds')) {
+        if (!hasPermission(context, 'jobs', 'write') && !hasPermission(context, 'jobs', 'update')) {
+          throw apiError(403, 'FORBIDDEN', 'You do not have permission for this operation.');
+        }
+        const allowed = new Set(['expectedVersion', 'fieldIds']);
+        Object.keys(body).forEach((key) => {
+          if (!allowed.has(key)) throw apiError(400, 'VALIDATION_ERROR', `Unexpected field: ${key}.`);
+        });
+        if (!Array.isArray(body.fieldIds) || body.fieldIds.length < 1 || body.fieldIds.length > 100) {
+          throw apiError(400, 'VALIDATION_ERROR', 'fieldIds must contain between 1 and 100 field IDs.');
+        }
+        const fieldIds = body.fieldIds.map((fieldId) => assertUuid(fieldId, 'fieldIds'));
+        if (new Set(fieldIds).size !== fieldIds.length) {
+          throw apiError(400, 'VALIDATION_ERROR', 'fieldIds must not contain duplicates.');
+        }
+        const result = await repository.writeJobScope(context, id, expectedVersion, fieldIds);
+        if (result.notFound || result.error === 'JOB_SCOPE_NOT_FOUND') throw apiError(404, 'NOT_FOUND', 'Operational record not found.');
+        if (result.error === 'JOB_SCOPE_VERSION_CONFLICT') {
+          throw apiError(409, 'JOB_SCOPE_VERSION_CONFLICT', 'This Job scope changed before your update.', { currentVersion: result.currentVersion });
+        }
+        if (result.error) throw apiError(400, result.error, 'The requested Job scope is invalid.');
+        return res.status(200).json({ data: mapDatabaseRecord('jobs', result.record) });
+      }
       if (req.method === 'PATCH') {
         assertPermission(context, resource, 'update');
         const existing = await repository.get(resource, context, id);

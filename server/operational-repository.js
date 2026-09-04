@@ -95,13 +95,17 @@ class OperationalRepository {
   async attachJobFieldIds(context, records) {
     if (!Array.isArray(records) || records.length === 0) return records;
     const jobIds = records.map((record) => record.id).filter(Boolean);
-    const links = await supabaseRequest(`rest/v1/job_fields?${tenantFilter(context)}&job_id=in.(${jobIds.map(encodeURIComponent).join(',')})&${activeFilter()}&select=job_id,field_id&order=field_id.asc`, {
+    const links = await supabaseRequest(`rest/v1/job_fields?${tenantFilter(context)}&job_id=in.(${jobIds.map(encodeURIComponent).join(',')})&${activeFilter()}&select=job_id,field_id,property_id&order=field_id.asc`, {
       publicMessage: 'Job field assignments could not be loaded.',
     });
-    return records.map((record) => ({
-      ...record,
-      field_ids: (Array.isArray(links) ? links : []).filter((link) => link.job_id === record.id).map((link) => link.field_id),
-    }));
+    return records.map((record) => {
+      const jobLinks = (Array.isArray(links) ? links : []).filter((link) => link.job_id === record.id);
+      return {
+        ...record,
+        field_ids: jobLinks.map((link) => link.field_id),
+        property_ids: [...new Set([record.property_id, ...jobLinks.map((link) => link.property_id)].filter(Boolean))],
+      };
+    });
   }
 
   async list(resource, context, { page = 1, pageSize = 25 } = {}) {
@@ -281,6 +285,29 @@ class OperationalRepository {
 
   async archive(resource, context, id, expectedVersion) {
     return this.write('archive', resource, context, id, expectedVersion, {});
+  }
+
+  async writeJobScope(context, jobId, expectedVersion, fieldIds) {
+    const result = await supabaseRequest('rest/v1/rpc/ftf_write_job_scope', {
+      method: 'POST',
+      body: JSON.stringify({
+        p_organisation_id: context.organisation.id,
+        p_actor_internal_user_id: context.internalUser.id,
+        p_job_id: jobId,
+        p_expected_version: expectedVersion,
+        p_field_ids: fieldIds,
+      }),
+      publicMessage: 'Job scope could not be saved.',
+    });
+    if (result?.error) return { error: result.error, currentVersion: result.current_version };
+    const fields = Array.isArray(result?.fields) ? result.fields : [];
+    const fieldIdsFromParents = fields.map((field) => field?.id).filter(Boolean);
+    const propertyIds = [...new Set(fields.map((field) => field?.property_id).filter(Boolean))];
+    const record = { ...(result?.record || result) };
+    record.field_ids = fieldIdsFromParents.length ? fieldIdsFromParents : record.field_ids;
+    record.property_ids = propertyIds.length ? propertyIds : record.property_ids;
+    if (record.property_ids?.[0]) record.property_id = record.property_ids[0];
+    return { record, fields };
   }
 
   async createDelegated(resource, context, data) { return this.writeDelegated('create',resource,context,null,null,data); }
