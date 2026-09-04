@@ -4,6 +4,7 @@ if (!global.TextDecoder) global.TextDecoder = TextDecoder;
 const { jsPDF } = require('jspdf');
 const { renderMissionPackPdf } = require('./mission-pack-renderer');
 const { renderMissionSummaryPdf } = require('./mission-summary-renderer');
+const { buildMissionSummaryViewModel } = require('./report-view-models');
 
 const GREEN = [17, 68, 36];
 const GREEN_LIGHT = [237, 246, 239];
@@ -66,6 +67,13 @@ function reportSections(reportType, evidence) {
     ];
   }
   const completion = evidence.completionRevision || {};
+  if (completion.daily_evidence_digest || completion.dailyEvidenceDigest) {
+    const model = buildMissionSummaryViewModel({ evidence: { missionId: evidence.missionId || evidence.mission_id, completionRevision: completion } });
+    const frozenSections = [['Frozen Mission Scope', model.scope], ['CRP and JSA Authority', model.approval], ...model.operatingDays.map(day => [`Operating Day - ${day.workDate}`, day]), ['Recorded Exceptions', model.exceptions || []]];
+    if (model.evidenceGaps.length) frozenSections.push(['Evidence Availability', model.evidenceGaps]);
+    frozenSections.push(['Final Sign-off', model.finalSignoff]);
+    return frozenSections;
+  }
   const snapshot = completion.completion_snapshot || completion.completionSnapshot || {};
   const authorisation = snapshot.planningAndPreflightAuthorisation || snapshot.planning_and_preflight_authorisation || {};
   const manifest = authorisation.evidence_manifest || authorisation.evidenceManifest || {};
