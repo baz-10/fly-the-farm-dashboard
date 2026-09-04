@@ -10,6 +10,90 @@ alter table public.mission_completion_revisions
       or (jsonb_typeof(daily_evidence_manifest) = 'object'
         and daily_evidence_digest ~ '^[a-f0-9]{64}$'));
 
+-- The ordinary aggregate lock is also the terminal-state guard. Final sign-off
+-- has one private lock path so an exact retry can read the immutable result;
+-- no ordinary command may use that path.
+create function public.ftf_lock_mission_package_aggregate_allow_final(
+  p_organisation_id uuid, p_mission_id uuid
+) returns void language plpgsql security definer set search_path=public,pg_temp as $$
+begin
+  if p_organisation_id is null or p_mission_id is null then raise exception 'MISSION_PACKAGE_LOCK_SCOPE_REQUIRED' using errcode='22023'; end if;
+  perform pg_advisory_xact_lock(hashtext(p_organisation_id::text)::bigint);
+  perform pg_advisory_xact_lock(hashtext(p_organisation_id::text),hashtext(p_mission_id::text));
+  perform 1 from public.missions where organisation_id=p_organisation_id and id=p_mission_id for update;
+end $$;
+
+create function public.ftf_assert_mission_not_final(
+  p_organisation_id uuid, p_mission_id uuid
+) returns void language plpgsql stable security definer set search_path=public,pg_temp as $$
+begin
+  if exists(select 1 from public.mission_completion_revisions c
+    where c.organisation_id=p_organisation_id and c.mission_id=p_mission_id and c.daily_evidence_digest is not null) then
+    raise exception 'MISSION_FINAL_SIGNOFF_IMMUTABLE' using errcode='55000';
+  end if;
+end $$;
+
+create or replace function public.ftf_lock_mission_package_aggregate(
+  p_organisation_id uuid, p_mission_id uuid default null
+) returns void language plpgsql security definer set search_path=public,pg_temp as $$
+begin
+  if p_organisation_id is null then raise exception 'MISSION_PACKAGE_LOCK_ORGANISATION_REQUIRED'; end if;
+  perform pg_advisory_xact_lock(hashtext(p_organisation_id::text)::bigint);
+  if p_mission_id is not null then
+    perform public.ftf_lock_mission_package_aggregate_allow_final(p_organisation_id,p_mission_id);
+    perform public.ftf_assert_mission_not_final(p_organisation_id,p_mission_id);
+  end if;
+end $$;
+
+create function public.ftf_guard_completion_append_after_final()
+returns trigger language plpgsql security definer set search_path=public,pg_temp as $$
+begin
+  perform public.ftf_lock_mission_package_aggregate_allow_final(new.organisation_id,new.mission_id);
+  perform public.ftf_assert_mission_not_final(new.organisation_id,new.mission_id);
+  return new;
+end $$;
+create trigger mission_completion_append_terminal_guard before insert on public.mission_completion_revisions
+  for each row execute function public.ftf_guard_completion_append_after_final();
+
+-- This legacy command was the only ordinary Mission evidence writer that did
+-- not already enter the aggregate lock. Keep its implementation private.
+alter function public.ftf_save_mission_operational_events(uuid,uuid,uuid,integer,jsonb)
+  rename to ftf_save_mission_operational_events_before_finality_guard;
+create function public.ftf_save_mission_operational_events(
+  p_organisation_id uuid,p_actor_internal_user_id uuid,p_mission_id uuid,p_expected_version integer,p_events jsonb
+) returns jsonb language plpgsql security definer set search_path=public,pg_temp as $$
+begin
+  perform public.ftf_lock_mission_package_aggregate(p_organisation_id,p_mission_id);
+  return public.ftf_save_mission_operational_events_before_finality_guard(
+    p_organisation_id,p_actor_internal_user_id,p_mission_id,p_expected_version,p_events);
+end $$;
+
+create function public.ftf_guard_mission_terminal_mutation()
+returns trigger language plpgsql security definer set search_path=public,pg_temp as $$
+declare v_row jsonb := case when tg_op='DELETE' then to_jsonb(old) else to_jsonb(new) end;
+begin
+  perform public.ftf_lock_mission_package_aggregate(
+    nullif(v_row->>'organisation_id','')::uuid,nullif(v_row->>'mission_id','')::uuid);
+  if tg_op='DELETE' then return old; end if;
+  return new;
+end $$;
+
+do $terminal_mutation_guards$
+declare v_table text;
+begin
+  foreach v_table in array array[
+    'mission_operational_imports','mission_operational_import_attributions',
+    'mission_operational_resource_revisions','mission_operational_chemical_revisions',
+    'mission_operational_events','mission_operational_revisions',
+    'mission_operating_days','mission_day_jsa_reviews','mission_day_field_activity',
+    'mission_aircraft_day_actuals','mission_flight_actuals',
+    'mission_day_chemical_revisions','mission_day_chemical_lines','mission_day_weather_reports',
+    'mission_package_amendments'
+  ] loop
+    execute format('create trigger mission_terminal_guard before insert or update or delete on public.%I for each row execute function public.ftf_guard_mission_terminal_mutation()',v_table);
+  end loop;
+end $terminal_mutation_guards$;
+
 create table public.mission_final_projection_sources (
   id uuid primary key default gen_random_uuid(),
   organisation_id uuid not null,
@@ -110,6 +194,11 @@ begin
       (select 1 from public.mission_day_chemical_revisions c where c.organisation_id=p_organisation_id and c.mission_id=p_mission_id and c.operating_day_id=v_day.id) then
       v_blockers := v_blockers || jsonb_build_array(jsonb_build_object('code','MISSION_DAY_CHEMICAL_REQUIRED','message',v_day.work_date::text||': chemical actuals are not confirmed.'));
     end if;
+    if coalesce((select c.material_variance from public.mission_day_chemical_revisions c
+      where c.organisation_id=p_organisation_id and c.mission_id=p_mission_id and c.operating_day_id=v_day.id
+      order by c.revision_number desc limit 1),false) then
+      v_blockers := v_blockers || jsonb_build_array(jsonb_build_object('code','MISSION_DAY_CHEMICAL_RECONCILIATION_REQUIRED','message',v_day.work_date::text||': material chemical variance has no governed reconciliation.'));
+    end if;
     if not exists (select 1 from public.mission_day_weather_reports w where w.organisation_id=p_organisation_id and w.mission_id=p_mission_id and w.operating_day_id=v_day.id) then
       v_blockers := v_blockers || jsonb_build_array(jsonb_build_object('code','MISSION_DAY_WEATHER_REQUIRED','message',v_day.work_date::text||': actual weather evidence is missing.'));
     end if;
@@ -152,7 +241,7 @@ declare v_mission public.missions%rowtype; v_job public.jobs%rowtype; v_pack pub
   v_completion public.mission_completion_revisions%rowtype; v_manifest jsonb; v_digest text; v_blockers jsonb; v_current integer;
 begin
   perform public.ftf_lock_active_organisation(p_organisation_id);
-  perform public.ftf_lock_mission_package_aggregate(p_organisation_id,p_mission_id);
+  perform public.ftf_lock_mission_package_aggregate_allow_final(p_organisation_id,p_mission_id);
   if not public.ftf_actor_has_active_beta_seat(p_organisation_id,p_actor_internal_user_id)
     or not public.ftf_actor_has_permission(p_organisation_id,p_actor_internal_user_id,'mission.completion.complete') then return jsonb_build_object('forbidden',true); end if;
   select * into v_mission from public.missions where organisation_id=p_organisation_id and id=p_mission_id and archived_at is null for update;
@@ -210,8 +299,21 @@ begin
   if p_expected_version is null or v_job.row_version<>p_expected_version then return jsonb_build_object('error','JOB_VERSION_CONFLICT','current_version',v_job.row_version); end if;
   for v_mission in select id from public.missions where organisation_id=p_organisation_id and job_id=p_job_id and archived_at is null and lower(status) not in ('cancelled','canceled') order by id for update loop null; end loop;
   if exists(select 1 from public.missions m where m.organisation_id=p_organisation_id and m.job_id=p_job_id and m.archived_at is null and lower(m.status) not in ('cancelled','canceled')
-    and not exists(select 1 from public.mission_completion_revisions c where c.organisation_id=m.organisation_id and c.mission_id=m.id and c.daily_evidence_digest is not null)) then
+    and coalesce((select c.daily_evidence_digest is not null from public.mission_completion_revisions c
+      where c.organisation_id=m.organisation_id and c.mission_id=m.id order by c.version_number desc limit 1),false)=false) then
     return jsonb_build_object('error','JOB_MISSIONS_NOT_SIGNED_OFF'); end if;
+  if exists(
+    select 1 from public.missions m
+    join lateral (select c.* from public.mission_completion_revisions c where c.organisation_id=m.organisation_id and c.mission_id=m.id order by c.version_number desc limit 1) final on true
+    join public.mission_authorisation_revisions authority on authority.organisation_id=final.organisation_id and authority.id=final.authorisation_revision_id
+    join public.mission_pack_revisions final_pack on final_pack.organisation_id=authority.organisation_id and final_pack.id=authority.mission_pack_revision_id
+    where m.organisation_id=p_organisation_id and m.job_id=p_job_id and m.archived_at is null and lower(m.status) not in ('cancelled','canceled') and (
+      exists(select 1 from public.mission_pack_revisions prospective where prospective.organisation_id=m.organisation_id and prospective.mission_id=m.id
+        and lower(prospective.package_state) in ('preparing','awaiting_crp_approval') and prospective.version_number>final_pack.version_number)
+      or exists(select 1 from public.mission_package_amendments amendment where amendment.organisation_id=m.organisation_id
+        and amendment.mission_id=m.id and amendment.created_at>final.completed_at)
+    )
+  ) then return jsonb_build_object('error','JOB_MISSION_AUTHORITY_UNRESOLVED'); end if;
   update public.jobs set status='closed',row_version=row_version+1,updated_at=now() where organisation_id=p_organisation_id and id=p_job_id returning * into v_job;
   insert into public.audit_events(organisation_id,actor_internal_user_id,event_type,entity_type,entity_id,event_payload) values(p_organisation_id,p_actor_internal_user_id,'job.closed','job',p_job_id,jsonb_build_object('version',v_job.row_version));
   insert into public.transactional_outbox(organisation_id,topic,aggregate_type,aggregate_id,payload) values(p_organisation_id,'job.closed','job',p_job_id,jsonb_build_object('version',v_job.row_version));
@@ -260,5 +362,11 @@ grant execute on function public.ftf_financial_actual_operational_proposal(uuid,
 revoke all on function public.ftf_build_mission_daily_evidence_manifest(uuid,uuid), public.ftf_mission_final_signoff_blockers(uuid,uuid),
   public.ftf_read_mission_final_signoff_readiness(uuid,uuid,uuid), public.ftf_final_signoff_mission(uuid,uuid,uuid,integer,text),
   public.ftf_close_job(uuid,uuid,uuid,integer) from public,anon,authenticated;
+revoke all on function public.ftf_lock_mission_package_aggregate_allow_final(uuid,uuid),public.ftf_assert_mission_not_final(uuid,uuid),
+  public.ftf_guard_completion_append_after_final(),public.ftf_guard_mission_terminal_mutation(),
+  public.ftf_save_mission_operational_events_before_finality_guard(uuid,uuid,uuid,integer,jsonb)
+  from public,anon,authenticated,service_role;
+revoke all on function public.ftf_save_mission_operational_events(uuid,uuid,uuid,integer,jsonb) from public,anon,authenticated,service_role;
 grant execute on function public.ftf_read_mission_final_signoff_readiness(uuid,uuid,uuid),
-  public.ftf_final_signoff_mission(uuid,uuid,uuid,integer,text), public.ftf_close_job(uuid,uuid,uuid,integer) to service_role;
+  public.ftf_final_signoff_mission(uuid,uuid,uuid,integer,text), public.ftf_close_job(uuid,uuid,uuid,integer),
+  public.ftf_save_mission_operational_events(uuid,uuid,uuid,integer,jsonb) to service_role;

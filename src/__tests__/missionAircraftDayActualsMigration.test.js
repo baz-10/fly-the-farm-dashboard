@@ -437,6 +437,60 @@ if (child) {
     expect(await scalar(db, `select count(*)::integer as value from public.mission_final_projection_sources where mission_id='${ids.mission}'`)).toBe(0);
   });
 
+  test('terminal finality guard blocks ordinary commands and direct writers without partial mutation', async () => {
+    const authorisationId = 'e0000000-0000-4000-8000-000000000001';
+    const chemicalId = 'e0000000-0000-4000-8000-000000000002';
+    const operationalId = 'e0000000-0000-4000-8000-000000000003';
+    const prospectivePackId = 'e0000000-0000-4000-8000-000000000004';
+    await db.exec(`
+      insert into public.mission_authorisation_revisions(
+        id,organisation_id,operating_location_id,mission_id,version_number,evidence_manifest,readiness_snapshot,declaration,
+        authorised_personnel_id,authorised_personnel_snapshot,authorised_by_internal_user_id,mission_pack_revision_id,decision,evidence_digest
+      ) values('${authorisationId}','${orgA}','${baseA}','${ids.mission}',1,'{}','{}','Authorised','${ids.personnel}','{}','${actorA}','${ids.pack}','AUTHORISED','${'c'.repeat(64)}');
+      update public.missions set current_authorised_pack_revision_id='${ids.pack}' where id='${ids.mission}';
+      insert into public.mission_pack_revisions(
+        id,organisation_id,operating_location_id,mission_id,version_number,pack_snapshot,generated_by_internal_user_id,
+        job_id,package_state,jsa_revision_id,evidence_digest,source_manifest
+      ) values('${prospectivePackId}','${orgA}','${baseA}','${ids.mission}',2,'{}','${actorA}','${ids.job}','PREPARING','${ids.jsa}','${'e'.repeat(64)}','{}');
+      insert into public.mission_operational_chemical_revisions(
+        id,organisation_id,operating_location_id,mission_id,version_number,changed_from_plan,actual_usage,planned_chemicals_snapshot,recorded_by_internal_user_id
+      ) values('${chemicalId}','${orgA}','${baseA}','${ids.mission}',1,false,'{}','{}','${actorA}');
+      insert into public.mission_operational_revisions(
+        id,organisation_id,operating_location_id,mission_id,version_number,authorisation_revision_id,source_file_ids,
+        resource_revision_id,chemical_revision_id,event_ids,review_snapshot,submitted_by_internal_user_id
+      ) select '${operationalId}','${orgA}','${baseA}','${ids.mission}',1,'${authorisationId}','{}',id,'${chemicalId}','{}','{}','${actorA}'
+        from public.mission_operational_resource_revisions where organisation_id='${orgA}' and mission_id='${ids.mission}' order by version_number desc limit 1;
+      insert into public.mission_completion_revisions(
+        organisation_id,operating_location_id,mission_id,version_number,authorisation_revision_id,operational_revision_id,
+        completion_snapshot,declaration,completed_by_internal_user_id,daily_evidence_manifest,daily_evidence_digest
+      ) values('${orgA}','${baseA}','${ids.mission}',1,'${authorisationId}','${operationalId}','{}','Final','${actorA}','{}','${'d'.repeat(64)}');
+    `);
+    expect(await scalar(db, "select count(*)::integer as value from pg_trigger where tgname='mission_terminal_guard' and not tgisinternal")).toBe(15);
+    const before = await scalar(db, `select count(*)::integer as value from public.mission_operational_events where mission_id='${ids.mission}'`);
+    await expect(call('ftf_save_mission_operational_events', [orgA, actorA, ids.mission, 0, '[]']))
+      .rejects.toThrow(/MISSION_FINAL_SIGNOFF_IMMUTABLE/);
+    await expect(call('ftf_complete_mission', [orgA, actorA, ids.mission, operationalId, 1, 'Again', 'Not permitted']))
+      .rejects.toThrow(/MISSION_FINAL_SIGNOFF_IMMUTABLE/);
+    await expect(db.exec(`insert into public.mission_operational_events(
+      organisation_id,operating_location_id,mission_id,batch_version,event_index,event_type,event_details,no_events_declaration,recorded_by_internal_user_id
+    ) values('${orgA}','${baseA}','${ids.mission}',99,0,'NO_OPERATIONAL_EVENTS','{}',true,'${actorA}')`))
+      .rejects.toThrow(/MISSION_FINAL_SIGNOFF_IMMUTABLE/);
+    await expect(db.exec(`insert into public.mission_completion_revisions(
+      organisation_id,operating_location_id,mission_id,version_number,authorisation_revision_id,operational_revision_id,
+      completion_snapshot,declaration,completed_by_internal_user_id
+    ) values('${orgA}','${baseA}','${ids.mission}',2,'${authorisationId}','${operationalId}','{}','Legacy append','${actorA}')`))
+      .rejects.toThrow(/MISSION_FINAL_SIGNOFF_IMMUTABLE/);
+    expect(await scalar(db, `select count(*)::integer as value from public.mission_operational_events where mission_id='${ids.mission}'`)).toBe(before);
+    expect(await scalar(db, `select count(*)::integer as value from public.mission_completion_revisions where mission_id='${ids.mission}'`)).toBe(1);
+    await db.exec(`insert into public.permissions(organisation_id,code,description) values('${orgA}','jobs.write','Write Jobs') on conflict do nothing;
+      insert into public.role_permissions(organisation_id,role_id,permission_id)
+      select '${orgA}',role.id,permission.id from public.roles role join public.permissions permission on permission.organisation_id=role.organisation_id
+      where role.organisation_id='${orgA}' and role.code='admin' and permission.code='jobs.write' on conflict do nothing`);
+    const jobVersion = await scalar(db, `select row_version as value from public.jobs where id='${ids.job}'`);
+    expect(await call('ftf_close_job', [orgA, actorA, ids.job, jobVersion])).toMatchObject({ error: 'JOB_MISSION_AUTHORITY_UNRESOLVED' });
+    expect(await scalar(db, `select lower(status) as value from public.jobs where id='${ids.job}'`)).not.toBe('closed');
+  });
+
   test('writes bounded audit and outbox evidence and closes the database', async () => {
     expect(await scalar(db, `select count(*)::integer as value from public.audit_events where organisation_id='${orgA}' and event_type like 'mission.aircraft_day.%'`)).toBeGreaterThan(0);
     expect(await scalar(db, `select count(*)::integer as value from public.transactional_outbox where organisation_id='${orgA}' and topic like 'operational.mission.aircraft_day_%'`)).toBeGreaterThan(0);

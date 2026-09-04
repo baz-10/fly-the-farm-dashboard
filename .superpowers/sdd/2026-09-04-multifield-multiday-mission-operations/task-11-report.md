@@ -13,18 +13,26 @@
 - Job closure locks all Missions and requires a digest-bearing canonical final completion for every non-cancelled Mission.
 - UI now distinguishes operational completion from final sign-off, presents precise blockers, and exposes Job close only after every governed Mission is finally signed off.
 
+## Review round 1
+
+- Final readiness now rejects the latest daily chemical revision when it carries `material_variance`; no reconciliation override was invented because the repository has no existing governed chemical-reconciliation authority tied to that revision.
+- The shared Mission aggregate lock is now the terminal-finality guard for every ordinary package/day/aircraft/chemical/weather/import/attribution/amendment command. The one formerly unlocked operational-event writer is wrapped, and table triggers cover direct writes to the post-package operational tables.
+- A dedicated append trigger prevents a legacy completion revision from being added after a digest-bearing canonical final revision. Final sign-off retains a private lock-only path solely for exact idempotent retries; that helper has no callable role grant.
+- Job close evaluates the latest canonical completion, not any historical final revision, and rejects a newer unresolved `PREPARING`/`AWAITING_CRP_APPROVAL` package or later amendment under the same deterministic Mission locks.
+- Executable PGlite coverage proves RPC mutation, direct table mutation, legacy completion append and Job-close-with-prospective-authority all fail closed without partial mutation.
+
 ## RED evidence
 
 The first focused run failed for the intended missing migration, absent `MissionFinalSignoff` component and unsupported API actions. The lifecycle refinement also identified and corrected the existing-closeout compatibility case: revision 1 may already exist, so final sign-off must append rather than overwrite or falsely return it.
 
 ## Verification
 
-- Focused authority/API/decoder/UI/Financial/Fleet/migration suite: 9 suites / 80 tests PASS.
+- Focused authority/API/decoder/UI/Financial/Fleet/migration suite: 9 suites / 82 tests PASS.
 - Full-chain PGlite migration execution and Fleet behavior: PASS, including an executable multi-day final-sign-off fail-closed/zero-mutation assertion.
 - Production build: PASS with the repository's pre-existing Browserslist, lint-warning and bundle-size warning backlog.
 - Targeted ESLint: zero errors; six pre-existing unused-import warnings remain in `JobDetail.tsx`.
 - `git diff --check`: PASS.
-- Migration SHA-256: `6a4d492193034978985de739ad6fd37183285637f5518d5582da685b6875ea38`.
+- Migration SHA-256: `a2ee74d4237f1cdac867c4f270a3acb72f926b7d5b80e2ad188c0c1b747adfdb`.
 
 ## Files
 
