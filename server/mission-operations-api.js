@@ -421,6 +421,16 @@ function checkedFailure(req, result) {
 }
 
 function safeError(req, error) {
+  let postgrest = null;
+  if (Number.isInteger(error?.statusCode) && typeof error?.message === 'string') {
+    const bodyStart = error.message.indexOf('{');
+    if (bodyStart >= 0) {
+      try { postgrest = JSON.parse(error.message.slice(bodyStart)); } catch { postgrest = null; }
+    }
+  }
+  if (postgrest?.code === '55000' && postgrest?.message === 'MISSION_FINAL_SIGNOFF_IMMUTABLE') {
+    return errorResponse(req, 409, 'MISSION_FINAL_SIGNOFF_IMMUTABLE', 'This Mission is finally signed off and cannot be changed.');
+  }
   if (['MISSION_OPERATIONS_REQUEST_INVALID', 'SAME_ORIGIN_REQUIRED', 'UNSUPPORTED_ACTION', 'METHOD_NOT_ALLOWED',
     'MISSION_DAY_WEATHER_PROVIDER_UNAVAILABLE'].includes(error?.code)) {
     return errorResponse(req, error.statusCode, error.code, error.publicMessage);

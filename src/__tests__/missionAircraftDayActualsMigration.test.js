@@ -56,6 +56,7 @@ const ids = {
   field: '40000000-0000-4000-8000-000000000001',
   job: '50000000-0000-4000-8000-000000000001',
   mission: '60000000-0000-4000-8000-000000000001',
+  missionOther: '60000000-0000-4000-8000-000000000002',
   personnel: '70000000-0000-4000-8000-000000000001',
   jsa: '80000000-0000-4000-8000-000000000001',
   pack: '90000000-0000-4000-8000-000000000001',
@@ -442,7 +443,10 @@ if (child) {
     const chemicalId = 'e0000000-0000-4000-8000-000000000002';
     const operationalId = 'e0000000-0000-4000-8000-000000000003';
     const prospectivePackId = 'e0000000-0000-4000-8000-000000000004';
+    const eventId = 'e0000000-0000-4000-8000-000000000005';
     await db.exec(`
+      insert into public.missions(id,organisation_id,job_id,operating_location_id,mission_number,status)
+        values('${ids.missionOther}','${orgA}','${ids.job}','${baseA}','MIS-OTHER','cancelled');
       insert into public.mission_authorisation_revisions(
         id,organisation_id,operating_location_id,mission_id,version_number,evidence_manifest,readiness_snapshot,declaration,
         authorised_personnel_id,authorised_personnel_snapshot,authorised_by_internal_user_id,mission_pack_revision_id,decision,evidence_digest
@@ -460,12 +464,15 @@ if (child) {
         resource_revision_id,chemical_revision_id,event_ids,review_snapshot,submitted_by_internal_user_id
       ) select '${operationalId}','${orgA}','${baseA}','${ids.mission}',1,'${authorisationId}','{}',id,'${chemicalId}','{}','{}','${actorA}'
         from public.mission_operational_resource_revisions where organisation_id='${orgA}' and mission_id='${ids.mission}' order by version_number desc limit 1;
+      insert into public.mission_operational_events(
+        id,organisation_id,operating_location_id,mission_id,batch_version,event_index,event_type,event_details,no_events_declaration,recorded_by_internal_user_id
+      ) values('${eventId}','${orgA}','${baseA}','${ids.mission}',1,0,'NO_OPERATIONAL_EVENTS','{}',true,'${actorA}');
       insert into public.mission_completion_revisions(
         organisation_id,operating_location_id,mission_id,version_number,authorisation_revision_id,operational_revision_id,
         completion_snapshot,declaration,completed_by_internal_user_id,daily_evidence_manifest,daily_evidence_digest
       ) values('${orgA}','${baseA}','${ids.mission}',1,'${authorisationId}','${operationalId}','{}','Final','${actorA}','{}','${'d'.repeat(64)}');
     `);
-    expect(await scalar(db, "select count(*)::integer as value from pg_trigger where tgname='mission_terminal_guard' and not tgisinternal")).toBe(15);
+    expect(await scalar(db, "select count(*)::integer as value from pg_trigger where tgname='aaa_mission_terminal_guard' and not tgisinternal")).toBe(15);
     const before = await scalar(db, `select count(*)::integer as value from public.mission_operational_events where mission_id='${ids.mission}'`);
     await expect(call('ftf_save_mission_operational_events', [orgA, actorA, ids.mission, 0, '[]']))
       .rejects.toThrow(/MISSION_FINAL_SIGNOFF_IMMUTABLE/);
@@ -475,6 +482,9 @@ if (child) {
       organisation_id,operating_location_id,mission_id,batch_version,event_index,event_type,event_details,no_events_declaration,recorded_by_internal_user_id
     ) values('${orgA}','${baseA}','${ids.mission}',99,0,'NO_OPERATIONAL_EVENTS','{}',true,'${actorA}')`))
       .rejects.toThrow(/MISSION_FINAL_SIGNOFF_IMMUTABLE/);
+    await expect(db.exec(`update public.mission_operational_events set mission_id='${ids.missionOther}' where id='${eventId}'`))
+      .rejects.toThrow(/MISSION_FINAL_SIGNOFF_IMMUTABLE/);
+    expect(await scalar(db, `select mission_id::text as value from public.mission_operational_events where id='${eventId}'`)).toBe(ids.mission);
     await expect(db.exec(`insert into public.mission_completion_revisions(
       organisation_id,operating_location_id,mission_id,version_number,authorisation_revision_id,operational_revision_id,
       completion_snapshot,declaration,completed_by_internal_user_id

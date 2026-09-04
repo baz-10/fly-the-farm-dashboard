@@ -70,10 +70,22 @@ end $$;
 
 create function public.ftf_guard_mission_terminal_mutation()
 returns trigger language plpgsql security definer set search_path=public,pg_temp as $$
-declare v_row jsonb := case when tg_op='DELETE' then to_jsonb(old) else to_jsonb(new) end;
+declare v_old_row jsonb; v_new_row jsonb; v_scope record;
 begin
-  perform public.ftf_lock_mission_package_aggregate(
-    nullif(v_row->>'organisation_id','')::uuid,nullif(v_row->>'mission_id','')::uuid);
+  v_old_row := case when tg_op in ('UPDATE','DELETE') then to_jsonb(old) end;
+  v_new_row := case when tg_op in ('INSERT','UPDATE') then to_jsonb(new) end;
+  for v_scope in
+    select distinct scope.organisation_id,scope.mission_id from (
+      select nullif(v_old_row->>'organisation_id','')::uuid organisation_id,
+        nullif(v_old_row->>'mission_id','')::uuid mission_id where v_old_row is not null
+      union all
+      select nullif(v_new_row->>'organisation_id','')::uuid,
+        nullif(v_new_row->>'mission_id','')::uuid where v_new_row is not null
+    ) scope where scope.organisation_id is not null and scope.mission_id is not null
+    order by scope.organisation_id,scope.mission_id
+  loop
+    perform public.ftf_lock_mission_package_aggregate(v_scope.organisation_id,v_scope.mission_id);
+  end loop;
   if tg_op='DELETE' then return old; end if;
   return new;
 end $$;
@@ -90,7 +102,7 @@ begin
     'mission_day_chemical_revisions','mission_day_chemical_lines','mission_day_weather_reports',
     'mission_package_amendments'
   ] loop
-    execute format('create trigger mission_terminal_guard before insert or update or delete on public.%I for each row execute function public.ftf_guard_mission_terminal_mutation()',v_table);
+    execute format('create trigger aaa_mission_terminal_guard before insert or update or delete on public.%I for each row execute function public.ftf_guard_mission_terminal_mutation()',v_table);
   end loop;
 end $terminal_mutation_guards$;
 

@@ -41,6 +41,9 @@ test('uses one terminal guard for every ordinary Mission mutation boundary', () 
   expect(sql).toMatch(/create or replace function public\.ftf_lock_mission_package_aggregate[\s\S]+ftf_assert_mission_not_final/);
   expect(sql).toMatch(/create (or replace )?function public\.ftf_save_mission_operational_events[\s\S]+ftf_lock_mission_package_aggregate/);
   expect(sql).toMatch(/create function public\.ftf_final_signoff_mission[\s\S]+ftf_lock_mission_package_aggregate_allow_final/);
+  expect(sql).toMatch(/tg_op in \('update','delete'\)[\s\S]+to_jsonb\(old\)/);
+  expect(sql).toMatch(/tg_op in \('insert','update'\)[\s\S]+to_jsonb\(new\)/);
+  expect(sql).toMatch(/select distinct scope\.organisation_id,scope\.mission_id[\s\S]+order by scope\.organisation_id,scope\.mission_id/);
   const chain = missionChain();
   for (const writer of [
     'ftf_generate_mission_pack', 'ftf_save_mission_package_scope', 'ftf_submit_mission_package',

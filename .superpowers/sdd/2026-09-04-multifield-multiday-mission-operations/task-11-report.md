@@ -21,18 +21,25 @@
 - Job close evaluates the latest canonical completion, not any historical final revision, and rejects a newer unresolved `PREPARING`/`AWAITING_CRP_APPROVAL` package or later amendment under the same deterministic Mission locks.
 - Executable PGlite coverage proves RPC mutation, direct table mutation, legacy completion append and Job-close-with-prospective-authority all fail closed without partial mutation.
 
+## Review round 2
+
+- The terminal table trigger now resolves both `OLD` and `NEW` organisation/Mission identities for `UPDATE`, deduplicates them, and locks/checks them in deterministic organisation/Mission order. Reparenting cannot move evidence out of a finalized source scope.
+- Terminal guards are installed on all 15 post-package operational/evidence relationship tables. Their rows expose both `organisation_id` and `mission_id`, so no indirect relationship lookup or unscoped fallback is required.
+- Executable privileged-update coverage attempts to reparent an existing operational event from a finalized Mission to a non-final Mission and proves the source identity and row count remain unchanged.
+- The API now recognizes only the exact thrown PostgREST pair `55000` + `MISSION_FINAL_SIGNOFF_IMMUTABLE` and maps it to a fixed safe 409 response. Other `55000` errors remain the generic safe 500 path; upstream details are never returned.
+
 ## RED evidence
 
 The first focused run failed for the intended missing migration, absent `MissionFinalSignoff` component and unsupported API actions. The lifecycle refinement also identified and corrected the existing-closeout compatibility case: revision 1 may already exist, so final sign-off must append rather than overwrite or falsely return it.
 
 ## Verification
 
-- Focused authority/API/decoder/UI/Financial/Fleet/migration suite: 9 suites / 82 tests PASS.
+- Focused authority/API/decoder/UI/Financial/Fleet/migration suite: 9 suites / 83 tests PASS.
 - Full-chain PGlite migration execution and Fleet behavior: PASS, including an executable multi-day final-sign-off fail-closed/zero-mutation assertion.
 - Production build: PASS with the repository's pre-existing Browserslist, lint-warning and bundle-size warning backlog.
 - Targeted ESLint: zero errors; six pre-existing unused-import warnings remain in `JobDetail.tsx`.
 - `git diff --check`: PASS.
-- Migration SHA-256: `a2ee74d4237f1cdac867c4f270a3acb72f926b7d5b80e2ad188c0c1b747adfdb`.
+- Migration SHA-256: `7586956d1652e8ca5b4a20da86113a64cec41dd4dcd17a522f82b540d057c743`.
 
 ## Files
 

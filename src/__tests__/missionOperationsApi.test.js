@@ -87,6 +87,30 @@ test('routes checked final readiness, canonical final sign-off and Job close com
   expect(repo.closeJob).toHaveBeenCalledWith(expect.anything(), { jobId: FIELD_B, expectedVersion: 4 });
 });
 
+test('maps only the recognized thrown PostgREST finality guard to a safe conflict', async () => {
+  const postgrestError = (message) => Object.assign(new Error(`500 ${JSON.stringify({ code: '55000', details: 'private detail', hint: null, message })}`), {
+    statusCode: 500,
+    publicMessage: 'Supabase request failed.',
+  });
+  let repo = repository();
+  repo.finalSignoffMission.mockRejectedValueOnce(postgrestError('MISSION_FINAL_SIGNOFF_IMMUTABLE'));
+  let handler = createMissionOperationsHandler({ repository: repo, resolveContext: async () => context(['mission.completion.complete']) });
+  let res = response();
+  await handler(request('POST', 'final-signoff', { missionId: MISSION, expectedRevision: 1, declaration: 'Retry.' }), res);
+  expect(res.statusCode).toBe(409);
+  expect(res.body.error.code).toBe('MISSION_FINAL_SIGNOFF_IMMUTABLE');
+  expect(JSON.stringify(res.body)).not.toContain('private detail');
+
+  repo = repository();
+  repo.finalSignoffMission.mockRejectedValueOnce(postgrestError('ANOTHER_TERMINAL_ERROR'));
+  handler = createMissionOperationsHandler({ repository: repo, resolveContext: async () => context(['mission.completion.complete']) });
+  res = response();
+  await handler(request('POST', 'final-signoff', { missionId: MISSION, expectedRevision: 1, declaration: 'Retry.' }), res);
+  expect(res.statusCode).toBe(500);
+  expect(res.body.error.code).toBe('MISSION_OPERATIONS_UNAVAILABLE');
+  expect(JSON.stringify(res.body)).not.toContain('ANOTHER_TERMINAL_ERROR');
+});
+
 test('routes a strictly decoded amendment through checked package authority', async () => {
   const repo = repository();
   const handler = createMissionOperationsHandler({
