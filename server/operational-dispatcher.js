@@ -29,6 +29,7 @@ const { createGettingStartedHandler } = require('./getting-started-api');
 const { createFinancialActualsHandler } = require('./financial-actuals-api');
 const { createFleetMaintenanceHandler } = require('./fleet-maintenance-api');
 const { createTechnicalCatalogueHandler } = require('./technical-catalogue-api');
+const { createMissionOperationsHandler } = require('./mission-operations-api');
 const ASSET_MAINTENANCE_RESOURCE = 'asset-maintenance';
 
 function createDefaultHandlers() {
@@ -52,6 +53,7 @@ function createDefaultHandlers() {
     'mission-chemicals': createMissionChemicalsHandler(),
     'mission-jsa': createMissionJsaHandler(),
     'mission-authorisation': createMissionAuthorisationHandler(),
+    'mission-operations': createMissionOperationsHandler(),
     'mission-operational-closeout': createMissionOperationalCloseoutHandler(),
     'mission-outcomes': createMissionOutcomesHandler(),
     'customer-acceptance': createCustomerAcceptanceHandler(),

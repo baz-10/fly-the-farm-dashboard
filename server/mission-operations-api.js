@@ -1,0 +1,170 @@
+const { MissionOperationsRepository } = require('./mission-operations-repository');
+const { resolveOperationalActorContext } = require('./operational-actor-context');
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const SHA256 = /^[a-f0-9]{64}$/;
+const ACTIONS = Object.freeze({
+  scope: { method: 'POST', permission: 'mission.pack.generate' },
+  submit: { method: 'POST', permission: 'mission.pack.generate' },
+  authorise: { method: 'POST', permission: 'mission.authorisation.authorise' },
+  reject: { method: 'POST', permission: 'mission.authorisation.authorise' },
+  history: { method: 'GET', permissionsAny: ['mission.pack.read', 'mission.authorisation.read'] },
+});
+
+function fail(statusCode, code, message) {
+  throw Object.assign(new Error(message), { statusCode, code, publicMessage: message });
+}
+
+function exactObject(value, keys) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) fail(400, 'MISSION_OPERATIONS_REQUEST_INVALID', 'Mission Operations input is invalid.');
+  const actual = Object.keys(value);
+  if (actual.length !== keys.length || keys.some((key) => !(key in value)) || actual.some((key) => !keys.includes(key))) {
+    fail(400, 'MISSION_OPERATIONS_REQUEST_INVALID', 'Mission Operations input is invalid.');
+  }
+  return value;
+}
+
+function uuid(value, name) {
+  if (typeof value !== 'string' || !UUID.test(value)) fail(400, 'MISSION_OPERATIONS_REQUEST_INVALID', `${name} is invalid.`);
+  return value;
+}
+
+function revision(value) {
+  if (!Number.isInteger(value) || value < 0) fail(400, 'MISSION_OPERATIONS_REQUEST_INVALID', 'Expected revision is invalid.');
+  return value;
+}
+
+function fieldIds(value) {
+  if (!Array.isArray(value) || value.length < 1 || value.length > 100) fail(400, 'MISSION_OPERATIONS_REQUEST_INVALID', 'Mission Field scope is invalid.');
+  const ids = value.map((id) => uuid(id, 'Field'));
+  if (new Set(ids.map((id) => id.toLowerCase())).size !== ids.length) fail(400, 'MISSION_OPERATIONS_REQUEST_INVALID', 'Mission Field scope contains duplicates.');
+  return ids;
+}
+
+function digest(value) {
+  if (typeof value !== 'string' || !SHA256.test(value)) fail(400, 'MISSION_OPERATIONS_REQUEST_INVALID', 'Evidence digest is invalid.');
+  return value;
+}
+
+function declaration(value) {
+  const hasControlCharacter = typeof value === 'string'
+    && value.split('').some((character) => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127);
+  if (typeof value !== 'string' || value.trim().length < 1 || value.trim().length > 2000 || hasControlCharacter) {
+    fail(400, 'MISSION_OPERATIONS_REQUEST_INVALID', 'Decision declaration is invalid.');
+  }
+  return value.trim();
+}
+
+function permitted(context, definition) {
+  const permissions = context.permissions || [];
+  if (permissions.includes('*')) return true;
+  return definition.permissionsAny
+    ? definition.permissionsAny.some((permission) => permissions.includes(permission))
+    : permissions.includes(definition.permission);
+}
+
+function sameOrigin(req) {
+  const origin = req.headers?.origin;
+  const protocol = req.headers?.['x-forwarded-proto'] || 'https';
+  const host = req.headers?.host;
+  if (!origin || origin !== `${protocol}://${host}`) fail(403, 'SAME_ORIGIN_REQUIRED', 'Same-origin requests are required.');
+}
+
+function errorResponse(req, status, code, message, result = {}) {
+  const error = { code, message, correlationId: req.correlationId };
+  if (Number.isInteger(result.currentVersion)) error.currentVersion = result.currentVersion;
+  if (typeof result.currentDigest === 'string') error.currentDigest = result.currentDigest;
+  return { status, error };
+}
+
+function checkedFailure(req, result) {
+  if (!result || typeof result !== 'object') return null;
+  if (result.forbidden || result.locationForbidden) return errorResponse(req, 403, 'FORBIDDEN', 'You do not have permission to use Mission Operations.');
+  if (result.readinessBlocked) return errorResponse(req, 409, 'READINESS_BLOCKED', 'Mission readiness must pass before this package can be authorised.', result);
+  const code = result.error;
+  if (!code) return null;
+  if (code === 'MISSION_PACKAGE_NOT_FOUND') return errorResponse(req, 404, 'NOT_FOUND', 'Mission package was not found.');
+  if (code === 'MISSION_CRP_INELIGIBLE') return errorResponse(req, 403, 'CRP_INELIGIBLE', 'The signed-in user is not an eligible CRP for this Mission Base.');
+  if (['MISSION_PACKAGE_VERSION_CONFLICT', 'MISSION_PACKAGE_EVIDENCE_STALE', 'MISSION_PACKAGE_DECISION_CONFLICT'].includes(code)) {
+    const message = code === 'MISSION_PACKAGE_EVIDENCE_STALE'
+      ? 'Mission package evidence changed. Reload before continuing.'
+      : code === 'MISSION_PACKAGE_DECISION_CONFLICT'
+        ? 'A CRP decision already exists for this package revision.'
+        : 'Mission package revision changed in another session.';
+    return errorResponse(req, 409, code, message, result);
+  }
+  if (['MISSION_SCOPE_EMPTY', 'MISSION_SCOPE_FIELD_INVALID', 'MISSION_SCOPE_FIELD_DUPLICATE', 'MISSION_SCOPE_FIELD_NOT_IN_JOB', 'MISSION_PACKAGE_JSA_REQUIRED', 'MISSION_PACKAGE_DECISION_INVALID', 'MISSION_PACKAGE_DECLARATION_INVALID'].includes(code)) {
+    return errorResponse(req, 400, code, 'Mission package input is invalid.');
+  }
+  return errorResponse(req, 500, 'MISSION_OPERATIONS_UNAVAILABLE', 'Mission Operations are temporarily unavailable.');
+}
+
+function safeError(req, error) {
+  if (['MISSION_OPERATIONS_REQUEST_INVALID', 'SAME_ORIGIN_REQUIRED', 'UNSUPPORTED_ACTION', 'METHOD_NOT_ALLOWED'].includes(error?.code)) {
+    return errorResponse(req, error.statusCode, error.code, error.publicMessage);
+  }
+  if (error?.statusCode === 401) return errorResponse(req, 401, 'UNAUTHENTICATED', 'Authentication is required.');
+  if (error?.statusCode === 403) return errorResponse(req, 403, 'FORBIDDEN', 'You do not have permission to use Mission Operations.');
+  const status = Number.isInteger(error?.statusCode) && error.statusCode >= 500 && error.statusCode <= 599 ? error.statusCode : 500;
+  return errorResponse(req, status, 'MISSION_OPERATIONS_UNAVAILABLE', 'Mission Operations are temporarily unavailable.');
+}
+
+function createMissionOperationsHandler(dependencies = {}) {
+  const repository = dependencies.repository || new MissionOperationsRepository();
+  const resolveContext = dependencies.resolveContext || resolveOperationalActorContext;
+  return async function missionOperationsHandler(req, res) {
+    res.setHeader('Cache-Control', 'no-store');
+    try {
+      const action = typeof req.query?.action === 'string' ? req.query.action : '';
+      const definition = ACTIONS[action];
+      if (!definition) fail(400, 'UNSUPPORTED_ACTION', 'Unsupported Mission Operations action.');
+      if (req.method !== definition.method) fail(405, 'METHOD_NOT_ALLOWED', 'Method not allowed.');
+      const context = await resolveContext(req, res);
+      if (!context?.organisation?.id || !context?.internalUser?.id || !permitted(context, definition)) {
+        fail(403, 'FORBIDDEN', 'You do not have permission to use Mission Operations.');
+      }
+      if (req.method === 'POST') sameOrigin(req);
+      let result;
+      let status = 200;
+      if (action === 'history') {
+        result = await repository.readPackageHistory(context, uuid(req.query?.missionId, 'Mission'));
+      } else if (action === 'scope') {
+        const body = exactObject(req.body, ['missionId', 'expectedRevision', 'fieldIds']);
+        result = await repository.saveScope(context, {
+          missionId: uuid(body.missionId, 'Mission'),
+          expectedRevision: revision(body.expectedRevision),
+          fieldIds: fieldIds(body.fieldIds),
+        });
+        status = 201;
+      } else if (action === 'submit') {
+        const body = exactObject(req.body, ['missionId', 'packageRevisionId', 'expectedRevision', 'evidenceDigest']);
+        result = await repository.submitForApproval(context, {
+          missionId: uuid(body.missionId, 'Mission'),
+          packageRevisionId: uuid(body.packageRevisionId, 'Package revision'),
+          expectedRevision: revision(body.expectedRevision),
+          evidenceDigest: digest(body.evidenceDigest),
+        });
+        status = 201;
+      } else {
+        const body = exactObject(req.body, ['missionId', 'packageRevisionId', 'expectedRevision', 'evidenceDigest', 'declaration']);
+        result = await repository.decide(context, {
+          missionId: uuid(body.missionId, 'Mission'),
+          packageRevisionId: uuid(body.packageRevisionId, 'Package revision'),
+          expectedRevision: revision(body.expectedRevision),
+          evidenceDigest: digest(body.evidenceDigest),
+          decision: action === 'authorise' ? 'AUTHORISED' : 'REJECTED',
+          declaration: declaration(body.declaration),
+        });
+        status = 201;
+      }
+      const checked = checkedFailure(req, result);
+      if (checked) return res.status(checked.status).json({ error: checked.error });
+      return res.status(status).json({ data: result });
+    } catch (error) {
+      const safe = safeError(req, error);
+      return res.status(safe.status).json({ error: safe.error });
+    }
+  };
+}
+
+module.exports = { createMissionOperationsHandler };
