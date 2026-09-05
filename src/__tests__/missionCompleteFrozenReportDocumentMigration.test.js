@@ -18,7 +18,10 @@ test('freezes through a before-insert trigger and validates the identical compos
 
 test('keeps prior eras unavailable and grants no parallel table authority', () => {
   const migration = sql();
-  expect(migration).toContain("'historical_complete_report_document_unavailable'");
+  expect(migration).toContain("'historical_report_document_unavailable'");
+  expect(migration).toContain('v_completion.report_document_era<2');
+  expect(migration).toContain('if new.daily_evidence_digest is null then');
+  expect(migration).toContain('new.report_document_era:=0');
   expect(migration).not.toMatch(/update\s+public\.mission_completion_revisions/);
   expect(migration).not.toMatch(/grant\s+(select|insert|update|delete).*mission_completion_revisions/);
 });

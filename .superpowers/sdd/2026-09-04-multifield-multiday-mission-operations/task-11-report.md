@@ -105,6 +105,12 @@
 - Document era 2 is the default for new rows. Earlier eras are not backfilled or presented as complete. The checked reader returns only era-2 text/digest after recomposing the authoritative object, requiring exact text equality and both manifest/document digest equivalence.
 - Executable PostgreSQL coverage proves the exact document contains report metadata, full daily evidence and final identity, retry bytes remain stable, privileged tampering fails, append-only authority remains effective and over-bound manifest construction rolls back before insertion.
 
+## Task 11D review round 1
+
+- The completion freeze trigger now explicitly normalizes inserts without canonical daily evidence to era 0 with all report-document fields null. Existing legacy `ftf_complete_mission`/completion behavior therefore remains compatible despite era 2 being the default for new canonical inserts.
+- The checked reader uses the single repository-decoded `HISTORICAL_REPORT_DOCUMENT_UNAVAILABLE` status for both genuine era-0 legacy rows and prior incomplete era-1 representations; only era 2 is presented as a complete report document.
+- Executable PostgreSQL coverage inserts a legacy completion through the ordinary completion-table path, proves era 0 and the aligned unavailable response, then rolls back with zero retained completion before exercising the canonical era-2 path.
+
 ## RED evidence
 
 The first focused run failed for the intended missing migration, absent `MissionFinalSignoff` component and unsupported API actions. The lifecycle refinement also identified and corrected the existing-closeout compatibility case: revision 1 may already exist, so final sign-off must append rather than overwrite or falsely return it.
@@ -119,7 +125,7 @@ The first focused run failed for the intended missing migration, absent `Mission
 - Migration SHA-256: `7586956d1652e8ca5b4a20da86113a64cec41dd4dcd17a522f82b540d057c743`.
 - Task 11B migration SHA-256: `c636cfbaf1f7dc7ffa952c2a1392795e22b7293f0485f927b18fc9706f8f852b`.
 - Task 11C migration SHA-256: `bcc96aac0431906b32cc7e8762ba6511caad1d29004fa9e93ee12e99ce4829f5`.
-- Task 11D migration SHA-256: `0c0becd690da6dc7699b17bd6f312c570b94e241f694dd4503334f0092e28149`.
+- Task 11D migration SHA-256: `6394fb26b35be6c2db1f735ecfd97f89efb3dba7b44f7d49e7262c84f2f3fe37`.
 
 ## Files
 

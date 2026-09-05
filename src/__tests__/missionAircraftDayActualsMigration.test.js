@@ -652,6 +652,17 @@ if (child) {
     await db.exec('rollback');
     expect(await scalar(db, `select count(*)::integer as value from public.mission_operating_days where mission_id='${ids.mission}' and work_date>=date '2030-01-01'`)).toBe(0);
 
+    await db.exec('begin');
+    await db.exec(`insert into public.mission_completion_revisions(
+      organisation_id,operating_location_id,mission_id,version_number,authorisation_revision_id,operational_revision_id,
+      completion_snapshot,declaration,completed_by_internal_user_id
+    ) values('${orgA}','${baseA}','${ids.mission}',1,'${authorisationId}','${operationalId}','{}','Legacy completion','${actorA}')`);
+    expect(await scalar(db, `select report_document_era as value from public.mission_completion_revisions where mission_id='${ids.mission}'`)).toBe(0);
+    expect(await call('ftf_read_mission_frozen_report_document', [orgA, actorA, ids.mission, null]))
+      .toMatchObject({ status: 'HISTORICAL_REPORT_DOCUMENT_UNAVAILABLE' });
+    await db.exec('rollback');
+    expect(await scalar(db, `select count(*)::integer as value from public.mission_completion_revisions where mission_id='${ids.mission}'`)).toBe(0);
+
     await db.exec(`
       insert into public.mission_completion_revisions(
         organisation_id,operating_location_id,mission_id,version_number,authorisation_revision_id,operational_revision_id,

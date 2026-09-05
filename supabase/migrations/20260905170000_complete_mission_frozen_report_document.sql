@@ -34,7 +34,11 @@ create function public.ftf_freeze_complete_mission_report_document() returns tri
 security definer set search_path=public,pg_temp as $$
 declare v_document jsonb; v_text text; v_manifest_digest text;
 begin
-  if new.daily_evidence_digest is null then return new; end if;
+  if new.daily_evidence_digest is null then
+    new.report_document_era:=0; new.report_document_schema_version:=null;
+    new.report_document_text:=null; new.report_document_digest:=null;
+    return new;
+  end if;
   v_manifest_digest:=encode(digest(convert_to(new.daily_evidence_manifest::text,'UTF8'),'sha256'),'hex');
   if v_manifest_digest<>new.daily_evidence_digest then raise exception 'MISSION_REPORT_DOCUMENT_INTEGRITY_FAILED' using errcode='22000'; end if;
   v_document:=public.ftf_compose_complete_mission_report_document(new);
@@ -64,7 +68,7 @@ begin
     and operating_location_id=v_mission.operating_location_id and (p_completion_revision_id is null or id=p_completion_revision_id)
     order by version_number desc limit 1;
   if not found then return jsonb_build_object('error','MISSION_COMPLETION_NOT_FOUND'); end if;
-  if v_completion.report_document_era<2 then return jsonb_build_object('status','HISTORICAL_COMPLETE_REPORT_DOCUMENT_UNAVAILABLE','completionRevisionId',v_completion.id); end if;
+  if v_completion.report_document_era<2 then return jsonb_build_object('status','HISTORICAL_REPORT_DOCUMENT_UNAVAILABLE','completionRevisionId',v_completion.id); end if;
   if v_completion.report_document_era<>2 or v_completion.report_document_schema_version<>2
     or v_completion.report_document_text is null or v_completion.report_document_digest is null then
     raise exception 'MISSION_REPORT_DOCUMENT_INTEGRITY_FAILED' using errcode='22000';
