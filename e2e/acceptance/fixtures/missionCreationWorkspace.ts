@@ -1,4 +1,4 @@
-import { expect, Page } from '@playwright/test';
+import { expect, Page, Response } from '@playwright/test';
 
 const AUTHORITATIVE_READ_PATHS = new Set([
   '/api/v1/session',
@@ -47,4 +47,32 @@ export async function openMissionCreationWorkspace(page: Page): Promise<void> {
   }
 
   await expect(page.getByRole('heading', { name: 'Create a Mission' })).toBeVisible();
+}
+
+export async function runSingleAuthoritativeCommand(
+  page: Page,
+  input: { pathname: string; method: string; expectedStatus: number },
+  action: () => Promise<void>,
+): Promise<Response> {
+  let matchingRequests = 0;
+  const count = (request: { url(): string; method(): string }) => {
+    const url = new URL(request.url());
+    if (url.pathname === input.pathname && request.method() === input.method) matchingRequests += 1;
+  };
+  page.on('request', count);
+  try {
+    // Register the response observer before invoking the browser action. A click,
+    // route transition or DOM update is not command-completion authority.
+    const responsePromise = page.waitForResponse((response) => {
+      const url = new URL(response.url());
+      return url.pathname === input.pathname && response.request().method() === input.method;
+    });
+    await action();
+    const response = await responsePromise;
+    expect(response.status()).toBe(input.expectedStatus);
+    expect(matchingRequests, `${input.method} ${input.pathname} should be sent once`).toBe(1);
+    return response;
+  } finally {
+    page.off('request', count);
+  }
 }

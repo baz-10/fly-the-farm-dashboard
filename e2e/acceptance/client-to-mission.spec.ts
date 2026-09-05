@@ -8,7 +8,7 @@ import {
   findAcceptanceRecord,
 } from './fixtures/acceptanceRecords';
 import { acceptanceEnvironment } from './environment';
-import { openMissionCreationWorkspace } from './fixtures/missionCreationWorkspace';
+import { openMissionCreationWorkspace, runSingleAuthoritativeCommand } from './fixtures/missionCreationWorkspace';
 
 test('creates, persists, reopens, and archives the authoritative Client to Draft Mission chain', async ({ browser, page }, testInfo) => {
   testInfo.setTimeout(180_000);
@@ -84,15 +84,9 @@ test('creates, persists, reopens, and archives the authoritative Client to Draft
     await expect(page.getByRole('heading', { name: 'Record Spray Job' })).toBeVisible();
     await page.getByRole('textbox', { name: 'Job Reference' }).fill(label);
     await page.getByRole('combobox', { name: 'Weed Target' }).fill(label);
-    const jobResponsePromise = page.waitForResponse((response) => {
-      const responseUrl = new URL(response.url());
-      return responseUrl.origin === new URL(acceptanceEnvironment().baseUrl).origin
-        && responseUrl.pathname === '/api/v1/jobs'
-        && response.request().method() === 'POST';
-    });
-    await page.getByRole('button', { name: 'Save Job' }).click();
-    const jobResponse = await jobResponsePromise;
-    expect(jobResponse.status()).toBe(201);
+    const jobResponse = await runSingleAuthoritativeCommand(page, {
+      pathname: '/api/v1/jobs', method: 'POST', expectedStatus: 201,
+    }, () => page.getByRole('button', { name: 'Save Job' }).click());
     const jobResponseBody = await jobResponse.json();
     expect(jobResponseBody.data.fieldIds).toEqual(expect.arrayContaining([records.field.id, records.secondaryField.id]));
     expect(jobResponseBody.data.fieldIds).toHaveLength(2);
@@ -112,7 +106,9 @@ test('creates, persists, reopens, and archives the authoritative Client to Draft
     await page.getByRole('option', { name: new RegExp(label) }).click();
     await page.getByRole('button', { name: 'Continue' }).click();
     await page.getByRole('textbox', { name: 'Mission title' }).fill(label);
-    await page.getByRole('button', { name: 'Create Draft Mission' }).click();
+    await runSingleAuthoritativeCommand(page, {
+      pathname: '/api/v1/missions', method: 'POST', expectedStatus: 201,
+    }, () => page.getByRole('button', { name: 'Create Draft Mission' }).click());
     // Mission creation also retires the persisted setup Draft. Production cold
     // starts and optimistic-concurrency reconciliation can legitimately span
     // more than Playwright's default assertion timeout.
