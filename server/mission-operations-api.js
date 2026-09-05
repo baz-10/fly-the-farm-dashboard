@@ -28,6 +28,7 @@ const ACTIONS = Object.freeze({
   'day-weather-capture': { method: 'POST', permission: 'mission.operational.write' },
   'day-weather-manual': { method: 'POST', permission: 'mission.operational.write' },
   'final-signoff-readiness': { method: 'GET', permission: 'mission.operational.read' },
+  'frozen-report-document': { method: 'GET', permission: 'mission.operational.read' },
   'final-signoff': { method: 'POST', permission: 'mission.completion.complete' },
   'job-close': { method: 'POST', permission: 'jobs.write' },
 });
@@ -485,6 +486,9 @@ function createMissionOperationsHandler(dependencies = {}) {
         );
       } else if (action === 'final-signoff-readiness') {
         result = await repository.readFinalSignoffReadiness(context, uuid(req.query?.missionId, 'Mission'));
+      } else if (action === 'frozen-report-document') {
+        result = await repository.readFrozenReportDocument(context, uuid(req.query?.missionId, 'Mission'),
+          req.query?.completionRevisionId ? uuid(req.query.completionRevisionId, 'Completion revision') : null);
       } else if (action === 'scope') {
         const body = exactObject(req.body, ['missionId', 'expectedRevision', 'fieldIds']);
         result = await repository.saveScope(context, {

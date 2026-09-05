@@ -78,6 +78,7 @@ begin
   if not found then return jsonb_build_object('error','MISSION_NOT_FOUND'); end if;
   if not public.ftf_operational_location_allowed(p_organisation_id,p_actor_internal_user_id,v_mission.operating_location_id) then return jsonb_build_object('location_forbidden',true); end if;
   select * into v_completion from public.mission_completion_revisions where organisation_id=p_organisation_id and mission_id=p_mission_id
+    and operating_location_id=v_mission.operating_location_id
     and (p_completion_revision_id is null or id=p_completion_revision_id) order by version_number desc limit 1;
   if not found then return jsonb_build_object('error','MISSION_COMPLETION_NOT_FOUND'); end if;
   if v_completion.report_document_text is null and v_completion.report_document_digest is null then

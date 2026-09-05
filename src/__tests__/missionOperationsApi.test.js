@@ -63,6 +63,7 @@ const repository = () => ({
   freezeWeatherReport: jest.fn().mockResolvedValue({ id: WEATHER_REPORT, missionId: MISSION, operatingDayId: DAY, sourceDigest: DIGEST }),
   readWeatherReport: jest.fn().mockResolvedValue(null),
   readFinalSignoffReadiness: jest.fn().mockResolvedValue({ missionId: MISSION, operationalWorkCompleted: true, finalSignedOff: false, readyForFinalSignoff: true, currentCompletionRevision: 0, blockers: [] }),
+  readFrozenReportDocument: jest.fn().mockResolvedValue({ status: 'AVAILABLE', completionRevisionId: DECISION, documentText: '{"value":1.0}', documentDigest: DIGEST }),
   finalSignoffMission: jest.fn().mockResolvedValue({ id: DECISION, missionId: MISSION, versionNumber: 1, dailyEvidenceDigest: DIGEST, completedAt: '2026-09-06T10:00:00.000Z' }),
   closeJob: jest.fn().mockResolvedValue({ id: FIELD_B, status: 'closed', rowVersion: 5 }),
 });
@@ -85,6 +86,26 @@ test('routes checked final readiness, canonical final sign-off and Job close com
   await handler(request('POST', 'job-close', { jobId: FIELD_B, expectedVersion: 4 }), res);
   expect(res.statusCode).toBe(200);
   expect(repo.closeJob).toHaveBeenCalledWith(expect.anything(), { jobId: FIELD_B, expectedVersion: 4 });
+});
+
+test('routes exact frozen report text and digest through the trusted read boundary', async () => {
+  const repo = repository();
+  const handler = createMissionOperationsHandler({ repository: repo, resolveContext: async () => context(['mission.operational.read']) });
+  const res = response();
+  await handler(request('GET', 'frozen-report-document', {}, { missionId: MISSION, completionRevisionId: DECISION }), res);
+  expect(res.statusCode).toBe(200);
+  expect(repo.readFrozenReportDocument).toHaveBeenCalledWith(expect.anything(), MISSION, DECISION);
+  expect(res.body.data).toEqual({ status: 'AVAILABLE', completionRevisionId: DECISION, documentText: '{"value":1.0}', documentDigest: DIGEST });
+});
+
+test('maps frozen report RPC envelope without parsing or reserializing document text', async () => {
+  const rpc = jest.fn().mockResolvedValue({ status: 'AVAILABLE', completionRevisionId: DECISION,
+    documentText: '{"value":1.0}', documentDigest: DIGEST });
+  const repo = new MissionOperationsRepository(rpc);
+  await expect(repo.readFrozenReportDocument(context(['mission.operational.read']), MISSION, DECISION))
+    .resolves.toEqual({ status: 'AVAILABLE', completionRevisionId: DECISION, documentText: '{"value":1.0}', documentDigest: DIGEST });
+  expect(JSON.parse(rpc.mock.calls[0][1].body)).toEqual({ p_organisation_id: ORG, p_actor_internal_user_id: ACTOR,
+    p_mission_id: MISSION, p_completion_revision_id: DECISION });
 });
 
 test('maps only the recognized thrown PostgREST finality guard to a safe conflict', async () => {

@@ -655,9 +655,11 @@ if (child) {
     await db.exec(`
       insert into public.mission_completion_revisions(
         organisation_id,operating_location_id,mission_id,version_number,authorisation_revision_id,operational_revision_id,
-        completion_snapshot,declaration,completed_by_internal_user_id,daily_evidence_manifest,daily_evidence_digest
+        completion_snapshot,declaration,completed_by_internal_user_id,daily_evidence_manifest,daily_evidence_digest,
+        report_document_text,report_document_digest
       ) select '${orgA}','${baseA}','${ids.mission}',1,'${authorisationId}','${operationalId}','{}','Final','${actorA}',evidence,
-        encode(digest(convert_to(evidence::text,'UTF8'),'sha256'),'hex')
+        encode(digest(convert_to(evidence::text,'UTF8'),'sha256'),'hex'),(evidence->'reportEvidence')::text,
+        encode(digest(convert_to((evidence->'reportEvidence')::text,'UTF8'),'sha256'),'hex')
         from (select public.ftf_build_mission_daily_evidence_manifest('${orgA}','${ids.mission}') evidence) frozen;
     `);
     const frozen = await scalar(db, `select daily_evidence_manifest as value from public.mission_completion_revisions where mission_id='${ids.mission}'`);
@@ -670,6 +672,15 @@ if (child) {
     expect(frozen.reportEvidence.aircraft.map((item) => item.registration)).toEqual(['FTF-T100-001', 'FTF-T100-002', 'FTF-T100-003']);
     expect(frozen.reportEvidence.flightLineEvidence[0]).toEqual(expect.objectContaining({ filename: 'multi.kml', digest: 'b'.repeat(64), format: 'KML' }));
     const frozenDigest = await scalar(db, `select daily_evidence_digest as value from public.mission_completion_revisions where mission_id='${ids.mission}'`);
+    const reportDocument = await call('ftf_read_mission_frozen_report_document', [orgA, actorA, ids.mission, null]);
+    expect(reportDocument.status).toBe('AVAILABLE');
+    expect(typeof reportDocument.documentText).toBe('string');
+    expect(reportDocument.documentDigest).toBe(await scalar(db, `select encode(digest(convert_to(report_document_text,'UTF8'),'sha256'),'hex') as value from public.mission_completion_revisions where mission_id='${ids.mission}'`));
+    const reportRetry = await call('ftf_final_signoff_mission', [orgA, actorA, ids.mission, 1, 'Final']);
+    expect(reportRetry.idempotent).toBe(true);
+    expect(reportRetry.record.report_document_text).toBe(reportDocument.documentText);
+    await expect(db.exec(`update public.mission_completion_revisions set report_document_text='{}' where mission_id='${ids.mission}'`)).rejects.toThrow(/append-only/);
+    expect(await call('ftf_read_mission_frozen_report_document', [orgB, actorB, ids.mission, null])).toMatchObject({ error: 'MISSION_NOT_FOUND' });
     const retry = await call('ftf_final_signoff_mission', [orgA, actorA, ids.mission, 1, 'Final']);
     expect(retry).toMatchObject({ idempotent: true, record: { version_number: 1, daily_evidence_digest: frozenDigest } });
     await db.exec(`update public.clients set name='Client A renamed after final' where organisation_id='${orgA}' and id='${ids.client}'`);

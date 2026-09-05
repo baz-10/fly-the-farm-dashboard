@@ -276,6 +276,19 @@ function completionRevision(result) {
     dailyEvidenceDigest: record.daily_evidence_digest, completedAt: record.completed_at };
 }
 
+function frozenReportDocument(result) {
+  const failed = failure(result); if (failed) return failed;
+  if (result.status === 'HISTORICAL_REPORT_DOCUMENT_UNAVAILABLE') return {
+    status: result.status, completionRevisionId: result.completionRevisionId,
+  };
+  if (result.status !== 'AVAILABLE' || typeof result.documentText !== 'string'
+    || typeof result.documentDigest !== 'string' || !/^[a-f0-9]{64}$/.test(result.documentDigest)) {
+    return { error: 'MISSION_REPORT_DOCUMENT_MALFORMED' };
+  }
+  return { status: result.status, completionRevisionId: result.completionRevisionId,
+    documentText: result.documentText, documentDigest: result.documentDigest };
+}
+
 function weatherCaptureContext(result) {
   const failed = failure(result);
   if (failed) return failed;
@@ -531,6 +544,12 @@ class MissionOperationsRepository {
     return finalSignoffReadiness(await this.rpc('ftf_read_mission_final_signoff_readiness', {
       ...this.trusted(context), p_mission_id: missionId,
     }, 'Mission final sign-off readiness could not be loaded.'));
+  }
+
+  async readFrozenReportDocument(context, missionId, completionRevisionId = null) {
+    return frozenReportDocument(await this.rpc('ftf_read_mission_frozen_report_document', {
+      ...this.trusted(context), p_mission_id: missionId, p_completion_revision_id: completionRevisionId,
+    }, 'Mission frozen report document could not be loaded.'));
   }
 
   async finalSignoffMission(context, { missionId, expectedRevision, declaration }) {

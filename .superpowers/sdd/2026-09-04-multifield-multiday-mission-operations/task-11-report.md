@@ -78,6 +78,13 @@
 - A checked service-role-only read requires the existing active-seat, Mission-read and Base scope, returns exact text rather than parsed/reserialized JSON, and recomputes SHA-256 before release. Missing pairs and mismatches fail closed.
 - Transport regression proves JSON numeric representations such as `1.0` and `1` hash differently and verification is performed over transported exact text.
 
+## Task 11C review round 1
+
+- The checked frozen-document RPC is now exposed through the existing Mission Operations repository/API GET boundary with `mission.operational.read`; its decoder preserves `documentText` and `documentDigest` as strings and never parses or reserializes the report representation.
+- The database read additionally requires the selected completion's organisation, Mission and Base to equal the current Mission scope.
+- Executable PostgreSQL coverage now stores exact text/digest, recomputes the digest from stored bytes, proves exact retry byte identity, rejects cross-organisation reads, and proves append-only immutability. The existing bounded-builder rollback cases cover over-bound source construction before completion insert; historical rows remain nullable and are never updated/backfilled by this migration.
+- End-to-end handler/repository tests prove the exact `1.0` text survives the trusted envelope and the RPC receives only server-derived organisation/actor scope plus validated Mission/completion identities.
+
 ## RED evidence
 
 The first focused run failed for the intended missing migration, absent `MissionFinalSignoff` component and unsupported API actions. The lifecycle refinement also identified and corrected the existing-closeout compatibility case: revision 1 may already exist, so final sign-off must append rather than overwrite or falsely return it.
@@ -91,7 +98,7 @@ The first focused run failed for the intended missing migration, absent `Mission
 - `git diff --check`: PASS.
 - Migration SHA-256: `7586956d1652e8ca5b4a20da86113a64cec41dd4dcd17a522f82b540d057c743`.
 - Task 11B migration SHA-256: `c636cfbaf1f7dc7ffa952c2a1392795e22b7293f0485f927b18fc9706f8f852b`.
-- Task 11C migration SHA-256: `d9235fd5d7e7b1366d97644b7e33495d8126789c32fe37c10a8f0c5f0d32a09e`.
+- Task 11C migration SHA-256: `2235f806555075c96e228c2e94c04b91c747b8bb92da698dd495f4830847e72f`.
 
 ## Files
 
