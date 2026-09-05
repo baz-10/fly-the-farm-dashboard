@@ -40,7 +40,7 @@ function display(value) {
 }
 
 function rows(value, prefix = '', output = []) {
-  if (output.length >= 160) return output;
+  if (output.length >= 50000) return output;
   if (Array.isArray(value)) {
     if (!value.length) output.push([humanise(prefix || 'Items'), 'None recorded']);
     value.forEach((item, index) => rows(item, `${prefix}${prefix ? ' ' : ''}${index + 1}`, output));
@@ -56,7 +56,7 @@ function rows(value, prefix = '', output = []) {
   return output;
 }
 
-function reportSections(reportType, evidence) {
+function reportSections(reportType, evidence, frozenReportDocument) {
   if (reportType === 'MISSION_PACK') {
     const pack = get(evidence, 'missionPackRevision.pack_snapshot', 'missionPackRevision.packSnapshot', 'missionPackRevision') || {};
     const authorised = get(pack, 'evidence', 'authorisation.evidence_manifest', 'authorisation.evidenceManifest') || {};
@@ -67,8 +67,8 @@ function reportSections(reportType, evidence) {
     ];
   }
   const completion = evidence.completionRevision || {};
-  if (completion.daily_evidence_digest || completion.dailyEvidenceDigest) {
-    const model = buildMissionSummaryViewModel({ evidence: { missionId: evidence.missionId || evidence.mission_id, completionRevision: completion } });
+  if (frozenReportDocument || completion.daily_evidence_digest || completion.dailyEvidenceDigest) {
+    const model = buildMissionSummaryViewModel({ evidence, frozenReportDocument });
     const frozenSections = [['Frozen Mission Scope', model.scope], ['CRP and JSA Authority', model.approval], ...model.operatingDays.map(day => [`Operating Day - ${day.workDate}`, day]), ['Recorded Exceptions', model.exceptions || []]];
     if (model.evidenceGaps.length) frozenSections.push(['Evidence Availability', model.evidenceGaps]);
     frozenSections.push(['Final Sign-off', model.finalSignoff]);
@@ -124,9 +124,10 @@ function brandingDetails(branding) {
   };
 }
 
-function renderReportPdf({ reportType, templateVersion = 2, branding = {}, evidence = {}, artefact = {} }) {
+function renderReportPdf({ reportType, templateVersion = 2, branding = {}, evidence = {}, artefact = {}, frozenReportDocument }) {
   if (reportType === 'MISSION_PACK') return renderMissionPackPdf({ reportType, templateVersion, branding, evidence, artefact });
-  if (reportType === 'MISSION_SUMMARY') return renderMissionSummaryPdf({ reportType, templateVersion, branding, evidence, artefact });
+  if (reportType === 'MISSION_SUMMARY') return renderMissionSummaryPdf({ reportType, templateVersion, branding, evidence, artefact, frozenReportDocument });
+  const recordModel = reportType === 'MISSION_RECORD' ? buildMissionSummaryViewModel({ evidence, artefact, frozenReportDocument }) : null;
   const doc = new jsPDF({ unit: 'mm', format: 'a4', compress: false, putOnlyUsedFonts: true });
   doc.setFileId('00000000000000000000000000000000');
   doc.setCreationDate(new Date(artefact.createdAt || '2000-01-01T00:00:00.000Z'));
@@ -185,18 +186,14 @@ function renderReportPdf({ reportType, templateVersion = 2, branding = {}, evide
     for (const [label, entry] of sectionRows) {
       const labelLines = doc.splitTextToSize(display(label), 54);
       const valueLines = doc.splitTextToSize(display(entry), 112);
-      const height = Math.max(labelLines.length, valueLines.length) * 4.5 + 4;
-      if (ensure(height)) drawSectionHeading(true);
-      doc.setDrawColor(...LINE);
-      doc.line(MARGIN, y + height, PAGE_WIDTH - MARGIN, y + height);
-      doc.setFontSize(8.5);
-      doc.setFont('helvetica', 'bold');
-      doc.setTextColor(...MUTED);
-      doc.text(labelLines, MARGIN + 2, y + 4.5);
-      doc.setFont('helvetica', 'normal');
-      doc.setTextColor(...INK);
-      doc.text(valueLines, MARGIN + 62, y + 4.5);
-      y += height;
+      let offset=0;const total=Math.max(labelLines.length,valueLines.length);
+      do {
+        let capacity=Math.floor((278-y-4)/4.5);
+        if(capacity<1){newPage();drawSectionHeading(true);capacity=Math.floor((278-y-4)/4.5);}
+        const count=Math.min(total-offset,capacity),left=labelLines.slice(offset,offset+count),right=valueLines.slice(offset,offset+count),height=count*4.5+4;
+        doc.setDrawColor(...LINE);doc.line(MARGIN,y+height,PAGE_WIDTH-MARGIN,y+height);doc.setFontSize(8.5);doc.setFont('helvetica','bold');doc.setTextColor(...MUTED);if(left.length)doc.text(left,MARGIN+2,y+4.5);doc.setFont('helvetica','normal');doc.setTextColor(...INK);if(right.length)doc.text(right,MARGIN+62,y+4.5);y+=height;offset+=count;
+        if(offset<total){newPage();drawSectionHeading(true);}
+      } while(offset<total);
     }
     y += 6;
   };
@@ -215,13 +212,14 @@ function renderReportPdf({ reportType, templateVersion = 2, branding = {}, evide
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(9.5);
   doc.setTextColor(...INK);
-  doc.text(display(evidence.missionId || evidence.mission_id), MARGIN + 5, y + 15, { maxWidth: 58 });
+  doc.text(display(recordModel?.scope?.mission?.id || evidence.missionId || evidence.mission_id), MARGIN + 5, y + 15, { maxWidth: 58 });
   doc.text(display(artefact.id || 'Pending'), MARGIN + 69, y + 15, { maxWidth: 55 });
   doc.text(display(artefact.createdAt || 'Not recorded'), MARGIN + 130, y + 15, { maxWidth: 43 });
   y += 32;
 
-  for (const [heading, content] of reportSections(reportType, evidence)) section(heading, content);
-  section('Evidence Manifest', null, evidenceRegister(evidence));
+  for (const [heading, content] of reportSections(reportType, evidence, frozenReportDocument)) section(heading, content);
+  if(reportType==='MISSION_RECORD') section('Evidence Manifest',null,evidenceRegister({completionRevisionId:recordModel?.finalSignoff?.id,frozenEvidenceDigest:recordModel?.finalSignoff?.evidenceDigest}));
+  else section('Evidence Manifest', null, evidenceRegister(evidence));
 
   const pages = doc.getNumberOfPages();
   for (let page = 1; page <= pages; page += 1) {

@@ -1,3 +1,5 @@
+const { decodeFrozenMissionReportDocument } = require('./frozen-mission-report-document');
+
 function get(value, ...paths) {
   for (const path of paths) {
     let current = value;
@@ -67,11 +69,14 @@ function buildMissionPackViewModel(input) {
 
 function buildMissionSummaryViewModel(input) {
   const evidence = input.evidence || {};
-  const completion = evidence.completionRevision || evidence.completion_revision || {};
+  const legacyCompletion = evidence.completionRevision || evidence.completion_revision || {};
+  const decoded = decodeFrozenMissionReportDocument(input.frozenReportDocument);
+  const document = decoded.status === 'AVAILABLE' ? decoded.document : null;
+  const completion = document?.finalCompletion || legacyCompletion;
   const completionSnapshot = completion.completion_snapshot || completion.completionSnapshot || {};
-  const daily = completion.daily_evidence_manifest || completion.dailyEvidenceManifest;
-  const report = daily?.reportEvidence || daily?.report_evidence;
-  const canonical = Boolean(completion.daily_evidence_digest || completion.dailyEvidenceDigest);
+  const daily = document?.dailyEvidence;
+  const report = document?.reportEvidence;
+  const canonical = decoded.status !== 'HISTORICAL' && Boolean(input.frozenReportDocument || legacyCompletion.daily_evidence_digest || legacyCompletion.dailyEvidenceDigest);
   const frozenAuthorisation = completionSnapshot.planningAndPreflightAuthorisation || completionSnapshot.planning_and_preflight_authorisation || {};
   const frozenManifest = frozenAuthorisation.evidence_manifest || frozenAuthorisation.evidenceManifest || {};
   const legacyOperational = completionSnapshot.operationalEvidence || completionSnapshot.operational_evidence || {};
@@ -85,20 +90,16 @@ function buildMissionSummaryViewModel(input) {
       completionStatus: 'Mission completed; detailed operating-day evidence is unavailable.', missionRecordPath: `/missions/${evidence.missionId || evidence.mission_id || input.artefact?.mission_id || ''}#mission-record`,
     };
   }
-  const frozenDigest = completion.daily_evidence_digest || completion.dailyEvidenceDigest;
-  const validReport = report?.schemaVersion === 1 && report.scope?.mission && report.scope?.job && report.scope?.client
-    && Array.isArray(report.scope.properties) && report.governance?.effectivePackage && report.governance?.effectiveApproval
-    && report.governance?.governingJsa && Array.isArray(report.aircraft) && Array.isArray(report.plannedChemicals)
-    && Array.isArray(report.flightLineEvidence) && Array.isArray(report.exceptionHistory) && Array.isArray(daily?.days)
-    && typeof frozenDigest === 'string' && /^[a-f0-9]{64}$/.test(frozenDigest);
+  const frozenDigest = completion.dailyEvidenceDigest || completion.daily_evidence_digest;
+  const validReport = decoded.status === 'AVAILABLE';
   if (!daily || !report || !validReport) {
-    const unavailable = identity({}, input);
-    const missing = !daily || !report;
+    const unavailable = { missionNumber: 'Mission', missionStatus: 'Unavailable', client: 'Not recorded', property: 'Not recorded', field: 'Not recorded', title: '' };
+    const missing = !input.frozenReportDocument || decoded.message?.includes('unavailable');
     return {
       source: 'FROZEN_FINAL_SIGNOFF', evidenceStatus: 'MISSING_FROZEN_EVIDENCE', evidenceGaps: [missing ? 'Frozen report evidence is unavailable.' : 'Frozen report evidence is invalid.'], identity: unavailable,
       footer: { ...unavailable, reportVersion: Number(input.artefact?.version || input.artefact?.version_number || 1) }, scope: { mission: {}, job: {}, client: {}, properties: [] }, approval: {}, operatingDays: [], totals: {},
-      finalSignoff: { id: completion.id, revisionNumber: completion.version_number || completion.version, evidenceDigest: frozenDigest, declaration: completion.declaration, completedAt: completion.completed_at || completionSnapshot.completedAt },
-      completionStatus: 'Mission report unavailable: frozen evidence is incomplete.', missionRecordPath: `/missions/${evidence.missionId || evidence.mission_id || input.artefact?.mission_id || ''}#mission-record`,
+      finalSignoff: { id: completion.id, revisionNumber: completion.versionNumber || completion.version_number || completion.version, evidenceDigest: frozenDigest, declaration: completion.declaration, completedAt: completion.completedAt || completion.completed_at || completionSnapshot.completedAt },
+      completionStatus: 'Mission report unavailable: frozen evidence is incomplete.', missionRecordPath: '',
     };
   }
   const rawProperties = list(report.scope?.properties)
@@ -115,7 +116,7 @@ function buildMissionSummaryViewModel(input) {
     const plan = plannedRevisions.get(day.chemicalActual?.planned_chemical_revision_id || day.chemicalActual?.plannedChemicalRevisionId) || {};
     const plannedLines = new Map(list(plan.lines).map(line => [line.id,line]));
     const dayFields = list(day.fieldActivities || day.field_activities).map(activity => { const field=fields.get(activity.field_id || activity.fieldId)||{}; return { fieldId: activity.field_id || activity.fieldId, name: field.name || 'Unavailable', propertyName: field.propertyName || 'Unavailable', attemptedHectares: activity.attempted_hectares || activity.attemptedHectares, completedHectares: activity.completed_hectares || activity.completedHectares, status: activity.status }; }).sort((a,b)=>String(a.propertyName).localeCompare(String(b.propertyName))||String(a.name).localeCompare(String(b.name)));
-    const dayAircraft = list(day.aircraftActuals || day.aircraft_actuals).map(actual => { const frozen=aircraft.get(actual.aircraft_id || actual.aircraftId)||{}; return { aircraftId: actual.aircraft_id || actual.aircraftId, registration: frozen.registration || 'Unavailable', manufacturer: frozen.manufacturer, model: frozen.model, flightHours: actual.total_flight_hours || actual.totalFlightHours, reconciliationStatus: actual.reconciliation_status || actual.reconciliationStatus, flights: list(actual.flights).map(flight=>({ index: flight.flight_index || flight.flightIndex, durationHours: flight.duration_hours || flight.durationHours, fieldId: flight.field_id || flight.fieldId, startedAt: flight.started_at || flight.startedAt, finishedAt: flight.finished_at || flight.finishedAt })).sort((a,b)=>Number(a.index)-Number(b.index)) }; }).sort((a,b)=>String(a.registration).localeCompare(String(b.registration))||String(a.aircraftId).localeCompare(String(b.aircraftId)));
+    const dayAircraft = list(day.aircraftActuals || day.aircraft_actuals).map(actual => { const frozen=aircraft.get(actual.aircraft_id || actual.aircraftId)||{}; return { aircraftId: actual.aircraft_id || actual.aircraftId, registration: frozen.registration || 'Unavailable', manufacturer: frozen.manufacturer, model: frozen.model, flightHours: actual.total_flight_hours || actual.totalFlightHours, reconciliationStatus: actual.reconciliation_status || actual.reconciliationStatus, flights: list(actual.flights).map(flight=>({ index: flight.flight_index || flight.flightIndex, durationHours: flight.duration_hours || flight.durationHours, fieldId: flight.field_id || flight.fieldId, startedAt: flight.started_at || flight.startedAt, finishedAt: flight.finished_at || flight.finishedAt, sourceImportId: flight.source_import_id || flight.sourceImportId })).sort((a,b)=>Number(a.index)-Number(b.index)) }; }).sort((a,b)=>String(a.registration).localeCompare(String(b.registration))||String(a.aircraftId).localeCompare(String(b.aircraftId)));
     const chemicals = list(day.chemicalActual?.lines).map(line => { const planned=plannedLines.get(line.planned_line_id || line.plannedLineId)||{}; const field=fields.get(line.field_id || line.fieldId)||{}; return { lineNumber: line.line_number || line.lineNumber, fieldId: line.field_id || line.fieldId, fieldName: field.name || 'Unavailable', productName: planned.productName || line.product_name_snapshot || line.productNameSnapshot || 'Unavailable', plannedRate: planned.rate, actualRate: line.actual_rate || line.actualRate, rateUnit: line.rate_unit || line.rateUnit || planned.rateUnit, quantityApplied: line.quantity_applied || line.quantityApplied, batchLot: line.batch_lot || line.batchLot }; }).sort((a,b)=>Number(a.lineNumber)-Number(b.lineNumber));
     const weather = day.weatherReport || day.weather_report || {};
     const attributions = list(day.flightLineAttributions || day.flight_line_attributions).map(link => ({ ...(flightLines.get(link.operational_import_id || link.operationalImportId)||{}), referenceId: link.operational_import_id || link.operationalImportId, aircraftId: link.aircraft_id || link.aircraftId })).sort((a,b)=>String(a.filename||'').localeCompare(String(b.filename||''))||String(a.referenceId).localeCompare(String(b.referenceId)));
@@ -130,9 +131,9 @@ function buildMissionSummaryViewModel(input) {
     footer: { ...id, reportVersion: Number(input.artefact?.version || input.artefact?.version_number || 1) },
     approval:{ packageRevisionId:governance.effectivePackage?.id, packageRevisionNumber:governance.effectivePackage?.revisionNumber, approvalRevisionNumber:governance.effectiveApproval?.revisionNumber, approvedAt:governance.effectiveApproval?.decidedAt, jsaRevisionId:governance.governingJsa?.id, jsaRevisionNumber:governance.governingJsa?.versionNumber, packageHistory:list(governance.packageHistory), decisionHistory:list(governance.decisionHistory), jsaHistory:list(governance.jsaHistory) },
     operatingDays:days, totals:{ operationalDays:daily.operationalDays, actualWorkHours:daily.actualWorkHours, totalAircraftHours:daily.totalAircraftHours }, exceptions:list(report.exceptionHistory), flightLineEvidence:list(report.flightLineEvidence),
-    finalSignoff:{ id:completion.id, revisionNumber:completion.version_number||completion.version, evidenceDigest:completion.daily_evidence_digest||completion.dailyEvidenceDigest, declaration:completion.declaration, completedAt:completion.completed_at||completionSnapshot.completedAt, completedBy:completion.completed_by_internal_user_id||completion.completedByInternalUserId },
+    finalSignoff:{ id:completion.id, revisionNumber:completion.versionNumber||completion.version_number||completion.version, evidenceDigest:completion.dailyEvidenceDigest||completion.daily_evidence_digest, declaration:completion.declaration, completedAt:completion.completedAt||completion.completed_at||completionSnapshot.completedAt, completedBy:completion.completedByInternalUserId||completion.completed_by_internal_user_id },
     completionStatus:list(report.exceptionHistory).length?'Mission finally signed off with recorded exceptions.':'Mission finally signed off.',
-    missionRecordPath: `/missions/${evidence.missionId || evidence.mission_id || input.artefact?.mission_id || ''}#mission-record`,
+    missionRecordPath: `/missions/${completion.missionId}#mission-record`,
   };
 }
 
