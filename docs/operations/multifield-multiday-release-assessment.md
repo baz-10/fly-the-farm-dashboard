@@ -4,11 +4,11 @@
 
 **Branch:** `codex/multifield-multiday-mission-design`
 
-**Assessed clean branch HEAD:** `c51cb753b53848a700e24e645260380d655140b6`
+**Assessed clean branch HEAD:** `3fdaa6054b1a6db766622f9eca5a67f1f9465ad7`
 
 **Merge base / current `spray-command/main`:** `0f46c7ee47d1483e960cce0f20c158ccebcf207c`
 
-**Release recommendation:** `NO-GO`
+**Release recommendation:** `GO FOR REPOSITORY REVIEW / MERGE GATE`; Production remains separately gated.
 
 **Product Maturity:** `COMING_SOON`
 
@@ -16,7 +16,7 @@ No merged-main commit or proposed immutable Production `RELEASE_SHA` exists. Nor
 
 ## Decision summary
 
-Task 14A corrected the original three local blockers and the review-round frozen/per-day lineage issue. Deterministic shards 1 and 2 now pass. Shard 3 is the first failing boundary: two more older all-migration PGlite runners omit pgcrypto and fail during migration apply before their Personnel or Operating Authority assertions. Shards 4–8 were not run after that fail-closed stop. Protected Chromium/WebKit lifecycle execution and Production-shaped migration/legacy assessment remain unavailable. The workflow remains `COMING_SOON` and the recommendation remains `NO-GO`.
+All locally actionable Task 14 findings are corrected and independently reviewed clean. At exact HEAD `3fdaa6054b1a6db766622f9eca5a67f1f9465ad7`, all eight deterministic shards, Product Maturity, Production build and diff integrity pass. The exact fourteen-migration inventory and hashes are recorded below. Protected Chromium/WebKit lifecycle execution and Production-shaped migration/legacy assessment remain `CANNOT VERIFY` because their separately governed environments were not accessed. The workflow remains `COMING_SOON`.
 
 ## Verification status
 
@@ -26,21 +26,21 @@ Task 14A corrected the original three local blockers and the review-round frozen
 | Maturity registration TDD GREEN | PASS | Targeted boundary test: 1 passed, 228 skipped. Workflow is `COMING_SOON` and names all five required automated-evidence classes. |
 | Focused authority/security tests | PASS | Fresh run: 7 suites / 57 tests passed under `TZ=Australia/Brisbane`: Job scope, package/CRP, operating days/JSA, aircraft actuals, chemical/weather, final sign-off and trusted API decoding. |
 | Frozen report authority/security tests | PASS | Final focused runs: server report suite 1/31 plus worker/view/renderer/database coverage passed under `TZ=Australia/Brisbane`. Coverage includes the exact database-produced 24-field weather row, bounded decimal observations/coordinates, null/absent/calendar-invalid required evidence, strict frozen lineage, exact digest binding, typed canonical render abort, and proof that invalid canonical evidence stores no PDF and never becomes READY. |
-| Production build | PASS WITH WARNINGS | Fresh `npm run build` exited 0. No build error; the existing lint and bundle-size warning backlog remains. |
-| Deterministic eight-shard regression | PASS | 323 suites / 2,173 tests passed under `TZ=Australia/Brisbane` across all eight deterministic shards: 41/290, 41/280, 41/241, 40/448, 40/169, 40/173, 40/318 and 40/254 suites/tests. |
+| Production build | PASS WITH WARNINGS | Final clean-HEAD `npm run build` exited 0. No build error; the existing lint, stale browser-data and bundle-size warning backlog remains. |
+| Deterministic eight-shard regression | PASS | Final clean-HEAD run: 325 suites / 2,175 tests passed under `TZ=Australia/Brisbane` across all eight deterministic shards: 41/294, 41/215, 41/275, 41/571, 41/182, 40/203, 40/260 and 40/175 suites/tests. |
 | Full-chain Mission/CRP database behavior | PASS (FOCUSED) | Fresh focused run passed. The executable chain proves prospective current authority, two authorised packages across separate days, later-rejection isolation, frozen completion authority and exact per-day package/approval lineage. |
 | Product Maturity verifier | PASS | 46 modules / 16 workflows / 57 routes / 192 customer UI files / 85 evidence references; zero customer-facing Legacy violations. The workflow remains `COMING_SOON`. |
 | Chromium/WebKit project discovery | PASS | 15 tests in 4 files listed: one auth setup plus seven Chromium and seven WebKit tests, including the real multi-Field/multi-day Mission surface. |
 | Protected authenticated Chromium/WebKit lifecycle | CANNOT VERIFY | `E2E_ORGANISATION_EMAIL`, `E2E_ORGANISATION_PASSWORD` and `E2E_BASE_URL` are absent. No genuine Fly The Farm identity or data was used. |
 | Local complete migration-chain behavior | PASS (FOCUSED) | All six repository verifiers that intentionally apply the governed full migration chain now register/create bundled pgcrypto. Four Jest wrappers pass (4 suites / 4 tests), and the Mission JSA and Organisation Branding/Reports scripts both exit 0. Unfiltered historical scripts that include environment-specific identity migrations were not blanket-edited. This remains local verification, not a Production dry-run. |
-| Independent whole-slice review | CANNOT VERIFY IN THIS RUN | Prior task reviews and Task 14A review round 1 are recorded, but no separate independent reviewer was available for this final rerun. A fresh independent review remains required after correcting the newly exposed harness. |
+| Independent whole-slice review | PASS / CLEAN | The clean independent fix review completed before final verification at exact HEAD `3fdaa6054b1a6db766622f9eca5a67f1f9465ad7`. |
 | Production migration ledger / legacy record counts | CANNOT VERIFY | Requires an approved repository-governed remote read or an isolated Production snapshot, neither of which is available or authorised here. |
 
 ## Release-blocking findings
 
 ### 1. Effective CRP decision override — corrected in Task 14A
 
-Focused status: corrected and passing; whole-gate confirmation pending.
+Focused and whole-gate status: corrected and passing.
 
 `20260905100000_mission_scope_revision_and_crp_gate.sql` correctly changes `ftf_read_mission_operational_closeout` to use `ftf_resolve_effective_mission_authorisation`. `20260905120000_mission_aircraft_day_actuals.sql` later replaces the same function and selects the greatest authorisation revision without filtering to the Mission's effective authorised package/decision. The executable full-chain test proves that a later rejected proposal is consequently returned as operational authority.
 
@@ -48,13 +48,13 @@ Correction: `20260905200000_mission_closeout_effective_authorisation.sql` uses `
 
 ### 2. Product Maturity visible-string analysis — corrected in Task 14A
 
-Focused status: corrected and passing; whole-gate confirmation pending.
+Focused and whole-gate status: corrected and passing.
 
 Dynamic customer-visible state/amendment transformations were replaced by bounded static label dictionaries, and short-date display was moved to the deterministic date formatter. The verifier was not weakened and the workflow was not promoted. A newly exposed customer-facing prohibited term was also replaced with accurate neutral copy.
 
 ### 3. Legacy all-migration Aircraft harness pgcrypto setup — corrected in Task 14A
 
-Focused status: corrected and passing; whole-gate confirmation pending.
+Focused and whole-gate status: corrected and passing.
 
 The new migrations correctly rely on PostgreSQL `pgcrypto`, but `scripts/verifyAuthoritativeAircraftMigration.mjs` constructs PGlite without registering its bundled `pgcrypto` extension. This makes the deterministic regression fail before the Aircraft assertions. The focused Mission database harnesses register pgcrypto and can apply the chain.
 
@@ -62,7 +62,7 @@ Correction: the harness now registers the repository-controlled PGlite pgcrypto 
 
 ### 4. Shared CASA/Personnel all-migration harness pgcrypto — corrected
 
-Focused status: corrected and passing; complete shard-2 context not yet rerun.
+Focused and whole-gate status: corrected and passing.
 
 The complete gate revealed that `casaCompliancePglite.test.js` and `personnelCasaCredentialsPglite.test.js` both execute `scripts/verifyCasaComplianceMigration.mjs`. The runner constructed `new PGlite()` without pgcrypto, so both tests failed during migration apply; no CASA or Personnel product assertion failed.
 
@@ -120,7 +120,7 @@ All reviewed `SECURITY DEFINER` functions in this chain declare `search_path = p
 - Signed reports read exact frozen UTF-8 report text, verify SHA-256 before parsing and do not refresh mutable current evidence.
 - Frozen weather decoding follows the actual `to_jsonb(mission_day_weather_reports) - 'organisation_id'` representation (`source`/`coverage`, not parallel aliases), and required timestamps/coordinates fail closed independently from explicitly nullable fields.
 - PGlite is single-session; true independent-session blocking/deadlock timing remains a deferred verification limitation even where lock participation is exercised.
-- Focused complete-chain tests pass for prospective, per-day and frozen-final authorisation lineage. The systematic pgcrypto harness inventory is corrected and focused checks pass; the deterministic gate and independent review remain incomplete.
+- Focused complete-chain tests pass for prospective, per-day and frozen-final authorisation lineage. The systematic pgcrypto harness inventory is corrected; the final deterministic gate and independent review pass.
 
 ## Legacy and migration assessment
 
@@ -129,7 +129,7 @@ All reviewed `SECURITY DEFINER` functions in this chain declare `search_path = p
 - **Genuine source counts / ambiguity classes:** `CANNOT VERIFY`; no approved Production snapshot was available.
 - **Fabricated operating days:** zero created by these migrations. The migrations add authority/schema and command paths; they do not synthesize historical Mission days, flights, chemical actuals or weather evidence.
 - **Application deployment dependency:** yes. The branch changes trusted server routes, strict client decoders and Mission/Job UI in addition to SQL authority.
-- **Fix-forward boundary:** the local deterministic, maturity and build gate is complete. Obtain independent review, then run protected controlled cross-browser acceptance and Production-shaped ledger/legacy assessment only in their separately governed environments.
+- **Next boundary:** proceed through the normal repository review/merge gate. Protected controlled cross-browser acceptance and Production-shaped ledger/legacy assessment may run only in their separately governed environments.
 
 ## Cross-browser and Production boundary
 
@@ -137,4 +137,4 @@ Project configuration and controlled specs are discoverable for Chromium and Web
 
 ## Required next gate
 
-The complete local gate is ready for independent review: all 323 deterministic suites / 2,173 tests pass, Product Maturity reports zero violations, the Production build passes with the existing warning backlog, and `git diff --check` passes from a clean tracked worktree. Protected controlled cross-browser acceptance and a Production-shaped ledger/legacy assessment remain `CANNOT VERIFY` because they require separately governed environments. Separate approval remains required for merge, every Production migration, Production deployment and Production acceptance.
+The final clean-HEAD local gate and independent review are complete: all 325 deterministic suites / 2,175 tests pass, Product Maturity reports zero violations, the Production build passes with the existing warning backlog, all fourteen migration hashes match the inventory below, and `git diff --check` passes from a clean tracked worktree. Recommendation: `GO FOR REPOSITORY REVIEW / MERGE GATE`. Protected controlled cross-browser acceptance and a Production-shaped ledger/legacy assessment remain `CANNOT VERIFY` because they require separately governed environments. Separate approval remains required for merge, every Production migration, Production deployment and Production acceptance.
