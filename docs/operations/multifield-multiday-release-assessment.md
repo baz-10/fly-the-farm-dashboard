@@ -27,7 +27,7 @@ Task 14A corrected the original three local blockers and the review-round frozen
 | Focused authority/security tests | PASS | Fresh run: 7 suites / 57 tests passed under `TZ=Australia/Brisbane`: Job scope, package/CRP, operating days/JSA, aircraft actuals, chemical/weather, final sign-off and trusted API decoding. |
 | Frozen report authority/security tests | PASS | Fresh run: 7 suites / 36 tests passed under `TZ=Australia/Brisbane`: frozen evidence/document, complete document, worker binding and idempotency serialization/scope. The expected negative-path worker diagnostic was logged by its passing test. |
 | Production build | PASS WITH WARNINGS | Fresh `npm run build` exited 0. No build error; the existing lint and bundle-size warning backlog remains. |
-| Deterministic eight-shard regression | FAIL | 323 suites discovered under `TZ=Australia/Brisbane`. Shards 1–6 PASS: respectively 41/290, 41/280, 41/241, 40/448, 40/169 and 40/173 suites/tests. Corrected shard 7 PASS: 40 suites / 318 tests. Shard 8 FAIL: 39 suites / 251 tests passed, 1 suite / 3 tests failed in `MissionOperationalCloseout.test.tsx`; assertions still expect the superseded action/status copy `Complete Mission` and `Mission completed · version 1`, while the authoritative component exposes `Complete operational work` and `Operational closeout completed · version 1`. |
+| Deterministic eight-shard regression | PASS | 323 suites / 2,173 tests passed under `TZ=Australia/Brisbane` across all eight deterministic shards: 41/290, 41/280, 41/241, 40/448, 40/169, 40/173, 40/318 and 40/254 suites/tests. |
 | Full-chain Mission/CRP database behavior | PASS (FOCUSED) | Fresh focused run passed. The executable chain proves prospective current authority, two authorised packages across separate days, later-rejection isolation, frozen completion authority and exact per-day package/approval lineage. |
 | Product Maturity verifier | PASS | 46 modules / 16 workflows / 57 routes / 192 customer UI files / 85 evidence references; zero customer-facing Legacy violations. The workflow remains `COMING_SOON`. |
 | Chromium/WebKit project discovery | PASS | 15 tests in 4 files listed: one auth setup plus seven Chromium and seven WebKit tests, including the real multi-Field/multi-day Mission surface. |
@@ -86,7 +86,7 @@ Focused and shard status: corrected and passing. The registry correctly contains
 
 ### 8. Operational closeout UI assertions — corrected
 
-Focused status: corrected and passing; shard 8 rerun pending. Three assertions in `MissionOperationalCloseout.test.tsx` expected `Complete Mission` or `Mission completed · version 1`. They now require the authoritative `Complete operational work` and `Operational closeout completed · version 1` copy, and explicitly prove the component states that final sign-off occurs separately. Product behavior was not changed and assertions were not weakened. Focused suite PASS: 7 tests.
+Focused and shard status: corrected and passing. Three assertions in `MissionOperationalCloseout.test.tsx` expected `Complete Mission` or `Mission completed · version 1`. They now require the authoritative `Complete operational work` and `Operational closeout completed · version 1` copy, and explicitly prove the component states that final sign-off occurs separately. Product behavior was not changed and assertions were not weakened. Focused suite PASS: 7 tests. Corrected shard 8 PASS: 40 suites / 254 tests.
 
 ## Migration inventory
 
@@ -127,7 +127,7 @@ All reviewed `SECURITY DEFINER` functions in this chain declare `search_path = p
 - **Genuine source counts / ambiguity classes:** `CANNOT VERIFY`; no approved Production snapshot was available.
 - **Fabricated operating days:** zero created by these migrations. The migrations add authority/schema and command paths; they do not synthesize historical Mission days, flights, chemical actuals or weather evidence.
 - **Application deployment dependency:** yes. The branch changes trusted server routes, strict client decoders and Mission/Job UI in addition to SQL authority.
-- **Fix-forward boundary:** confirm the operational-closeout versus final-signoff wording, update only the three stale UI assertions if confirmed, rerun the focused suite and shard 8, then rerun Product Maturity/build and obtain independent review. Protected controlled cross-browser acceptance remains separately environment-gated.
+- **Fix-forward boundary:** the local deterministic, maturity and build gate is complete. Obtain independent review, then run protected controlled cross-browser acceptance and Production-shaped ledger/legacy assessment only in their separately governed environments.
 
 ## Cross-browser and Production boundary
 
@@ -135,4 +135,4 @@ Project configuration and controlled specs are discoverable for Chromium and Web
 
 ## Required next gate
 
-Do not request merge or Production authority from this state. Shards 1–7 pass, but shard 8 has three stale operational-closeout UI assertions; independent review is also pending. Product Maturity and build passed at the preceding complete-gate commit and were not rerun after the shard-8 failure. Protected controlled cross-browser acceptance and a Production-shaped ledger/legacy assessment still require their separately governed environments. Separate approval remains required for merge, every Production migration, Production deployment and Production acceptance.
+The complete local gate is ready for independent review: all 323 deterministic suites / 2,173 tests pass, Product Maturity reports zero violations, the Production build passes with the existing warning backlog, and `git diff --check` passes from a clean tracked worktree. Protected controlled cross-browser acceptance and a Production-shaped ledger/legacy assessment remain `CANNOT VERIFY` because they require separately governed environments. Separate approval remains required for merge, every Production migration, Production deployment and Production acceptance.
