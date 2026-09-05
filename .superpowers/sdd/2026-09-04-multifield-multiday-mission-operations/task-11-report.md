@@ -69,6 +69,15 @@
 - The package/day graph audit covers package→Job/Client, package→JSA, package scope→Field→Property→Client/Job, day→package/JSA, approval→package, actual→day/package and all previously documented chemical, weather, import and aircraft relationships.
 - Executable PostgreSQL transactions corrupt a signed day's JSA and a historical package's Job while retaining otherwise valid same-organisation rows. Both fail at their named lineage boundary and roll back completely.
 
+## Task 11C — representation-safe frozen report document
+
+- Added forward migration `20260905160000_mission_frozen_report_document.sql`; no previously reviewed migration was changed.
+- Canonical final sign-off now serializes the bounded `reportEvidence` object once using PostgreSQL `jsonb::text`, stores that exact UTF-8 text and its SHA-256 beside the existing manifest/digest, and includes the report digest in audit/outbox evidence. Existing authority columns remain unchanged.
+- The stored document is constrained to a JSON object and one mebibyte. Exact retries return the existing completion row without rebuilding either representation or digest; append-only completion authority prevents subsequent mutation.
+- Historical completions remain null and are explicitly projected as `HISTORICAL_REPORT_DOCUMENT_UNAVAILABLE`; no backfill or fabrication is present.
+- A checked service-role-only read requires the existing active-seat, Mission-read and Base scope, returns exact text rather than parsed/reserialized JSON, and recomputes SHA-256 before release. Missing pairs and mismatches fail closed.
+- Transport regression proves JSON numeric representations such as `1.0` and `1` hash differently and verification is performed over transported exact text.
+
 ## RED evidence
 
 The first focused run failed for the intended missing migration, absent `MissionFinalSignoff` component and unsupported API actions. The lifecycle refinement also identified and corrected the existing-closeout compatibility case: revision 1 may already exist, so final sign-off must append rather than overwrite or falsely return it.
@@ -82,6 +91,7 @@ The first focused run failed for the intended missing migration, absent `Mission
 - `git diff --check`: PASS.
 - Migration SHA-256: `7586956d1652e8ca5b4a20da86113a64cec41dd4dcd17a522f82b540d057c743`.
 - Task 11B migration SHA-256: `c636cfbaf1f7dc7ffa952c2a1392795e22b7293f0485f927b18fc9706f8f852b`.
+- Task 11C migration SHA-256: `d9235fd5d7e7b1366d97644b7e33495d8126789c32fe37c10a8f0c5f0d32a09e`.
 
 ## Files
 
@@ -100,6 +110,8 @@ The first focused run failed for the intended missing migration, absent `Mission
 - `src/__tests__/missionOperationsApi.test.js`
 - `supabase/migrations/20260905150000_mission_frozen_report_evidence.sql`
 - `src/__tests__/missionFrozenReportEvidenceMigration.test.js`
+- `supabase/migrations/20260905160000_mission_frozen_report_document.sql`
+- `src/__tests__/missionFrozenReportDocumentMigration.test.js`
 
 ## Deviations / limitations
 
