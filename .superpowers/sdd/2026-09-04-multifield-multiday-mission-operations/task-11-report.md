@@ -97,6 +97,14 @@
 - The document must be byte-for-byte equal to PostgreSQL's canonical `(daily_evidence_manifest->'reportEvidence')::text` using `IS NOT DISTINCT FROM`, before the separately stored exact-text digest is accepted.
 - Executable privileged-tamper transactions prove semantically equal JSON with different whitespace and a correctly recomputed document digest is rejected, and prove a manifest with `reportEvidence` removed plus a correctly recomputed manifest digest is rejected. Both transactions roll back fully.
 
+## Task 11D — complete frozen report input
+
+- Added forward migration `20260905170000_complete_mission_frozen_report_document.sql`; prior Task 11 migrations remain unchanged.
+- A canonical completion insert now freezes one schema-v2 JSON document containing the bounded `reportEvidence`, the complete remaining daily manifest (days, totals and all nested operational evidence), and final completion identity, signatory/time plus governing authorisation, operational-revision and daily-evidence digest references.
+- A before-insert trigger composes only from the canonical completion row under the finalisation transaction, verifies the original manifest digest, enforces the one-mebibyte exact-text bound, and stores exact PostgreSQL text/SHA-256 atomically. It introduces no table or lifecycle authority.
+- Document era 2 is the default for new rows. Earlier eras are not backfilled or presented as complete. The checked reader returns only era-2 text/digest after recomposing the authoritative object, requiring exact text equality and both manifest/document digest equivalence.
+- Executable PostgreSQL coverage proves the exact document contains report metadata, full daily evidence and final identity, retry bytes remain stable, privileged tampering fails, append-only authority remains effective and over-bound manifest construction rolls back before insertion.
+
 ## RED evidence
 
 The first focused run failed for the intended missing migration, absent `MissionFinalSignoff` component and unsupported API actions. The lifecycle refinement also identified and corrected the existing-closeout compatibility case: revision 1 may already exist, so final sign-off must append rather than overwrite or falsely return it.
@@ -111,6 +119,7 @@ The first focused run failed for the intended missing migration, absent `Mission
 - Migration SHA-256: `7586956d1652e8ca5b4a20da86113a64cec41dd4dcd17a522f82b540d057c743`.
 - Task 11B migration SHA-256: `c636cfbaf1f7dc7ffa952c2a1392795e22b7293f0485f927b18fc9706f8f852b`.
 - Task 11C migration SHA-256: `bcc96aac0431906b32cc7e8762ba6511caad1d29004fa9e93ee12e99ce4829f5`.
+- Task 11D migration SHA-256: `0c0becd690da6dc7699b17bd6f312c570b94e241f694dd4503334f0092e28149`.
 
 ## Files
 
@@ -131,6 +140,8 @@ The first focused run failed for the intended missing migration, absent `Mission
 - `src/__tests__/missionFrozenReportEvidenceMigration.test.js`
 - `supabase/migrations/20260905160000_mission_frozen_report_document.sql`
 - `src/__tests__/missionFrozenReportDocumentMigration.test.js`
+- `supabase/migrations/20260905170000_complete_mission_frozen_report_document.sql`
+- `src/__tests__/missionCompleteFrozenReportDocumentMigration.test.js`
 
 ## Deviations / limitations
 

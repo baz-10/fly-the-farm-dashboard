@@ -675,6 +675,12 @@ if (child) {
     const reportDocument = await call('ftf_read_mission_frozen_report_document', [orgA, actorA, ids.mission, null]);
     expect(reportDocument.status).toBe('AVAILABLE');
     expect(typeof reportDocument.documentText).toBe('string');
+    const completeReportDocument = JSON.parse(reportDocument.documentText);
+    expect(completeReportDocument.schemaVersion).toBe(2);
+    expect(completeReportDocument.reportEvidence.scope.mission.id).toBe(ids.mission);
+    expect(completeReportDocument.dailyEvidence.days.length).toBeGreaterThanOrEqual(2);
+    expect(completeReportDocument.dailyEvidence.days[0]).toEqual(expect.objectContaining({ jsaReview: null, aircraftActuals: expect.any(Array), fieldActivities: expect.any(Array) }));
+    expect(completeReportDocument.finalCompletion).toEqual(expect.objectContaining({ missionId: ids.mission, dailyEvidenceDigest: frozenDigest }));
     expect(reportDocument.documentDigest).toBe(await scalar(db, `select encode(digest(convert_to(report_document_text,'UTF8'),'sha256'),'hex') as value from public.mission_completion_revisions where mission_id='${ids.mission}'`));
     await db.exec('begin');
     await db.exec(`alter table public.mission_completion_revisions disable trigger mission_completion_revisions_immutable;
