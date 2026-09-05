@@ -5,6 +5,7 @@ import type {
   MissionWorkspaceStageDefinition,
   MissionWorkspaceStageId,
 } from '../types/missionWorkspace';
+import type { MissionOperatingDay } from '../types/missionOperations';
 
 export const MISSION_WORKSPACE_STAGES: readonly MissionWorkspaceStageDefinition[] = [
   { id: 'mission', label: 'Mission', question: 'What am I doing?' },
@@ -12,7 +13,8 @@ export const MISSION_WORKSPACE_STAGES: readonly MissionWorkspaceStageDefinition[
   { id: 'resources', label: 'Resources', question: 'What am I taking?' },
   { id: 'weather-chemicals', label: 'Weather & Chemicals', question: 'What conditions am I expecting and what am I applying?' },
   { id: 'jsa', label: 'JSA', question: 'Is it safe?' },
-  { id: 'review', label: 'Review', question: 'Am I ready to fly?' },
+  { id: 'review', label: 'Review', question: 'What exact package may the eligible CRP decide?', authority: 'MISSION_PACKAGE_REVISION' },
+  { id: 'operating-days', label: 'Operating Days', question: 'What work is planned or recorded for each operating day?' },
   { id: 'operational-closeout', label: 'Operational Closeout', question: 'What actually happened?' },
   { id: 'mission-outcomes', label: 'Mission Outcomes', question: 'How effective was the work?' },
   { id: 'customer-outcome', label: 'Customer Outcome', question: 'What did the customer think?' },
@@ -40,6 +42,11 @@ export function deriveMissionWorkspaceStages(input: {
     input.planningSteps[9],
   ];
   const lifecycle: Array<Pick<MissionWorkspaceStage, 'state' | 'reason' | 'available'>> = [
+    input.completed
+      ? { state: 'COMPLETE', reason: 'Operating-day evidence is retained with the completed Mission.', available: true }
+      : input.authorised
+        ? { state: 'INCOMPLETE', reason: 'Review the daily JSA and record authorised Field activity.', available: true }
+        : { state: 'BLOCKED', reason: 'Available after Mission Authorisation', available: false },
     input.completed
       ? { state: 'COMPLETE', reason: 'Operational Closeout and Completion Evidence are authoritative.', available: true }
       : input.authorised
@@ -76,4 +83,22 @@ export function groupMissionStatusItems(stages: MissionWorkspaceStage[]): Missio
     else if (stage.available && stage.state !== 'OPTIONAL') groups.needsAttention.push(item);
   });
   return groups;
+}
+
+export function formatMissionOperatingWorkDate(workDate: string): string {
+  const [year, month, day] = workDate.split('-').map(Number);
+  return new Intl.DateTimeFormat('en-AU', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' })
+    .format(new Date(Date.UTC(year, month - 1, day)));
+}
+
+export function formatMissionOperatingShortWorkDate(workDate: string): string {
+  const [year, month, day] = workDate.split('-').map(Number);
+  return new Intl.DateTimeFormat('en-AU', { day: 'numeric', month: 'long', timeZone: 'UTC' })
+    .format(new Date(Date.UTC(year, month - 1, day)));
+}
+
+export function canStartMissionOperatingDay(day: Pick<MissionOperatingDay, 'state' | 'jsaRevisionId' | 'jsaReview'>): boolean {
+  return day.state === 'READY'
+    && day.jsaReview?.outcome === 'CONDITIONS_COVERED'
+    && day.jsaReview.jsaRevisionId === day.jsaRevisionId;
 }

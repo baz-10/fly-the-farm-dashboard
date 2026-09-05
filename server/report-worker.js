@@ -37,6 +37,10 @@ class ReportWorkerRepository {
     return { bytes, contentType: record.content_type };
   }
 
+  async loadFrozenReportDocument(job) {
+    return supabaseRequest('rest/v1/rpc/ftf_read_report_job_frozen_document',{method:'POST',body:JSON.stringify({p_job_id:job.id,p_artefact_id:job.artefact.id}),publicMessage:'Frozen mission report evidence could not be loaded.'});
+  }
+
   async complete(jobId, artefactId, file) {
     return supabaseRequest('rest/v1/rpc/ftf_complete_report_generation_job', { method: 'POST', body: JSON.stringify({ p_job_id: jobId, p_artefact_id: artefactId, p_file: file }), publicMessage: 'Report completion could not be retained.' });
   }
@@ -55,12 +59,15 @@ async function processNextReportJob({ workerId, repository = new ReportWorkerRep
     let branding = artefact.branding_snapshot || {};
     const logo = repository.loadLogo ? await repository.loadLogo(job) : null;
     if (logo) branding = { ...branding, logoData: logo.bytes, logoType: logo.contentType };
+    stage = 'load_frozen_report';
+    const frozenReportDocument=['MISSION_SUMMARY','MISSION_RECORD'].includes(artefact.report_type)&&repository.loadFrozenReportDocument?await repository.loadFrozenReportDocument(job):undefined;
     stage = 'render';
     const bytes = renderer({
       reportType: artefact.report_type,
       templateVersion: artefact.template_version,
       branding,
       evidence: artefact.evidence_manifest,
+      frozenReportDocument,
       artefact: { id: artefact.id, version: artefact.version_number, createdAt: artefact.created_at },
     });
     stage = 'store';
@@ -77,7 +84,8 @@ async function processNextReportJob({ workerId, repository = new ReportWorkerRep
       statusCode: error?.statusCode || null,
       message: error?.publicMessage || `Report ${stage} failed.`,
     });
-    await repository.fail(job.id, job.artefact.id, 'RENDER_FAILED', 'Report generation failed.');
+    const frozenFailure=error?.code==='FROZEN_REPORT_EVIDENCE_INVALID';
+    await repository.fail(job.id, job.artefact.id, frozenFailure?error.code:'RENDER_FAILED', frozenFailure?error.publicMessage:'Report generation failed.');
     return { processed: false, jobId: job.id, failed: true };
   }
 }

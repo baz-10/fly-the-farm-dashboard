@@ -63,6 +63,7 @@ import {
 } from '../services/weatherService';
 import { useOperationalData } from '../contexts/OperationalDataContext';
 import { describeOperationalError } from '../services/operationalDataStore';
+import JobFieldScopeSelector from '../components/jobs/JobFieldScopeSelector';
 
 const WIND_DIRECTIONS = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
 
@@ -98,6 +99,28 @@ export default function JobCreate() {
   const client = operational.mode === 'remote'
     ? operational.clients.find((record) => record.id === clientId)
     : getClientById(clientId || '');
+  const initialScopeFieldIds = useMemo(() => {
+    const queryFieldIds = searchParams.get('fieldIds')?.split(',').filter(Boolean) || [];
+    return Array.from(new Set(queryFieldIds.length ? queryFieldIds : (fieldId ? [fieldId] : [])));
+  }, [fieldId, searchParams]);
+  const [scope, setScope] = useState({ clientId: clientId || '', fieldIds: initialScopeFieldIds });
+  const scopedPropertyIds = new Set(operational.properties
+    .filter((record) => record.clientId === scope.clientId)
+    .map((record) => record.id));
+  const scopedFieldIds = scope.fieldIds.filter((id) => {
+    const record = operational.fields.find((fieldRecord) => fieldRecord.id === id);
+    return Boolean(record && scopedPropertyIds.has(record.propertyId));
+  });
+  const scopedFields = operational.mode === 'remote'
+    ? scopedFieldIds.map((id) => operational.fields.find((record) => record.id === id)).filter((record): record is typeof operational.fields[number] => Boolean(record))
+    : field ? [field] : [];
+  const scopedClient = operational.mode === 'remote'
+    ? operational.clients.find((record) => record.id === scope.clientId)
+    : client;
+  const scopedPrimaryField = scopedFields[0];
+  const scopedPrimaryProperty = scopedPrimaryField
+    ? operational.properties.find((record) => record.id === scopedPrimaryField.propertyId && record.clientId === scope.clientId)
+    : undefined;
 
   const allWeeds = useMemo(() => getAllWeeds(), []);
   const allBrandNames = useMemo(() => getAllBrands(), []);
@@ -446,15 +469,19 @@ export default function JobCreate() {
         setSaveError('Chemical, weather, spray recommendation, operator, quote and compliance values are not yet supported by the Production Beta job API. Remove those values before saving; they have not been saved.');
         return;
       }
+      if (!scopedClient || !scopedPrimaryField || !scopedPrimaryProperty || scopedFields.length === 0) {
+        setSaveError('Select at least one Field for this Job.');
+        return;
+      }
       try {
         const created = await operational.createJob({
-          clientId: client.id, propertyId: property.id, fieldIds: [field.id], reference: jobReference.trim(),
+          clientId: scopedClient.id, propertyId: scopedPrimaryProperty.id, fieldIds: scopedFields.map((record) => record.id), reference: jobReference.trim(),
           scope: weedTarget.trim(), status: jobStatus, notes, requestedDate: requestedDate || undefined,
           scheduledDate: dateSprayed || undefined,
         });
         setSaveError('');
         if (returnTo) setOnboardingSaved(true);
-        else navigate(`/jobs/client/${clientId}/property/${propertyId}/field/${fieldId}/job/${created.id}`);
+        else navigate(`/jobs/client/${scopedClient.id}/property/${scopedPrimaryProperty.id}/field/${scopedPrimaryField.id}/job/${created.id}`);
       } catch (error) {
         setSaveError(describeOperationalError(error));
       }
@@ -586,6 +613,14 @@ export default function JobCreate() {
             <CardContent sx={{ p: 3 }}>
               <Typography variant="subtitle1" fontWeight={700} color="primary.dark" sx={{ mb: 2.5 }}>Job Details</Typography>
               <Stack spacing={2.5}>
+                <JobFieldScopeSelector
+                  clients={operational.clients}
+                  properties={operational.properties}
+                  fields={operational.fields}
+                  selectedClientId={scope.clientId}
+                  selectedFieldIds={scopedFieldIds}
+                  onScopeChange={setScope}
+                />
                 <TextField label="Job Reference" value={jobReference} onChange={(event) => setJobReference(event.target.value)} required fullWidth />
                 <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
                   <TextField select label="Status" value={jobStatus} onChange={(event) => setJobStatus(event.target.value)} fullWidth>
@@ -1384,7 +1419,7 @@ export default function JobCreate() {
             variant="contained"
             startIcon={<SaveIcon />}
             onClick={() => void handleSave()}
-            disabled={!weedTarget.trim() || !dateSprayed || operational.saving || (operational.mode === 'remote' && !jobReference.trim())}
+            disabled={!weedTarget.trim() || !dateSprayed || operational.saving || (operational.mode === 'remote' && (!jobReference.trim() || scopedFields.length === 0))}
             sx={{ borderRadius: '10px', fontWeight: 700, px: 4 }}
           >
             {operational.saving ? 'Saving…' : 'Save Job'}

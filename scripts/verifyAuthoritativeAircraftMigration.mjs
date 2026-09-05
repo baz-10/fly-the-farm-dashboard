@@ -2,18 +2,24 @@ import { readFile, readdir } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 import { PGlite } from '@electric-sql/pglite';
+import { createRequire } from 'node:module';
 
 const scriptDirectory = dirname(fileURLToPath(import.meta.url));
 const migrationDirectory = resolve(scriptDirectory, '../supabase/migrations');
+const require = createRequire(import.meta.url);
+// PGlite 0.5's CommonJS wildcard export appends a duplicate extension, so load
+// the bundled extension by its repository-controlled absolute path.
+const { pgcrypto } = require(resolve(scriptDirectory, '../node_modules/@electric-sql/pglite/dist/contrib/pgcrypto.cjs'));
 
 async function rejected(db, sql) {
   try { await db.exec(sql); } catch { return true; }
   return false;
 }
 
-const db = new PGlite();
+const db = new PGlite({ extensions: { pgcrypto } });
 try {
   await db.exec(`
+    create extension if not exists pgcrypto;
     create schema auth;
     create table auth.users (id uuid primary key);
     create function auth.uid() returns uuid language sql stable as $$ select null::uuid; $$;

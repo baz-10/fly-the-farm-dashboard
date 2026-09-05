@@ -21,7 +21,13 @@ const playwrightConfiguration = () => {
   const configModule = { exports: {} };
   const controlledRequire = (name) => {
     if (name === '@playwright/test') {
-      return { defineConfig: (config) => config, devices: { 'Desktop Chrome': { browserName: 'chromium' } } };
+      return {
+        defineConfig: (config) => config,
+        devices: {
+          'Desktop Chrome': { browserName: 'chromium' },
+          'Desktop Safari': { browserName: 'webkit' },
+        },
+      };
     }
     throw new Error(`Unexpected Playwright config import: ${name}`);
   };
@@ -189,6 +195,15 @@ describe('Production Beta operational acceptance execution profile', () => {
       const effectiveUse = { ...config.use, ...project.use };
       expect(effectiveUse).toMatchObject({ trace: 'off', screenshot: 'off', video: 'off' });
     }
+  });
+
+  test('defines both Chromium and WebKit browser projects for responsive acceptance coverage', () => {
+    const config = playwrightConfiguration();
+
+    expect(config.projects).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: 'chromium', use: expect.objectContaining({ browserName: 'chromium' }) }),
+      expect.objectContaining({ name: 'webkit', use: expect.objectContaining({ browserName: 'webkit' }) }),
+    ]));
   });
 
   test('uploads only explicit safe text outcomes after removing authenticated storage', () => {

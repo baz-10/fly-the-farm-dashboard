@@ -129,6 +129,19 @@ describe('operational API adapter', () => {
     })).toEqual(expect.objectContaining({ id: 'boundary-1', fieldId: 'field-1', versionNumber: 2, fieldVersion: 5 }));
   });
 
+  test('derives checked Job property scope and rejects duplicate scope IDs', () => {
+    expect(mapApiJob({
+      id: 'job-1', client_id: 'client-1', property_id: 'property-1', property_ids: ['property-1', 'property-2'],
+      field_ids: ['field-1', 'field-2'], reference: 'JOB-42', scope: 'Spray lantana', status: 'scheduled', notes: '',
+      row_version: 3, created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-02T00:00:00Z',
+    })).toEqual(expect.objectContaining({ propertyIds: ['property-1', 'property-2'] }));
+    expect(() => mapApiJob({
+      id: 'job-1', client_id: 'client-1', property_id: 'property-1', property_ids: ['property-1', 'property-1'],
+      field_ids: ['field-1'], reference: 'JOB-42', scope: 'Spray lantana', status: 'scheduled', notes: '',
+      row_version: 3, created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-02T00:00:00Z',
+    })).toThrow(expect.objectContaining({ code: 'MALFORMED_RESPONSE' }));
+  });
+
   test('sends explicit Base confirmation evidence with optimistic concurrency', async () => {
     const fetchMock = jest.spyOn(global, 'fetch').mockImplementation(() => jsonResponse(200, { data: {
       id: 'location-1', name: 'Brisbane Base', address: '1 Airfield Rd', timezone: 'Australia/Brisbane',

@@ -1,0 +1,2 @@
+const fs=require('fs'),path=require('path'),sql=fs.readFileSync(path.join(__dirname,'../../supabase/migrations/20260905210000_fail_invalid_frozen_report_job.sql'),'utf8');
+test('invalid frozen evidence marks the durable job and artefact FAILED without retry',()=>{expect(sql).toContain("v_terminal boolean:=p_error_code='FROZEN_REPORT_EVIDENCE_INVALID'");expect(sql).toMatch(/status=case when v_terminal or attempt_count>=max_attempts then'FAILED'else'QUEUED'end/);expect(sql).toMatch(/report_artefacts set status=case when j.status='FAILED'then'FAILED'else'QUEUED'end/);});

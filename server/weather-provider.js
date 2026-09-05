@@ -9,6 +9,51 @@ async function fetchOpenMeteoPlanningForecast({latitude,longitude,validFrom,vali
   const snapshot=await response.json();if(!snapshot?.hourly?.time)throw new Error('Open-Meteo returned no hourly forecast.');
   return{provider:'OPEN_METEO',providerModel:'best_match',issuedAt:new Date().toISOString(),validFrom:start.toISOString(),validTo:end.toISOString(),latitude:Number(snapshot.latitude??latitude),longitude:Number(snapshot.longitude??longitude),snapshot,transformationMetadata:{requestedLatitude:latitude,requestedLongitude:longitude,requestedAt:new Date().toISOString(),attribution:'Weather data by Open-Meteo.com (CC BY 4.0)'}};
 }
+async function fetchOpenMeteoHistoricalWeather({latitude,longitude,intervalStart,intervalEnd,fetchImpl=global.fetch,now=()=>new Date()}){
+  const start=new Date(intervalStart),end=new Date(intervalEnd),hourMs=60*60*1000;
+  if(!Number.isFinite(Number(latitude))||Number(latitude)<-90||Number(latitude)>90||!Number.isFinite(Number(longitude))||Number(longitude)<-180||Number(longitude)>180||!Number.isFinite(start.getTime())||!Number.isFinite(end.getTime())||end<=start||end-start>1000*hourMs)throw new Error('Invalid historical weather interval.');
+  const lastIncluded=new Date(end.getTime()-1),query=new URLSearchParams({latitude:String(latitude),longitude:String(longitude),start_date:start.toISOString().slice(0,10),end_date:lastIncluded.toISOString().slice(0,10),timezone:'GMT',hourly:'temperature_2m,relative_humidity_2m,dew_point_2m,wind_speed_10m,wind_direction_10m,precipitation'});
+  const response=await fetchImpl(`https://archive-api.open-meteo.com/v1/archive?${query.toString()}`,{headers:{Accept:'application/json'}});
+  if(!response.ok)throw new Error(`Open-Meteo historical weather failed (${response.status}).`);
+  const snapshot=await response.json(),hourly=snapshot?.hourly||{},times=Array.isArray(hourly.time)?hourly.time:[];
+  if(!['GMT','UTC'].includes(snapshot?.timezone)||snapshot?.utc_offset_seconds!==0){
+    throw new Error('Open-Meteo historical timestamps must use an explicit UTC/GMT zero offset.');
+  }
+  if(typeof snapshot?.latitude!=='number'||typeof snapshot?.longitude!=='number'){
+    throw new Error('Open-Meteo returned invalid historical coordinates.');
+  }
+  const responseLatitude=snapshot.latitude,responseLongitude=snapshot.longitude;
+  if(!Number.isFinite(responseLatitude)||responseLatitude < -90||responseLatitude > 90
+    ||!Number.isFinite(responseLongitude)||responseLongitude < -180||responseLongitude > 180){
+    throw new Error('Open-Meteo returned invalid historical coordinates.');
+  }
+  const arrays=['temperature_2m','relative_humidity_2m','dew_point_2m','wind_speed_10m','wind_direction_10m','precipitation'];
+  if(!arrays.every((key)=>Array.isArray(hourly[key])&&hourly[key].length===times.length)){
+    throw new Error('Open-Meteo must return aligned finite hourly observations.');
+  }
+  const ranges={temperature_2m:[-100,100],relative_humidity_2m:[0,100],dew_point_2m:[-150,100],wind_speed_10m:[0,500],wind_direction_10m:[0,359.999999],precipitation:[0,10000]};
+  if(!arrays.every((key)=>hourly[key].every((value)=>Number.isFinite(value)&&value>=ranges[key][0]&&value<=ranges[key][1]))){
+    throw new Error('Open-Meteo must return aligned finite hourly observations.');
+  }
+  let previous=-Infinity;
+  const allObservations=times.map((value,index)=>{
+    const timestamp=String(value);
+    if(!/^\d{4}-\d{2}-\d{2}T\d{2}:00(?::00(?:\.0{1,3})?)?(?:Z|\+00:00)?$/.test(timestamp)){
+      throw new Error('Open-Meteo historical timestamps must be unambiguous UTC hourly buckets.');
+    }
+    const parsed=new Date(/[zZ]|\+00:00$/.test(timestamp)?timestamp:`${timestamp}Z`),at=parsed.getTime();
+    if(!Number.isFinite(at)||at%hourMs!==0||at<=previous){
+      throw new Error('Open-Meteo historical timestamps must be unique ordered UTC hourly buckets.');
+    }
+    previous=at;
+    return{observedAt:parsed.toISOString(),temperatureC:hourly.temperature_2m[index],relativeHumidity:hourly.relative_humidity_2m[index],dewPointC:hourly.dew_point_2m[index],windSpeedKmh:hourly.wind_speed_10m[index],windDirectionDegrees:hourly.wind_direction_10m[index],precipitationMm:hourly.precipitation[index]};
+  });
+  const observations=allObservations.filter(item=>{const value=Date.parse(item.observedAt);return value>=Math.ceil(start.getTime()/hourMs)*hourMs&&value<end.getTime();});
+  if(!observations.length)throw new Error('Open-Meteo returned no historical observations for the operating interval.');
+  const present=new Set(observations.map(item=>item.observedAt)),coverageGaps=[];
+  for(let value=Math.ceil(start.getTime()/hourMs)*hourMs;value<end.getTime();value+=hourMs){const observedAt=new Date(value).toISOString();if(!present.has(observedAt))coverageGaps.push({observedAt,reason:'PROVIDER_HOUR_MISSING'});}
+  return{source:'OPEN_METEO',providerIdentifier:'OPEN_METEO_ARCHIVE_V1',providerRetrievedAt:now().toISOString(),hourlyObservations:observations,inversionInputs:{method:'OPEN_METEO_HOURLY_PROXY_V1',inputsAvailable:false,temperatureAndWindHours:observations.length},inversionResults:{assessment:'UNABLE_TO_DETERMINE',reason:'Open-Meteo hourly surface observations do not provide an authoritative vertical temperature profile.'},coverageGaps,manualReason:null,sourceMetadata:{requestedLatitude:Number(latitude),requestedLongitude:Number(longitude),requestedIntervalStart:start.toISOString(),requestedIntervalEnd:end.toISOString(),responseLatitude,responseLongitude,providerTimezone:snapshot.timezone,utcOffsetSeconds:snapshot.utc_offset_seconds,attribution:'Weather data by Open-Meteo.com (CC BY 4.0)'}};
+}
 const AU_STATE_ABBREVIATIONS={
   'Australian Capital Territory':'ACT','New South Wales':'NSW','Northern Territory':'NT',
   Queensland:'QLD','South Australia':'SA',Tasmania:'TAS',Victoria:'VIC','Western Australia':'WA',
@@ -39,4 +84,4 @@ async function reverseGeocodeAustralianLocation({latitude,longitude},fetchImpl=g
   if(!response.ok)return null;const data=await response.json();return{...normaliseAustralianPlace(data?.address),latitude:Number(latitude),longitude:Number(longitude)};
 }
 async function fetchOpenMeteoOperationsForecast({latitude,longitude,fetchImpl=global.fetch}){const{calculateDeltaT,assessSprayCondition,findBestSprayWindow}=require('./spray-weather'),query=new URLSearchParams({latitude:String(latitude),longitude:String(longitude),timezone:'auto',forecast_days:'7',current:'temperature_2m,apparent_temperature,relative_humidity_2m,weather_code,wind_speed_10m,wind_gusts_10m,wind_direction_10m,precipitation,rain',hourly:'temperature_2m,relative_humidity_2m,precipitation_probability,precipitation,wind_speed_10m,wind_gusts_10m,wind_direction_10m',daily:'temperature_2m_min,temperature_2m_max,precipitation_probability_max,precipitation_sum,wind_speed_10m_max,wind_gusts_10m_max'}),response=await fetchImpl(`https://api.open-meteo.com/v1/forecast?${query}`,{headers:{Accept:'application/json'}});if(!response.ok)throw new Error(`Open-Meteo operations forecast failed (${response.status}).`);const d=await response.json(),compass=deg=>['N','NE','E','SE','S','SW','W','NW'][Math.round(Number(deg||0)/45)%8],hourly=(d.hourly?.time||[]).map((time,i)=>{const deltaT=calculateDeltaT(d.hourly.temperature_2m[i],d.hourly.relative_humidity_2m[i]);return{time,temperatureC:d.hourly.temperature_2m[i],humidityPercent:d.hourly.relative_humidity_2m[i],windSpeedKmh:d.hourly.wind_speed_10m[i],windGustKmh:d.hourly.wind_gusts_10m[i],windDirection:compass(d.hourly.wind_direction_10m[i]),rainProbability:d.hourly.precipitation_probability[i],rainAmountMm:d.hourly.precipitation[i],deltaTC:deltaT,sprayCondition:assessSprayCondition({deltaT,windSpeedKmh:d.hourly.wind_speed_10m[i],windGustKmh:d.hourly.wind_gusts_10m[i],rainProbability:d.hourly.precipitation_probability[i]})};}),currentDelta=calculateDeltaT(d.current.temperature_2m,d.current.relative_humidity_2m),daily=(d.daily?.time||[]).map((date,i)=>({date,minTemperatureC:d.daily.temperature_2m_min[i],maxTemperatureC:d.daily.temperature_2m_max[i],rainProbability:d.daily.precipitation_probability_max[i],rainAmountMm:d.daily.precipitation_sum[i],windSpeedKmh:d.daily.wind_speed_10m_max[i],windGustKmh:d.daily.wind_gusts_10m_max[i]}));return{provider:'Open-Meteo',retrievedAt:new Date().toISOString(),latitude:Number(d.latitude??latitude),longitude:Number(d.longitude??longitude),current:{temperatureC:d.current.temperature_2m,apparentTemperatureC:d.current.apparent_temperature,humidityPercent:d.current.relative_humidity_2m,windSpeedKmh:d.current.wind_speed_10m,windGustKmh:d.current.wind_gusts_10m,windDirection:compass(d.current.wind_direction_10m),rainAmountMm:Number(d.current.precipitation||d.current.rain||0),rainProbability:hourly[0]?.rainProbability??0,deltaTC:currentDelta,condition:'Current conditions',minTemperatureC:daily[0]?.minTemperatureC,maxTemperatureC:daily[0]?.maxTemperatureC,sprayCondition:assessSprayCondition({deltaT:currentDelta,windSpeedKmh:d.current.wind_speed_10m,windGustKmh:d.current.wind_gusts_10m,rainProbability:hourly[0]?.rainProbability??0})},hourly,daily,bestSprayWindow:findBestSprayWindow(hourly.slice(0,24))};}
-module.exports={fetchOpenMeteoPlanningForecast,fetchOpenMeteoOperationsForecast,geocodeOpenMeteoLocation,searchAustralianWeatherLocations,reverseGeocodeAustralianLocation,deriveAustralianPlaceFromAddress,mergeAustralianPlace};
+module.exports={fetchOpenMeteoPlanningForecast,fetchOpenMeteoHistoricalWeather,fetchOpenMeteoOperationsForecast,geocodeOpenMeteoLocation,searchAustralianWeatherLocations,reverseGeocodeAustralianLocation,deriveAustralianPlaceFromAddress,mergeAustralianPlace};

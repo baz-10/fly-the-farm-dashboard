@@ -309,13 +309,9 @@ describe('authoritative client/property/field workflow screens', () => {
     mockSearchParams = new URLSearchParams('view=jobs');
     route('/jobs?view=jobs', <ClientList />);
     fireEvent.click(screen.getByRole('button', { name: 'Add Job' }));
-    fireEvent.mouseDown(screen.getByRole('combobox', { name: 'Select Client' }));
-    fireEvent.click(await screen.findByRole('option', { name: 'North Farm' }));
-    fireEvent.mouseDown(screen.getByRole('combobox', { name: 'Select Property' }));
-    fireEvent.click(await screen.findByRole('option', { name: 'Home Block' }));
-    fireEvent.mouseDown(screen.getByRole('combobox', { name: 'Select Field' }));
-    fireEvent.click(await screen.findByRole('option', { name: 'North Paddock' }));
-    expect(screen.getByText(/12\.5 ha · Known Field details/)).toBeVisible();
+    fireEvent.change(screen.getByRole('combobox', { name: 'Client' }), { target: { value: 'client-1' } });
+    fireEvent.click(screen.getByRole('checkbox', { name: 'North Paddock' }));
+    expect(screen.getByText('1 Property · 1 Field · 12.5000 ha')).toBeVisible();
     fireEvent.click(screen.getByRole('button', { name: 'Continue to Job details' }));
     expect(mockNavigate).toHaveBeenCalledWith('/jobs/client/client-1/property/property-1/field/field-1/new-job');
     expect(mockOperational.updateClient).not.toHaveBeenCalled();
@@ -396,12 +392,8 @@ describe('authoritative client/property/field workflow screens', () => {
     mockSearchParams = new URLSearchParams('view=jobs&onboarding=job&returnTo=%2Fgetting-started');
     const workspace = route('/jobs?view=jobs&onboarding=job&returnTo=%2Fgetting-started', <ClientList />);
     expect(await screen.findByRole('dialog', { name: 'Add Job' })).toBeVisible();
-    fireEvent.mouseDown(screen.getByRole('combobox', { name: 'Select Client' }));
-    fireEvent.click(await screen.findByRole('option', { name: 'North Farm' }));
-    fireEvent.mouseDown(screen.getByRole('combobox', { name: 'Select Property' }));
-    fireEvent.click(await screen.findByRole('option', { name: 'Home Block' }));
-    fireEvent.mouseDown(screen.getByRole('combobox', { name: 'Select Field' }));
-    fireEvent.click(await screen.findByRole('option', { name: 'North Paddock' }));
+    fireEvent.change(screen.getByRole('combobox', { name: 'Client' }), { target: { value: 'client-1' } });
+    fireEvent.click(screen.getByRole('checkbox', { name: 'North Paddock' }));
     fireEvent.click(screen.getByRole('button', { name: 'Continue to Job details' }));
     expect(mockNavigate).toHaveBeenCalledWith('/jobs/client/client-1/property/property-1/field/field-1/new-job?returnTo=%2Fgetting-started');
 
@@ -620,6 +612,40 @@ describe('authoritative client/property/field workflow screens', () => {
     await waitFor(() => expect(mockOperational.createJob).toHaveBeenCalledWith(expect.objectContaining({
       clientId: 'client-1', propertyId: 'property-1', fieldIds: ['field-1'], reference: 'JOB-99',
       scope: 'Spray lantana', notes: 'Gate code 2', scheduledDate: expect.any(String),
+    })));
+  });
+
+  test('submits every Field selected through a multi-property compatibility route', async () => {
+    const secondProperty = { ...property, id: 'property-2', name: 'River Flats' };
+    const secondField = { ...field, id: 'field-2', propertyId: 'property-2', name: 'River Block', sizeHa: 32.2 };
+    mockOperational = baseOperational({ properties: [property, secondProperty], fields: [field, secondField] });
+    mockSearchParams = new URLSearchParams('fieldIds=field-1%2Cfield-2');
+    route('/jobs/client/client-1/property/property-1/field/field-1/new-job', <JobCreate />);
+
+    fireEvent.change(screen.getByRole('textbox', { name: 'Job Reference' }), { target: { value: 'JOB-MULTI' } });
+    fireEvent.change(screen.getByRole('combobox', { name: 'Weed Target' }), { target: { value: 'Spray lantana' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save Job' }));
+
+    await waitFor(() => expect(mockOperational.createJob).toHaveBeenCalledWith(expect.objectContaining({
+      clientId: 'client-1', propertyId: 'property-1', fieldIds: ['field-1', 'field-2'], reference: 'JOB-MULTI',
+    })));
+  });
+
+  test('drops a foreign-client Field seeded through the Job scope query', async () => {
+    const otherClient = { ...client, id: 'client-2', name: 'South Farm' };
+    const otherProperty = { ...property, id: 'property-2', clientId: 'client-2', name: 'South Block' };
+    const otherField = { ...field, id: 'field-2', propertyId: 'property-2', name: 'South Field' };
+    mockOperational = baseOperational({ clients: [client, otherClient], properties: [property, otherProperty], fields: [field, otherField] });
+    mockSearchParams = new URLSearchParams('fieldIds=field-1%2Cfield-2');
+    route('/jobs/client/client-1/property/property-1/field/field-1/new-job', <JobCreate />);
+
+    expect(screen.getByText('1 Property · 1 Field · 12.5000 ha')).toBeVisible();
+    fireEvent.change(screen.getByRole('textbox', { name: 'Job Reference' }), { target: { value: 'JOB-SANITISED' } });
+    fireEvent.change(screen.getByRole('combobox', { name: 'Weed Target' }), { target: { value: 'Spray lantana' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save Job' }));
+
+    await waitFor(() => expect(mockOperational.createJob).toHaveBeenCalledWith(expect.objectContaining({
+      clientId: 'client-1', propertyId: 'property-1', fieldIds: ['field-1'], reference: 'JOB-SANITISED',
     })));
   });
 

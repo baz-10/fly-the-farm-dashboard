@@ -1,0 +1,157 @@
+# Task 11 report — Final sign-off, Job closure and downstream projections
+
+## Outcome
+
+- Extended the canonical immutable `mission_completion_revisions` authority with a frozen, digest-bound daily evidence manifest. No `mission_final_signoffs` table or competing current pointer was created.
+- Added checked final-readiness, final-sign-off and Job-close commands through the existing Mission Operations API.
+- Final sign-off serializes on the organisation/Mission package aggregate, locks the Mission, effective package, operating days and Job, then rejects the first precise unresolved daily/JSA/aircraft/chemical/weather/hold boundary.
+- A legacy operational-completion revision remains valid compatibility evidence; the multi-day final sign-off appends the next canonical completion revision. Exact retries return that same final revision only when revision/declaration identity matches.
+- The frozen manifest preserves ordered days, package/JSA linkage, Field activities, per-aircraft totals and optional flights, daily chemical revisions/lines, weather reports and flight-line attributions.
+- Fleet daily readings continue through the existing atomic signed-day command. Final sign-off records immutable, unique `FLEET` and `FINANCIAL` projection-source markers in the same transaction.
+- Financial prefill preserves the existing single-closeout calculator and adds canonical multi-day facts from the final completion: distinct positive-work dates as `operationalDays`, Mission actual work hours, and separately summed aircraft flight hours.
+- The renamed compatibility calculator and new Financial wrapper are both denied `PUBLIC`/browser execution; only `service_role` may execute the checked wrapper.
+- Job closure locks all Missions and requires a digest-bearing canonical final completion for every non-cancelled Mission.
+- UI now distinguishes operational completion from final sign-off, presents precise blockers, and exposes Job close only after every governed Mission is finally signed off.
+
+## Review round 1
+
+- Final readiness now rejects the latest daily chemical revision when it carries `material_variance`; no reconciliation override was invented because the repository has no existing governed chemical-reconciliation authority tied to that revision.
+- The shared Mission aggregate lock is now the terminal-finality guard for every ordinary package/day/aircraft/chemical/weather/import/attribution/amendment command. The one formerly unlocked operational-event writer is wrapped, and table triggers cover direct writes to the post-package operational tables.
+- A dedicated append trigger prevents a legacy completion revision from being added after a digest-bearing canonical final revision. Final sign-off retains a private lock-only path solely for exact idempotent retries; that helper has no callable role grant.
+- Job close evaluates the latest canonical completion, not any historical final revision, and rejects a newer unresolved `PREPARING`/`AWAITING_CRP_APPROVAL` package or later amendment under the same deterministic Mission locks.
+- Executable PGlite coverage proves RPC mutation, direct table mutation, legacy completion append and Job-close-with-prospective-authority all fail closed without partial mutation.
+
+## Review round 2
+
+- The terminal table trigger now resolves both `OLD` and `NEW` organisation/Mission identities for `UPDATE`, deduplicates them, and locks/checks them in deterministic organisation/Mission order. Reparenting cannot move evidence out of a finalized source scope.
+- Terminal guards are installed on all 15 post-package operational/evidence relationship tables. Their rows expose both `organisation_id` and `mission_id`, so no indirect relationship lookup or unscoped fallback is required.
+- Executable privileged-update coverage attempts to reparent an existing operational event from a finalized Mission to a non-final Mission and proves the source identity and row count remain unchanged.
+- The API now recognizes only the exact thrown PostgREST pair `55000` + `MISSION_FINAL_SIGNOFF_IMMUTABLE` and maps it to a fixed safe 409 response. Other `55000` errors remain the generic safe 500 path; upstream details are never returned.
+
+## Task 11B — frozen report-ready evidence prerequisite
+
+- Added the forward-only migration `20260905150000_mission_frozen_report_evidence.sql`; the previously reviewed Task 11 migration remains unchanged.
+- The existing canonical completion manifest is enriched at final sign-off with a bounded `reportEvidence` member. No report table, report lifecycle, parallel sign-off record or new callable browser authority was introduced.
+- The server-derived snapshot is assembled under the existing Mission package aggregate locks and freezes stable Mission, Job, Client, Property and ordered Field identities; Field and target hectares; the effective package and bounded package/decision history; effective CRP approval; governing JSA and bounded JSA history; aircraft identity and daily participation/totals; planned chemical revisions and lines; safe flight-line evidence references; and bounded amendment/exception history.
+- Flight-line evidence contains only controlled identity, version, safe filename, digest, format/type and import timestamp. Binary content, storage locations, download URLs and provider credentials are not frozen.
+- Every collection has an explicit deterministic order and bounded count, and the complete report-evidence object has a one-mebibyte canonical JSON bound. Missing Job/Client/package/approval/JSA authority, tenant/Base mismatch and malformed scope fail closed.
+- The final digest remains the canonical SHA-256 of the complete `daily_evidence_manifest`, so report evidence cannot be altered without invalidating the completion digest. Exact final-sign-off retries return the already frozen revision and never recalculate it.
+- Executable PostgreSQL coverage proves snapshot content, deterministic aircraft ordering, safe flight-line references, cross-organisation denial, exact-retry identity/digest stability and post-final mutation immutability.
+
+## Task 11B review round 1
+
+- Final freezing now validates every included Base-scoped relationship against the exact Mission organisation/Base: packages, approval/JSA authority, package Fields, days, daily JSA reviews and Field activity, aircraft totals/flights and aircraft identity, chemical actuals/lines and planned revisions, weather/source observations, flight-line imports/attributions, and amendments.
+- A documented `MISSION_REPORT_EVIDENCE_LOCK_ORDER_V1` locks the live display identities and mutable evidence rows in a fixed table and UUID order before construction. The report-evidence half runs first and retains those locks while the canonical daily half is constructed, preventing a mixed snapshot through governed writers.
+- Explicit preconstruction limits now cover days, daily JSA reviews, Field activities, aircraft totals and flights, chemical revisions/lines, weather reports/observations/gaps, import attributions, package/decision/JSA histories, planned chemical revisions/lines, flight-line imports and exception history. The one-mebibyte JSON limit remains defense in depth.
+- Executable PostgreSQL transactions prove a cross-Base attribution and an over-bound 367-day input both fail with zero retained mutation. A permitted post-final Client rename proves the frozen Client identity and digest remain unchanged.
+- PGlite cannot run two independent sessions to measure blocking time. Serialization is therefore evidenced by full migration execution, the explicit lock-order catalogue, shared aggregate lock participation, and transactional failure/rollback tests; real two-session lock timing remains an integration-level check.
+
+## Task 11B review round 2
+
+- Reference validation now follows identities rather than trusting matching Base columns. Daily Field activity, optional flight Fields and chemical-line Fields must belong to each day's governing package; flight source imports and attribution imports must belong to the exact Mission/Base; attributed aircraft must have authoritative participation in the Mission and belong to its Base; weather reports must reference an observation for the exact Mission/Base; and daily JSA, chemical revision, planned chemical and aircraft relationships are cross-checked before freezing.
+- The deterministic lock catalogue now includes referenced `mission_weather_observations` and `mission_aircraft_assignments`, ahead of reference validation and manifest construction.
+- Executable PostgreSQL corruption tests retain correct row-level Base values while wiring an attribution to another Mission's import and a weather report to another Mission's observation. Both fail with `MISSION_REPORT_EVIDENCE_INVALID: reference`, and each transaction rolls back completely.
+
+## Task 11B review round 3
+
+- Every aircraft-day actual now resolves its exact assignment identity and verifies Mission, Base and aircraft equality. Unsigned evidence requires an active assignment; signed evidence preserves the existing Task 8 historical rule only when assignment start precedes sign-off and any unassignment occurred at or after sign-off.
+- Chemical actual revisions must retain the day's exact package and planned revision. A non-null `planned_line_id` must belong to that exact planned revision/Mission, and a non-null chemical aircraft must belong to the Mission Base and have authoritative participation on the same operating day.
+- Day-specific flight-line attribution now requires the attributed aircraft to participate on that exact operating day, rather than merely somewhere in the Mission.
+- The deterministic parent-lock phase follows child references even when corrupt: foreign Mission imports, referenced planned revisions/lines, exact assignments, chemical-only/attribution-only aircraft, referenced Fields/Properties, and source weather observations are locked by table then UUID before validation/build.
+- The related-reference audit also verifies each day's package/JSA, package Field→Job/Property/Client and `job_fields` membership, aircraft actual→day package, chemical/weather→day package, chemical revision→day plan, and CRP decision→Mission package.
+- Executable PostgreSQL transactions prove valid post-sign-off assignment retirement remains historical authority, pre-sign-off retirement fails closed, and corrupt assignment, wrong-day attribution, wrong planned-line revision and non-participating chemical aircraft all fail with complete rollback.
+
+## Task 11B review round 4
+
+- Every operating day now proves its `jsa_revision_id` is exactly the JSA carried by that day's governing package, with exact Mission, organisation and Base lineage; independently valid but different Mission JSA revisions fail closed.
+- Every effective and historical package now reconciles to the Mission's exact Job and governing JSA. Every package Field scope resolves through the exact package, Mission Job, `job_fields`, Field, Property and Client chain.
+- The deterministic parent-lock phase now follows package references to Jobs, Clients and JSAs even when a same-organisation reference is corrupt; Properties, Fields and `job_fields` are likewise locked in table/UUID order before lineage validation and snapshot construction.
+- The package/day graph audit covers package→Job/Client, package→JSA, package scope→Field→Property→Client/Job, day→package/JSA, approval→package, actual→day/package and all previously documented chemical, weather, import and aircraft relationships.
+- Executable PostgreSQL transactions corrupt a signed day's JSA and a historical package's Job while retaining otherwise valid same-organisation rows. Both fail at their named lineage boundary and roll back completely.
+
+## Task 11C — representation-safe frozen report document
+
+- Added forward migration `20260905160000_mission_frozen_report_document.sql`; no previously reviewed migration was changed.
+- Canonical final sign-off now serializes the bounded `reportEvidence` object once using PostgreSQL `jsonb::text`, stores that exact UTF-8 text and its SHA-256 beside the existing manifest/digest, and includes the report digest in audit/outbox evidence. Existing authority columns remain unchanged.
+- The stored document is constrained to a JSON object and one mebibyte. Exact retries return the existing completion row without rebuilding either representation or digest; append-only completion authority prevents subsequent mutation.
+- Historical completions remain null and are explicitly projected as `HISTORICAL_REPORT_DOCUMENT_UNAVAILABLE`; no backfill or fabrication is present.
+- A checked service-role-only read requires the existing active-seat, Mission-read and Base scope, returns exact text rather than parsed/reserialized JSON, and recomputes SHA-256 before release. Missing pairs and mismatches fail closed.
+- Transport regression proves JSON numeric representations such as `1.0` and `1` hash differently and verification is performed over transported exact text.
+
+## Task 11C review round 1
+
+- The checked frozen-document RPC is now exposed through the existing Mission Operations repository/API GET boundary with `mission.operational.read`; its decoder preserves `documentText` and `documentDigest` as strings and never parses or reserializes the report representation.
+- The database read additionally requires the selected completion's organisation, Mission and Base to equal the current Mission scope.
+- Executable PostgreSQL coverage now stores exact text/digest, recomputes the digest from stored bytes, proves exact retry byte identity, rejects cross-organisation reads, and proves append-only immutability. The existing bounded-builder rollback cases cover over-bound source construction before completion insert; historical rows remain nullable and are never updated/backfilled by this migration.
+- End-to-end handler/repository tests prove the exact `1.0` text survives the trusted envelope and the RPC receives only server-derived organisation/actor scope plus validated Mission/completion identities.
+
+## Task 11C review round 2
+
+- Checked reads now revalidate the original `daily_evidence_manifest` SHA-256 first, require the report document parsed JSON to equal that manifest's frozen `reportEvidence`, and only then validate the exact document-text digest. The representation therefore cannot become parallel authority.
+- A durable `report_document_era` marker is added with `0` assigned only to rows existing when the migration runs, then defaulted to `1` for all later inserts. Era 1 requires schema version 1, exact text and digest atomically; only genuine era-0 rows receive the historical-unavailable label. No backfill occurs.
+- Executable PostgreSQL coverage tampers the original manifest behind the append-only trigger and proves the checked read fails integrity validation, then rolls the transaction back. Normal append-only mutation, retry byte identity and cross-tenant failure remain executable.
+
+## Task 11C review round 3
+
+- Integrity verification explicitly requires `daily_evidence_manifest.reportEvidence` to exist as a JSON object; SQL NULL can no longer pass a three-valued comparison.
+- The document must be byte-for-byte equal to PostgreSQL's canonical `(daily_evidence_manifest->'reportEvidence')::text` using `IS NOT DISTINCT FROM`, before the separately stored exact-text digest is accepted.
+- Executable privileged-tamper transactions prove semantically equal JSON with different whitespace and a correctly recomputed document digest is rejected, and prove a manifest with `reportEvidence` removed plus a correctly recomputed manifest digest is rejected. Both transactions roll back fully.
+
+## Task 11D — complete frozen report input
+
+- Added forward migration `20260905170000_complete_mission_frozen_report_document.sql`; prior Task 11 migrations remain unchanged.
+- A canonical completion insert now freezes one schema-v2 JSON document containing the bounded `reportEvidence`, the complete remaining daily manifest (days, totals and all nested operational evidence), and final completion identity, signatory/time plus governing authorisation, operational-revision and daily-evidence digest references.
+- A before-insert trigger composes only from the canonical completion row under the finalisation transaction, verifies the original manifest digest, enforces the one-mebibyte exact-text bound, and stores exact PostgreSQL text/SHA-256 atomically. It introduces no table or lifecycle authority.
+- Document era 2 is the default for new rows. Earlier eras are not backfilled or presented as complete. The checked reader returns only era-2 text/digest after recomposing the authoritative object, requiring exact text equality and both manifest/document digest equivalence.
+- Executable PostgreSQL coverage proves the exact document contains report metadata, full daily evidence and final identity, retry bytes remain stable, privileged tampering fails, append-only authority remains effective and over-bound manifest construction rolls back before insertion.
+
+## Task 11D review round 1
+
+- The completion freeze trigger now explicitly normalizes inserts without canonical daily evidence to era 0 with all report-document fields null. Existing legacy `ftf_complete_mission`/completion behavior therefore remains compatible despite era 2 being the default for new canonical inserts.
+- The checked reader uses the single repository-decoded `HISTORICAL_REPORT_DOCUMENT_UNAVAILABLE` status for both genuine era-0 legacy rows and prior incomplete era-1 representations; only era 2 is presented as a complete report document.
+- Executable PostgreSQL coverage inserts a legacy completion through the ordinary completion-table path, proves era 0 and the aligned unavailable response, then rolls back with zero retained completion before exercising the canonical era-2 path.
+
+## RED evidence
+
+The first focused run failed for the intended missing migration, absent `MissionFinalSignoff` component and unsupported API actions. The lifecycle refinement also identified and corrected the existing-closeout compatibility case: revision 1 may already exist, so final sign-off must append rather than overwrite or falsely return it.
+
+## Verification
+
+- Focused Task 11/11B authority/API/decoder/UI/Financial/Fleet/migration suite: 10 suites / 97 tests PASS.
+- Full-chain PGlite migration execution and Fleet behavior: PASS, including an executable multi-day final-sign-off fail-closed/zero-mutation assertion.
+- Production build: PASS with the repository's pre-existing Browserslist, lint-warning and bundle-size warning backlog.
+- Targeted ESLint: zero errors; six pre-existing unused-import warnings remain in `JobDetail.tsx`.
+- `git diff --check`: PASS.
+- Migration SHA-256: `7586956d1652e8ca5b4a20da86113a64cec41dd4dcd17a522f82b540d057c743`.
+- Task 11B migration SHA-256: `c636cfbaf1f7dc7ffa952c2a1392795e22b7293f0485f927b18fc9706f8f852b`.
+- Task 11C migration SHA-256: `bcc96aac0431906b32cc7e8762ba6511caad1d29004fa9e93ee12e99ce4829f5`.
+- Task 11D migration SHA-256: `6394fb26b35be6c2db1f735ecfd97f89efb3dba7b44f7d49e7262c84f2f3fe37`.
+
+## Files
+
+- `supabase/migrations/20260905140000_mission_final_signoff_and_job_close.sql`
+- `src/__tests__/missionFinalSignoffMigration.test.js`
+- `src/__tests__/missionAircraftDayActualsMigration.test.js`
+- `server/mission-operations-api.js`
+- `server/mission-operations-repository.js`
+- `src/types/missionOperations.ts`
+- `src/services/missionOperationsApi.ts`
+- `src/services/__tests__/missionOperationsApi.test.ts`
+- `src/components/mission/MissionFinalSignoff.tsx`
+- `src/components/mission/__tests__/MissionFinalSignoff.test.tsx`
+- `src/components/mission/MissionOperationalCloseout.tsx`
+- `src/pages/JobDetail.tsx`
+- `src/__tests__/missionOperationsApi.test.js`
+- `supabase/migrations/20260905150000_mission_frozen_report_evidence.sql`
+- `src/__tests__/missionFrozenReportEvidenceMigration.test.js`
+- `supabase/migrations/20260905160000_mission_frozen_report_document.sql`
+- `src/__tests__/missionFrozenReportDocumentMigration.test.js`
+- `supabase/migrations/20260905170000_complete_mission_frozen_report_document.sql`
+- `src/__tests__/missionCompleteFrozenReportDocumentMigration.test.js`
+
+## Deviations / limitations
+
+- The approved preflight ruling replaced the plan's proposed parallel `mission_final_signoffs` table with additive columns on the existing canonical completion authority and a narrow immutable projection-source table.
+- Final Fleet values are projected at signed-day time by the already reviewed Task 8 command; Mission final sign-off freezes and identifies those sources atomically rather than duplicating Fleet meter writes.
+- PGlite is single-session, so it proves shared lock participation, transactional failure and idempotent identities but cannot measure real two-session blocking timing.
+- No Production migration, deployment, alias operation or genuine data mutation occurred.

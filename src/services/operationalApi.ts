@@ -30,6 +30,7 @@ export interface OperationalJob {
   id: string;
   clientId: string;
   propertyId: string;
+  propertyIds: string[];
   fieldIds: string[];
   reference: string;
   scope: string;
@@ -69,12 +70,12 @@ export interface FieldBoundaryVersionCreateInput {
   capturedAt?: string;
 }
 
-type OperationalJobCreateBase = Omit<OperationalJob, 'id' | 'reference' | 'rowVersion' | 'createdAt' | 'updatedAt'>;
+type OperationalJobCreateBase = Omit<OperationalJob, 'id' | 'reference' | 'propertyIds' | 'rowVersion' | 'createdAt' | 'updatedAt'>;
 export type OperationalJobCreateInput = OperationalJobCreateBase & (
   { autoGenerateReference: true; reference?: never } | { autoGenerateReference?: false; reference: string }
 );
 export type OperationalJobUpdateInput = Partial<Pick<OperationalJob, 'fieldIds' | 'reference' | 'scope' | 'status' | 'notes' | 'requestedDate' | 'scheduledDate'>>;
-export type OperationalJobArchiveConfirmation = Omit<OperationalJob, 'fieldIds'>;
+export type OperationalJobArchiveConfirmation = Omit<OperationalJob, 'fieldIds' | 'propertyIds'>;
 
 export interface OperationalMission {
   id: string;
@@ -319,7 +320,11 @@ function mapApiJobCore(record: ApiRecord): OperationalJobArchiveConfirmation {
 }
 
 export function mapApiJob(record: ApiRecord): OperationalJob {
-  return { ...mapApiJobCore(record), fieldIds: stringArray(record, 'fieldIds', 'field_ids', false) };
+  const core = mapApiJobCore(record);
+  const rawPropertyIds = value(record, 'propertyIds', 'property_ids');
+  const propertyIds = rawPropertyIds === undefined ? [core.propertyId] : stringArray(record, 'propertyIds', 'property_ids', false);
+  if (!propertyIds.includes(core.propertyId)) return malformed('propertyIds');
+  return { ...core, propertyIds, fieldIds: stringArray(record, 'fieldIds', 'field_ids', false) };
 }
 
 export function mapApiJobArchiveConfirmation(record: ApiRecord): OperationalJobArchiveConfirmation {

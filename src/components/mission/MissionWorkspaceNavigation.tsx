@@ -82,7 +82,7 @@ export function MissionWorkspaceStepper({ stages, activeStage, onStageSelect }: 
   onStageSelect: (stage: MissionWorkspaceStageId) => void;
 }) {
   const theme = useTheme();
-  return <Box component="nav" aria-label="Mission lifecycle" sx={{ overflowX: 'auto', pb: 1, mb: 2 }}>
+  return <Box component="nav" aria-label="Mission lifecycle" sx={{ overflowX: 'auto', scrollSnapType: 'x proximity', pb: 1, mb: 2 }}>
     <Stack direction="row" spacing={1} sx={{ minWidth: 'max-content' }}>
       {stages.map((stage) => {
         const active = stage.id === activeStage;
@@ -106,6 +106,7 @@ export function MissionWorkspaceStepper({ stages, activeStage, onStageSelect }: 
           sx={{
             minHeight: 58,
             px: 1.75,
+            scrollSnapAlign: 'start',
             borderColor: active ? undefined : alpha(theme.palette.primary.main, stage.available ? 0.35 : 0.16),
             color: active ? undefined : stage.available ? 'text.primary' : 'text.secondary',
             bgcolor: active ? undefined : stage.state === 'COMPLETE' ? alpha(theme.palette.success.main, 0.06) : 'background.paper',
