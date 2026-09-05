@@ -32,11 +32,15 @@ function decode(transport){
     ||governance.packageHistory.length>64||governance.decisionHistory.length>64||governance.jsaHistory.length>64||!unique(governance.packageHistory)||!unique(governance.decisionHistory)||!unique(governance.jsaHistory))return invalid();
   const packIds=new Set(governance.packageHistory.map(item=>item.id)),jsaIds=new Set(governance.jsaHistory.map(item=>item.id));
   const decisionIds=new Set(governance.decisionHistory.map(item=>item.id));
+  const effectivePackHistory=governance.packageHistory.find(item=>item.id===governance.effectivePackage.id),effectiveDecisionHistory=governance.decisionHistory.find(item=>item.id===governance.effectiveApproval.id),governingJsaHistory=governance.jsaHistory.find(item=>item.id===governance.governingJsa.id);
   if(!packIds.has(governance.effectivePackage.id)||!jsaIds.has(governance.governingJsa.id)||!decisionIds.has(governance.effectiveApproval.id)
     ||governance.decisionHistory.some(item=>!packIds.has(item.packageRevisionId)||!Number.isInteger(item.revisionNumber)||!string(item.decision)||!timestamp(item.decidedAt))
-    ||governance.packageHistory.some(item=>!Number.isInteger(item.revisionNumber)||!string(item.state)||!SHA256.test(item.evidenceDigest||'')||!timestamp(item.generatedAt))
+    ||governance.packageHistory.some(item=>!jsaIds.has(item.jsaRevisionId)||!Number.isInteger(item.revisionNumber)||!string(item.state)||!SHA256.test(item.evidenceDigest||'')||!timestamp(item.generatedAt))
     ||governance.jsaHistory.some(item=>!Number.isInteger(item.versionNumber)||!timestamp(item.createdAt))
-    ||governance.effectiveApproval.packageRevisionId&&governance.effectiveApproval.packageRevisionId!==governance.effectivePackage.id
+    ||governance.effectiveApproval.packageRevisionId!==governance.effectivePackage.id||governance.effectivePackage.jsaRevisionId!==governance.governingJsa.id
+    ||governance.effectivePackage.revisionNumber!==effectivePackHistory.revisionNumber||governance.effectivePackage.evidenceDigest!==effectivePackHistory.evidenceDigest||governance.effectivePackage.jsaRevisionId!==effectivePackHistory.jsaRevisionId
+    ||governance.effectiveApproval.revisionNumber!==effectiveDecisionHistory.revisionNumber||governance.effectiveApproval.personnelId!==effectiveDecisionHistory.personnelId||governance.effectiveApproval.decidedAt!==effectiveDecisionHistory.decidedAt||governance.effectiveApproval.packageRevisionId!==effectiveDecisionHistory.packageRevisionId
+    ||governance.governingJsa.versionNumber!==governingJsaHistory.versionNumber
     ||final.missionId!==report.scope.mission.id||final.authorisationRevisionId!==governance.effectiveApproval.id)return invalid();
   for(const day of daily.days){
     if(!DATE.test(day.workDate||'')||!string(day.state)||(day.timezone!==undefined&&!string(day.timezone))||!timestamp(day.startedAt??null)||!timestamp(day.finishedAt??null)||!packIds.has(day.packageRevisionId)||!jsaIds.has(day.jsaRevisionId)||!day.jsaReview||typeof day.jsaReview!=='object'||!Array.isArray(day.fieldActivities)||!Array.isArray(day.aircraftActuals)||!day.weatherReport||!Array.isArray(day.flightLineAttributions))return invalid();

@@ -24,11 +24,17 @@
 - Expanded recursive validation across governance package/decision/JSA lineage, JSA review parents, Field activity parents, aircraft actual/flight parents, chemical revision/line parents, weather package/day parents, and flight-line attribution parents. Digest-valid but internally inconsistent documents fail closed.
 - Both Mission Summary and Mission Record now render the frozen `operationalDays`, `actualWorkHours`, and `totalAircraftHours` aggregate totals.
 
+### Review round 3
+
+- Added forward migration `20260905190000_report_idempotency_and_governance_lineage.sql`. `ftf_request_report_artefact` now authorises and loads the requested Mission before checking reuse, and an existing organisation-wide key is reusable only for the exact Mission, report type, Base and requesting actor. Every mismatch returns `REPORT_IDEMPOTENCY_SCOPE_MISMATCH`; the API exposes a bounded 409 without returning the foreign artefact.
+- Executable PGlite coverage proves same-organisation cross-Base/Mission, report-type and requester collisions fail closed while exact-scope retry succeeds. API coverage proves the bounded 409 mapping.
+- Newly frozen governance evidence now carries package-to-JSA lineage on effective and historical package rows and package lineage on effective approval. The decoder requires effective package, approval and JSA values to equal their corresponding immutable history rows and requires the approval/package/JSA chain to be exact.
+
 ## TDD evidence
 
 - RED: six server report tests initially failed because the existing model had no frozen source/status, no daily projection, no deterministic grouping, no malformed-evidence gate, and the renderers used mutable operational evidence.
-- GREEN: focused server suite 18/18 PASS, including adversarial cross-reference, parent-lineage, digest, mutable-leak and maximum-bound pagination cases.
-- Component/view-model/renderer/worker/authority regression suite: 6 suites / 21 tests PASS.
+- GREEN: focused server suite 21/21 PASS, including adversarial cross-reference, governance equality, parent-lineage, digest, mutable-leak and maximum-bound pagination cases.
+- Component/view-model/renderer/worker/authority/API regression suite: 9 suites / 26 tests PASS.
 
 ## Verification
 
@@ -44,6 +50,11 @@
 - `server/report-worker.js`
 - `supabase/migrations/20260905180000_report_job_frozen_document_authority.sql`
 - `src/__tests__/reportJobFrozenDocumentAuthorityMigration.test.js`
+- `supabase/migrations/20260905190000_report_idempotency_and_governance_lineage.sql`
+- `src/__tests__/reportIdempotencyScopePglite.test.js`
+- `src/__tests__/reportIdempotencyApi.test.js`
+- `server/operational-api.js`
+- `server/operational-repository.js`
 - `server/mission-summary-renderer.js`
 - `server/report-renderer.js`
 - `server/__tests__/multiday-mission-report.test.js`
