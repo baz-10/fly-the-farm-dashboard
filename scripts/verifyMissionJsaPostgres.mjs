@@ -1,13 +1,14 @@
 import { readFile, readdir } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
+import { createRequire } from 'node:module';
 import { PGlite } from '@electric-sql/pglite';
 
-const directory=resolve(dirname(fileURLToPath(import.meta.url)),'../supabase/migrations');
+const scriptDirectory=dirname(fileURLToPath(import.meta.url)),require=createRequire(import.meta.url),{pgcrypto}=require(resolve(scriptDirectory,'../node_modules/@electric-sql/pglite/dist/contrib/pgcrypto.cjs')),directory=resolve(scriptDirectory,'../supabase/migrations');
 const ids={org:'81000000-0000-4000-8000-000000000001',otherOrg:'82000000-0000-4000-8000-000000000001',actor:'81000000-0000-4000-8000-000000000101',otherActor:'82000000-0000-4000-8000-000000000101',location:'81000000-0000-4000-8000-000000001001',otherLocation:'82000000-0000-4000-8000-000000001001',membership:'81000000-0000-4000-8000-000000000121'};
-const db=new PGlite();
+const db=new PGlite({extensions:{pgcrypto}});
 try{
- await db.exec(`create schema auth;create table auth.users(id uuid primary key);create function auth.uid()returns uuid language sql stable as $$select null::uuid$$;create role anon;create role authenticated;create role service_role;`);
+ await db.exec(`create extension if not exists pgcrypto;create schema auth;create table auth.users(id uuid primary key);create function auth.uid()returns uuid language sql stable as $$select null::uuid$$;create role anon;create role authenticated;create role service_role;`);
  for(const name of(await readdir(directory)).filter(name=>name.endsWith('.sql')&&!['20260804162000_production_beta_platform_identity_reconciliation.sql','20260805131000_personnel_compliance_evidence_storage.sql','20260805144000_checklist_evidence_storage.sql'].includes(name)).sort())await db.exec(await readFile(resolve(directory,name),'utf8'));
  await db.exec(`insert into auth.users(id)values('81000000-0000-4000-8000-000000000011'),('82000000-0000-4000-8000-000000000011');
  insert into public.organisations(id,organisation_id,name)values('${ids.org}','${ids.org}','Fly The Farm'),('${ids.otherOrg}','${ids.otherOrg}','Other');
