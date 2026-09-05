@@ -49,11 +49,11 @@ begin
   select * into v_auth from public.mission_authorisation_revisions where organisation_id=p_organisation_id and mission_id=p_mission_id and mission_pack_revision_id=v_pack.id and decision='AUTHORISED' order by version_number desc limit 1;
   select * into v_operational from public.mission_operational_revisions where organisation_id=p_organisation_id and mission_id=p_mission_id order by version_number desc limit 1;
   v_manifest:=public.ftf_build_mission_daily_evidence_manifest(p_organisation_id,p_mission_id);
-  v_digest:=encode(digest(convert_to(v_manifest::text,'UTF8'),'sha256'),'hex');
+  v_digest:=encode(sha256(convert_to(v_manifest::text,'UTF8')),'hex');
   if jsonb_typeof(v_manifest->'reportEvidence')<>'object' then raise exception 'MISSION_REPORT_DOCUMENT_INVALID' using errcode='22023'; end if;
   v_report_document_text := (v_manifest->'reportEvidence')::text;
   if octet_length(convert_to(v_report_document_text,'UTF8'))>1048576 then raise exception 'MISSION_REPORT_DOCUMENT_BOUND_EXCEEDED' using errcode='22023'; end if;
-  v_report_document_digest:=encode(digest(convert_to(v_report_document_text,'UTF8'),'sha256'),'hex');
+  v_report_document_digest:=encode(sha256(convert_to(v_report_document_text,'UTF8')),'hex');
   insert into public.mission_completion_revisions(organisation_id,operating_location_id,mission_id,version_number,authorisation_revision_id,operational_revision_id,completion_snapshot,declaration,completed_by_internal_user_id,daily_evidence_manifest,daily_evidence_digest,report_document_text,report_document_digest,report_document_schema_version)
   values(p_organisation_id,v_mission.operating_location_id,p_mission_id,v_current+1,v_auth.id,v_operational.id,
     jsonb_build_object('schemaVersion',2,'planningAndPreflightAuthorisation',to_jsonb(v_auth),'operationalEvidence',to_jsonb(v_operational),'dailyEvidenceDigest',v_digest,'reportDocumentDigest',v_report_document_digest,'completedAt',now()),
@@ -92,12 +92,12 @@ begin
     or v_completion.daily_evidence_manifest is null or v_completion.daily_evidence_digest is null
     or jsonb_typeof(v_completion.daily_evidence_manifest->'reportEvidence')<>'object'
     or jsonb_typeof(v_completion.report_document_text::jsonb)<>'object' then raise exception 'MISSION_REPORT_DOCUMENT_INTEGRITY_FAILED' using errcode='22000'; end if;
-  v_manifest_digest:=encode(digest(convert_to(v_completion.daily_evidence_manifest::text,'UTF8'),'sha256'),'hex');
+  v_manifest_digest:=encode(sha256(convert_to(v_completion.daily_evidence_manifest::text,'UTF8')),'hex');
   if v_manifest_digest<>v_completion.daily_evidence_digest
     or v_completion.report_document_text is distinct from (v_completion.daily_evidence_manifest->'reportEvidence')::text then
     raise exception 'MISSION_REPORT_DOCUMENT_INTEGRITY_FAILED' using errcode='22000';
   end if;
-  v_digest:=encode(digest(convert_to(v_completion.report_document_text,'UTF8'),'sha256'),'hex');
+  v_digest:=encode(sha256(convert_to(v_completion.report_document_text,'UTF8')),'hex');
   if v_digest<>v_completion.report_document_digest then raise exception 'MISSION_REPORT_DOCUMENT_INTEGRITY_FAILED' using errcode='22000'; end if;
   return jsonb_build_object('status','AVAILABLE','completionRevisionId',v_completion.id,
     'documentText',v_completion.report_document_text,'documentDigest',v_completion.report_document_digest);

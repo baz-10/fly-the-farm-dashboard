@@ -340,7 +340,7 @@ begin
     v_preparing.id, v_policy->>'classification', array(select jsonb_array_elements_text(v_policy->'changed_keys')),
     array(select jsonb_array_elements_text(v_policy->'reasons')),
     v_authoritative_before, v_authoritative_after,
-    encode(digest(v_authoritative_before::text, 'sha256'), 'hex'), encode(digest(v_authoritative_after::text, 'sha256'), 'hex'),
+    encode(sha256(convert_to(v_authoritative_before::text, 'UTF8')), 'hex'), encode(sha256(convert_to(v_authoritative_after::text, 'UTF8')), 'hex'),
     p_reason, p_actor_internal_user_id
   ) returning * into v_amendment;
   insert into public.audit_events(organisation_id,actor_internal_user_id,event_type,entity_type,entity_id,event_payload)

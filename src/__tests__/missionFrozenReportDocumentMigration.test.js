@@ -9,7 +9,7 @@ test('stores one exact bounded UTF-8 JSON representation on canonical completion
   for (const token of ['report_document_text text', 'report_document_digest text', "convert_to(v_report_document_text,'utf8')", "octet_length(convert_to(v_report_document_text,'utf8'))", '1048576']) expect(migration).toContain(token);
   expect(migration).toContain("jsonb_typeof(v_manifest->'reportevidence')<>'object'");
   expect(migration).toContain("v_report_document_text := (v_manifest->'reportevidence')::text");
-  expect(migration).toContain("encode(digest(convert_to(v_report_document_text,'utf8'),'sha256'),'hex')");
+  expect(migration).toContain("encode(sha256(convert_to(v_report_document_text,'utf8')),'hex')");
 });
 
 test('preserves old manifest authority and makes retry representation-idempotent', () => {
@@ -42,7 +42,7 @@ test('binds the representation to original manifest authority and a durable docu
   expect(migration).toContain('report_document_era smallint not null default 0');
   expect(migration).toContain('alter column report_document_era set default 1');
   expect(migration).toContain('report_document_schema_version=1');
-  expect(migration).toContain("digest(convert_to(v_completion.daily_evidence_manifest::text,'utf8'),'sha256')");
+  expect(migration).toContain("sha256(convert_to(v_completion.daily_evidence_manifest::text,'utf8'))");
   expect(migration).toContain("v_manifest_digest<>v_completion.daily_evidence_digest");
   expect(migration).toContain("jsonb_typeof(v_completion.daily_evidence_manifest->'reportevidence')<>'object'");
   expect(migration).toContain("v_completion.report_document_text is distinct from (v_completion.daily_evidence_manifest->'reportevidence')::text");
@@ -54,5 +54,5 @@ test('verification hashes transported exact text rather than reserialized JSON',
   expect(reserialized).toBe('{"value":1}');
   expect(crypto.createHash('sha256').update(exact, 'utf8').digest('hex'))
     .not.toBe(crypto.createHash('sha256').update(reserialized, 'utf8').digest('hex'));
-  expect(sql()).toContain("digest(convert_to(v_completion.report_document_text,'utf8'),'sha256')");
+  expect(sql()).toContain("sha256(convert_to(v_completion.report_document_text,'utf8'))");
 });

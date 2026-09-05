@@ -481,7 +481,7 @@ begin
     'latitude', v_observation.latitude::numeric(9,6)::text,
     'longitude', v_observation.longitude::numeric(9,6)::text);
   return v_context || jsonb_build_object('context_digest',
-    encode(digest(convert_to(v_context::text, 'UTF8'), 'sha256'), 'hex'));
+    encode(sha256(convert_to(v_context::text, 'UTF8')), 'hex'));
 end;
 $$;
 
@@ -688,7 +688,7 @@ begin
     'intervalStartAt', v_context->>'interval_start_at', 'intervalEndAt', v_context->>'interval_end_at',
     'timezone', v_context->>'timezone', 'sourceWeatherObservationId', v_context->>'source_weather_observation_id',
     'latitude', v_context->>'latitude', 'longitude', v_context->>'longitude', 'evidence', p_evidence);
-  v_digest := encode(digest(convert_to(v_digest_payload::text, 'UTF8'), 'sha256'), 'hex');
+  v_digest := encode(sha256(convert_to(v_digest_payload::text, 'UTF8')), 'hex');
   insert into public.mission_day_weather_reports (
     organisation_id, operating_location_id, mission_id, operating_day_id, mission_pack_revision_id, coverage,
     interval_start_at, interval_end_at, timezone, source, source_weather_observation_id, latitude, longitude,

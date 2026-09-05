@@ -277,7 +277,7 @@ begin
   select * into v_auth from public.mission_authorisation_revisions where organisation_id=p_organisation_id and mission_id=p_mission_id and mission_pack_revision_id=v_pack.id and decision='AUTHORISED' order by version_number desc limit 1;
   select * into v_operational from public.mission_operational_revisions where organisation_id=p_organisation_id and mission_id=p_mission_id order by version_number desc limit 1;
   v_manifest := public.ftf_build_mission_daily_evidence_manifest(p_organisation_id,p_mission_id);
-  v_digest := encode(digest(convert_to(v_manifest::text,'UTF8'),'sha256'),'hex');
+  v_digest := encode(sha256(convert_to(v_manifest::text,'UTF8')),'hex');
   insert into public.mission_completion_revisions(organisation_id,operating_location_id,mission_id,version_number,authorisation_revision_id,operational_revision_id,completion_snapshot,declaration,completed_by_internal_user_id,daily_evidence_manifest,daily_evidence_digest)
   values(p_organisation_id,v_mission.operating_location_id,p_mission_id,v_current+1,v_auth.id,v_operational.id,
     jsonb_build_object('schemaVersion',2,'planningAndPreflightAuthorisation',to_jsonb(v_auth),'operationalEvidence',to_jsonb(v_operational),'dailyEvidenceDigest',v_digest,'completedAt',now()),
@@ -356,11 +356,11 @@ begin
   )) loop
     v_fact := v_fact || jsonb_build_object('sourceClass','AUTHORITATIVE_OPERATIONAL_INPUT','sourceEntityType','mission_completion_revision','sourceEntityId',v_completion.id,
       'sourceVersion',v_completion.version_number::text,'sourceRecordedAt',v_completion.completed_at,'comparison','NEW_SOURCE_EVIDENCE',
-      'evidenceIdentity',encode(digest(convert_to(jsonb_build_object('fieldPath',v_fact->>'fieldPath','sourceEntityId',v_completion.id,'sourceVersion',v_completion.version_number::text,'value',v_fact->>'value','unitCode',v_fact->>'unitCode')::text,'UTF8'),'sha256'),'hex'));
+      'evidenceIdentity',encode(sha256(convert_to(jsonb_build_object('fieldPath',v_fact->>'fieldPath','sourceEntityId',v_completion.id,'sourceVersion',v_completion.version_number::text,'value',v_fact->>'value','unitCode',v_fact->>'unitCode')::text,'UTF8')),'hex'));
     v_facts := v_facts || jsonb_build_array(v_fact);
   end loop;
   v_projection := jsonb_set(v_base,'{facts}',v_facts);
-  v_projection := jsonb_set(v_projection,'{proposalDigest}',to_jsonb(encode(digest(convert_to((v_projection-'proposalDigest')::text,'UTF8'),'sha256'),'hex')));
+  v_projection := jsonb_set(v_projection,'{proposalDigest}',to_jsonb(encode(sha256(convert_to((v_projection-'proposalDigest')::text,'UTF8')),'hex')));
   return v_projection;
 end $$;
 

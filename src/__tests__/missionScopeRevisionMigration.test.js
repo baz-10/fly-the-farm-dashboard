@@ -55,8 +55,7 @@ test('binds every package to one Mission Job subset and exact JSA/evidence ident
     'mission_map_revisions',
     'mission_weather_selections',
     'ftf_evaluate_mission_readiness',
-    'digest(',
-    "'sha256'",
+    'sha256(',
     "'jobfieldrowversion'",
     "'fieldrowversion'",
     "'propertyrowversion'",
@@ -66,6 +65,25 @@ test('binds every package to one Mission Job subset and exact JSA/evidence ident
   expect(sql).toContain('mission_scope_field_duplicate');
   expect(sql).toContain('mission_scope_empty');
   expect(sql).toContain('mission_package_evidence_stale');
+});
+
+test('uses schema-independent PostgreSQL SHA-256 for package evidence', () => {
+  const sql = migration();
+  expect(sql).toContain("sha256(convert_to(p_manifest::text, 'utf8'))");
+  expect(sql).not.toMatch(/(?<![.\w])digest\s*\(/);
+});
+
+test('keeps the remaining Mission release chain independent of schema-sensitive digest resolution', () => {
+  const migrationDirectory = path.resolve(__dirname, '../../supabase/migrations');
+  const remaining = fs.readdirSync(migrationDirectory)
+    .filter((name) => /^20260905\d{6}_.+\.sql$/.test(name) && name >= '20260905100000')
+    .sort();
+  expect(remaining.length).toBeGreaterThan(0);
+  for (const name of remaining) {
+    const sql = fs.readFileSync(path.join(migrationDirectory, name), 'utf8').toLowerCase();
+    expect(sql).not.toMatch(/(?<![.\w])digest\s*\(/);
+    expect(sql).not.toContain('extensions.digest(');
+  }
 });
 
 test('detects assignment asset revision drift and null digest bypasses', () => {
