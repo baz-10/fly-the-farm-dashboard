@@ -84,9 +84,9 @@ The suite was not blocked by an open handle, fake timer, worker or import side e
 
 Focused and shard status: corrected and passing. The registry correctly contains `mission-workspace` / `multiday-operations` at `COMING_SOON`, and the boundary verifier passes. The separate exact-array baseline in `src/productMaturity/__tests__/registry.test.ts` had not been extended when Task 14 registered the workflow. The exact governed tuple is now present in canonical order; strict equality remains and no workflow was promoted. Focused registry PASS: 1 suite / 11 tests. Corrected shard 7 PASS: 40 suites / 318 tests.
 
-### 8. Operational closeout UI assertions retain superseded copy
+### 8. Operational closeout UI assertions — corrected
 
-Severity: deterministic release-gate blocker in shard 8. Three assertions in `MissionOperationalCloseout.test.tsx` expect `Complete Mission` or `Mission completed · version 1`. The component deliberately distinguishes operational closeout from later final Mission sign-off: its action is `Complete operational work`, and its persisted-state alert is `Operational closeout completed · version 1`. The rendered component is internally consistent with the multi-stage authority model; the stale assertions fail before/after the mocked closeout call. Shard 8 result: 39 suites / 251 tests passed, 1 suite / 3 tests failed. This needs a narrow test correction only if review confirms those semantics remain authoritative.
+Focused status: corrected and passing; shard 8 rerun pending. Three assertions in `MissionOperationalCloseout.test.tsx` expected `Complete Mission` or `Mission completed · version 1`. They now require the authoritative `Complete operational work` and `Operational closeout completed · version 1` copy, and explicitly prove the component states that final sign-off occurs separately. Product behavior was not changed and assertions were not weakened. Focused suite PASS: 7 tests.
 
 ## Migration inventory
 
