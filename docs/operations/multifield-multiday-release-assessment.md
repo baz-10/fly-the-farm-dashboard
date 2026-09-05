@@ -4,7 +4,7 @@
 
 **Branch:** `codex/multifield-multiday-mission-design`
 
-**Assessed branch HEAD before this release-preparation commit:** `9a74c6c3fc9ef524aef637147449a8ef34d83c44`
+**Assessed clean branch HEAD:** `c51cb753b53848a700e24e645260380d655140b6`
 
 **Merge base / current `spray-command/main`:** `0f46c7ee47d1483e960cce0f20c158ccebcf207c`
 
@@ -16,7 +16,7 @@ No merged-main commit or proposed immutable Production `RELEASE_SHA` exists. Nor
 
 ## Decision summary
 
-Task 14A has corrected the three locally proven blockers with a forward-only authority migration, repository-standard pgcrypto harness setup and statically governed customer-visible labels. The previously failing focused checks now pass. The complete release gate has not yet been rerun, and protected Chromium/WebKit lifecycle execution plus the Production-shaped migration/legacy assessment remain unavailable in this environment. The workflow therefore remains `COMING_SOON` and the recommendation remains `NO-GO` until the whole gate is repeated.
+Task 14A corrected the original three local blockers and the review-round frozen/per-day lineage issue. The complete gate was rerun from clean commit `c51cb753b53848a700e24e645260380d655140b6`. Focused authority, Product Maturity and the Production build pass, but deterministic shard 1 exposes two additional older PGlite harnesses that do not register pgcrypto; shards 2–8 therefore did not run. Protected Chromium/WebKit lifecycle execution and Production-shaped migration/legacy assessment remain unavailable. The workflow remains `COMING_SOON` and the recommendation remains `NO-GO`.
 
 ## Verification status
 
@@ -24,15 +24,16 @@ Task 14A has corrected the three locally proven blockers with a forward-only aut
 |---|---|---|
 | Maturity registration TDD RED | PASS | Targeted test failed because `mission-workspace/multiday-operations` was absent. |
 | Maturity registration TDD GREEN | PASS | Targeted boundary test: 1 passed, 228 skipped. Workflow is `COMING_SOON` and names all five required automated-evidence classes. |
-| Focused authority/security tests | PASS | 7 suites / 66 tests passed: Job scope, package/CRP, operating days/JSA, aircraft actuals, chemical/weather, final sign-off and trusted API. |
-| Frozen report authority/security tests | PASS | 7 suites / 37 tests passed: frozen evidence/document, complete document, worker binding, idempotency serialization/scope and renderer integrity. |
-| Production build | PASS WITH PRE-EXISTING WARNINGS | `npm run build` exited 0. No build error; repository warning backlog remains. |
-| Deterministic eight-shard regression | NOT RERUN | Task 14A reran the previously failing Aircraft PGlite test only: 1 suite / 1 test passed after registering and creating pgcrypto. The complete eight-shard gate remains pending. |
-| Full-chain Mission/CRP database behavior | PASS (FOCUSED) | 1 suite / 1 child-process test passed. The executable chain now proves a later rejected proposal does not displace the exact effective authorised decision and package lineage. |
+| Focused authority/security tests | PASS | Fresh run: 7 suites / 57 tests passed under `TZ=Australia/Brisbane`: Job scope, package/CRP, operating days/JSA, aircraft actuals, chemical/weather, final sign-off and trusted API decoding. |
+| Frozen report authority/security tests | PASS | Fresh run: 7 suites / 36 tests passed under `TZ=Australia/Brisbane`: frozen evidence/document, complete document, worker binding and idempotency serialization/scope. The expected negative-path worker diagnostic was logged by its passing test. |
+| Production build | PASS WITH WARNINGS | Fresh `npm run build` exited 0. No build error; the existing lint and bundle-size warning backlog remains. |
+| Deterministic eight-shard regression | FAIL | 323 suites discovered. Shard 1: 39 suites / 278 tests passed; 2 suites / 2 tests failed. `casaCompliancePglite.test.js` and `personnelCasaCredentialsPglite.test.js` both invoke `verifyCasaComplianceMigration.mjs`, whose PGlite instance lacks pgcrypto; applying the new digest-using migration fails with `function digest(bytea, unknown) does not exist`. Shards 2–8 (282 suites) were not run after the fail-closed stop. |
+| Full-chain Mission/CRP database behavior | PASS (FOCUSED) | Fresh focused run passed. The executable chain proves prospective current authority, two authorised packages across separate days, later-rejection isolation, frozen completion authority and exact per-day package/approval lineage. |
 | Product Maturity verifier | PASS | 46 modules / 16 workflows / 57 routes / 192 customer UI files / 85 evidence references; zero customer-facing Legacy violations. The workflow remains `COMING_SOON`. |
-| Chromium/WebKit project discovery | PASS | Five tests listed: auth setup plus the controlled lifecycle and Client-to-Mission paths for Chromium and WebKit. |
+| Chromium/WebKit project discovery | PASS | 15 tests in 4 files listed: one auth setup plus seven Chromium and seven WebKit tests, including the real multi-Field/multi-day Mission surface. |
 | Protected authenticated Chromium/WebKit lifecycle | CANNOT VERIFY | `E2E_ORGANISATION_EMAIL`, `E2E_ORGANISATION_PASSWORD` and `E2E_BASE_URL` are absent. No genuine Fly The Farm identity or data was used. |
-| Local complete migration-chain behavior | PASS (FOCUSED) | Both previously failing full-chain harnesses now apply the complete local migration chain. Mission authority proves prospective current-authorised resolution, frozen final-completion authority, exact per-day package/approval lineage and later-rejection isolation; Aircraft persistence remains executable with pgcrypto. This is focused local evidence, not a Production dry-run. |
+| Local complete migration-chain behavior | PARTIAL / FAIL | The pgcrypto-enabled Mission and Aircraft harnesses apply and exercise the complete chain successfully. Two CASA/Personnel tests share an older all-migration runner without pgcrypto and fail during migration apply. This is a local harness compatibility failure, not a Production dry-run or product assertion failure. |
+| Independent whole-slice review | CANNOT VERIFY IN THIS RUN | Prior task reviews and Task 14A review round 1 are recorded, but no separate independent reviewer was available for this final rerun. A fresh independent review remains required after correcting the newly exposed harness. |
 | Production migration ledger / legacy record counts | CANNOT VERIFY | Requires an approved repository-governed remote read or an isolated Production snapshot, neither of which is available or authorised here. |
 
 ## Release-blocking findings
@@ -58,6 +59,14 @@ Focused status: corrected and passing; whole-gate confirmation pending.
 The new migrations correctly rely on PostgreSQL `pgcrypto`, but `scripts/verifyAuthoritativeAircraftMigration.mjs` constructs PGlite without registering its bundled `pgcrypto` extension. This makes the deterministic regression fail before the Aircraft assertions. The focused Mission database harnesses register pgcrypto and can apply the chain.
 
 Correction: the harness now registers the repository-controlled PGlite pgcrypto extension and executes `create extension if not exists pgcrypto` before applying migrations. Production SQL semantics are unchanged.
+
+### 4. Shared CASA/Personnel all-migration harness lacks pgcrypto
+
+Severity: release-preparation blocker for the deterministic suite.
+
+The complete gate reveals that `casaCompliancePglite.test.js` and `personnelCasaCredentialsPglite.test.js` both execute `scripts/verifyCasaComplianceMigration.mjs`. That runner still constructs `new PGlite()` without registering or creating pgcrypto, so both tests fail while applying the digest-using Mission migration with PostgreSQL error `function digest(bytea, unknown) does not exist`. No CASA or Personnel product assertion fails.
+
+Required correction: register and create the repository-controlled PGlite pgcrypto extension in this shared local harness using the same bounded convention as the corrected Aircraft harness, then rerun all eight shards.
 
 ## Migration inventory
 
@@ -89,7 +98,7 @@ All reviewed `SECURITY DEFINER` functions in this chain declare `search_path = p
 - Fleet and Financial projections use stable source identities and unique/idempotent projection rows.
 - Signed reports read exact frozen UTF-8 report text, verify SHA-256 before parsing and do not refresh mutable current evidence.
 - PGlite is single-session; true independent-session blocking/deadlock timing remains a deferred verification limitation even where lock participation is exercised.
-- Focused complete-chain tests now pass for prospective, per-day and frozen-final authorisation lineage; a READY conclusion still requires the complete release gate and independent review.
+- Focused complete-chain tests pass for prospective, per-day and frozen-final authorisation lineage. The complete gate still fails on the shared CASA/Personnel harness and independent review remains required.
 
 ## Legacy and migration assessment
 
@@ -98,7 +107,7 @@ All reviewed `SECURITY DEFINER` functions in this chain declare `search_path = p
 - **Genuine source counts / ambiguity classes:** `CANNOT VERIFY`; no approved Production snapshot was available.
 - **Fabricated operating days:** zero created by these migrations. The migrations add authority/schema and command paths; they do not synthesize historical Mission days, flights, chemical actuals or weather evidence.
 - **Application deployment dependency:** yes. The branch changes trusted server routes, strict client decoders and Mission/Job UI in addition to SQL authority.
-- **Fix-forward boundary:** the three Task 14 blockers and the review-round final/per-day lineage issue are corrected locally; rerun all eight deterministic shards, Product Maturity, build and protected controlled cross-browser acceptance before any merge or Production request.
+- **Fix-forward boundary:** initialise pgcrypto in the shared CASA/Personnel local harness, then rerun all eight deterministic shards and obtain independent review. Protected controlled cross-browser acceptance remains separately environment-gated.
 
 ## Cross-browser and Production boundary
 
@@ -106,4 +115,4 @@ Project configuration and controlled specs are discoverable for Chromium and Web
 
 ## Required next gate
 
-Do not request merge or Production authority from this state. The three local blockers are corrected, but Task 14's complete deterministic, build, maturity and independent-review gate must now be repeated. Protected controlled cross-browser acceptance and a Production-shaped ledger/legacy assessment still require their separately governed environments. Separate approval remains required for merge, every Production migration, Production deployment and Production acceptance.
+Do not request merge or Production authority from this state. Product Maturity and build pass, but the deterministic suite is incomplete after the shard-1 shared-harness failure and independent review is pending. Protected controlled cross-browser acceptance and a Production-shaped ledger/legacy assessment still require their separately governed environments. Separate approval remains required for merge, every Production migration, Production deployment and Production acceptance.
