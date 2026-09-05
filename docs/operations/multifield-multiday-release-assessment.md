@@ -16,7 +16,7 @@ No merged-main commit or proposed immutable Production `RELEASE_SHA` exists. Nor
 
 ## Decision summary
 
-The focused multi-day Mission authority suite passes and the Production build completes, but the complete release gate does not pass. The deterministic regression stops in shard 1 on an executable PostgreSQL migration-chain failure, a second full-chain database test exposes an effective-CRP-authority regression, and Product Maturity fails closed. Protected Chromium/WebKit lifecycle execution and Production-shaped migration/legacy assessment are not available in this environment. These are release blockers; this assessment does not promote or expose the workflow.
+Task 14A has corrected the three locally proven blockers with a forward-only authority migration, repository-standard pgcrypto harness setup and statically governed customer-visible labels. The previously failing focused checks now pass. The complete release gate has not yet been rerun, and protected Chromium/WebKit lifecycle execution plus the Production-shaped migration/legacy assessment remain unavailable in this environment. The workflow therefore remains `COMING_SOON` and the recommendation remains `NO-GO` until the whole gate is repeated.
 
 ## Verification status
 
@@ -27,9 +27,9 @@ The focused multi-day Mission authority suite passes and the Production build co
 | Focused authority/security tests | PASS | 7 suites / 66 tests passed: Job scope, package/CRP, operating days/JSA, aircraft actuals, chemical/weather, final sign-off and trusted API. |
 | Frozen report authority/security tests | PASS | 7 suites / 37 tests passed: frozen evidence/document, complete document, worker binding, idempotency serialization/scope and renderer integrity. |
 | Production build | PASS WITH PRE-EXISTING WARNINGS | `npm run build` exited 0. No build error; repository warning backlog remains. |
-| Deterministic eight-shard regression | FAIL | Shard 1: 40 suites passed, 1 failed; 289 tests passed, 1 failed. `authoritativeAircraftPglite.test.js` fails while applying the repository migration chain: `function digest(bytea, unknown) does not exist`. Shards 2–8 were not run after the fail-closed stop. |
-| Full-chain Mission/CRP database behavior | FAIL | Migration chain applies with the repository-controlled PGlite `pgcrypto` extension, then `missionScopeRevisionDatabase.test.js` fails: expected the effective `AUTHORISED` decision ID but closeout returned the later `REJECTED` decision ID. Eight preceding database assertions passed. |
-| Product Maturity verifier | FAIL | `npm run verify:product-maturity` exits 1: `visible-string rendered string transform could not be resolved safely.` |
+| Deterministic eight-shard regression | NOT RERUN | Task 14A reran the previously failing Aircraft PGlite test only: 1 suite / 1 test passed after registering and creating pgcrypto. The complete eight-shard gate remains pending. |
+| Full-chain Mission/CRP database behavior | PASS (FOCUSED) | 1 suite / 1 child-process test passed. The executable chain now proves a later rejected proposal does not displace the exact effective authorised decision and package lineage. |
+| Product Maturity verifier | PASS | 46 modules / 16 workflows / 57 routes / 192 customer UI files / 85 evidence references; zero customer-facing Legacy violations. The workflow remains `COMING_SOON`. |
 | Chromium/WebKit project discovery | PASS | Five tests listed: auth setup plus the controlled lifecycle and Client-to-Mission paths for Chromium and WebKit. |
 | Protected authenticated Chromium/WebKit lifecycle | CANNOT VERIFY | `E2E_ORGANISATION_EMAIL`, `E2E_ORGANISATION_PASSWORD` and `E2E_BASE_URL` are absent. No genuine Fly The Farm identity or data was used. |
 | Local Production-shaped migration apply | PARTIAL / FAILING BEHAVIOR | The full chain applies in the pgcrypto-enabled Mission authority harness, but the post-apply effective-authorisation behavior fails. A second legacy harness lacks its required pgcrypto extension and fails during apply. This is not a successful dry-run. |
@@ -37,31 +37,31 @@ The focused multi-day Mission authority suite passes and the Production build co
 
 ## Release-blocking findings
 
-### 1. Effective CRP decision is overwritten by a later rejected decision
+### 1. Effective CRP decision override — corrected in Task 14A
 
-Severity: release blocking.
+Focused status: corrected and passing; whole-gate confirmation pending.
 
 `20260905100000_mission_scope_revision_and_crp_gate.sql` correctly changes `ftf_read_mission_operational_closeout` to use `ftf_resolve_effective_mission_authorisation`. `20260905120000_mission_aircraft_day_actuals.sql` later replaces the same function and selects the greatest authorisation revision without filtering to the Mission's effective authorised package/decision. The executable full-chain test proves that a later rejected proposal is consequently returned as operational authority.
 
-Required correction: add a forward-only migration that restores canonical effective-authorisation resolution in the final `ftf_read_mission_operational_closeout` definition, with a regression test against the complete ordered migration chain. Do not rewrite the reviewed migrations.
+Correction: `20260905200000_mission_closeout_effective_authorisation.sql` restores `ftf_resolve_effective_mission_authorisation` in the final closeout projection without rewriting prior migrations. The full-chain regression asserts the exact authorised decision and its governing package revision after a later rejection.
 
-### 2. Product Maturity visible-string analysis fails closed
+### 2. Product Maturity visible-string analysis — corrected in Task 14A
 
-Severity: release blocking.
+Focused status: corrected and passing; whole-gate confirmation pending.
 
-The canonical verifier reports `visible-string rendered string transform could not be resolved safely.` The new workflow remains unpromoted, as required. The customer-visible transformation that cannot be statically resolved must be replaced with a bounded, statically governed label mapping or otherwise adapted to the existing verifier contract, then the full verifier must report zero violations.
+Dynamic customer-visible state/amendment transformations were replaced by bounded static label dictionaries, and short-date display was moved to the deterministic date formatter. The verifier was not weakened and the workflow was not promoted. A newly exposed customer-facing prohibited term was also replaced with accurate neutral copy.
 
-### 3. Legacy all-migration Aircraft harness does not initialise pgcrypto
+### 3. Legacy all-migration Aircraft harness pgcrypto setup — corrected in Task 14A
 
-Severity: release-preparation blocker for the deterministic suite.
+Focused status: corrected and passing; whole-gate confirmation pending.
 
 The new migrations correctly rely on PostgreSQL `pgcrypto`, but `scripts/verifyAuthoritativeAircraftMigration.mjs` constructs PGlite without registering its bundled `pgcrypto` extension. This makes the deterministic regression fail before the Aircraft assertions. The focused Mission database harnesses register pgcrypto and can apply the chain.
 
-Required correction: initialise the repository-controlled pgcrypto extension in the legacy Aircraft verification harness, without changing Production SQL semantics.
+Correction: the harness now registers the repository-controlled PGlite pgcrypto extension and executes `create extension if not exists pgcrypto` before applying migrations. Production SQL semantics are unchanged.
 
 ## Migration inventory
 
-All twelve development migrations are pending relative to `spray-command/main`. The list is ordered and must remain atomic for review; it supersedes the earlier seven-file planning list.
+All thirteen development migrations are pending relative to `spray-command/main`. The list is ordered and must remain atomic for review; it supersedes the earlier seven-file planning list.
 
 | Migration | SHA-256 | Purpose and database effect | Authority / data / application dependency |
 |---|---|---|---|
@@ -77,6 +77,7 @@ All twelve development migrations are pending relative to `spray-command/main`. 
 | `20260905170000_complete_mission_frozen_report_document.sql` | `6394fb26b35be6c2db1f735ecfd97f89efb3dba7b44f7d49e7262c84f2f3fe37` | Advances report document era and installs a trigger to freeze the complete bounded report representation. | Internal composer/trigger revoked; checked read only to `service_role`; no mutable report source; required for complete daily/governance report detail. |
 | `20260905180000_report_job_frozen_document_authority.sql` | `ef9429dd4b06401c1768bf29e5c2e934e2db674408108daf8b3187283242377` | Binds report requests to completion authority and adds exact worker-job frozen-document read. | Trigger/internal helper revoked; worker read only to `service_role`; no report-data mutation beyond request binding; required by report worker. |
 | `20260905190000_report_idempotency_and_governance_lineage.sql` | `54f780fb4e53ad4f141598a03a9c97b5bf3fc19e95afe634344d66241285793c` | Serialises scoped report idempotency and replaces report evidence builder with explicit effective package/JSA/approval lineage. | Request command only to `service_role`; lineage builder internal/revoked; creates/reuses scoped report jobs; required by deterministic idempotent reports. |
+| `20260905200000_mission_closeout_effective_authorisation.sql` | `627dc95f0ef9977075832d7a3c52c1e92f2b2efa1d308fc063d43421325e3033` | Replaces the closeout read projection so authorisation is resolved through the canonical effective-authorisation function while retaining aircraft-day, import-attribution and closeout detail. | Forward-only function correction; no schema/data/RLS/grant change and no new runtime authority; required to preserve exact governing CRP lineage after a later rejected proposal. |
 
 All reviewed `SECURITY DEFINER` functions in this chain declare `search_path = public, pg_temp`. New authority tables force RLS and revoke generic access. Runtime entry points are narrowly granted to `service_role`; internal projection, digest, trigger and lock helpers are revoked. No migration introduces generic browser table-write authority.
 
@@ -92,7 +93,7 @@ All reviewed `SECURITY DEFINER` functions in this chain declare `search_path = p
 
 ## Legacy and migration assessment
 
-- **Exact local proposed set:** the twelve ordered migrations listed above.
+- **Exact local proposed set:** the thirteen ordered migrations listed above.
 - **Production pending set:** `CANNOT VERIFY`; no Production ledger was read.
 - **Genuine source counts / ambiguity classes:** `CANNOT VERIFY`; no approved Production snapshot was available.
 - **Fabricated operating days:** zero created by these migrations. The migrations add authority/schema and command paths; they do not synthesize historical Mission days, flights, chemical actuals or weather evidence.
@@ -105,4 +106,4 @@ Project configuration and controlled specs are discoverable for Chromium and Web
 
 ## Required next gate
 
-Do not request merge or Production authority from this state. First correct the effective-authorisation override, initialise pgcrypto in the legacy local migration harness, and resolve the Product Maturity fail-closed transformation. Then repeat Task 14 and obtain an independent whole-slice review. Separate approval remains required for merge, every Production migration, Production deployment and Production acceptance.
+Do not request merge or Production authority from this state. The three local blockers are corrected, but Task 14's complete deterministic, build, maturity and independent-review gate must now be repeated. Protected controlled cross-browser acceptance and a Production-shaped ledger/legacy assessment still require their separately governed environments. Separate approval remains required for merge, every Production migration, Production deployment and Production acceptance.

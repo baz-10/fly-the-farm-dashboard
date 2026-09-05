@@ -3,14 +3,14 @@ import { Alert, Box, Button, Card, CardContent, Chip, CircularProgress, Stack, T
 import type { AuthorisedMissionOperatingField } from '../../types/missionWorkspace';
 import type { MissionOperatingDay } from '../../types/missionOperations';
 import { missionOperationsApi } from '../../services/missionOperationsApi';
-import { formatMissionOperatingWorkDate } from '../../utils/missionWorkspace';
+import { formatMissionOperatingShortWorkDate, formatMissionOperatingWorkDate } from '../../utils/missionWorkspace';
 import MissionOperatingDayDetail from './MissionOperatingDayDetail';
 
 type OperatingDaysApi = Pick<typeof missionOperationsApi, 'createDay' | 'readDays' | 'readPackageHistory' | 'reviewJsa' | 'startDay' | 'saveFieldActivity' | 'completeDay'>;
 
-function stateLabel(state: MissionOperatingDay['state']) {
-  return state.toLowerCase().replace('_', ' ').replace(/\b\w/g, (letter) => letter.toUpperCase());
-}
+const operatingDayStateLabels: Readonly<Record<MissionOperatingDay['state'], string>> = Object.freeze({
+  DRAFT: 'Draft', READY: 'Ready', IN_PROGRESS: 'In progress', COMPLETED: 'Completed', SIGNED_OFF: 'Signed off',
+});
 
 function daySummary(day: MissionOperatingDay) {
   const actualActivities = day.fieldActivities.filter((activity) => activity.status !== 'PLANNED');
@@ -108,9 +108,9 @@ export default function MissionOperatingDays({
       {dayList.map((day) => {
         const summary = daySummary(day);
         const date = formatMissionOperatingWorkDate(day.workDate);
-        const shortDate = date.replace(/ \d{4}$/, '');
+        const shortDate = formatMissionOperatingShortWorkDate(day.workDate);
         return <Card key={day.id} variant="outlined" sx={{ minWidth: 0 }}><CardContent><Stack spacing={1.25}>
-          <Stack direction="row" justifyContent="space-between" alignItems="flex-start" spacing={1}><Typography variant="subtitle1" fontWeight={800}>{date}</Typography><Chip size="small" label={stateLabel(day.state)} color={day.state === 'DRAFT' ? 'warning' : day.state === 'COMPLETED' || day.state === 'SIGNED_OFF' ? 'success' : 'primary'} /></Stack>
+          <Stack direction="row" justifyContent="space-between" alignItems="flex-start" spacing={1}><Typography variant="subtitle1" fontWeight={800}>{date}</Typography><Chip size="small" label={operatingDayStateLabels[day.state]} color={day.state === 'DRAFT' ? 'warning' : day.state === 'COMPLETED' || day.state === 'SIGNED_OFF' ? 'success' : 'primary'} /></Stack>
           <Typography variant="body2" color="text.secondary">{day.jsaReview?.outcome === 'CONDITIONS_COVERED' ? 'JSA reviewed' : day.jsaReview?.outcome === 'CHANGE_DECLARED' ? 'JSA change declared' : 'JSA review required'}</Typography>
           <Typography variant="body2">Actual: {summary.completed.toFixed(1)} ha completed of {summary.attempted.toFixed(1)} ha attempted</Typography>
           <Button fullWidth variant="outlined" aria-label={`Open operating day ${shortDate}`} onClick={() => setSelectedId(day.id)}>Open operating day</Button>

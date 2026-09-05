@@ -5,7 +5,26 @@ import { missionOperationsApi } from '../../services/missionOperationsApi';
 
 type CrpApi = Pick<typeof missionOperationsApi, 'authorise' | 'reject'>;
 const staleCodes = new Set(['MISSION_PACKAGE_VERSION_CONFLICT', 'MISSION_PACKAGE_EVIDENCE_STALE', 'MISSION_PACKAGE_DECISION_CONFLICT']);
-const amendmentReasonLabel = (reason: string) => reason.split('_').map((part, index) => part === 'JSA' ? part : index === 0 ? `${part[0]}${part.slice(1).toLowerCase()}` : part.toLowerCase()).join(' ');
+const amendmentReasonLabels: Readonly<Record<string, string>> = Object.freeze({
+  FIELD_SCOPE_CHANGED: 'Field scope changed',
+  TARGET_AREA_CHANGED: 'Target area changed',
+  AIRCRAFT_ASSIGNMENT_CHANGED: 'Aircraft assignment changed',
+  REGULATED_CREW_CHANGED: 'Regulated crew changed',
+  CHEMICAL_PRODUCT_CHANGED: 'Chemical product changed',
+  APPLICATION_METHOD_CHANGED: 'Application method changed',
+  GOVERNED_RATE_CHANGED: 'Governed rate changed',
+  JSA_HAZARDS_CHANGED: 'JSA hazards changed',
+  JSA_CONTROLS_CHANGED: 'JSA controls changed',
+  SAFETY_MAP_CHANGED: 'Safety map changed',
+  OPERATIONAL_PERMISSION_CHANGED: 'Operational permission changed',
+  UNRECOGNISED_CHANGE: 'Unrecognised change',
+});
+const packageStateLabels: Readonly<Record<string, string>> = Object.freeze({
+  PREPARING: 'Preparing',
+  AWAITING_CRP_APPROVAL: 'Awaiting CRP approval',
+  AUTHORISED: 'Authorised',
+  REJECTED: 'Rejected',
+});
 
 export default function MissionCrpReview({
   missionId,
@@ -75,11 +94,11 @@ export default function MissionCrpReview({
       <Stack spacing={0.5}>
         <Typography variant="body2">Further operating-day starts are on hold pending CRP approval.</Typography>
         <Typography variant="body2">Completed and already-started days retain their governing package and JSA revisions.</Typography>
-        <Typography variant="caption">{amendmentReasons.map(amendmentReasonLabel).join(' · ')}</Typography>
+        <Typography variant="caption">{amendmentReasons.map((reason) => amendmentReasonLabels[reason] ?? amendmentReasonLabels.UNRECOGNISED_CHANGE).join(' · ')}</Typography>
       </Stack>
     </Alert>}
     <Stack spacing={0.5} divider={<Divider flexItem />}>
-      <Typography variant="body2"><strong>Package state:</strong> {packageRevision.state.replaceAll('_', ' ')}</Typography>
+      <Typography variant="body2"><strong>Package state:</strong> {packageStateLabels[packageRevision.state] ?? 'Unknown package state'}</Typography>
       <Typography variant="body2"><strong>JSA revision:</strong> {packageRevision.jsaRevisionId}</Typography>
       <Typography variant="body2" sx={{ overflowWrap: 'anywhere' }}><strong>Evidence digest:</strong> {packageRevision.evidenceDigest}</Typography>
       <Typography variant="body2"><strong>Included Fields:</strong> {packageRevision.fieldIds.length}</Typography>

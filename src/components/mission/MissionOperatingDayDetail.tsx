@@ -34,9 +34,10 @@ const conflictCodes = new Set([
   'MISSION_FIELD_ACTIVITY_CONFLICT',
 ]);
 
-function stateLabel(state: MissionOperatingDay['state'] | MissionFieldActivityStatus) {
-  return state.toLowerCase().replace('_', ' ').replace(/\b\w/g, (letter) => letter.toUpperCase());
-}
+const stateLabels: Readonly<Record<MissionOperatingDay['state'] | MissionFieldActivityStatus, string>> = Object.freeze({
+  DRAFT: 'Draft', READY: 'Ready', IN_PROGRESS: 'In progress', COMPLETED: 'Completed', SIGNED_OFF: 'Signed off',
+  PLANNED: 'Planned', NOT_WORKED: 'Not worked',
+});
 
 function asFixedHa(value: string) {
   if (!value.trim()) return null;
@@ -129,7 +130,7 @@ export default function MissionOperatingDayDetail({
           <Typography component="h2" id={`operating-day-${day.id}`} variant="h5" fontWeight={900}>{formatMissionOperatingWorkDate(day.workDate)}</Typography>
           <Typography variant="body2" color="text.secondary">Base local date · {day.timezone}</Typography>
         </Box>
-        <Chip label={stateLabel(day.state)} color={day.state === 'SIGNED_OFF' || day.state === 'COMPLETED' ? 'success' : day.state === 'DRAFT' ? 'warning' : 'primary'} variant="outlined" />
+        <Chip label={stateLabels[day.state]} color={day.state === 'SIGNED_OFF' || day.state === 'COMPLETED' ? 'success' : day.state === 'DRAFT' ? 'warning' : 'primary'} variant="outlined" />
       </Stack>
       {error && <Alert severity="error" action={hasConflict && onReloadDay ? <Button color="inherit" size="small" onClick={() => void reloadAfterConflict()}>Reload operating day</Button> : undefined}>{error}</Alert>}
       <Alert severity={jsaEffective ? 'success' : 'warning'}>
@@ -173,7 +174,7 @@ export default function MissionOperatingDayDetail({
         })}</Stack></Box>}
         {actualActivities.length > 0 && <Box sx={{ mt: 2 }}><Typography variant="subtitle2" fontWeight={800} sx={{ mb: 0.75 }}>Actual Field activity</Typography><Stack spacing={0.75}>{actualActivities.map((activity) => {
           const field = authorisedFields.find((candidate) => candidate.id === activity.fieldId);
-          return <Box key={activity.id} sx={{ display: 'flex', justifyContent: 'space-between', gap: 2, py: 1, borderTop: '1px solid', borderColor: 'divider' }}><Typography variant="body2" fontWeight={700}>{field?.name || 'Authorised Field'}</Typography><Stack direction="row" spacing={1} alignItems="center"><Typography variant="body2" color="text.secondary">{activity.status === 'PLANNED' ? 'Proposed' : stateLabel(activity.status)} · {activity.hectaresAttempted || '0.000000'} ha attempted / {activity.hectaresCompleted || '0.000000'} ha completed</Typography><Button size="small" disabled={!mutable || busy} aria-label={`Edit ${field?.name || 'authorised Field'} activity`} onClick={() => editActivity(activity)}>Edit</Button></Stack></Box>;
+          return <Box key={activity.id} sx={{ display: 'flex', justifyContent: 'space-between', gap: 2, py: 1, borderTop: '1px solid', borderColor: 'divider' }}><Typography variant="body2" fontWeight={700}>{field?.name || 'Authorised Field'}</Typography><Stack direction="row" spacing={1} alignItems="center"><Typography variant="body2" color="text.secondary">{activity.status === 'PLANNED' ? 'Proposed' : stateLabels[activity.status]} · {activity.hectaresAttempted || '0.000000'} ha attempted / {activity.hectaresCompleted || '0.000000'} ha completed</Typography><Button size="small" disabled={!mutable || busy} aria-label={`Edit ${field?.name || 'authorised Field'} activity`} onClick={() => editActivity(activity)}>Edit</Button></Stack></Box>;
         })}</Stack></Box>}
       </Box>
 

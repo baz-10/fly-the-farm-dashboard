@@ -91,6 +91,12 @@ export function formatMissionOperatingWorkDate(workDate: string): string {
     .format(new Date(Date.UTC(year, month - 1, day)));
 }
 
+export function formatMissionOperatingShortWorkDate(workDate: string): string {
+  const [year, month, day] = workDate.split('-').map(Number);
+  return new Intl.DateTimeFormat('en-AU', { day: 'numeric', month: 'long', timeZone: 'UTC' })
+    .format(new Date(Date.UTC(year, month - 1, day)));
+}
+
 export function canStartMissionOperatingDay(day: Pick<MissionOperatingDay, 'state' | 'jsaRevisionId' | 'jsaReview'>): boolean {
   return day.state === 'READY'
     && day.jsaReview?.outcome === 'CONDITIONS_COVERED'

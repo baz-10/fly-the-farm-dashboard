@@ -242,6 +242,7 @@ if (child) {
     const closeout = await call('ftf_read_mission_operational_closeout', [orgA, ids.mission]);
     expect(closeout.authorisation.id).toBe(authorised.record.id);
     expect(closeout.authorisation.decision).toBe('AUTHORISED');
+    expect(closeout.authorisation.mission_pack_revision_id).toBe(submitted1.record.id);
     expect(closeout.authorisation.evidence_manifest.planning).toBeTruthy();
     const pack = await db.query(`select value from public.ftf_read_mission_pack($1,$2,false) value`, [orgA, ids.mission]);
     expect(pack.rows[0].value.id).toBe(submitted1.record.id);
