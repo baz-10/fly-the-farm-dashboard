@@ -85,6 +85,12 @@
 - Executable PostgreSQL coverage now stores exact text/digest, recomputes the digest from stored bytes, proves exact retry byte identity, rejects cross-organisation reads, and proves append-only immutability. The existing bounded-builder rollback cases cover over-bound source construction before completion insert; historical rows remain nullable and are never updated/backfilled by this migration.
 - End-to-end handler/repository tests prove the exact `1.0` text survives the trusted envelope and the RPC receives only server-derived organisation/actor scope plus validated Mission/completion identities.
 
+## Task 11C review round 2
+
+- Checked reads now revalidate the original `daily_evidence_manifest` SHA-256 first, require the report document parsed JSON to equal that manifest's frozen `reportEvidence`, and only then validate the exact document-text digest. The representation therefore cannot become parallel authority.
+- A durable `report_document_era` marker is added with `0` assigned only to rows existing when the migration runs, then defaulted to `1` for all later inserts. Era 1 requires schema version 1, exact text and digest atomically; only genuine era-0 rows receive the historical-unavailable label. No backfill occurs.
+- Executable PostgreSQL coverage tampers the original manifest behind the append-only trigger and proves the checked read fails integrity validation, then rolls the transaction back. Normal append-only mutation, retry byte identity and cross-tenant failure remain executable.
+
 ## RED evidence
 
 The first focused run failed for the intended missing migration, absent `MissionFinalSignoff` component and unsupported API actions. The lifecycle refinement also identified and corrected the existing-closeout compatibility case: revision 1 may already exist, so final sign-off must append rather than overwrite or falsely return it.
@@ -98,7 +104,7 @@ The first focused run failed for the intended missing migration, absent `Mission
 - `git diff --check`: PASS.
 - Migration SHA-256: `7586956d1652e8ca5b4a20da86113a64cec41dd4dcd17a522f82b540d057c743`.
 - Task 11B migration SHA-256: `c636cfbaf1f7dc7ffa952c2a1392795e22b7293f0485f927b18fc9706f8f852b`.
-- Task 11C migration SHA-256: `2235f806555075c96e228c2e94c04b91c747b8bb92da698dd495f4830847e72f`.
+- Task 11C migration SHA-256: `4c93e1656e09a08037eeda100a602d191a90251e958c92ed01f8bd33002b4d90`.
 
 ## Files
 

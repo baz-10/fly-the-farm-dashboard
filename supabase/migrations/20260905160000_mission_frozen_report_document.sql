@@ -5,11 +5,15 @@
 alter table public.mission_completion_revisions
   add column report_document_text text,
   add column report_document_digest text,
+  add column report_document_schema_version smallint,
+  add column report_document_era smallint not null default 0,
   add constraint mission_completion_report_document_pair check (
-    (report_document_text is null and report_document_digest is null)
-    or (report_document_text is not null and report_document_digest ~ '^[0-9a-f]{64}$'
+    (report_document_era=0 and report_document_text is null and report_document_digest is null and report_document_schema_version is null)
+    or (report_document_era=1 and report_document_text is not null and report_document_digest ~ '^[0-9a-f]{64}$' and report_document_schema_version=1
       and octet_length(convert_to(report_document_text,'UTF8')) between 2 and 1048576
       and jsonb_typeof(report_document_text::jsonb)='object'));
+
+alter table public.mission_completion_revisions alter column report_document_era set default 1;
 
 create or replace function public.ftf_final_signoff_mission(
   p_organisation_id uuid, p_actor_internal_user_id uuid, p_mission_id uuid,
@@ -50,10 +54,10 @@ begin
   v_report_document_text := (v_manifest->'reportEvidence')::text;
   if octet_length(convert_to(v_report_document_text,'UTF8'))>1048576 then raise exception 'MISSION_REPORT_DOCUMENT_BOUND_EXCEEDED' using errcode='22023'; end if;
   v_report_document_digest:=encode(digest(convert_to(v_report_document_text,'UTF8'),'sha256'),'hex');
-  insert into public.mission_completion_revisions(organisation_id,operating_location_id,mission_id,version_number,authorisation_revision_id,operational_revision_id,completion_snapshot,declaration,completed_by_internal_user_id,daily_evidence_manifest,daily_evidence_digest,report_document_text,report_document_digest)
+  insert into public.mission_completion_revisions(organisation_id,operating_location_id,mission_id,version_number,authorisation_revision_id,operational_revision_id,completion_snapshot,declaration,completed_by_internal_user_id,daily_evidence_manifest,daily_evidence_digest,report_document_text,report_document_digest,report_document_schema_version)
   values(p_organisation_id,v_mission.operating_location_id,p_mission_id,v_current+1,v_auth.id,v_operational.id,
     jsonb_build_object('schemaVersion',2,'planningAndPreflightAuthorisation',to_jsonb(v_auth),'operationalEvidence',to_jsonb(v_operational),'dailyEvidenceDigest',v_digest,'reportDocumentDigest',v_report_document_digest,'completedAt',now()),
-    p_declaration,p_actor_internal_user_id,v_manifest,v_digest,v_report_document_text,v_report_document_digest) returning * into v_completion;
+    p_declaration,p_actor_internal_user_id,v_manifest,v_digest,v_report_document_text,v_report_document_digest,1) returning * into v_completion;
   insert into public.mission_final_projection_sources(organisation_id,operating_location_id,mission_id,completion_revision_id,projection_type,source_digest,source_manifest)
     values(p_organisation_id,v_mission.operating_location_id,p_mission_id,v_completion.id,'FLEET',v_digest,jsonb_build_object('dailyEvidenceDigest',v_digest,'days',v_manifest->'days')),
       (p_organisation_id,v_mission.operating_location_id,p_mission_id,v_completion.id,'FINANCIAL',v_digest,jsonb_build_object('dailyEvidenceDigest',v_digest,'operationalDays',v_manifest->'operationalDays','actualWorkHours',v_manifest->'actualWorkHours','totalAircraftHours',v_manifest->'totalAircraftHours'))
@@ -70,7 +74,7 @@ end $$;
 create function public.ftf_read_mission_frozen_report_document(
   p_organisation_id uuid,p_actor_internal_user_id uuid,p_mission_id uuid,p_completion_revision_id uuid default null
 ) returns jsonb language plpgsql security definer set search_path=public,pg_temp as $$
-declare v_mission public.missions%rowtype; v_completion public.mission_completion_revisions%rowtype; v_digest text;
+declare v_mission public.missions%rowtype; v_completion public.mission_completion_revisions%rowtype; v_digest text; v_manifest_digest text;
 begin
   if not public.ftf_actor_has_active_beta_seat(p_organisation_id,p_actor_internal_user_id)
     or not public.ftf_actor_has_permission(p_organisation_id,p_actor_internal_user_id,'mission.operational.read') then return jsonb_build_object('forbidden',true); end if;
@@ -81,11 +85,17 @@ begin
     and operating_location_id=v_mission.operating_location_id
     and (p_completion_revision_id is null or id=p_completion_revision_id) order by version_number desc limit 1;
   if not found then return jsonb_build_object('error','MISSION_COMPLETION_NOT_FOUND'); end if;
-  if v_completion.report_document_text is null and v_completion.report_document_digest is null then
+  if v_completion.report_document_era=0 and v_completion.report_document_schema_version is null and v_completion.report_document_text is null and v_completion.report_document_digest is null then
     return jsonb_build_object('status','HISTORICAL_REPORT_DOCUMENT_UNAVAILABLE','completionRevisionId',v_completion.id);
   end if;
-  if v_completion.report_document_text is null or v_completion.report_document_digest is null
+  if v_completion.report_document_schema_version<>1 or v_completion.report_document_text is null or v_completion.report_document_digest is null
+    or v_completion.daily_evidence_manifest is null or v_completion.daily_evidence_digest is null
     or jsonb_typeof(v_completion.report_document_text::jsonb)<>'object' then raise exception 'MISSION_REPORT_DOCUMENT_INTEGRITY_FAILED' using errcode='22000'; end if;
+  v_manifest_digest:=encode(digest(convert_to(v_completion.daily_evidence_manifest::text,'UTF8'),'sha256'),'hex');
+  if v_manifest_digest<>v_completion.daily_evidence_digest
+    or v_completion.report_document_text::jsonb<>v_completion.daily_evidence_manifest->'reportEvidence' then
+    raise exception 'MISSION_REPORT_DOCUMENT_INTEGRITY_FAILED' using errcode='22000';
+  end if;
   v_digest:=encode(digest(convert_to(v_completion.report_document_text,'UTF8'),'sha256'),'hex');
   if v_digest<>v_completion.report_document_digest then raise exception 'MISSION_REPORT_DOCUMENT_INTEGRITY_FAILED' using errcode='22000'; end if;
   return jsonb_build_object('status','AVAILABLE','completionRevisionId',v_completion.id,

@@ -36,6 +36,17 @@ test('does not backfill or fabricate historical completion documents', () => {
   expect(migration).not.toMatch(/report_document_text\s*=\s*daily_evidence_manifest/);
 });
 
+test('binds the representation to original manifest authority and a durable document era', () => {
+  const migration = sql();
+  expect(migration).toContain('report_document_schema_version smallint');
+  expect(migration).toContain('report_document_era smallint not null default 0');
+  expect(migration).toContain('alter column report_document_era set default 1');
+  expect(migration).toContain('report_document_schema_version=1');
+  expect(migration).toContain("digest(convert_to(v_completion.daily_evidence_manifest::text,'utf8'),'sha256')");
+  expect(migration).toContain("v_manifest_digest<>v_completion.daily_evidence_digest");
+  expect(migration).toContain("v_completion.report_document_text::jsonb<>v_completion.daily_evidence_manifest->'reportevidence'");
+});
+
 test('verification hashes transported exact text rather than reserialized JSON', () => {
   const exact = '{"value":1.0}';
   const reserialized = JSON.stringify(JSON.parse(exact));

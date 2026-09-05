@@ -656,10 +656,10 @@ if (child) {
       insert into public.mission_completion_revisions(
         organisation_id,operating_location_id,mission_id,version_number,authorisation_revision_id,operational_revision_id,
         completion_snapshot,declaration,completed_by_internal_user_id,daily_evidence_manifest,daily_evidence_digest,
-        report_document_text,report_document_digest
+        report_document_text,report_document_digest,report_document_schema_version
       ) select '${orgA}','${baseA}','${ids.mission}',1,'${authorisationId}','${operationalId}','{}','Final','${actorA}',evidence,
         encode(digest(convert_to(evidence::text,'UTF8'),'sha256'),'hex'),(evidence->'reportEvidence')::text,
-        encode(digest(convert_to((evidence->'reportEvidence')::text,'UTF8'),'sha256'),'hex')
+        encode(digest(convert_to((evidence->'reportEvidence')::text,'UTF8'),'sha256'),'hex'),1
         from (select public.ftf_build_mission_daily_evidence_manifest('${orgA}','${ids.mission}') evidence) frozen;
     `);
     const frozen = await scalar(db, `select daily_evidence_manifest as value from public.mission_completion_revisions where mission_id='${ids.mission}'`);
@@ -676,6 +676,13 @@ if (child) {
     expect(reportDocument.status).toBe('AVAILABLE');
     expect(typeof reportDocument.documentText).toBe('string');
     expect(reportDocument.documentDigest).toBe(await scalar(db, `select encode(digest(convert_to(report_document_text,'UTF8'),'sha256'),'hex') as value from public.mission_completion_revisions where mission_id='${ids.mission}'`));
+    await db.exec('begin');
+    await db.exec(`alter table public.mission_completion_revisions disable trigger mission_completion_revisions_immutable;
+      update public.mission_completion_revisions set daily_evidence_manifest=daily_evidence_manifest||'{"tampered":true}'::jsonb where mission_id='${ids.mission}';
+      alter table public.mission_completion_revisions enable trigger mission_completion_revisions_immutable`);
+    await expect(call('ftf_read_mission_frozen_report_document', [orgA, actorA, ids.mission, null]))
+      .rejects.toThrow(/MISSION_REPORT_DOCUMENT_INTEGRITY_FAILED/);
+    await db.exec('rollback');
     const reportRetry = await call('ftf_final_signoff_mission', [orgA, actorA, ids.mission, 1, 'Final']);
     expect(reportRetry.idempotent).toBe(true);
     expect(reportRetry.record.report_document_text).toBe(reportDocument.documentText);
