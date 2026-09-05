@@ -16,6 +16,7 @@ begin
   if not found then return jsonb_build_object('not_found',true); end if;
   if not public.ftf_operational_location_allowed(p_organisation_id,p_actor_internal_user_id,v_mission.operating_location_id) then
     return jsonb_build_object('location_forbidden',true); end if;
+  perform pg_advisory_xact_lock(hashtextextended('report-idempotency:'||p_organisation_id::text||':'||p_idempotency_key,0));
   select * into v_existing from public.report_artefacts where organisation_id=p_organisation_id and idempotency_key=p_idempotency_key;
   if found then
     if v_existing.mission_id<>v_mission.id or v_existing.report_type<>p_report_type
@@ -35,7 +36,7 @@ grant execute on function public.ftf_request_report_artefact(uuid,uuid,uuid,text
 alter function public.ftf_build_mission_report_evidence_manifest(uuid,uuid)
   rename to ftf_build_mission_report_evidence_manifest_before_explicit_lineage;
 create function public.ftf_build_mission_report_evidence_manifest(p_organisation_id uuid,p_mission_id uuid)
-returns jsonb language plpgsql stable security definer set search_path=public,pg_temp as $$
+returns jsonb language plpgsql security definer set search_path=public,pg_temp as $$
 declare v_manifest jsonb; v_effective_package uuid; v_effective_approval uuid;
 begin
   v_manifest:=public.ftf_build_mission_report_evidence_manifest_before_explicit_lineage(p_organisation_id,p_mission_id);

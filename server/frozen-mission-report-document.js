@@ -38,6 +38,7 @@ function decode(transport){
     ||governance.packageHistory.some(item=>!jsaIds.has(item.jsaRevisionId)||!Number.isInteger(item.revisionNumber)||!string(item.state)||!SHA256.test(item.evidenceDigest||'')||!timestamp(item.generatedAt))
     ||governance.jsaHistory.some(item=>!Number.isInteger(item.versionNumber)||!timestamp(item.createdAt))
     ||governance.effectiveApproval.packageRevisionId!==governance.effectivePackage.id||governance.effectivePackage.jsaRevisionId!==governance.governingJsa.id
+    ||effectiveDecisionHistory.decision!=='AUTHORISED'
     ||governance.effectivePackage.revisionNumber!==effectivePackHistory.revisionNumber||governance.effectivePackage.evidenceDigest!==effectivePackHistory.evidenceDigest||governance.effectivePackage.jsaRevisionId!==effectivePackHistory.jsaRevisionId
     ||governance.effectiveApproval.revisionNumber!==effectiveDecisionHistory.revisionNumber||governance.effectiveApproval.personnelId!==effectiveDecisionHistory.personnelId||governance.effectiveApproval.decidedAt!==effectiveDecisionHistory.decidedAt||governance.effectiveApproval.packageRevisionId!==effectiveDecisionHistory.packageRevisionId
     ||governance.governingJsa.versionNumber!==governingJsaHistory.versionNumber

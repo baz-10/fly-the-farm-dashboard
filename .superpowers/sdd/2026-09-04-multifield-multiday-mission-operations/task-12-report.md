@@ -30,10 +30,18 @@
 - Executable PGlite coverage proves same-organisation cross-Base/Mission, report-type and requester collisions fail closed while exact-scope retry succeeds. API coverage proves the bounded 409 mapping.
 - Newly frozen governance evidence now carries package-to-JSA lineage on effective and historical package rows and package lineage on effective approval. The decoder requires effective package, approval and JSA values to equal their corresponding immutable history rows and requires the approval/package/JSA chain to be exact.
 
+### Review round 4
+
+- Removed the incorrect `STABLE` volatility declaration from the governance wrapper: it reaches the existing locking manifest builder and is now correctly VOLATILE by default.
+- Report idempotency now acquires a transaction-scoped advisory lock derived from the organisation and idempotency key before lookup. Same-scope retries remain reusable; competing cross-scope callers serialize and then receive the bounded mismatch response.
+- The real full migration-chain PostgreSQL test exercises the locking builder, freezes a report, and proves the new effective package/JSA, package-history/JSA and approval/package lineage. This passed; it is not a stubbed builder test.
+- PGlite executes the lock and scope behavior but uses a single embedded database connection, so it cannot model two genuinely independent PostgreSQL sessions. Static order coverage proves lock-before-lookup; Production-grade multi-session contention remains an integration concern rather than being overstated here.
+- The strict decoder now requires the matched effective decision to be exactly `AUTHORISED`; a digest-valid `REJECTED` mutation fails closed.
+
 ## TDD evidence
 
 - RED: six server report tests initially failed because the existing model had no frozen source/status, no daily projection, no deterministic grouping, no malformed-evidence gate, and the renderers used mutable operational evidence.
-- GREEN: focused server suite 21/21 PASS, including adversarial cross-reference, governance equality, parent-lineage, digest, mutable-leak and maximum-bound pagination cases.
+- GREEN: focused server suite 22/22 PASS, including adversarial cross-reference, governance equality/decision state, parent-lineage, digest, mutable-leak and maximum-bound pagination cases.
 - Component/view-model/renderer/worker/authority/API regression suite: 9 suites / 26 tests PASS.
 
 ## Verification
@@ -41,6 +49,7 @@
 - `node ./node_modules/jest/bin/jest.js --runInBand server/__tests__/multiday-mission-report.test.js`: 1 suite / 12 tests PASS.
 - `TZ=Australia/Brisbane CI=true npm test -- --watchAll=false --runInBand ...`: 6 suites / 21 tests PASS.
 - Production build: PASS with the repository's pre-existing Browserslist, lint-warning and bundle-size warning backlog.
+- Round-4 database/API/worker focus: 7 suites / 21 tests PASS, including the real full migration-chain PostgreSQL test.
 - `git diff --check`: PASS.
 
 ## Files

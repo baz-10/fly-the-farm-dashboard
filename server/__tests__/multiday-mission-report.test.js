@@ -72,6 +72,7 @@ test.each([
   ['effective approval differs from history',draft=>{draft.reportEvidence.governance.effectiveApproval.personnelId='foreign-crp';}],
   ['effective package differs from history',draft=>{draft.reportEvidence.governance.effectivePackage.evidenceDigest='f'.repeat(64);}],
   ['effective package JSA differs from governing JSA',draft=>{draft.reportEvidence.governance.effectivePackage.jsaRevisionId='foreign-jsa';}],
+  ['matched effective decision is not authorised',draft=>{draft.reportEvidence.governance.decisionHistory[0].decision='REJECTED';}],
   ['JSA review parent mismatch',draft=>{draft.dailyEvidence.days[0].jsaReview.operating_day_id='foreign-day';}],
   ['flight to aircraft actual parent mismatch',draft=>{draft.dailyEvidence.days[1].aircraftActuals[0].flights[0].aircraft_day_actual_id='foreign-actual';}],
   ['chemical line revision parent mismatch',draft=>{draft.dailyEvidence.days[0].chemicalActual.lines[0].revision_id='foreign-chemical';}],

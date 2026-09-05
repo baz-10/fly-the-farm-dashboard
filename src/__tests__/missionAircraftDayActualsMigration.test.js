@@ -679,7 +679,9 @@ if (child) {
       job: { id: ids.job, reference: 'JOB-A' }, client: { id: ids.client, name: 'Client A' },
     });
     expect(frozen.reportEvidence.scope.properties[0].fields[0]).toMatchObject({ id: ids.field, name: 'Field A', areaHectares: '10.0000', targetHectares: '10.0000' });
-    expect(frozen.reportEvidence.governance.effectivePackage).toMatchObject({ id: ids.pack, revisionNumber: 1 });
+    expect(frozen.reportEvidence.governance.effectivePackage).toMatchObject({ id: ids.pack, revisionNumber: 1, jsaRevisionId: ids.jsa });
+    expect(frozen.reportEvidence.governance.packageHistory[0]).toMatchObject({ id: ids.pack, jsaRevisionId: ids.jsa });
+    expect(frozen.reportEvidence.governance.effectiveApproval).toMatchObject({ packageRevisionId: ids.pack });
     expect(frozen.reportEvidence.aircraft.map((item) => item.registration)).toEqual(['FTF-T100-001', 'FTF-T100-002', 'FTF-T100-003']);
     expect(frozen.reportEvidence.flightLineEvidence[0]).toEqual(expect.objectContaining({ filename: 'multi.kml', digest: 'b'.repeat(64), format: 'KML' }));
     const frozenDigest = await scalar(db, `select daily_evidence_digest as value from public.mission_completion_revisions where mission_id='${ids.mission}'`);
