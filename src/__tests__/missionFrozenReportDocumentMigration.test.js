@@ -44,7 +44,8 @@ test('binds the representation to original manifest authority and a durable docu
   expect(migration).toContain('report_document_schema_version=1');
   expect(migration).toContain("digest(convert_to(v_completion.daily_evidence_manifest::text,'utf8'),'sha256')");
   expect(migration).toContain("v_manifest_digest<>v_completion.daily_evidence_digest");
-  expect(migration).toContain("v_completion.report_document_text::jsonb<>v_completion.daily_evidence_manifest->'reportevidence'");
+  expect(migration).toContain("jsonb_typeof(v_completion.daily_evidence_manifest->'reportevidence')<>'object'");
+  expect(migration).toContain("v_completion.report_document_text is distinct from (v_completion.daily_evidence_manifest->'reportevidence')::text");
 });
 
 test('verification hashes transported exact text rather than reserialized JSON', () => {

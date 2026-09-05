@@ -90,10 +90,11 @@ begin
   end if;
   if v_completion.report_document_schema_version<>1 or v_completion.report_document_text is null or v_completion.report_document_digest is null
     or v_completion.daily_evidence_manifest is null or v_completion.daily_evidence_digest is null
+    or jsonb_typeof(v_completion.daily_evidence_manifest->'reportEvidence')<>'object'
     or jsonb_typeof(v_completion.report_document_text::jsonb)<>'object' then raise exception 'MISSION_REPORT_DOCUMENT_INTEGRITY_FAILED' using errcode='22000'; end if;
   v_manifest_digest:=encode(digest(convert_to(v_completion.daily_evidence_manifest::text,'UTF8'),'sha256'),'hex');
   if v_manifest_digest<>v_completion.daily_evidence_digest
-    or v_completion.report_document_text::jsonb<>v_completion.daily_evidence_manifest->'reportEvidence' then
+    or v_completion.report_document_text is distinct from (v_completion.daily_evidence_manifest->'reportEvidence')::text then
     raise exception 'MISSION_REPORT_DOCUMENT_INTEGRITY_FAILED' using errcode='22000';
   end if;
   v_digest:=encode(digest(convert_to(v_completion.report_document_text,'UTF8'),'sha256'),'hex');

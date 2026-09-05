@@ -91,6 +91,12 @@
 - A durable `report_document_era` marker is added with `0` assigned only to rows existing when the migration runs, then defaulted to `1` for all later inserts. Era 1 requires schema version 1, exact text and digest atomically; only genuine era-0 rows receive the historical-unavailable label. No backfill occurs.
 - Executable PostgreSQL coverage tampers the original manifest behind the append-only trigger and proves the checked read fails integrity validation, then rolls the transaction back. Normal append-only mutation, retry byte identity and cross-tenant failure remain executable.
 
+## Task 11C review round 3
+
+- Integrity verification explicitly requires `daily_evidence_manifest.reportEvidence` to exist as a JSON object; SQL NULL can no longer pass a three-valued comparison.
+- The document must be byte-for-byte equal to PostgreSQL's canonical `(daily_evidence_manifest->'reportEvidence')::text` using `IS NOT DISTINCT FROM`, before the separately stored exact-text digest is accepted.
+- Executable privileged-tamper transactions prove semantically equal JSON with different whitespace and a correctly recomputed document digest is rejected, and prove a manifest with `reportEvidence` removed plus a correctly recomputed manifest digest is rejected. Both transactions roll back fully.
+
 ## RED evidence
 
 The first focused run failed for the intended missing migration, absent `MissionFinalSignoff` component and unsupported API actions. The lifecycle refinement also identified and corrected the existing-closeout compatibility case: revision 1 may already exist, so final sign-off must append rather than overwrite or falsely return it.
@@ -104,7 +110,7 @@ The first focused run failed for the intended missing migration, absent `Mission
 - `git diff --check`: PASS.
 - Migration SHA-256: `7586956d1652e8ca5b4a20da86113a64cec41dd4dcd17a522f82b540d057c743`.
 - Task 11B migration SHA-256: `c636cfbaf1f7dc7ffa952c2a1392795e22b7293f0485f927b18fc9706f8f852b`.
-- Task 11C migration SHA-256: `4c93e1656e09a08037eeda100a602d191a90251e958c92ed01f8bd33002b4d90`.
+- Task 11C migration SHA-256: `bcc96aac0431906b32cc7e8762ba6511caad1d29004fa9e93ee12e99ce4829f5`.
 
 ## Files
 

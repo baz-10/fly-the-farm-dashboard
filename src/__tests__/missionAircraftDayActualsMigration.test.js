@@ -683,6 +683,26 @@ if (child) {
     await expect(call('ftf_read_mission_frozen_report_document', [orgA, actorA, ids.mission, null]))
       .rejects.toThrow(/MISSION_REPORT_DOCUMENT_INTEGRITY_FAILED/);
     await db.exec('rollback');
+    await db.exec('begin');
+    await db.exec(`alter table public.mission_completion_revisions disable trigger mission_completion_revisions_immutable;
+      update public.mission_completion_revisions
+        set report_document_text=' '||report_document_text,
+            report_document_digest=encode(digest(convert_to(' '||report_document_text,'UTF8'),'sha256'),'hex')
+        where mission_id='${ids.mission}';
+      alter table public.mission_completion_revisions enable trigger mission_completion_revisions_immutable`);
+    await expect(call('ftf_read_mission_frozen_report_document', [orgA, actorA, ids.mission, null]))
+      .rejects.toThrow(/MISSION_REPORT_DOCUMENT_INTEGRITY_FAILED/);
+    await db.exec('rollback');
+    await db.exec('begin');
+    await db.exec(`alter table public.mission_completion_revisions disable trigger mission_completion_revisions_immutable;
+      update public.mission_completion_revisions
+        set daily_evidence_manifest=daily_evidence_manifest-'reportEvidence',
+            daily_evidence_digest=encode(digest(convert_to((daily_evidence_manifest-'reportEvidence')::text,'UTF8'),'sha256'),'hex')
+        where mission_id='${ids.mission}';
+      alter table public.mission_completion_revisions enable trigger mission_completion_revisions_immutable`);
+    await expect(call('ftf_read_mission_frozen_report_document', [orgA, actorA, ids.mission, null]))
+      .rejects.toThrow(/MISSION_REPORT_DOCUMENT_INTEGRITY_FAILED/);
+    await db.exec('rollback');
     const reportRetry = await call('ftf_final_signoff_mission', [orgA, actorA, ids.mission, 1, 'Final']);
     expect(reportRetry.idempotent).toBe(true);
     expect(reportRetry.record.report_document_text).toBe(reportDocument.documentText);
