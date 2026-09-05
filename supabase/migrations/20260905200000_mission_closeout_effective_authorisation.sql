@@ -10,7 +10,19 @@ set search_path = public, pg_temp
 as $$
   select case when mission.id is null then null else jsonb_build_object(
     'mission', to_jsonb(mission) - 'organisation_id',
-    'authorisation', public.ftf_resolve_effective_mission_authorisation(mission.organisation_id, mission.id),
+    'authorisation', coalesce(
+      (select to_jsonb(authorisation)
+        from public.mission_completion_revisions completion
+        join public.mission_authorisation_revisions authorisation
+          on authorisation.organisation_id = completion.organisation_id
+         and authorisation.mission_id = completion.mission_id
+         and authorisation.id = completion.authorisation_revision_id
+        where completion.organisation_id = mission.organisation_id
+          and completion.mission_id = mission.id
+          and completion.daily_evidence_digest is not null
+        order by completion.version_number desc
+        limit 1),
+      public.ftf_resolve_effective_mission_authorisation(mission.organisation_id, mission.id)),
     'availableResources', jsonb_build_object(
       'aircraft', coalesce((select jsonb_agg(jsonb_build_object('id', aircraft.id, 'label', aircraft.registration || ' · ' || aircraft.model) order by aircraft.registration)
         from public.aircraft aircraft where aircraft.organisation_id = mission.organisation_id and aircraft.operating_location_id = mission.operating_location_id and aircraft.archived_at is null), '[]'::jsonb),
@@ -29,6 +41,14 @@ as $$
     'operatingDays', coalesce((select jsonb_agg(jsonb_build_object(
       'id', day.id, 'work_date', day.work_date::text, 'package_revision_id', day.mission_pack_revision_id,
       'state', day.state, 'row_version', day.row_version,
+      'authorisation', (select to_jsonb(authorisation)
+        from public.mission_authorisation_revisions authorisation
+        where authorisation.organisation_id = day.organisation_id
+          and authorisation.mission_id = day.mission_id
+          and authorisation.mission_pack_revision_id = day.mission_pack_revision_id
+          and authorisation.decision = 'AUTHORISED'
+        order by authorisation.version_number desc
+        limit 1),
       'aircraft_actuals', public.ftf_project_mission_aircraft_day_actuals(day.organisation_id, day.mission_id, day.id)
     ) order by day.work_date, day.id) from public.mission_operating_days day
       where day.organisation_id = mission.organisation_id and day.mission_id = mission.id), '[]'::jsonb),

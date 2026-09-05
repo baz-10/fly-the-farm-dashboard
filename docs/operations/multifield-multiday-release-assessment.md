@@ -32,7 +32,7 @@ Task 14A has corrected the three locally proven blockers with a forward-only aut
 | Product Maturity verifier | PASS | 46 modules / 16 workflows / 57 routes / 192 customer UI files / 85 evidence references; zero customer-facing Legacy violations. The workflow remains `COMING_SOON`. |
 | Chromium/WebKit project discovery | PASS | Five tests listed: auth setup plus the controlled lifecycle and Client-to-Mission paths for Chromium and WebKit. |
 | Protected authenticated Chromium/WebKit lifecycle | CANNOT VERIFY | `E2E_ORGANISATION_EMAIL`, `E2E_ORGANISATION_PASSWORD` and `E2E_BASE_URL` are absent. No genuine Fly The Farm identity or data was used. |
-| Local Production-shaped migration apply | PARTIAL / FAILING BEHAVIOR | The full chain applies in the pgcrypto-enabled Mission authority harness, but the post-apply effective-authorisation behavior fails. A second legacy harness lacks its required pgcrypto extension and fails during apply. This is not a successful dry-run. |
+| Local complete migration-chain behavior | PASS (FOCUSED) | Both previously failing full-chain harnesses now apply the complete local migration chain. Mission authority proves prospective current-authorised resolution, frozen final-completion authority, exact per-day package/approval lineage and later-rejection isolation; Aircraft persistence remains executable with pgcrypto. This is focused local evidence, not a Production dry-run. |
 | Production migration ledger / legacy record counts | CANNOT VERIFY | Requires an approved repository-governed remote read or an isolated Production snapshot, neither of which is available or authorised here. |
 
 ## Release-blocking findings
@@ -43,7 +43,7 @@ Focused status: corrected and passing; whole-gate confirmation pending.
 
 `20260905100000_mission_scope_revision_and_crp_gate.sql` correctly changes `ftf_read_mission_operational_closeout` to use `ftf_resolve_effective_mission_authorisation`. `20260905120000_mission_aircraft_day_actuals.sql` later replaces the same function and selects the greatest authorisation revision without filtering to the Mission's effective authorised package/decision. The executable full-chain test proves that a later rejected proposal is consequently returned as operational authority.
 
-Correction: `20260905200000_mission_closeout_effective_authorisation.sql` restores `ftf_resolve_effective_mission_authorisation` in the final closeout projection without rewriting prior migrations. The full-chain regression asserts the exact authorised decision and its governing package revision after a later rejection.
+Correction: `20260905200000_mission_closeout_effective_authorisation.sql` uses `ftf_resolve_effective_mission_authorisation` for prospective work, but when a frozen final completion exists it returns that completion's exact `authorisation_revision_id`. Each projected operating day independently includes the exact `AUTHORISED` decision for its own package revision. The full-chain regression covers two authorised packages across separate days, a later rejected proposal, frozen completion authority and pointer drift without flattening historical day lineage.
 
 ### 2. Product Maturity visible-string analysis — corrected in Task 14A
 
@@ -77,7 +77,7 @@ All thirteen development migrations are pending relative to `spray-command/main`
 | `20260905170000_complete_mission_frozen_report_document.sql` | `6394fb26b35be6c2db1f735ecfd97f89efb3dba7b44f7d49e7262c84f2f3fe37` | Advances report document era and installs a trigger to freeze the complete bounded report representation. | Internal composer/trigger revoked; checked read only to `service_role`; no mutable report source; required for complete daily/governance report detail. |
 | `20260905180000_report_job_frozen_document_authority.sql` | `ef9429dd4b06401c1768bf29e5c2e934e2db674408108daf8b3187283242377` | Binds report requests to completion authority and adds exact worker-job frozen-document read. | Trigger/internal helper revoked; worker read only to `service_role`; no report-data mutation beyond request binding; required by report worker. |
 | `20260905190000_report_idempotency_and_governance_lineage.sql` | `54f780fb4e53ad4f141598a03a9c97b5bf3fc19e95afe634344d66241285793c` | Serialises scoped report idempotency and replaces report evidence builder with explicit effective package/JSA/approval lineage. | Request command only to `service_role`; lineage builder internal/revoked; creates/reuses scoped report jobs; required by deterministic idempotent reports. |
-| `20260905200000_mission_closeout_effective_authorisation.sql` | `627dc95f0ef9977075832d7a3c52c1e92f2b2efa1d308fc063d43421325e3033` | Replaces the closeout read projection so authorisation is resolved through the canonical effective-authorisation function while retaining aircraft-day, import-attribution and closeout detail. | Forward-only function correction; no schema/data/RLS/grant change and no new runtime authority; required to preserve exact governing CRP lineage after a later rejected proposal. |
+| `20260905200000_mission_closeout_effective_authorisation.sql` | `1ca63f5f0f9e16003cdc9b2c80d18783a02c71e7f68f6fbc903998a47b8ee741` | Replaces the closeout read projection so prospective authority uses the current authorised package, frozen completion uses its exact authorisation, and every operating day carries its own package/authorisation lineage while retaining aircraft-day, import-attribution and closeout detail. | Forward-only function correction; no schema/data/RLS/grant change and no new runtime authority; required to prevent current or rejected proposals from rewriting final or historical-day CRP lineage. |
 
 All reviewed `SECURITY DEFINER` functions in this chain declare `search_path = public, pg_temp`. New authority tables force RLS and revoke generic access. Runtime entry points are narrowly granted to `service_role`; internal projection, digest, trigger and lock helpers are revoked. No migration introduces generic browser table-write authority.
 
@@ -89,7 +89,7 @@ All reviewed `SECURITY DEFINER` functions in this chain declare `search_path = p
 - Fleet and Financial projections use stable source identities and unique/idempotent projection rows.
 - Signed reports read exact frozen UTF-8 report text, verify SHA-256 before parsing and do not refresh mutable current evidence.
 - PGlite is single-session; true independent-session blocking/deadlock timing remains a deferred verification limitation even where lock participation is exercised.
-- The effective-authorisation regression above prevents a READY security conclusion for the whole ordered chain.
+- Focused complete-chain tests now pass for prospective, per-day and frozen-final authorisation lineage; a READY conclusion still requires the complete release gate and independent review.
 
 ## Legacy and migration assessment
 
@@ -98,7 +98,7 @@ All reviewed `SECURITY DEFINER` functions in this chain declare `search_path = p
 - **Genuine source counts / ambiguity classes:** `CANNOT VERIFY`; no approved Production snapshot was available.
 - **Fabricated operating days:** zero created by these migrations. The migrations add authority/schema and command paths; they do not synthesize historical Mission days, flights, chemical actuals or weather evidence.
 - **Application deployment dependency:** yes. The branch changes trusted server routes, strict client decoders and Mission/Job UI in addition to SQL authority.
-- **Fix-forward boundary:** correct the three release-blocking findings on this branch through reviewed forward changes; rerun the complete chain, all eight deterministic shards, Product Maturity, build and protected controlled cross-browser acceptance before any merge or Production request.
+- **Fix-forward boundary:** the three Task 14 blockers and the review-round final/per-day lineage issue are corrected locally; rerun all eight deterministic shards, Product Maturity, build and protected controlled cross-browser acceptance before any merge or Production request.
 
 ## Cross-browser and Production boundary
 

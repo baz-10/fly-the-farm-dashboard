@@ -273,6 +273,56 @@ if (child) {
     expect(current.rows[0].value.pack_snapshot.evidence.planning).toBeTruthy();
   });
 
+  test('freezes final authority while retaining exact authorised lineage for each operating day', async () => {
+    const before = await call('ftf_read_mission_package_history', [orgA, actorA, ids.mission]);
+    const nextPreparing = await call('ftf_save_mission_package_scope', [orgA, actorA, ids.mission, before.current_revision, JSON.stringify([ids.fieldA, ids.fieldB])]);
+    const nextAwaiting = await call('ftf_submit_mission_package', [orgA, actorA, ids.mission, nextPreparing.record.id, nextPreparing.record.version_number, nextPreparing.record.evidence_digest]);
+    const nextAuthorised = await call('ftf_decide_mission_package', [orgA, actorA, ids.mission, nextAwaiting.record.id, nextAwaiting.record.version_number, nextAwaiting.record.evidence_digest, 'AUTHORISED', 'Second operating phase approved.']);
+
+    await db.exec(`
+      insert into public.mission_operating_days(
+        organisation_id,operating_location_id,mission_id,work_date,timezone,mission_pack_revision_id,jsa_revision_id,
+        state,actual_started_at,actual_finished_at,created_by_internal_user_id,updated_by_internal_user_id
+      ) values
+        ('${orgA}','${baseA}','${ids.mission}','2026-09-04','Australia/Brisbane','${submitted1.record.id}','${ids.jsa2}','COMPLETED','2026-09-03T22:00:00Z','2026-09-04T06:00:00Z','${actorA}','${actorA}'),
+        ('${orgA}','${baseA}','${ids.mission}','2026-09-05','Australia/Brisbane','${nextAwaiting.record.id}','${ids.jsa2}','COMPLETED','2026-09-04T22:00:00Z','2026-09-05T06:00:00Z','${actorA}','${actorA}');
+    `);
+
+    const rejectedPreparing = await call('ftf_save_mission_package_scope', [orgA, actorA, ids.mission, nextAwaiting.record.version_number, JSON.stringify([ids.fieldB])]);
+    const rejectedAwaiting = await call('ftf_submit_mission_package', [orgA, actorA, ids.mission, rejectedPreparing.record.id, rejectedPreparing.record.version_number, rejectedPreparing.record.evidence_digest]);
+    const laterRejected = await call('ftf_decide_mission_package', [orgA, actorA, ids.mission, rejectedAwaiting.record.id, rejectedAwaiting.record.version_number, rejectedAwaiting.record.evidence_digest, 'REJECTED', 'Prospective scope rejected.']);
+    expect(laterRejected.record.decision).toBe('REJECTED');
+
+    const resources = await db.query(`select id from public.mission_operational_resource_revisions where organisation_id=$1 and mission_id=$2 order by version_number desc limit 1`, [orgA, ids.mission]);
+    const chemicals = await db.query(`select id from public.mission_operational_chemical_revisions where organisation_id=$1 and mission_id=$2 order by version_number desc limit 1`, [orgA, ids.mission]);
+    const operational = await db.query(`insert into public.mission_operational_revisions(
+      organisation_id,operating_location_id,mission_id,version_number,authorisation_revision_id,resource_revision_id,
+      chemical_revision_id,review_snapshot,submitted_by_internal_user_id
+    ) values($1,$2,$3,1,$4,$5,$6,'{}'::jsonb,$7) returning id`,
+    [orgA, baseA, ids.mission, nextAuthorised.record.id, resources.rows[0].id, chemicals.rows[0].id, actorA]);
+    const completion = await db.query(`with evidence as (
+      select jsonb_build_object('days','[]'::jsonb,'reportEvidence','{}'::jsonb) manifest
+    ) insert into public.mission_completion_revisions(
+      organisation_id,operating_location_id,mission_id,version_number,authorisation_revision_id,operational_revision_id,
+      completion_snapshot,declaration,completed_by_internal_user_id,daily_evidence_manifest,daily_evidence_digest
+    ) select $1,$2,$3,1,$4,$5,'{}'::jsonb,'Final authority frozen.',$6,manifest,
+      encode(digest(convert_to(manifest::text,'UTF8'),'sha256'),'hex') from evidence returning id`,
+    [orgA, baseA, ids.mission, nextAuthorised.record.id, operational.rows[0].id, actorA]);
+
+    await db.exec(`alter table public.missions disable trigger mission_package_aggregate_lock`);
+    await db.exec(`update public.missions set current_authorised_pack_revision_id='${submitted1.record.id}' where organisation_id='${orgA}' and id='${ids.mission}'`);
+    await db.exec(`alter table public.missions enable trigger mission_package_aggregate_lock`);
+
+    const closeout = await call('ftf_read_mission_operational_closeout', [orgA, ids.mission]);
+    expect(closeout.completion.id).toBe(completion.rows[0].id);
+    expect(closeout.authorisation.id).toBe(nextAuthorised.record.id);
+    expect(closeout.authorisation.mission_pack_revision_id).toBe(nextAwaiting.record.id);
+    expect(closeout.operatingDays.map((day) => ({ packageId: day.package_revision_id, authorityId: day.authorisation.id }))).toEqual([
+      { packageId: submitted1.record.id, authorityId: authorised.record.id },
+      { packageId: nextAwaiting.record.id, authorityId: nextAuthorised.record.id },
+    ]);
+  });
+
   test('closes the database', async () => { await db.close(); });
 } else {
   test('passes repeatable Mission scope/CRP authority behavior checks in PostgreSQL', () => {
