@@ -38,8 +38,7 @@ class ReportWorkerRepository {
   }
 
   async loadFrozenReportDocument(job) {
-    const artefact=job.artefact,evidence=artefact.evidence_manifest||{},completion=evidence.completionRevision||evidence.completion_revision||{};
-    return supabaseRequest('rest/v1/rpc/ftf_read_mission_frozen_report_document',{method:'POST',body:JSON.stringify({p_organisation_id:artefact.organisation_id,p_actor_internal_user_id:artefact.requested_by_internal_user_id,p_mission_id:artefact.mission_id,p_completion_revision_id:completion.id||null}),publicMessage:'Frozen mission report evidence could not be loaded.'});
+    return supabaseRequest('rest/v1/rpc/ftf_read_report_job_frozen_document',{method:'POST',body:JSON.stringify({p_job_id:job.id,p_artefact_id:job.artefact.id}),publicMessage:'Frozen mission report evidence could not be loaded.'});
   }
 
   async complete(jobId, artefactId, file) {

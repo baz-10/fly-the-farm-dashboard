@@ -18,16 +18,22 @@
 - Summary and generic report rows paginate in bounded chunks. Maximum governance histories and hourly-weather arrays continue across pages without clipping into the footer.
 - Flight Field/start/end/source evidence, chemical Field/quantity/optional batch, flight-line ID/format, and final `completedBy` are now rendered.
 
+### Review round 2
+
+- Added forward migration `20260905180000_report_job_frozen_document_authority.sql`. Report authority is checked and bound when the immutable artefact is inserted using the active seat, Base scope, `reports.generate`, and report-type permission. The worker-safe read is then constrained to the exact GENERATING job, artefact, organisation, Base, Mission and completion identity; it intentionally does not re-evaluate mutable user authority later and cannot enumerate reports.
+- Expanded recursive validation across governance package/decision/JSA lineage, JSA review parents, Field activity parents, aircraft actual/flight parents, chemical revision/line parents, weather package/day parents, and flight-line attribution parents. Digest-valid but internally inconsistent documents fail closed.
+- Both Mission Summary and Mission Record now render the frozen `operationalDays`, `actualWorkHours`, and `totalAircraftHours` aggregate totals.
+
 ## TDD evidence
 
 - RED: six server report tests initially failed because the existing model had no frozen source/status, no daily projection, no deterministic grouping, no malformed-evidence gate, and the renderers used mutable operational evidence.
-- GREEN: focused server suite 12/12 PASS, including adversarial cross-reference, digest, mutable-leak and maximum-bound pagination cases.
-- Component/view-model/renderer/worker regression suite: 5 suites / 17 tests PASS.
+- GREEN: focused server suite 18/18 PASS, including adversarial cross-reference, parent-lineage, digest, mutable-leak and maximum-bound pagination cases.
+- Component/view-model/renderer/worker/authority regression suite: 6 suites / 21 tests PASS.
 
 ## Verification
 
 - `node ./node_modules/jest/bin/jest.js --runInBand server/__tests__/multiday-mission-report.test.js`: 1 suite / 12 tests PASS.
-- `TZ=Australia/Brisbane CI=true npm test -- --watchAll=false --runInBand src/__tests__/reportWorker.test.js src/__tests__/reportRenderer.test.js src/__tests__/reportViewModels.test.js src/components/mission/__tests__/MissionSummary.test.tsx src/components/mission/__tests__/MissionRecord.test.tsx`: 5 suites / 17 tests PASS.
+- `TZ=Australia/Brisbane CI=true npm test -- --watchAll=false --runInBand ...`: 6 suites / 21 tests PASS.
 - Production build: PASS with the repository's pre-existing Browserslist, lint-warning and bundle-size warning backlog.
 - `git diff --check`: PASS.
 
@@ -36,6 +42,8 @@
 - `server/report-view-models.js`
 - `server/frozen-mission-report-document.js`
 - `server/report-worker.js`
+- `supabase/migrations/20260905180000_report_job_frozen_document_authority.sql`
+- `src/__tests__/reportJobFrozenDocumentAuthorityMigration.test.js`
 - `server/mission-summary-renderer.js`
 - `server/report-renderer.js`
 - `server/__tests__/multiday-mission-report.test.js`

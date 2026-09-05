@@ -69,7 +69,7 @@ function reportSections(reportType, evidence, frozenReportDocument) {
   const completion = evidence.completionRevision || {};
   if (frozenReportDocument || completion.daily_evidence_digest || completion.dailyEvidenceDigest) {
     const model = buildMissionSummaryViewModel({ evidence, frozenReportDocument });
-    const frozenSections = [['Frozen Mission Scope', model.scope], ['CRP and JSA Authority', model.approval], ...model.operatingDays.map(day => [`Operating Day - ${day.workDate}`, day]), ['Recorded Exceptions', model.exceptions || []]];
+    const frozenSections = [['Frozen Mission Scope', model.scope],['Frozen Aggregate Totals',model.totals], ['CRP and JSA Authority', model.approval], ...model.operatingDays.map(day => [`Operating Day - ${day.workDate}`, day]), ['Recorded Exceptions', model.exceptions || []]];
     if (model.evidenceGaps.length) frozenSections.push(['Evidence Availability', model.evidenceGaps]);
     frozenSections.push(['Final Sign-off', model.finalSignoff]);
     return frozenSections;
