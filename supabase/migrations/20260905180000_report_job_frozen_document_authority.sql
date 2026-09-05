@@ -39,9 +39,9 @@ begin
   if v_completion.report_document_era<>2 or v_completion.report_document_schema_version<>2
     or v_completion.report_document_text is null or v_completion.report_document_digest is null then
     raise exception 'MISSION_REPORT_DOCUMENT_INTEGRITY_FAILED' using errcode='22000'; end if;
-  v_manifest_digest:=encode(digest(convert_to(v_completion.daily_evidence_manifest::text,'UTF8'),'sha256'),'hex');
+  v_manifest_digest:=encode(sha256(convert_to(v_completion.daily_evidence_manifest::text,'UTF8')),'hex');
   v_expected:=public.ftf_compose_complete_mission_report_document(v_completion);
-  v_digest:=encode(digest(convert_to(v_completion.report_document_text,'UTF8'),'sha256'),'hex');
+  v_digest:=encode(sha256(convert_to(v_completion.report_document_text,'UTF8')),'hex');
   if v_manifest_digest<>v_completion.daily_evidence_digest or v_completion.report_document_text is distinct from v_expected::text
     or v_digest<>v_completion.report_document_digest then raise exception 'MISSION_REPORT_DOCUMENT_INTEGRITY_FAILED' using errcode='22000'; end if;
   return jsonb_build_object('status','AVAILABLE','completionRevisionId',v_completion.id,

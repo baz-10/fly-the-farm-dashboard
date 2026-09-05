@@ -512,7 +512,7 @@ immutable
 security definer
 set search_path = public, pg_temp
 as $$
-  select encode(digest(convert_to(p_manifest::text, 'UTF8'), 'sha256'), 'hex')
+  select encode(sha256(convert_to(p_manifest::text, 'UTF8')), 'hex')
 $$;
 
 create function public.ftf_save_mission_package_scope(
