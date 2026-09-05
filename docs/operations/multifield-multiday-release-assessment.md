@@ -27,7 +27,7 @@ Task 14A corrected the original three local blockers and the review-round frozen
 | Focused authority/security tests | PASS | Fresh run: 7 suites / 57 tests passed under `TZ=Australia/Brisbane`: Job scope, package/CRP, operating days/JSA, aircraft actuals, chemical/weather, final sign-off and trusted API decoding. |
 | Frozen report authority/security tests | PASS | Fresh run: 7 suites / 36 tests passed under `TZ=Australia/Brisbane`: frozen evidence/document, complete document, worker binding and idempotency serialization/scope. The expected negative-path worker diagnostic was logged by its passing test. |
 | Production build | PASS WITH WARNINGS | Fresh `npm run build` exited 0. No build error; the existing lint and bundle-size warning backlog remains. |
-| Deterministic eight-shard regression | CANNOT VERIFY / STALLED | 323 suites discovered under `TZ=Australia/Brisbane`. Shard 1 PASS: 41 suites / 290 tests. Shard 2 PASS: 41 suites / 280 tests. Corrected shard 3 PASS: 41 suites / 241 tests. Shard 4 emitted 27 individual suite PASS results, then stopped producing progress and did not exit; isolated `productMaturityBoundary.test.tsx` likewise produced no result for more than 60 seconds despite `--runInBand`, `--forceExit` and a 15-second Jest test timeout. Both local processes were terminated deliberately. No aggregate shard-4 test count is claimed; 13 shard suites remain indeterminate and shards 5–8 were not run. |
+| Deterministic eight-shard regression | INCOMPLETE | 323 suites discovered under `TZ=Australia/Brisbane`. Shard 1 PASS: 41 suites / 290 tests. Shard 2 PASS: 41 suites / 280 tests. Shard 3 PASS: 41 suites / 241 tests. Corrected shard 4 PASS: 40 suites / 448 tests. The maturity boundary is a synchronous 229-test verifier suite and completed in 514 seconds; its only RED assertion was stale governed inventory counts, corrected without weakening the verifier. Shards 5–8 remain unexecuted. |
 | Full-chain Mission/CRP database behavior | PASS (FOCUSED) | Fresh focused run passed. The executable chain proves prospective current authority, two authorised packages across separate days, later-rejection isolation, frozen completion authority and exact per-day package/approval lineage. |
 | Product Maturity verifier | PASS | 46 modules / 16 workflows / 57 routes / 192 customer UI files / 85 evidence references; zero customer-facing Legacy violations. The workflow remains `COMING_SOON`. |
 | Chromium/WebKit project discovery | PASS | 15 tests in 4 files listed: one auth setup plus seven Chromium and seven WebKit tests, including the real multi-Field/multi-day Mission surface. |
@@ -76,6 +76,10 @@ Shard 3 proves `scripts/verifyAuthoritativePersonnelMigration.mjs` and `scripts/
 
 Correction: all six verifiers that intentionally apply the governed directory-wide chain now register and create the repository-controlled bundled pgcrypto extension without changing or skipping Production SQL: Authoritative Equipment Kits, Mission Weather, Personnel, Mission JSA, Operating Authority Register and Organisation Branding/Reports. The four Jest-backed verifiers pass 4 suites / 4 tests; the two direct verifiers exit 0. Unfiltered historical harnesses that include environment-specific identity migrations are not valid complete-chain runners and were deliberately left unchanged.
 
+### 6. Product Maturity boundary apparent stall — diagnosed and corrected
+
+The suite was not blocked by an open handle, fake timer, worker or import side effect. It contains 229 tests and repeatedly launches `verifyProductMaturityRegistry.mjs` through synchronous `spawnSync`; one canonical verifier run takes about 4.4 seconds, so Jest cannot emit per-test progress or enforce its asynchronous timeout while each child runs. A bounded full run completed after 488 seconds and exposed one genuine assertion failure: expected inventory counts were stale at 181 UI files / 81 evidence references while the unchanged verifier authoritatively reported 192 / 85. The exact expectations were updated. Focused assertion PASS: 1 test; full isolated suite PASS: 229 tests in 514.6 seconds; complete shard 4 PASS: 40 suites / 448 tests in 538.7 seconds.
+
 ## Migration inventory
 
 All thirteen development migrations are pending relative to `spray-command/main`. The list is ordered and must remain atomic for review; it supersedes the earlier seven-file planning list.
@@ -115,7 +119,7 @@ All reviewed `SECURITY DEFINER` functions in this chain declare `search_path = p
 - **Genuine source counts / ambiguity classes:** `CANNOT VERIFY`; no approved Production snapshot was available.
 - **Fabricated operating days:** zero created by these migrations. The migrations add authority/schema and command paths; they do not synthesize historical Mission days, flights, chemical actuals or weather evidence.
 - **Application deployment dependency:** yes. The branch changes trusted server routes, strict client decoders and Mission/Job UI in addition to SQL authority.
-- **Fix-forward boundary:** diagnose why the Product Maturity boundary suite does not return under the deterministic Jest runner, prove it independently, then restart shard 4 and continue shards 5–8. Rerun maturity/build only after the deterministic gate passes and obtain independent review. Protected controlled cross-browser acceptance remains separately environment-gated.
+- **Fix-forward boundary:** continue shards 5–8. Rerun Product Maturity and build only after the deterministic gate passes and obtain independent review. Protected controlled cross-browser acceptance remains separately environment-gated.
 
 ## Cross-browser and Production boundary
 
@@ -123,4 +127,4 @@ Project configuration and controlled specs are discoverable for Chromium and Web
 
 ## Required next gate
 
-Do not request merge or Production authority from this state. Shards 1–3 pass, but shard 4 is stalled at the Product Maturity boundary and shards 5–8 remain unexecuted; independent review is also pending. Product Maturity and build passed at the preceding complete-gate commit and have not been rerun after this stalled deterministic gate. Protected controlled cross-browser acceptance and a Production-shaped ledger/legacy assessment still require their separately governed environments. Separate approval remains required for merge, every Production migration, Production deployment and Production acceptance.
+Do not request merge or Production authority from this state. Shards 1–4 pass, but shards 5–8 remain unexecuted and independent review is pending. Product Maturity and build passed at the preceding complete-gate commit and have not yet been rerun after the current harness-only corrections. Protected controlled cross-browser acceptance and a Production-shaped ledger/legacy assessment still require their separately governed environments. Separate approval remains required for merge, every Production migration, Production deployment and Production acceptance.
