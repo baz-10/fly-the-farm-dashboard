@@ -85,7 +85,7 @@ test('creates, persists, reopens, and archives the authoritative Client to Draft
     await page.getByRole('textbox', { name: 'Job Reference' }).fill(label);
     await page.getByRole('combobox', { name: 'Weed Target' }).fill(label);
     const jobResponse = await runSingleAuthoritativeCommand(page, {
-      pathname: '/api/v1/jobs', method: 'POST', expectedStatus: 201,
+      origin: new URL(acceptanceEnvironment().baseUrl).origin, pathname: '/api/v1/jobs', method: 'POST', expectedStatus: 201,
     }, () => page.getByRole('button', { name: 'Save Job' }).click());
     const jobResponseBody = await jobResponse.json();
     expect(jobResponseBody.data.fieldIds).toEqual(expect.arrayContaining([records.field.id, records.secondaryField.id]));
@@ -107,7 +107,7 @@ test('creates, persists, reopens, and archives the authoritative Client to Draft
     await page.getByRole('button', { name: 'Continue' }).click();
     await page.getByRole('textbox', { name: 'Mission title' }).fill(label);
     await runSingleAuthoritativeCommand(page, {
-      pathname: '/api/v1/missions', method: 'POST', expectedStatus: 201,
+      origin: new URL(acceptanceEnvironment().baseUrl).origin, pathname: '/api/v1/missions', method: 'POST', expectedStatus: 201,
     }, () => page.getByRole('button', { name: 'Create Draft Mission' }).click());
     // Mission creation also retires the persisted setup Draft. Production cold
     // starts and optimistic-concurrency reconciliation can legitimately span

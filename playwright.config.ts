@@ -4,7 +4,7 @@ const baseURL = process.env.E2E_BASE_URL || 'http://127.0.0.1:3000';
 const remote = !/^https?:\/\/(localhost|127\.0\.0\.1)(?::\d+)?$/i.test(baseURL);
 
 export default defineConfig({
-  testDir: './e2e/acceptance',
+  testDir: './e2e',
   timeout: 60_000,
   expect: { timeout: 10_000 },
   forbidOnly: Boolean(process.env.CI),
@@ -41,6 +41,7 @@ export default defineConfig({
     },
     {
       name: 'chromium',
+      testMatch: [/acceptance\/.*\.spec\.ts/, /mission\/multifield-multiday-mission\.spec\.ts/],
       use: {
         ...devices['Desktop Chrome'],
         storageState: 'test-results/.auth/organisation.json',
@@ -53,6 +54,7 @@ export default defineConfig({
     },
     {
       name: 'webkit',
+      testMatch: [/acceptance\/.*\.spec\.ts/, /mission\/multifield-multiday-mission\.spec\.ts/],
       use: {
         ...devices['Desktop Safari'],
         storageState: 'test-results/.auth/organisation.json',

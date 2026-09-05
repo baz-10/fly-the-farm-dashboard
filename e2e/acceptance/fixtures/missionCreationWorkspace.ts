@@ -51,25 +51,32 @@ export async function openMissionCreationWorkspace(page: Page): Promise<void> {
 
 export async function runSingleAuthoritativeCommand(
   page: Page,
-  input: { pathname: string; method: string; expectedStatus: number },
+  input: { origin: string; pathname: string; method: string; action?: string; expectedStatus: number; expectedCorrelationId?: string },
   action: () => Promise<void>,
 ): Promise<Response> {
   let matchingRequests = 0;
-  const count = (request: { url(): string; method(): string }) => {
+  let commandRequest: { url(): string; method(): string } | undefined;
+  const matches = (request: { url(): string; method(): string }) => {
     const url = new URL(request.url());
-    if (url.pathname === input.pathname && request.method() === input.method) matchingRequests += 1;
+    return url.origin === input.origin && url.pathname === input.pathname && request.method() === input.method
+      && (input.action === undefined || url.searchParams.get('action') === input.action);
+  };
+  const count = (request: { url(): string; method(): string }) => {
+    if (matches(request)) { matchingRequests += 1; commandRequest = request; }
   };
   page.on('request', count);
   try {
     // Register the response observer before invoking the browser action. A click,
     // route transition or DOM update is not command-completion authority.
     const responsePromise = page.waitForResponse((response) => {
-      const url = new URL(response.url());
-      return url.pathname === input.pathname && response.request().method() === input.method;
+      return matches(response.request());
     });
     await action();
     const response = await responsePromise;
     expect(response.status()).toBe(input.expectedStatus);
+    expect(response.request()).toBe(commandRequest);
+    if (input.expectedCorrelationId) expect(response.headers()['x-correlation-id']).toBe(input.expectedCorrelationId);
+    await page.waitForTimeout(100);
     expect(matchingRequests, `${input.method} ${input.pathname} should be sent once`).toBe(1);
     return response;
   } finally {

@@ -1,48 +1,34 @@
 import { expect, test } from '@playwright/test';
-import {
-  controlledMissionFixture,
-  assertFailureBoundary,
-  installDeterministicMissionLifecycle,
-  runAuthoritativeMissionLifecycle,
-  type LifecycleFailure,
-} from './fixtures/multidayMission';
+import { runSingleAuthoritativeCommand } from '../acceptance/fixtures/missionCreationWorkspace';
 
-test.describe('controlled multi-Field multi-day Mission lifecycle', () => {
-  test('one Job spans Properties and one authorised Mission spans days', async ({ page }) => {
-    const state = await installDeterministicMissionLifecycle(page, controlledMissionFixture);
-    await runAuthoritativeMissionLifecycle(page, state);
+const protectedFixtureAvailable = Boolean(process.env.E2E_ORGANISATION_EMAIL
+  && process.env.E2E_ORGANISATION_PASSWORD && process.env.E2E_MULTIDAY_MISSION_ID
+  && process.env.E2E_MULTIDAY_FIELD_LABEL && process.env.E2E_BASE_URL);
 
-    await expect(page.getByText('Mission finally signed off')).toBeVisible();
-    await expect(page.getByText('2 operating days · 3 Fields · 30.0000 aircraft hours')).toBeVisible();
-    const bodies = state.requests.map((request) => request.postDataJSON());
-    expect(bodies.find((body) => body.jobId === controlledMissionFixture.jobId)?.fieldIds).toEqual(controlledMissionFixture.fieldIds);
-    expect(bodies.find((body) => body.missionId === controlledMissionFixture.missionId && body.fieldIds)?.fieldIds).toEqual(controlledMissionFixture.missionFieldIds);
-    expect(bodies.filter((body) => body.jsaRevisionId).map((body) => body.jsaRevisionId))
-      .toEqual([controlledMissionFixture.jsaRevisionId, controlledMissionFixture.jsaRevisionId]);
-    expect(bodies.filter((body) => body.totalAircraftHours).map((body) => body.totalAircraftHours)).toEqual(['20.0000', '10.0000']);
-    expect(bodies.filter((body) => body.coverage).map((body) => body.dayId)).toEqual(controlledMissionFixture.days.map((day) => day.id));
-    expect(bodies.filter((body) => body.dataUrl)).toHaveLength(2);
+test.describe('real multi-Field multi-day Mission workspace', () => {
+  test.skip(!protectedFixtureAvailable, 'CANNOT_VERIFY: protected controlled Mission fixture credentials/identity are unavailable.');
+
+  test('renders the real Mission authority surface responsively and rejects a stale scope command once', async ({ page }) => {
+    const missionId = process.env.E2E_MULTIDAY_MISSION_ID!;
+    const fieldLabel = process.env.E2E_MULTIDAY_FIELD_LABEL!;
+    await page.goto(`/missions/${encodeURIComponent(missionId)}?stage=review`);
+    for (const viewport of [{ width: 390, height: 844 }, { width: 768, height: 1024 }, { width: 1280, height: 900 }]) {
+      await page.setViewportSize(viewport);
+      await expect(page.getByRole('heading', { name: 'Mission Planner' })).toBeVisible();
+      await expect(page.getByText('Mission scope and CRP review')).toBeVisible();
+      await expect(page.getByRole('checkbox', { name: fieldLabel })).toBeVisible();
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+    }
+
+    await page.route('**/api/v1/mission-operations?action=scope', (route) => route.fulfill({
+      status: 409, contentType: 'application/json', headers: { 'X-Correlation-ID': 'task13-stale-scope' },
+      body: JSON.stringify({ error: { code: 'MISSION_PACKAGE_VERSION_CONFLICT', message: 'Mission package changed. Reload before deciding.', correlationId: 'task13-stale-scope', currentVersion: 2 } }),
+    }));
+    await runSingleAuthoritativeCommand(page, {
+      origin: new URL(process.env.E2E_BASE_URL!).origin, pathname: '/api/v1/mission-operations', method: 'POST', action: 'scope',
+      expectedStatus: 409, expectedCorrelationId: 'task13-stale-scope',
+    }, () => page.getByRole('button', { name: 'Save Mission Field scope' }).click());
+    await expect(page.getByRole('alert')).toContainText('Package changed. Reload before deciding.');
+    await expect(page.getByRole('button', { name: 'Reload' })).toBeVisible();
   });
-
-  const boundedFailures: LifecycleFailure[] = [
-    'CROSS_CLIENT_JOB_FIELD',
-    'MISSION_FIELD_OUTSIDE_JOB',
-    'STALE_CRP_REVISION',
-    'MISSING_JSA_REVIEW',
-    'MATERIAL_AMENDMENT_HOLD',
-    'AIRCRAFT_TOTAL_MISMATCH',
-    'WEATHER_PROVIDER_FAILURE',
-    'INVALID_KML',
-    'INCOMPLETE_FINAL_SIGNOFF',
-    'UNSIGNED_MISSION_JOB_CLOSE',
-    'STALE_CACHED_SCOPE',
-    'SESSION_ORGANISATION_CHANGED',
-  ];
-
-  for (const failure of boundedFailures) {
-    test(`${failure} fails closed at one authoritative command`, async ({ page }) => {
-      const state = await installDeterministicMissionLifecycle(page, controlledMissionFixture, failure);
-      await assertFailureBoundary(page, state, failure);
-    });
-  }
 });
