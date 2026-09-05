@@ -26,6 +26,7 @@ describe('product maturity registry', () => {
       ['fields', null, 'OPERATIONALLY_READY'], ['jobs', null, 'OPERATIONALLY_READY'],
       ['mission-register', null, 'OPERATIONALLY_READY'], ['mission-register', 'setup-drafts', 'OPERATIONALLY_READY'],
       ['mission-workspace', null, 'OPERATIONALLY_READY'], ['mission-workspace', 'reports', 'OPERATIONALLY_READY'],
+      ['mission-workspace', 'multiday-operations', 'COMING_SOON'],
       ['mission-mapping', null, 'OPERATIONALLY_READY'], ['mission-weather', null, 'OPERATIONALLY_READY'],
       ['mission-chemical-planning', null, 'OPERATIONALLY_READY'], ['mission-jsa', null, 'OPERATIONALLY_READY'],
       ['mission-closeout', null, 'OPERATIONALLY_READY'], ['mission-outcomes', null, 'OPERATIONALLY_READY'],

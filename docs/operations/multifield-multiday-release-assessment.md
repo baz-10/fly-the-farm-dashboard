@@ -80,9 +80,9 @@ Correction: all six verifiers that intentionally apply the governed directory-wi
 
 The suite was not blocked by an open handle, fake timer, worker or import side effect. It contains 229 tests and repeatedly launches `verifyProductMaturityRegistry.mjs` through synchronous `spawnSync`; one canonical verifier run takes about 4.4 seconds, so Jest cannot emit per-test progress or enforce its asynchronous timeout while each child runs. A bounded full run completed after 488 seconds and exposed one genuine assertion failure: expected inventory counts were stale at 181 UI files / 81 evidence references while the unchanged verifier authoritatively reported 192 / 85. The exact expectations were updated. Focused assertion PASS: 1 test; full isolated suite PASS: 229 tests in 514.6 seconds; complete shard 4 PASS: 40 suites / 448 tests in 538.7 seconds.
 
-### 7. Product Maturity registry exact baseline omits the new governed workflow
+### 7. Product Maturity registry exact baseline — corrected
 
-Severity: deterministic release-gate blocker in shard 7. The registry correctly contains `mission-workspace` / `multiday-operations` at `COMING_SOON`, and the boundary verifier passes. The separate exact-array baseline in `src/productMaturity/__tests__/registry.test.ts` was not extended when Task 14 registered the workflow. Shard 7 therefore reports 39 suites / 317 tests passed and this one test failed. This is a local maturity test expectation defect, not a product, authority or promotion failure. Shard 8 was not run under the fail-closed gate.
+Focused status: corrected and passing; shard 7 rerun pending. The registry correctly contains `mission-workspace` / `multiday-operations` at `COMING_SOON`, and the boundary verifier passes. The separate exact-array baseline in `src/productMaturity/__tests__/registry.test.ts` had not been extended when Task 14 registered the workflow. The exact governed tuple is now present in canonical order; strict equality remains and no workflow was promoted. Focused registry PASS: 1 suite / 11 tests.
 
 ## Migration inventory
 
