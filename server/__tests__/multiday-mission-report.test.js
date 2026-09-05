@@ -25,6 +25,7 @@ Object.assign(reportEvidence.governance.effectivePackage,{jsaRevisionId:'jsa3'})
 reportEvidence.governance.decisionHistory[0]={...reportEvidence.governance.decisionHistory[0],packageRevisionId:'pack4',personnelId:'crp1',decidedAt:'2026-09-04T20:00:00Z'};
 reportEvidence.governance.jsaHistory[0]={...reportEvidence.governance.jsaHistory[0],createdAt:'2026-09-04T18:00:00Z'};
 completion.daily_evidence_manifest.days.forEach(day=>{day.jsaReview={...day.jsaReview,operating_day_id:day.id,jsa_revision_id:day.jsaRevisionId,mission_id:'m1'};day.fieldActivities.forEach((row,index)=>Object.assign(row,{id:`${day.id}-field-${index}`,operating_day_id:day.id,mission_id:'m1'}));day.aircraftActuals.forEach((actual,index)=>{Object.assign(actual,{id:`${day.id}-aircraft-${index}`,operating_day_id:day.id,mission_id:'m1'});actual.flights.forEach((flight,flightIndex)=>Object.assign(flight,{id:`${day.id}-flight-${flightIndex}`,aircraft_day_actual_id:actual.id,mission_id:'m1',aircraft_id:actual.aircraft_id}));});if(day.chemicalActual){Object.assign(day.chemicalActual,{id:`${day.id}-chemical`,operating_day_id:day.id,mission_id:'m1'});day.chemicalActual.lines.forEach((line,index)=>Object.assign(line,{id:`${day.id}-chemical-line-${index}`,revision_id:day.chemicalActual.id,operating_day_id:day.id,mission_id:'m1'}));}Object.assign(day.weatherReport,{operating_day_id:day.id,mission_id:'m1',mission_pack_revision_id:day.packageRevisionId});day.flightLineAttributions.forEach((link,index)=>Object.assign(link,{id:`${day.id}-import-${index}`,operating_day_id:day.id,mission_id:'m1'}));});
+completion.daily_evidence_manifest.days.forEach(day=>day.weatherReport.coverage_gaps.forEach(gap=>{gap.observedAt=`${day.workDate}T00:00:00Z`;}));
 const document={schemaVersion:2,reportEvidence,dailyEvidence:completion.daily_evidence_manifest,finalCompletion:{id:'final2',missionId:'m1',versionNumber:2,authorisationRevisionId:'approval7',operationalRevisionId:'op1',declaration:'Evidence reconciled.',completedByInternalUserId:'signer1',completedAt:'2026-09-06T10:00:00Z',dailyEvidenceDigest:'b'.repeat(64)}};
 const transportFor=value=>{const text=JSON.stringify(value);return{status:'AVAILABLE',completionRevisionId:'final2',documentText:text,documentDigest:crypto.createHash('sha256').update(text).digest('hex')}};
 const clone=value=>JSON.parse(JSON.stringify(value));
@@ -62,6 +63,10 @@ test('fails closed on malformed frozen report evidence and digest', () => {
   expect(malformed).toMatchObject({ evidenceStatus: 'MISSING_FROZEN_EVIDENCE', operatingDays: [] });
   expect(malformed.evidenceGaps).toContain('Frozen report evidence is invalid.');
 });
+
+test('accepts bounded decimal weather coordinates and measurements',()=>{const draft=clone(document),weather=draft.dailyEvidence.days[0].weatherReport;Object.assign(weather,{latitude:'-27.125678',longitude:'153.333333',interval_start_at:'2026-09-06T00:00:00Z',interval_end_at:'2026-09-06T01:00:00Z'});weather.hourly_observations=[{observedAt:'2026-09-06T00:00:00Z',temperatureC:24.375,relativeHumidity:83.25,dewPointC:21.125,windSpeedKmh:13.9,windDirectionDegrees:182.75,precipitationMm:0.05}];expect(buildMissionSummaryViewModel({...input,frozenReportDocument:transportFor(draft)}).evidenceStatus).toBe('COMPLETE');});
+
+test('rejects digest-valid out-of-range decimal weather evidence',()=>{const draft=clone(document);draft.dailyEvidence.days[0].weatherReport.hourly_observations=[{observedAt:'2026-09-06T00:00:00Z',temperatureC:24.375,relativeHumidity:101.01,dewPointC:21.125,windSpeedKmh:13.9,windDirectionDegrees:182.75,precipitationMm:0.05}];expect(buildMissionSummaryViewModel({...input,frozenReportDocument:transportFor(draft)})).toMatchObject({evidenceStatus:'MISSING_FROZEN_EVIDENCE',operatingDays:[]});});
 
 test.each([
   ['unknown field reference',draft=>{draft.dailyEvidence.days[0].fieldActivities[0].field_id='foreign-field';}],
@@ -106,10 +111,10 @@ test('paginates maximum-bound frozen histories and weather without dropping boun
   draft.reportEvidence.governance.effectivePackage={...draft.reportEvidence.governance.packageHistory[63]};
   draft.reportEvidence.governance.decisionHistory[0].packageRevisionId='pack-63';
   draft.reportEvidence.governance.effectiveApproval.packageRevisionId='pack-63';
-  draft.dailyEvidence.days.forEach(day=>{day.packageRevisionId='pack-63';day.weatherReport.mission_pack_revision_id='pack-63';day.weatherReport.hourly_observations=Array.from({length:48},(_,i)=>({observedAt:`2026-09-05T${String(i%24).padStart(2,'0')}:00:00Z`,note:`BOUNDARY-WEATHER-${i}-`+'y'.repeat(80)}));});
+  draft.dailyEvidence.days.forEach(day=>{day.packageRevisionId='pack-63';day.weatherReport.mission_pack_revision_id='pack-63';day.weatherReport.hourly_observations=Array.from({length:48},(_,i)=>({observedAt:`2026-09-05T${String(i%24).padStart(2,'0')}:00:00Z`,temperatureC:20.125,relativeHumidity:55.5,dewPointC:10.25,windSpeedKmh:12.75,windDirectionDegrees:180.5,precipitationMm:i===47?0.047:0}));});
   const pdf=renderMissionSummaryPdf({...input,frozenReportDocument:transportFor(draft)}).toString('latin1');
   expect((pdf.match(/\/Type \/Page\b/g)||[]).length).toBeGreaterThan(2);
-  expect(pdf).toContain('BOUNDARY-PACK-63');expect(pdf).toContain('BOUNDARY-WEATHER-47');expect(pdf).toContain('Page 1 of');
+  expect(pdf).toContain('BOUNDARY-PACK-63');expect(pdf).toContain('0.047');expect(pdf).toContain('Page 1 of');
 });
 
 test('mission record never renders mutable caller evidence identifiers',()=>{
@@ -117,5 +122,6 @@ test('mission record never renders mutable caller evidence identifiers',()=>{
   expect(pdf).not.toContain('MUTABLE-LEAK');
   expect(pdf).toContain('Evidence Digest');
 });
+test.each(['MISSION_SUMMARY','MISSION_RECORD'])('%s aborts before PDF creation for invalid current-era evidence',reportType=>{expect(()=>renderReportPdf({...input,reportType,frozenReportDocument:{...input.frozenReportDocument,documentDigest:'0'.repeat(64)}})).toThrow(expect.objectContaining({name:'FrozenReportRenderingError',code:'FROZEN_REPORT_EVIDENCE_INVALID'}));});
 
 module.exports = { input };

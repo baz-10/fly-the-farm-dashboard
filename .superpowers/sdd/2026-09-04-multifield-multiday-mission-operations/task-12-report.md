@@ -38,16 +38,24 @@
 - PGlite executes the lock and scope behavior but uses a single embedded database connection, so it cannot model two genuinely independent PostgreSQL sessions. Static order coverage proves lock-before-lookup; Production-grade multi-session contention remains an integration concern rather than being overstated here.
 - The strict decoder now requires the matched effective decision to be exactly `AUTHORISED`; a digest-valid `REJECTED` mutation fails closed.
 
+### Final whole-slice review
+
+- The bounded generic JSON decoder now accepts finite decimal numbers instead of incorrectly restricting every number to a safe integer. Recognised weather coordinates and observations are still decoded through an exact schema with bounded finite ranges and timestamps; malformed, out-of-range and non-canonical structures fail closed.
+- Added representative decimal weather coverage for latitude/longitude, temperature, humidity, dew point, wind speed/direction and rainfall, plus an adversarial out-of-range decimal case.
+- Canonical current-era Mission Summary and Mission Record generation now throws the safe typed `FROZEN_REPORT_EVIDENCE_INVALID` rendering error before PDF construction when the frozen digest or schema is absent or invalid. It cannot continue into object storage or artefact completion.
+- The worker persists that deterministic integrity failure as terminal `FAILED` through forward migration `20260905210000_fail_invalid_frozen_report_job.sql`; it neither stores a PDF nor marks the artefact READY and it does not retry the same invalid immutable document. Error persistence is limited to the bounded code and safe public message.
+- Genuine historical era-0/1 completion remains a separate explicit unavailable report path. It is not treated as a malformed canonical report and never fabricates current operational evidence.
+
 ## TDD evidence
 
 - RED: six server report tests initially failed because the existing model had no frozen source/status, no daily projection, no deterministic grouping, no malformed-evidence gate, and the renderers used mutable operational evidence.
-- GREEN: focused server suite 22/22 PASS, including adversarial cross-reference, governance equality/decision state, parent-lineage, digest, mutable-leak and maximum-bound pagination cases.
-- Component/view-model/renderer/worker/authority/API regression suite: 9 suites / 26 tests PASS.
+- GREEN: focused server suite 26/26 PASS, including decimal weather, adversarial cross-reference, governance equality/decision state, parent-lineage, digest, typed render abort, mutable-leak and maximum-bound pagination cases.
+- Component/view-model/renderer/worker/authority/API regression suite: 8 suites / 23 tests PASS in the final focused run.
 
 ## Verification
 
-- `node ./node_modules/jest/bin/jest.js --runInBand server/__tests__/multiday-mission-report.test.js`: 1 suite / 12 tests PASS.
-- `TZ=Australia/Brisbane CI=true npm test -- --watchAll=false --runInBand ...`: 6 suites / 21 tests PASS.
+- `node ./node_modules/jest/bin/jest.js --runInBand server/__tests__/multiday-mission-report.test.js`: 1 suite / 26 tests PASS.
+- `TZ=Australia/Brisbane CI=true npm test -- --watchAll=false --runInBand ...`: 8 suites / 23 tests PASS, including the complete Mission migration-chain behavior and no-store/no-complete worker failure path.
 - Production build: PASS with the repository's pre-existing Browserslist, lint-warning and bundle-size warning backlog.
 - Round-4 database/API/worker focus: 7 suites / 21 tests PASS, including the real full migration-chain PostgreSQL test.
 - `git diff --check`: PASS.
@@ -57,6 +65,7 @@
 - `server/report-view-models.js`
 - `server/frozen-mission-report-document.js`
 - `server/report-worker.js`
+- `server/report-rendering-error.js`
 - `supabase/migrations/20260905180000_report_job_frozen_document_authority.sql`
 - `src/__tests__/reportJobFrozenDocumentAuthorityMigration.test.js`
 - `supabase/migrations/20260905190000_report_idempotency_and_governance_lineage.sql`
@@ -73,9 +82,12 @@
 - `src/components/mission/__tests__/MissionRecord.test.tsx`
 - `src/__tests__/reportViewModels.test.js`
 - `src/__tests__/reportRenderer.test.js`
+- `src/__tests__/reportWorkerFrozenFailure.test.js`
+- `src/__tests__/reportFrozenFailureMigration.test.js`
+- `supabase/migrations/20260905210000_fail_invalid_frozen_report_job.sql`
 
 ## Boundaries
 
-- No new report, database or read authority was introduced.
+- No new report or read authority was introduced. The forward migration changes only failure-state handling for an already-authorised report worker transition.
 - No mutable current Mission child is used for finally signed-off reporting.
 - No Production migration, deployment, alias operation or genuine data mutation occurred.

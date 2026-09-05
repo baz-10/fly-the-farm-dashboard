@@ -25,7 +25,7 @@ Task 14A corrected the original three local blockers and the review-round frozen
 | Maturity registration TDD RED | PASS | Targeted test failed because `mission-workspace/multiday-operations` was absent. |
 | Maturity registration TDD GREEN | PASS | Targeted boundary test: 1 passed, 228 skipped. Workflow is `COMING_SOON` and names all five required automated-evidence classes. |
 | Focused authority/security tests | PASS | Fresh run: 7 suites / 57 tests passed under `TZ=Australia/Brisbane`: Job scope, package/CRP, operating days/JSA, aircraft actuals, chemical/weather, final sign-off and trusted API decoding. |
-| Frozen report authority/security tests | PASS | Fresh run: 7 suites / 36 tests passed under `TZ=Australia/Brisbane`: frozen evidence/document, complete document, worker binding and idempotency serialization/scope. The expected negative-path worker diagnostic was logged by its passing test. |
+| Frozen report authority/security tests | PASS | Final focused runs: server report suite 1/26 and worker/view/renderer/database suite 8/23 passed under `TZ=Australia/Brisbane`. Coverage includes bounded decimal weather, strict frozen lineage, exact digest binding, typed canonical render abort, and proof that invalid canonical evidence stores no PDF and never becomes READY. |
 | Production build | PASS WITH WARNINGS | Fresh `npm run build` exited 0. No build error; the existing lint and bundle-size warning backlog remains. |
 | Deterministic eight-shard regression | PASS | 323 suites / 2,173 tests passed under `TZ=Australia/Brisbane` across all eight deterministic shards: 41/290, 41/280, 41/241, 40/448, 40/169, 40/173, 40/318 and 40/254 suites/tests. |
 | Full-chain Mission/CRP database behavior | PASS (FOCUSED) | Fresh focused run passed. The executable chain proves prospective current authority, two authorised packages across separate days, later-rejection isolation, frozen completion authority and exact per-day package/approval lineage. |
@@ -90,7 +90,7 @@ Focused and shard status: corrected and passing. Three assertions in `MissionOpe
 
 ## Migration inventory
 
-All thirteen development migrations are pending relative to `spray-command/main`. The list is ordered and must remain atomic for review; it supersedes the earlier seven-file planning list.
+All fourteen development migrations are pending relative to `spray-command/main`. The list is ordered and must remain atomic for review; it supersedes the earlier seven-file planning list.
 
 | Migration | SHA-256 | Purpose and database effect | Authority / data / application dependency |
 |---|---|---|---|
@@ -107,6 +107,7 @@ All thirteen development migrations are pending relative to `spray-command/main`
 | `20260905180000_report_job_frozen_document_authority.sql` | `ef9429dd4b06401c1768bf29e5c2e934e2db674408108daf8b3187283242377` | Binds report requests to completion authority and adds exact worker-job frozen-document read. | Trigger/internal helper revoked; worker read only to `service_role`; no report-data mutation beyond request binding; required by report worker. |
 | `20260905190000_report_idempotency_and_governance_lineage.sql` | `54f780fb4e53ad4f141598a03a9c97b5bf3fc19e95afe634344d66241285793c` | Serialises scoped report idempotency and replaces report evidence builder with explicit effective package/JSA/approval lineage. | Request command only to `service_role`; lineage builder internal/revoked; creates/reuses scoped report jobs; required by deterministic idempotent reports. |
 | `20260905200000_mission_closeout_effective_authorisation.sql` | `1ca63f5f0f9e16003cdc9b2c80d18783a02c71e7f68f6fbc903998a47b8ee741` | Replaces the closeout read projection so prospective authority uses the current authorised package, frozen completion uses its exact authorisation, and every operating day carries its own package/authorisation lineage while retaining aircraft-day, import-attribution and closeout detail. | Forward-only function correction; no schema/data/RLS/grant change and no new runtime authority; required to prevent current or rejected proposals from rewriting final or historical-day CRP lineage. |
+| `20260905210000_fail_invalid_frozen_report_job.sql` | `119785b74f2e6f5dbd9899982c4c206af273f4e4024a24554dbb971b3c8e6a61` | Makes immutable frozen-document integrity failures terminal in the existing report failure transition. | Forward-only worker-state correction; no schema/data/RLS/new grant change. Existing `service_role` worker execution remains the only caller; invalid canonical reports become FAILED without PDF storage, READY state or futile retry. |
 
 All reviewed `SECURITY DEFINER` functions in this chain declare `search_path = public, pg_temp`. New authority tables force RLS and revoke generic access. Runtime entry points are narrowly granted to `service_role`; internal projection, digest, trigger and lock helpers are revoked. No migration introduces generic browser table-write authority.
 
@@ -122,7 +123,7 @@ All reviewed `SECURITY DEFINER` functions in this chain declare `search_path = p
 
 ## Legacy and migration assessment
 
-- **Exact local proposed set:** the thirteen ordered migrations listed above.
+- **Exact local proposed set:** the fourteen ordered migrations listed above.
 - **Production pending set:** `CANNOT VERIFY`; no Production ledger was read.
 - **Genuine source counts / ambiguity classes:** `CANNOT VERIFY`; no approved Production snapshot was available.
 - **Fabricated operating days:** zero created by these migrations. The migrations add authority/schema and command paths; they do not synthesize historical Mission days, flights, chemical actuals or weather evidence.

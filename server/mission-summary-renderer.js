@@ -1,9 +1,10 @@
 const { jsPDF } = require('jspdf');
 const { buildMissionSummaryViewModel } = require('./report-view-models');
+const { requireRenderableMissionModel } = require('./report-rendering-error');
 const GREEN=[17,68,36],INK=[21,42,28],MUTED=[85,103,90],LINE=[209,221,212],MARGIN=15;
 function show(value){if(value===undefined||value===null||value==='')return'Unavailable';if(Array.isArray(value))return value.map(show).join(', ');if(typeof value==='object')return Object.entries(value).map(([key,item])=>`${key}: ${show(item)}`).join(' | ');return String(value).replace(/[\u2010-\u2015]/g,'-');}
 function renderMissionSummaryPdf(input){
-  const model=buildMissionSummaryViewModel(input),profile=input.branding?.profile||{},name=input.branding?.displayName||profile.report_display_name||profile.trading_name||profile.legal_business_name||'Organisation';
+  const model=requireRenderableMissionModel(buildMissionSummaryViewModel(input)),profile=input.branding?.profile||{},name=input.branding?.displayName||profile.report_display_name||profile.trading_name||profile.legal_business_name||'Organisation';
   const doc=new jsPDF({unit:'mm',format:'a4',compress:false,putOnlyUsedFonts:true});doc.setFileId('00000000000000000000000000000000');doc.setCreationDate(new Date(input.artefact?.createdAt||'2000-01-01T00:00:00.000Z'));doc.setProperties({title:'Mission Summary',author:'Spray Command',creator:'Spray Command'});let page=0,y=0;
   const header=title=>{page+=1;if(page>1)doc.addPage();doc.setFillColor(...GREEN);doc.rect(0,0,210,34,'F');doc.setTextColor(255);doc.setFont('helvetica','bold');doc.setFontSize(12);doc.text(name,MARGIN,12);doc.setFontSize(19);doc.text(title,MARGIN,27);y=42;};
   const ensure=height=>{if(y+height>278)header('Signed-off Mission Evidence');};

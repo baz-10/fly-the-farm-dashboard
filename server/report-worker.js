@@ -84,7 +84,8 @@ async function processNextReportJob({ workerId, repository = new ReportWorkerRep
       statusCode: error?.statusCode || null,
       message: error?.publicMessage || `Report ${stage} failed.`,
     });
-    await repository.fail(job.id, job.artefact.id, 'RENDER_FAILED', 'Report generation failed.');
+    const frozenFailure=error?.code==='FROZEN_REPORT_EVIDENCE_INVALID';
+    await repository.fail(job.id, job.artefact.id, frozenFailure?error.code:'RENDER_FAILED', frozenFailure?error.publicMessage:'Report generation failed.');
     return { processed: false, jobId: job.id, failed: true };
   }
 }
