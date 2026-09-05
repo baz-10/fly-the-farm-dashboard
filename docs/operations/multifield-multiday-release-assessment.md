@@ -25,7 +25,7 @@ Task 14A corrected the original three local blockers and the review-round frozen
 | Maturity registration TDD RED | PASS | Targeted test failed because `mission-workspace/multiday-operations` was absent. |
 | Maturity registration TDD GREEN | PASS | Targeted boundary test: 1 passed, 228 skipped. Workflow is `COMING_SOON` and names all five required automated-evidence classes. |
 | Focused authority/security tests | PASS | Fresh run: 7 suites / 57 tests passed under `TZ=Australia/Brisbane`: Job scope, package/CRP, operating days/JSA, aircraft actuals, chemical/weather, final sign-off and trusted API decoding. |
-| Frozen report authority/security tests | PASS | Final focused runs: server report suite 1/26 and worker/view/renderer/database suite 8/23 passed under `TZ=Australia/Brisbane`. Coverage includes bounded decimal weather, strict frozen lineage, exact digest binding, typed canonical render abort, and proof that invalid canonical evidence stores no PDF and never becomes READY. |
+| Frozen report authority/security tests | PASS | Final focused runs: server report suite 1/31 plus worker/view/renderer/database coverage passed under `TZ=Australia/Brisbane`. Coverage includes the exact database-produced 24-field weather row, bounded decimal observations/coordinates, null/absent/calendar-invalid required evidence, strict frozen lineage, exact digest binding, typed canonical render abort, and proof that invalid canonical evidence stores no PDF and never becomes READY. |
 | Production build | PASS WITH WARNINGS | Fresh `npm run build` exited 0. No build error; the existing lint and bundle-size warning backlog remains. |
 | Deterministic eight-shard regression | PASS | 323 suites / 2,173 tests passed under `TZ=Australia/Brisbane` across all eight deterministic shards: 41/290, 41/280, 41/241, 40/448, 40/169, 40/173, 40/318 and 40/254 suites/tests. |
 | Full-chain Mission/CRP database behavior | PASS (FOCUSED) | Fresh focused run passed. The executable chain proves prospective current authority, two authorised packages across separate days, later-rejection isolation, frozen completion authority and exact per-day package/approval lineage. |
@@ -118,6 +118,7 @@ All reviewed `SECURITY DEFINER` functions in this chain declare `search_path = p
 - Package decisions, JSA reviews, amendments, actual revisions, weather, completion and report evidence are append-only or terminally guarded.
 - Fleet and Financial projections use stable source identities and unique/idempotent projection rows.
 - Signed reports read exact frozen UTF-8 report text, verify SHA-256 before parsing and do not refresh mutable current evidence.
+- Frozen weather decoding follows the actual `to_jsonb(mission_day_weather_reports) - 'organisation_id'` representation (`source`/`coverage`, not parallel aliases), and required timestamps/coordinates fail closed independently from explicitly nullable fields.
 - PGlite is single-session; true independent-session blocking/deadlock timing remains a deferred verification limitation even where lock participation is exercised.
 - Focused complete-chain tests pass for prospective, per-day and frozen-final authorisation lineage. The systematic pgcrypto harness inventory is corrected and focused checks pass; the deterministic gate and independent review remain incomplete.
 

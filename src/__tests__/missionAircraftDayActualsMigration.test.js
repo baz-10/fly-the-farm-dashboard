@@ -635,7 +635,9 @@ if (child) {
       source_metadata,source_digest,recorded_by_internal_user_id
     ) values('${orgA}','${baseA}','${ids.mission}','${ids.dayA}','${ids.pack}','ACTUAL_INTERVAL',
       '2026-09-05T00:00:00Z','2026-09-05T01:00:00Z','Australia/Brisbane','OPEN_METEO','${foreignWeather.record.id}',
-      -27.0,153.0,'foreign-provider','2026-09-05T00:01:00Z','[{}]','{}','{}','[]','{}','${'1'.repeat(64)}','${actorA}')`);
+      -27.0,153.0,'foreign-provider','2026-09-05T00:01:00Z','[{"observedAt":"2026-09-05T00:00:00Z","temperatureC":24.375,"relativeHumidity":83.25,"dewPointC":21.125,"windSpeedKmh":13.9,"windDirectionDegrees":182.75,"precipitationMm":0.05}]','{}','{}','[]','{}','${'1'.repeat(64)}','${actorA}')`);
+    const producedWeather=await scalar(db,`select to_jsonb(weather)-'organisation_id' as value from public.mission_day_weather_reports weather where mission_id='${ids.mission}' and operating_day_id='${ids.dayA}'`);
+    expect(require('../../server/frozen-mission-report-document').validateFrozenWeatherReport(producedWeather,{id:ids.dayA,packageRevisionId:ids.pack},{missionId:ids.mission})).toBe(true);
     await expect(call('ftf_build_mission_report_evidence_manifest', [orgA, ids.mission]))
       .rejects.toThrow(/MISSION_REPORT_EVIDENCE_INVALID: reference/);
     await db.exec('rollback');

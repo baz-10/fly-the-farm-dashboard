@@ -45,16 +45,19 @@
 - Canonical current-era Mission Summary and Mission Record generation now throws the safe typed `FROZEN_REPORT_EVIDENCE_INVALID` rendering error before PDF construction when the frozen digest or schema is absent or invalid. It cannot continue into object storage or artefact completion.
 - The worker persists that deterministic integrity failure as terminal `FAILED` through forward migration `20260905210000_fail_invalid_frozen_report_job.sql`; it neither stores a PDF nor marks the artefact READY and it does not retry the same invalid immutable document. Error persistence is limited to the bounded code and safe public message.
 - Genuine historical era-0/1 completion remains a separate explicit unavailable report path. It is not treated as a malformed canonical report and never fabricates current operational evidence.
+- Final schema alignment replaces the invented weather aliases with the exact `mission_day_weather_reports` frozen row contract: `source` is bounded to `OPEN_METEO|MANUAL`, `coverage` to `ACTUAL_INTERVAL|FULL_DAY`, all 24 post-`organisation_id` keys are required, coordinates are bounded database-emitted JSON decimals, and provider/manual provenance is source-consistent. The view model renders these exact frozen fields.
+- An executable PostgreSQL fixture now creates a real weather report row, obtains the same `to_jsonb(weather) - 'organisation_id'` shape used by the frozen manifest, and proves that shape passes the production decoder. Handwritten positive fixtures mirror that proven shape rather than defining a parallel schema.
+- Required and nullable evidence are validated separately. Final completion, governance history, observation/gap and weather-row timestamps reject null, absence and calendar-impossible values; required report coordinates reject null/absence/out-of-range values. Explicitly nullable operating-day/flight times and provider/manual alternatives remain nullable only where the database schema permits them.
 
 ## TDD evidence
 
 - RED: six server report tests initially failed because the existing model had no frozen source/status, no daily projection, no deterministic grouping, no malformed-evidence gate, and the renderers used mutable operational evidence.
-- GREEN: focused server suite 26/26 PASS, including decimal weather, adversarial cross-reference, governance equality/decision state, parent-lineage, digest, typed render abort, mutable-leak and maximum-bound pagination cases.
+- GREEN: focused server suite 31/31 PASS, including database-aligned decimal weather, required/null/calendar-invalid evidence, adversarial cross-reference, governance equality/decision state, parent-lineage, digest, typed render abort, mutable-leak and maximum-bound pagination cases.
 - Component/view-model/renderer/worker/authority/API regression suite: 8 suites / 23 tests PASS in the final focused run.
 
 ## Verification
 
-- `node ./node_modules/jest/bin/jest.js --runInBand server/__tests__/multiday-mission-report.test.js`: 1 suite / 26 tests PASS.
+- `node ./node_modules/jest/bin/jest.js --runInBand server/__tests__/multiday-mission-report.test.js`: 1 suite / 31 tests PASS.
 - `TZ=Australia/Brisbane CI=true npm test -- --watchAll=false --runInBand ...`: 8 suites / 23 tests PASS, including the complete Mission migration-chain behavior and no-store/no-complete worker failure path.
 - Production build: PASS with the repository's pre-existing Browserslist, lint-warning and bundle-size warning backlog.
 - Round-4 database/API/worker focus: 7 suites / 21 tests PASS, including the real full migration-chain PostgreSQL test.
