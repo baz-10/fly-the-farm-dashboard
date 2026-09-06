@@ -1070,6 +1070,18 @@ function createOperationalHandler(resource, dependencies = {}) {
         assertPermission(context, resource, 'create');
         const { data, merged } = mapInput(resource, body);
         assertAcceptanceCreateScope(context, resource, merged);
+        if (resource === 'jobs') {
+          // Delegated Support retains its separately audited writer. The new
+          // organisation command must not bypass Support Session evidence.
+          if (context.actorType === 'PLATFORM_SUPPORT') await assertRelationships(repository, resource, context, merged);
+          const result = context.actorType === 'PLATFORM_SUPPORT'
+            ? await repository.createDelegated(resource, context, data)
+            : await repository.createJobWithScope(context, data);
+          if (result.forbidden) throw apiError(403, 'FORBIDDEN', 'You do not have permission for this operation.');
+          if (result.relationshipConflict) throw apiError(409, 'RELATIONSHIP_CONFLICT', 'The related record is missing, archived, or belongs to another organisation.');
+          if (result.error) throw apiError(409, result.error, 'The requested Job scope is invalid.');
+          return res.status(201).json({ data: mapDatabaseRecord(resource, result.record) });
+        }
         if (['missions', 'aircraft', 'equipment-kits', 'fleet-assets'].includes(resource)) assertLocationAccess(context, merged.operatingLocationId, resource === 'missions' ? 'mission' : resource === 'aircraft' ? 'aircraft' : resource === 'fleet-assets' ? 'Fleet asset' : 'equipment kit');
         await assertRelationships(repository, resource, context, merged);
         const result = context.actorType === 'PLATFORM_SUPPORT' ? await repository.createDelegated(resource, context, data) : await repository.create(resource, context, data);
