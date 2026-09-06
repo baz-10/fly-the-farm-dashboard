@@ -137,8 +137,7 @@ describe('live-chain boundary, job, and mission API prerequisites', () => {
 
   test('accepts multiple field IDs and all supported job workflow fields', async () => {
     const repository = {
-      relationshipExists: jest.fn().mockResolvedValue(true),
-      create: jest.fn().mockResolvedValue({ record: {
+      createJobWithScope: jest.fn().mockResolvedValue({ record: {
         id: JOB, client_id: CLIENT, property_id: PROPERTY, reference: 'JOB-42', scope: 'Spray two paddocks',
         status: 'draft', notes: 'Client requested morning', requested_date: '2026-08-08', scheduled_date: '2026-08-10',
         field_ids: [FIELD_ONE, FIELD_TWO], row_version: 1,
@@ -168,8 +167,9 @@ describe('live-chain boundary, job, and mission API prerequisites', () => {
       fieldIds: [FIELD_ONE, FIELD_TWO], scope: 'Spray two paddocks', notes: 'Client requested morning',
       requestedDate: '2026-08-08', scheduledDate: '2026-08-10',
     }));
-    expect(repository.relationshipExists).toHaveBeenCalledWith('fields', expect.anything(), FIELD_ONE, { property_id: PROPERTY });
-    expect(repository.relationshipExists).toHaveBeenCalledWith('fields', expect.anything(), FIELD_TWO, { property_id: PROPERTY });
+    expect(repository.createJobWithScope).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      client_id: CLIENT, field_ids: [FIELD_ONE, FIELD_TWO], property_id: PROPERTY,
+    }));
   });
 
   test('rejects empty or duplicate job field selections', async () => {

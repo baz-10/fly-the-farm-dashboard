@@ -279,6 +279,26 @@ class OperationalRepository {
     return this.write('create', resource, context, null, null, data);
   }
 
+  async createJobWithScope(context, data) {
+    const result = await supabaseRequest('rest/v1/rpc/ftf_create_job_with_scope', {
+      method: 'POST',
+      body: JSON.stringify({
+        p_organisation_id: context.organisation.id,
+        p_actor_internal_user_id: context.internalUser.id,
+        p_data: data,
+      }),
+      publicMessage: 'Job could not be saved.',
+    });
+    if (result?.forbidden) return { forbidden: true };
+    if (result?.error) return { error: result.error };
+    const fields = Array.isArray(result?.fields) ? result.fields : [];
+    const record = { ...(result?.record || result) };
+    record.field_ids = fields.map((field) => field?.id).filter(Boolean);
+    record.property_ids = [...new Set(fields.map((field) => field?.property_id).filter(Boolean))];
+    if (record.property_ids[0]) record.property_id = record.property_ids[0];
+    return { record, fields };
+  }
+
   async update(resource, context, id, expectedVersion, data) {
     return this.write('update', resource, context, id, expectedVersion, data);
   }

@@ -29,6 +29,15 @@ function request(method, body) {
   };
 }
 
+function createRequest(body) {
+  return {
+    method: 'POST',
+    body,
+    query: {},
+    headers: { host: 'localhost:3001', origin: 'http://localhost:3001' },
+  };
+}
+
 function context(permissions = ['jobs.write']) {
   return {
     organisation: { id: ORGANISATION, name: 'Farm A' },
@@ -48,6 +57,58 @@ function job() {
 }
 
 describe('checked multi-property Job scope API', () => {
+  test('creates a Job from Fields across two Properties of the same Client', async () => {
+    const created = job();
+    const repository = {
+      createJobWithScope: jest.fn().mockResolvedValue({ record: created }),
+    };
+    const handler = createOperationalHandler('jobs', {
+      repository,
+      resolveContext: jest.fn().mockResolvedValue(context(['jobs.create'])),
+    });
+    const res = response();
+
+    await handler(createRequest({
+      clientId: CLIENT,
+      propertyId: PROPERTY_A,
+      fieldIds: [FIELD_A, FIELD_B],
+      reference: 'JOB-42',
+      scope: 'Two Properties',
+      status: 'open',
+    }), res);
+
+    expect(res.statusCode).toBe(201);
+    expect(repository.createJobWithScope).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      client_id: CLIENT,
+      property_id: PROPERTY_A,
+      field_ids: [FIELD_A, FIELD_B],
+    }));
+    expect(res.body.data).toEqual(expect.objectContaining({
+      fieldIds: [FIELD_A, FIELD_B], propertyIds: [PROPERTY_A, PROPERTY_B], propertyId: PROPERTY_A,
+    }));
+  });
+
+  test('rejects a cross-Client Job scope without falling back to the generic writer', async () => {
+    const repository = {
+      createJobWithScope: jest.fn().mockResolvedValue({ error: 'JOB_SCOPE_CLIENT_MISMATCH' }),
+      create: jest.fn(),
+    };
+    const handler = createOperationalHandler('jobs', {
+      repository,
+      resolveContext: jest.fn().mockResolvedValue(context(['jobs.create'])),
+    });
+    const res = response();
+
+    await handler(createRequest({
+      clientId: CLIENT, propertyId: PROPERTY_A, fieldIds: [FIELD_A, FIELD_B],
+      reference: 'JOB-42', scope: 'Invalid scope', status: 'open',
+    }), res);
+
+    expect(res.statusCode).toBe(409);
+    expect(res.body.error.code).toBe('JOB_SCOPE_CLIENT_MISMATCH');
+    expect(repository.create).not.toHaveBeenCalled();
+  });
+
   test('updates a Job with Fields from two Properties of one Client', async () => {
     const repository = { writeJobScope: jest.fn().mockResolvedValue({ record: job() }) };
     const handler = createOperationalHandler('jobs', { repository, resolveContext: jest.fn().mockResolvedValue(context()) });
