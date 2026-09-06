@@ -78,6 +78,7 @@ test('creates, persists, reopens, and archives the authoritative Client to Draft
     records.field = validatePersistedOperationalRecordResponse(
       'fields', persistedFieldResponse.status(), await persistedFieldResponse.json().catch(() => ({})), createdField.id, 'name', label,
     );
+    expect(records.field.propertyId).toBe(records.property.id);
 
     await page.getByRole('button', { name: /2 Property/ }).click();
     await page.getByRole('button', { name: 'Add new Property' }).click();
@@ -112,21 +113,23 @@ test('creates, persists, reopens, and archives the authoritative Client to Draft
       'fields', secondaryFieldCreateResponse.status(), await secondaryFieldCreateResponse.json().catch(() => ({})), 'name', secondaryLabel,
     );
     records.secondaryField = createdSecondaryField;
+    await expect(page.getByRole('heading', { name: 'Create the work request' })).toBeVisible();
     const persistedSecondaryFieldResponse = await page.request.get(`/api/v1/fields?id=${encodeURIComponent(createdSecondaryField.id)}`);
     records.secondaryField = validatePersistedOperationalRecordResponse(
       'fields', persistedSecondaryFieldResponse.status(), await persistedSecondaryFieldResponse.json().catch(() => ({})), createdSecondaryField.id, 'name', secondaryLabel,
     );
+    expect(records.secondaryField.propertyId).toBe(records.secondaryProperty.id);
 
     await page.goto('/jobs?view=jobs');
     await expect(page.getByRole('heading', { name: 'Jobs' })).toBeVisible();
     await page.getByRole('button', { name: 'Add Job' }).first().click();
     await page.setViewportSize({ width: 390, height: 844 });
     await page.getByRole('combobox', { name: 'Client' }).selectOption(records.client.id);
-    await page.getByRole('checkbox', { name: label }).check();
-    await page.setViewportSize({ width: 768, height: 1024 });
     await page.getByRole('button', { name: 'Add fields from another Property' }).click();
+    await page.getByRole('checkbox', { name: label, exact: true }).check();
+    await page.setViewportSize({ width: 768, height: 1024 });
+    await page.getByRole('checkbox', { name: secondaryLabel, exact: true }).check();
     await page.setViewportSize({ width: 1280, height: 900 });
-    await page.getByRole('checkbox', { name: secondaryLabel }).check();
     await expect(page.getByText(/2 Properties · 2 Fields/)).toBeVisible();
     await page.getByRole('button', { name: 'Continue to Job details' }).click();
     await expect(page.getByRole('heading', { name: 'Record Spray Job' })).toBeVisible();
