@@ -6,10 +6,11 @@ const acceptanceSpec = () => fs.readFileSync(path.resolve(
   '../../e2e/acceptance/client-to-mission.spec.ts',
 ), 'utf8');
 
-test('keeps responsive field selection and resumed Mission locators on their matching record labels', () => {
+test('reveals both Properties and selects their Fields by exact labels across responsive widths', () => {
   const source = acceptanceSpec();
 
-  expect(source).toMatch(/setViewportSize\(\{ width: 390,[\s\S]*checkbox', \{ name: label \}\)\.check\(\)[\s\S]*setViewportSize\(\{ width: 768,[\s\S]*Add fields from another Property[\s\S]*setViewportSize\(\{ width: 1280,[\s\S]*checkbox', \{ name: secondaryLabel \}\)\.check\(\)/);
+  expect(source).toMatch(/setViewportSize\(\{ width: 390,[\s\S]*Add fields from another Property[\s\S]*checkbox', \{ name: label, exact: true \}\)\.check\(\)[\s\S]*setViewportSize\(\{ width: 768,[\s\S]*checkbox', \{ name: secondaryLabel, exact: true \}\)\.check\(\)[\s\S]*setViewportSize\(\{ width: 1280/);
+  expect(source).not.toMatch(/checkbox', \{ name: (?:label|secondaryLabel) \}\)/);
   expect(source).toMatch(/openMissionCreationWorkspace\(page\);[\s\S]*combobox', \{ name: 'Client' \}\)\.click\(\);\s*await page\.getByRole\('option', \{ name: label \}\)\.click\(\);[\s\S]*combobox', \{ name: 'Property' \}\)\.click\(\);\s*await page\.getByRole\('option', \{ name: label \}\)\.click\(\);[\s\S]*combobox', \{ name: 'Field' \}\)\.click\(\);\s*await page\.getByRole\('option', \{ name: label \}\)\.click\(\);/);
 });
 
@@ -40,4 +41,12 @@ test('proves every operational create command before exact-ID persistence verifi
   }
 
   expect(source).not.toContain('findAcceptanceRecord(');
+});
+
+test('proves Field parentage and boundary completion before retaining cleanup versions', () => {
+  const source = acceptanceSpec();
+
+  expect(source).toMatch(/records\.field = validatePersistedOperationalRecordResponse[\s\S]*expect\(records\.field\.propertyId\)\.toBe\(records\.property\.id\)/);
+  expect(source).toMatch(/secondaryFieldCreateResponse[\s\S]*heading', \{ name: 'Create the work request' \}\)\)\.toBeVisible\(\)[\s\S]*persistedSecondaryFieldResponse/);
+  expect(source).toMatch(/records\.secondaryField = validatePersistedOperationalRecordResponse[\s\S]*expect\(records\.secondaryField\.propertyId\)\.toBe\(records\.secondaryProperty\.id\)/);
 });
