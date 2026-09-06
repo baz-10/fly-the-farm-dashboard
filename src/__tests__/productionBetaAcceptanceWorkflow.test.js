@@ -105,7 +105,7 @@ describe('Production Beta operational acceptance execution profile', () => {
     ]));
     expect(operational.if).toContain("needs.client-to-mission-preflight.result == 'success'");
     expect(operational.if).toContain("needs.commercial-onboarding-acceptance.result == 'skipped'");
-    expect(preflight.env.EXPECTED_RELEASE_SHA).toBe('932f787d9ff9aa091a74a0543adc5d6e6be591f6');
+    expect(preflight.env.EXPECTED_RELEASE_SHA).toBe('${{ inputs.expected_release_sha }}');
     expect(preflight.env.EXPECTED_SUPABASE_PROJECT_REF).toBe('fzkrvglzompkuiodqllr');
 
     const preflightSource = fs.readFileSync(clientToMissionPreflightPath, 'utf8');
@@ -131,6 +131,23 @@ describe('Production Beta operational acceptance execution profile', () => {
     expect(preflightSource).not.toMatch(/commercial-onboarding\.spec|archive-controlled|ftf_archive_controlled_commercial_onboarding/);
     expect(`${preflightSource}${operationalSource}`).not.toMatch(/db push(?! --linked --dry-run)|vercel deploy|supabase migration up/);
     expect(operationalSource).not.toMatch(/commercial-onboarding\.spec|archive-controlled|ftf_archive_controlled_commercial_onboarding/);
+  });
+
+  test('runs the reviewed Client-to-Mission harness against the separately verified runtime SHA', () => {
+    const definition = workflowDefinition();
+    const operational = definition.jobs['operational-acceptance'];
+    const checkout = workflowStep(operational, 'Check out accepted source');
+    const harness = workflowStep(operational, 'Load reviewed Client-to-Mission acceptance harness');
+    const stepNames = operational.steps.map(({ name }) => name);
+
+    expect(checkout.with.ref).toBe('${{ needs.deployment-identity.outputs.commit-sha }}');
+    expect(harness.env.ACCEPTANCE_HARNESS_SHA).toBe('${{ github.sha }}');
+    expect(harness.run).toContain('e2e/acceptance/client-to-mission.spec.ts');
+    expect(harness.run).not.toMatch(/\bsrc\/|\bserver\/|\bapi\/|playwright\.config/);
+    expect(stepNames.indexOf('Install locked dependencies'))
+      .toBeLessThan(stepNames.indexOf('Load reviewed Client-to-Mission acceptance harness'));
+    expect(stepNames.indexOf('Load reviewed Client-to-Mission acceptance harness'))
+      .toBeLessThan(stepNames.indexOf('Run established Client-to-Mission gate'));
   });
 
   test('pins deterministic acceptance execution to the approved operational timezone', () => {
