@@ -151,13 +151,13 @@ test('creates, persists, reopens, and archives the authoritative Client to Draft
 
     await openMissionCreationWorkspace(page);
     await page.getByRole('combobox', { name: 'Client' }).click();
-    await page.getByRole('option', { name: label }).click();
+    await page.getByRole('option', { name: label, exact: true }).click();
     await page.getByRole('button', { name: 'Continue' }).click();
     await page.getByRole('combobox', { name: 'Property' }).click();
-    await page.getByRole('option', { name: label }).click();
+    await page.getByRole('option', { name: label, exact: true }).click();
     await page.getByRole('button', { name: 'Continue' }).click();
     await page.getByRole('combobox', { name: 'Field' }).click();
-    await page.getByRole('option', { name: label }).click();
+    await page.getByRole('option', { name: label, exact: true }).click();
     await page.getByRole('button', { name: 'Continue' }).click();
     await page.getByRole('combobox', { name: 'Job' }).click();
     await page.getByRole('option', { name: new RegExp(label) }).click();
