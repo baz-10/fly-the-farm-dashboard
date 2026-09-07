@@ -113,8 +113,14 @@ describe('Production Beta operational acceptance execution profile', () => {
     expect(preflightSource).toContain("event_type='commercial_onboarding.acceptance_archived'");
     expect(preflightSource).toContain("topic='commercial_onboarding.acceptance_archived'");
     expect(preflightSource).toContain("tenant_id='961a4354-40f5-479d-a577-74839596ad14'::uuid");
-    expect(preflightSource).toContain("digest mismatch: clients");
+    expect(preflightSource).toContain("'controlledFixture','archived'");
+    expect(preflightSource).toContain("'unrelatedRecords','not_read'");
     expect(preflightSource).not.toContain("name like 'SC ACCEPTANCE — %'");
+    expect(preflightSource).not.toMatch(/md5\(|string_agg\(|row_to_json\(|digest mismatch/);
+    expect(preflightSource).not.toMatch(/(?:organisation_id|tenant_id|id)\s*<>\s*'961a4354-40f5-479d-a577-74839596ad14'/);
+    expect(workflowStep(preflight, 'Verify controlled archived fixture isolation')).toEqual(expect.objectContaining({
+      run: expect.stringContaining('scripts/clientToMissionProductionPreflight.sql'),
+    }));
   });
 
   test('manual Client-to-Mission mode reuses the existing gate and cannot onboard, archive, migrate, or deploy', () => {

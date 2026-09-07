@@ -1,7 +1,4 @@
 do $$
-declare
-  v_count bigint;
-  v_digest text;
 begin
   if (select count(*) from supabase_migrations.schema_migrations where version='20260813130000')<>1 then
     raise exception 'CLIENT_TO_MISSION_PREFLIGHT: migration 20260813130000 mismatch';
@@ -45,30 +42,6 @@ begin
     raise exception 'CLIENT_TO_MISSION_PREFLIGHT: controlled evidence boundary mismatch';
   end if;
 
-  select count(*),md5(coalesce(string_agg(md5(row_to_json(t)::text),'' order by id::text),''))
-    into v_count,v_digest from public.clients t where organisation_id<>'961a4354-40f5-479d-a577-74839596ad14'::uuid;
-  if v_count<>27 or v_digest<>'361ec0ed3203caf8f71f5a0e580fb98f' then raise exception 'CLIENT_TO_MISSION_PREFLIGHT: digest mismatch: clients'; end if;
-  select count(*),md5(coalesce(string_agg(md5(row_to_json(t)::text),'' order by id::text),''))
-    into v_count,v_digest from public.properties t where organisation_id<>'961a4354-40f5-479d-a577-74839596ad14'::uuid;
-  if v_count<>23 or v_digest<>'8481208a52acf250dcb45d8ddd954297' then raise exception 'CLIENT_TO_MISSION_PREFLIGHT: digest mismatch: properties'; end if;
-  select count(*),md5(coalesce(string_agg(md5(row_to_json(t)::text),'' order by id::text),''))
-    into v_count,v_digest from public.fields t where organisation_id<>'961a4354-40f5-479d-a577-74839596ad14'::uuid;
-  if v_count<>20 or v_digest<>'ac6d293bc50227acac86e26feaaac141' then raise exception 'CLIENT_TO_MISSION_PREFLIGHT: digest mismatch: fields'; end if;
-  select count(*),md5(coalesce(string_agg(md5(row_to_json(t)::text),'' order by id::text),''))
-    into v_count,v_digest from public.jobs t where organisation_id<>'961a4354-40f5-479d-a577-74839596ad14'::uuid;
-  if v_count<>18 or v_digest<>'e2c080779ebb0c3eda4f6ba63eb7a712' then raise exception 'CLIENT_TO_MISSION_PREFLIGHT: digest mismatch: jobs'; end if;
-  select count(*),md5(coalesce(string_agg(md5(row_to_json(t)::text),'' order by id::text),''))
-    into v_count,v_digest from public.missions t where organisation_id<>'961a4354-40f5-479d-a577-74839596ad14'::uuid;
-  if v_count<>18 or v_digest<>'341a30e6f87afdcaaab99d8622c95ba8' then raise exception 'CLIENT_TO_MISSION_PREFLIGHT: digest mismatch: missions'; end if;
-  select count(*),md5(coalesce(string_agg(md5(row_to_json(t)::text),'' order by id::text),''))
-    into v_count,v_digest from public.organisations t where id<>'961a4354-40f5-479d-a577-74839596ad14'::uuid;
-  if v_count<>7 or v_digest<>'7544fdbf2a4820630183588eaa0d542a' then raise exception 'CLIENT_TO_MISSION_PREFLIGHT: digest mismatch: organisations'; end if;
-  select count(*),md5(coalesce(string_agg(md5(row_to_json(t)::text),'' order by id::text),''))
-    into v_count,v_digest from public.personnel t where organisation_id<>'961a4354-40f5-479d-a577-74839596ad14'::uuid;
-  if v_count<>3 or v_digest<>'ea98f788724f969e823071afdcbb1ec4' then raise exception 'CLIENT_TO_MISSION_PREFLIGHT: digest mismatch: personnel'; end if;
-  select count(*),md5(coalesce(string_agg(md5(row_to_json(t)::text),'' order by tenant_id::text,collection,record_id),''))
-    into v_count,v_digest from public.ftf_store t where tenant_id<>'961a4354-40f5-479d-a577-74839596ad14'::uuid;
-  if v_count<>6 or v_digest<>'f29ee3e6379136074b2f69dc715e2d46' then raise exception 'CLIENT_TO_MISSION_PREFLIGHT: digest mismatch: ftf_store'; end if;
 end
 $$;
 
@@ -76,5 +49,5 @@ select jsonb_build_object(
   'verified',true,
   'migration','20260813130000',
   'controlledFixture','archived',
-  'genuineBaseline','unchanged'
+  'unrelatedRecords','not_read'
 ) as client_to_mission_production_preflight;

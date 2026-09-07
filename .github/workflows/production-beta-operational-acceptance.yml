@@ -389,7 +389,7 @@ jobs:
           pending="$(printf '%s\n' "$pending_output" | node scripts/productionBetaReleaseEvidence.mjs plan)"
           node -e 'const value=JSON.parse(process.argv[1]); if(!Array.isArray(value)||value.length!==0) process.exit(1);' "$pending"
 
-      - name: Verify archived fixture and genuine-data baseline
+      - name: Verify controlled archived fixture isolation
         shell: bash
         run: npx --yes "supabase@$SUPABASE_CLI_VERSION" db query --linked --file scripts/clientToMissionProductionPreflight.sql
 
