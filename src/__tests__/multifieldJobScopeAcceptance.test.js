@@ -11,7 +11,8 @@ test('reveals both Properties and selects their Fields by exact labels across re
 
   expect(source).toMatch(/setViewportSize\(\{ width: 390,[\s\S]*Add fields from another Property[\s\S]*checkbox', \{ name: label, exact: true \}\)\.check\(\)[\s\S]*setViewportSize\(\{ width: 768,[\s\S]*checkbox', \{ name: secondaryLabel, exact: true \}\)\.check\(\)[\s\S]*setViewportSize\(\{ width: 1280/);
   expect(source).not.toMatch(/checkbox', \{ name: (?:label|secondaryLabel) \}\)/);
-  expect(source).toMatch(/openMissionCreationWorkspace\(page\);[\s\S]*combobox', \{ name: 'Client' \}\)\.click\(\);\s*await page\.getByRole\('option', \{ name: label \}\)\.click\(\);[\s\S]*combobox', \{ name: 'Property' \}\)\.click\(\);\s*await page\.getByRole\('option', \{ name: label \}\)\.click\(\);[\s\S]*combobox', \{ name: 'Field' \}\)\.click\(\);\s*await page\.getByRole\('option', \{ name: label \}\)\.click\(\);/);
+  expect(source).toMatch(/openMissionCreationWorkspace\(page\);[\s\S]*combobox', \{ name: 'Client' \}\)\.click\(\);\s*await page\.getByRole\('option', \{ name: label, exact: true \}\)\.click\(\);[\s\S]*combobox', \{ name: 'Property' \}\)\.click\(\);\s*await page\.getByRole\('option', \{ name: label, exact: true \}\)\.click\(\);[\s\S]*combobox', \{ name: 'Field' \}\)\.click\(\);\s*await page\.getByRole\('option', \{ name: label, exact: true \}\)\.click\(\);/);
+  expect(source).not.toMatch(/getByRole\('option', \{ name: label \}\)/);
 });
 
 test('proves every operational create command before exact-ID persistence verification', () => {
