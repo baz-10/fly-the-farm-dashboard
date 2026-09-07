@@ -180,9 +180,16 @@ export function createOperationalDataStore(gateway: OperationalDataGateway): Ope
       const invalidProperty = properties.some((record) => !clientIds.has(record.clientId));
       const invalidField = fields.some((record) => !propertiesById.has(record.propertyId));
       const invalidJob = jobs.some((record) => {
-        const parent = propertiesById.get(record.propertyId);
-        return !clientIds.has(record.clientId) || !parent || parent.clientId !== record.clientId
-          || record.fieldIds.some((fieldId) => fieldsById.get(fieldId)?.propertyId !== record.propertyId);
+        const propertyIds = record.propertyIds?.length ? record.propertyIds : [record.propertyId];
+        const propertyIdSet = new Set(propertyIds);
+        return !clientIds.has(record.clientId)
+          || propertyIdSet.size !== propertyIds.length
+          || !propertyIdSet.has(record.propertyId)
+          || propertyIds.some((propertyId) => propertiesById.get(propertyId)?.clientId !== record.clientId)
+          || record.fieldIds.some((fieldId) => {
+            const selectedField = fieldsById.get(fieldId);
+            return !selectedField || !propertyIdSet.has(selectedField.propertyId);
+          });
       });
       const invalidMission = missions.some((record) => !['Planning', 'Completed'].includes(record.status)
         || !jobIds.has(record.jobId) || !operatingLocationIds.has(record.operatingLocationId));
