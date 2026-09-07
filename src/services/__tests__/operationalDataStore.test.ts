@@ -467,6 +467,33 @@ describe('operational data store', () => {
     expect(store.getSnapshot()).toEqual(expect.objectContaining({ status: 'error', jobs: [], error: expect.objectContaining({ code: 'MALFORMED_RESPONSE' }) }));
   });
 
+  test('accepts a Job whose authoritative Fields span multiple Properties owned by the same Client', async () => {
+    const multiPropertyJob: OperationalJob = {
+      ...job('job-1', ['field-1', 'field-2']),
+      propertyIds: ['property-1', 'property-2'],
+    };
+    const store = createOperationalDataStore(gateway({
+      listClients: jest.fn().mockResolvedValue([client('client-1')]),
+      listProperties: jest.fn().mockResolvedValue([
+        property('property-1', 'client-1'),
+        property('property-2', 'client-1'),
+      ]),
+      listFields: jest.fn().mockResolvedValue([
+        field('field-1', 'property-1'),
+        field('field-2', 'property-2'),
+      ]),
+      listJobs: jest.fn().mockResolvedValue([multiPropertyJob]),
+    }));
+
+    await store.setAuthenticatedUser('user-1');
+
+    expect(store.getSnapshot()).toEqual(expect.objectContaining({
+      status: 'ready',
+      jobs: [expect.objectContaining({ id: 'job-1', propertyIds: ['property-1', 'property-2'] })],
+      error: null,
+    }));
+  });
+
   test('publishes boundary geometry and the advanced field version only after server confirmation', async () => {
     const data = gateway({
       listClients: jest.fn().mockResolvedValue([client('client-1')]),

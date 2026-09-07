@@ -50,3 +50,23 @@ test('proves Field parentage and boundary completion before retaining cleanup ve
   expect(source).toMatch(/secondaryFieldCreateResponse[\s\S]*heading', \{ name: 'Create the work request' \}\)\)\.toBeVisible\(\)[\s\S]*persistedSecondaryFieldResponse/);
   expect(source).toMatch(/records\.secondaryField = validatePersistedOperationalRecordResponse[\s\S]*expect\(records\.secondaryField\.propertyId\)\.toBe\(records\.secondaryProperty\.id\)/);
 });
+
+test('archives the multi-Property chain in reverse dependency order', () => {
+  const source = acceptanceSpec();
+  const cleanup = source.slice(source.indexOf('} finally {'));
+  const mission = cleanup.indexOf("archiveAcceptanceRecord(page.request, 'missions', records.mission");
+  const job = cleanup.indexOf("archiveAcceptanceRecord(page.request, 'jobs', records.job");
+  const secondaryField = cleanup.indexOf("archiveAcceptanceRecord(page.request, 'fields', records.secondaryField");
+  const field = cleanup.indexOf("archiveAcceptanceRecord(page.request, 'fields', records.field");
+  const secondaryProperty = cleanup.indexOf("archiveAcceptanceRecord(page.request, 'properties', records.secondaryProperty");
+  const property = cleanup.indexOf("archiveAcceptanceRecord(page.request, 'properties', records.property");
+  const client = cleanup.indexOf("archiveAcceptanceRecord(page.request, 'clients', records.client");
+
+  expect([mission, job, secondaryField, field, secondaryProperty, property, client].every((position) => position >= 0)).toBe(true);
+  expect(mission).toBeLessThan(job);
+  expect(job).toBeLessThan(secondaryField);
+  expect(secondaryField).toBeLessThan(field);
+  expect(field).toBeLessThan(secondaryProperty);
+  expect(secondaryProperty).toBeLessThan(property);
+  expect(property).toBeLessThan(client);
+});

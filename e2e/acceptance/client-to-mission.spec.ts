@@ -3,7 +3,6 @@ import path from 'node:path';
 import {
   acceptanceRunLabel,
   archiveAcceptanceRecord,
-  archiveAcceptanceChain,
   assertNoLegacyEntityPersistence,
 } from './fixtures/acceptanceRecords';
 import {
@@ -197,9 +196,13 @@ test('creates, persists, reopens, and archives the authoritative Client to Draft
     // a primary workflow failure from cancelling or being masked by cleanup.
     testInfo.setTimeout(testInfo.timeout + 90_000);
     try {
+      await archiveAcceptanceRecord(page.request, 'missions', records.mission, { origin: new URL(acceptanceEnvironment().baseUrl).origin });
+      await archiveAcceptanceRecord(page.request, 'jobs', records.job, { origin: new URL(acceptanceEnvironment().baseUrl).origin });
       await archiveAcceptanceRecord(page.request, 'fields', records.secondaryField, { origin: new URL(acceptanceEnvironment().baseUrl).origin });
+      await archiveAcceptanceRecord(page.request, 'fields', records.field, { origin: new URL(acceptanceEnvironment().baseUrl).origin });
       await archiveAcceptanceRecord(page.request, 'properties', records.secondaryProperty, { origin: new URL(acceptanceEnvironment().baseUrl).origin });
-      await archiveAcceptanceChain(page.request, records, { origin: new URL(acceptanceEnvironment().baseUrl).origin });
+      await archiveAcceptanceRecord(page.request, 'properties', records.property, { origin: new URL(acceptanceEnvironment().baseUrl).origin });
+      await archiveAcceptanceRecord(page.request, 'clients', records.client, { origin: new URL(acceptanceEnvironment().baseUrl).origin });
     } catch (error) {
       if (!workflowError) throw error;
       console.error(`[acceptance-cleanup] secondary_failure=${error instanceof Error ? error.message : 'UNKNOWN'}`);
