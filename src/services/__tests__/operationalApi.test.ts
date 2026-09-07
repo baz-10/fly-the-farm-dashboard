@@ -127,6 +127,21 @@ describe('operational API adapter', () => {
       boundary_geojson: { type: 'Polygon', coordinates: [[[153, -27], [154, -27], [154, -28], [153, -27]]] },
       field_version: 5, row_version: 1, created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z',
     })).toEqual(expect.objectContaining({ id: 'boundary-1', fieldId: 'field-1', versionNumber: 2, fieldVersion: 5 }));
+
+    expect(mapApiFieldBoundaryVersion({
+      id: 'boundary-2', field_id: 'field-1', property_id: 'property-1', version_number: 3,
+      boundary_geojson: { type: 'MultiPolygon', coordinates: [
+        [[[153, -27], [154, -27], [154, -28], [153, -27]]],
+        [[[155, -29], [156, -29], [156, -30], [155, -29]]],
+      ] },
+      field_version: 6, row_version: 1, created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z',
+    })).toEqual(expect.objectContaining({
+      boundaryCoords: [[-27, 153], [-27, 154], [-28, 154]],
+      boundaryPolygons: [
+        [[-27, 153], [-27, 154], [-28, 154]],
+        [[-29, 155], [-29, 156], [-30, 156]],
+      ],
+    }));
   });
 
   test('derives checked Job property scope and rejects duplicate scope IDs', () => {

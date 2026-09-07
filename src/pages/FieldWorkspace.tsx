@@ -20,8 +20,8 @@ import { FieldAccessPointDraft, moveFieldAccessPoint, suggestFieldAccessPoint } 
 
 const AddressLocationMap = React.lazy(() => import('../components/AddressLocationMap'));
 
-type FieldDraft = { clientId: string; propertyId: string; name: string; area: number; coords: LatLng[]; accessPoint?: FieldAccessPointDraft };
-const emptyDraft = (): FieldDraft => ({ clientId: '', propertyId: '', name: '', area: 0, coords: [] });
+type FieldDraft = { clientId: string; propertyId: string; name: string; area: number; coords: LatLng[]; polygons: LatLng[][]; accessPoint?: FieldAccessPointDraft };
+const emptyDraft = (): FieldDraft => ({ clientId: '', propertyId: '', name: '', area: 0, coords: [], polygons: [] });
 
 export default function FieldWorkspace() {
   const navigate = useNavigate();
@@ -77,11 +77,11 @@ export default function FieldWorkspace() {
         name: draft.name.trim(),
         sizeHa: draft.area,
         boundary: null,
-        boundaryCoords: draft.coords.length >= 3 ? draft.coords : undefined,
+        boundaryCoords: draft.polygons.length > 1 ? undefined : draft.coords.length >= 3 ? draft.coords : undefined,
         ...(draft.accessPoint?.locationConfirmedAt ? { accessPoint: { ...draft.accessPoint, locationConfirmedAt: draft.accessPoint.locationConfirmedAt } } : {}),
         notes: '',
       });
-      if (draft.coords.length >= 3) await operational.createFieldBoundaryVersion(created.id, draft.coords);
+      if (draft.coords.length >= 3) await operational.createFieldBoundaryVersion(created.id, draft.polygons.length > 1 ? draft.polygons : draft.coords);
       const parent = properties.get(created.propertyId);
       setDialogOpen(false);
       setDraft(emptyDraft());
@@ -163,7 +163,7 @@ export default function FieldWorkspace() {
           <TextField select label="Select Client" value={draft.clientId} onChange={(event) => setDraft({ ...emptyDraft(), clientId: event.target.value })} required fullWidth>
             {operational.clients.map((client) => <MenuItem key={client.id} value={client.id}>{client.name}</MenuItem>)}
           </TextField>
-          {draft.clientId && <TextField select label="Select Property" value={draft.propertyId} onChange={(event) => setDraft((current) => ({ ...current, propertyId: event.target.value, coords: [], area: 0, accessPoint: undefined }))} required fullWidth>
+          {draft.clientId && <TextField select label="Select Property" value={draft.propertyId} onChange={(event) => setDraft((current) => ({ ...current, propertyId: event.target.value, coords: [], polygons: [], area: 0, accessPoint: undefined }))} required fullWidth>
             {availableProperties.map((property) => <MenuItem key={property.id} value={property.id}>{property.name}</MenuItem>)}
           </TextField>}
           {selectedProperty && <>
@@ -172,7 +172,7 @@ export default function FieldWorkspace() {
             <Box>
               <Typography variant="subtitle2" fontWeight={800} sx={{ mb: 0.5 }}>Field boundary</Typography>
               <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 1.25 }}>Draw or upload the boundary now, or add it later from the Field.</Typography>
-              <FieldBoundaryEditor coords={draft.coords} onCoordsChange={(coords) => setDraft((current) => ({ ...current, coords }))} onAreaChange={(area) => setDraft((current) => ({ ...current, area }))} propertyLat={selectedProperty.lat} propertyLng={selectedProperty.lng} initialAddress={selectedProperty.address} mapHeight={360} />
+              <FieldBoundaryEditor coords={draft.coords} polygons={draft.polygons} onCoordsChange={(coords) => setDraft((current) => ({ ...current, coords, polygons: coords.length ? [coords, ...current.polygons.slice(1)] : current.polygons.slice(1) }))} onPolygonsChange={(polygons) => setDraft((current) => ({ ...current, polygons }))} onAreaChange={(area) => setDraft((current) => ({ ...current, area }))} propertyLat={selectedProperty.lat} propertyLng={selectedProperty.lng} initialAddress={selectedProperty.address} mapHeight={360} />
               <Typography variant="body2" fontWeight={800} sx={{ mt: 1 }}>{draft.area > 0 ? `${Number(draft.area.toFixed(2))} ha calculated from boundary` : 'Area will be calculated from the saved boundary.'}</Typography>
             </Box>
             <Box>

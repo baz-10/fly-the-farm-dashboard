@@ -88,6 +88,8 @@ export interface Field {
   sizeHa: number;
   boundary: BoundaryFileRef | null;
   boundaryCoords?: LatLng[];
+  /** Every outer ring in the active authoritative Polygon or MultiPolygon boundary. */
+  boundaryPolygons?: LatLng[][];
   notes: string;
   createdAt: string;
   updatedAt: string;

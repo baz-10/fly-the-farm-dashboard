@@ -113,7 +113,7 @@ export interface OperationalDataStore {
   updateMission(id: string, input: OperationalMissionUpdateInput): Promise<OperationalMission>;
   archiveMission(id: string): Promise<void>;
   refreshFieldBoundary(fieldId: string): Promise<OperationalFieldBoundaryVersion | null>;
-  createFieldBoundaryVersion(fieldId: string, coordinates: Array<[number, number]>): Promise<OperationalFieldBoundaryVersion>;
+  createFieldBoundaryVersion(fieldId: string, coordinates: Array<[number, number]> | Array<Array<[number, number]>>): Promise<OperationalFieldBoundaryVersion>;
 }
 
 export interface OperationalSessionScope {
@@ -372,7 +372,9 @@ export function createOperationalDataStore(gateway: OperationalDataGateway): Ope
           || [...records].sort((a, b) => b.versionNumber - a.versionNumber)[0] || null;
         patch({
           fieldBoundaryVersions: [...state.fieldBoundaryVersions.filter((record) => record.fieldId !== fieldId), ...records],
-          fields: current ? state.fields.map((record) => record.id === fieldId ? { ...record, boundaryCoords: current.boundaryCoords } : record) : state.fields,
+          fields: current ? state.fields.map((record) => record.id === fieldId ? {
+            ...record, boundaryCoords: current.boundaryCoords, boundaryPolygons: current.boundaryPolygons,
+          } : record) : state.fields,
           error: null,
         });
         return current;
@@ -384,22 +386,31 @@ export function createOperationalDataStore(gateway: OperationalDataGateway): Ope
     createFieldBoundaryVersion(fieldId, coordinates) {
       const field = state.fields.find((record) => record.id === fieldId);
       if (!field) return Promise.reject(Object.assign(new Error('Field not found.'), { code: 'NOT_FOUND', status: 404 }));
-      if (coordinates.length < 3 || coordinates.some(([lat, lng]) => !Number.isFinite(lat) || !Number.isFinite(lng)
-        || lat < -90 || lat > 90 || lng < -180 || lng > 180)) {
+      const polygons: Array<Array<[number, number]>> = typeof coordinates[0]?.[0] === 'number'
+        ? [coordinates as Array<[number, number]>]
+        : coordinates as Array<Array<[number, number]>>;
+      if (!polygons.length || polygons.some((polygon) => polygon.length < 3 || polygon.some(([lat, lng]) => !Number.isFinite(lat) || !Number.isFinite(lng)
+        || lat < -90 || lat > 90 || lng < -180 || lng > 180))) {
         return Promise.reject(Object.assign(new Error('Boundary geometry must contain at least three valid points.'), { code: 'VALIDATION_ERROR', status: 400 }));
       }
-      const ring = coordinates.map(([lat, lng]) => [lng, lat]);
-      ring.push([...ring[0]]);
+      const rings = polygons.map((polygon) => {
+        const ring = polygon.map(([lat, lng]) => [lng, lat]);
+        ring.push([...ring[0]]);
+        return ring;
+      });
       return mutate('boundary', fieldId, () => gateway.createFieldBoundaryVersion({
         fieldId, propertyId: field.propertyId, expectedFieldVersion: field.rowVersion || 1,
-        boundaryGeojson: { type: 'Polygon', coordinates: [ring] },
+        boundaryGeojson: rings.length === 1
+          ? { type: 'Polygon', coordinates: [rings[0]] }
+          : { type: 'MultiPolygon', coordinates: rings.map((ring) => [ring]) },
       }), (record) => {
         const boundary = record as OperationalFieldBoundaryVersion;
         if (!boundary.fieldVersion) throw Object.assign(new Error('The boundary response did not include the updated field version.'), { code: 'MALFORMED_RESPONSE' });
         patch({
           fieldBoundaryVersions: [...state.fieldBoundaryVersions.filter((item) => item.id !== boundary.id), boundary],
           fields: state.fields.map((item) => item.id === fieldId ? {
-            ...item, rowVersion: boundary.fieldVersion, fieldBoundaryVersionId: boundary.id, boundaryCoords: boundary.boundaryCoords,
+            ...item, rowVersion: boundary.fieldVersion, fieldBoundaryVersionId: boundary.id,
+            boundaryCoords: boundary.boundaryCoords, boundaryPolygons: boundary.boundaryPolygons,
           } : item),
         });
       });

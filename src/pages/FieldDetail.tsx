@@ -56,6 +56,7 @@ export default function FieldDetail() {
   const [editing, setEditing] = useState(false);
   const [editForm, setEditForm] = useState({ name: '', sizeHa: '', notes: '' });
   const [editBoundaryCoords, setEditBoundaryCoords] = useState<LatLng[]>([]);
+  const [editBoundaryPolygons, setEditBoundaryPolygons] = useState<LatLng[][]>([]);
   const [editBoundaryFile, setEditBoundaryFile] = useState<BoundaryFileRef | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState(false);
   const [actionError, setActionError] = useState('');
@@ -115,12 +116,13 @@ export default function FieldDetail() {
   const handleStartEdit = () => {
     setEditForm({ name: field.name, sizeHa: String(field.sizeHa || ''), notes: field.notes });
     setEditBoundaryCoords(field.boundaryCoords || []);
+    setEditBoundaryPolygons(field.boundaryPolygons || (field.boundaryCoords?.length ? [field.boundaryCoords] : []));
     setEditBoundaryFile(field.boundary);
     setEditing(true);
   };
 
   const handleSaveEdit = async () => {
-    const boundaryChanged = JSON.stringify(editBoundaryCoords) !== JSON.stringify(field.boundaryCoords || []) || editBoundaryFile !== field.boundary;
+    const boundaryChanged = JSON.stringify(editBoundaryPolygons) !== JSON.stringify(field.boundaryPolygons || (field.boundaryCoords?.length ? [field.boundaryCoords] : [])) || editBoundaryFile !== field.boundary;
     if (operational.mode === 'remote' && editForm.notes.trim()) {
       setActionError('Production Beta does not yet support field notes. Revert the note before saving; field name, area and boundary geometry are supported.');
       return;
@@ -128,7 +130,7 @@ export default function FieldDetail() {
     try {
       if (operational.mode === 'remote') {
         if (boundaryChanged) {
-          await operational.createFieldBoundaryVersion(field.id, editBoundaryCoords);
+          await operational.createFieldBoundaryVersion(field.id, editBoundaryPolygons.length > 1 ? editBoundaryPolygons : editBoundaryCoords);
         }
         const nextSize = parseFloat(editForm.sizeHa) || 0;
         if (editForm.name !== field.name || nextSize !== field.sizeHa) {
@@ -360,6 +362,7 @@ export default function FieldDetail() {
             <Stack spacing={2}>
               <FieldBoundaryEditor
                 coords={field.boundaryCoords}
+                polygons={field.boundaryPolygons}
                 onCoordsChange={() => {}}
                 onAreaChange={() => {}}
                 propertyLat={property?.lat}
@@ -567,7 +570,12 @@ export default function FieldDetail() {
 
             <FieldBoundaryEditor
               coords={editBoundaryCoords}
-              onCoordsChange={setEditBoundaryCoords}
+              polygons={editBoundaryPolygons}
+              onCoordsChange={(coords) => {
+                setEditBoundaryCoords(coords);
+                setEditBoundaryPolygons((current) => coords.length ? [coords, ...current.slice(1)] : current.slice(1));
+              }}
+              onPolygonsChange={setEditBoundaryPolygons}
               onAreaChange={(ha) => {
                 if (ha > 0) setEditForm((prev) => ({ ...prev, sizeHa: ha.toFixed(1) }));
               }}

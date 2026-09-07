@@ -479,7 +479,7 @@ function AuthoritativeMissionPlanning() {
     try {
       const boundary = await operational.refreshFieldBoundary(sourceField.id);
       if (!boundary || boundary.boundaryCoords.length < 3) { setMapError('The selected Field does not have a valid authoritative boundary.'); return; }
-      setMapPolygons([boundary.boundaryCoords]);
+      setMapPolygons(boundary.boundaryPolygons?.length ? boundary.boundaryPolygons : [boundary.boundaryCoords]);
       setMapBoundarySources([{ provenance: 'field_boundary', notes: `Started from ${sourceField.name} boundary version ${boundary.versionNumber}`, sourceFileId: null }]);
       setMapSourceFieldBoundaryVersionId(boundary.id);
     } catch (error) { setMapError(describeOperationalError(error)); }

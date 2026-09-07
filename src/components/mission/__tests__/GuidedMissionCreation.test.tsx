@@ -27,7 +27,18 @@ jest.mock('react-router-dom', () => ({ useNavigate: () => mockNavigate, useSearc
 jest.mock('../../../services/missionSetupDraftsApi', () => ({
   createMissionSetupDraftsApi: () => ({ create: mockDraftCreate, update: mockDraftUpdate, get: mockDraftGet, archive: mockDraftArchive }),
 }));
-jest.mock('../../FieldBoundaryEditor', () => (props: any) => <button onClick={() => { props.onCoordsChange([[-27, 151], [-27, 151.01], [-27.01, 151.01]]); props.onAreaChange(10.5); }}>Draw test boundary</button>);
+jest.mock('../../FieldBoundaryEditor', () => (props: any) => <>
+  <button onClick={() => { props.onCoordsChange([[-27, 151], [-27, 151.01], [-27.01, 151.01]]); props.onAreaChange(10.5); }}>Draw test boundary</button>
+  <button onClick={() => {
+    const polygons = [
+      [[-27, 151], [-27, 151.01], [-27.01, 151.01]],
+      [[-27.02, 151.02], [-27.02, 151.03], [-27.03, 151.03]],
+    ];
+    props.onCoordsChange(polygons[0]);
+    props.onPolygonsChange(polygons);
+    props.onAreaChange(21);
+  }}>Import multipart boundary</button>
+</>);
 jest.mock('../../AddressAutocomplete', () => (props: any) => <div>
   <label htmlFor="guided-address">{props.label}</label>
   <input id="guided-address" value={props.initialValue || ''} onChange={(event) => props.onInputChange?.(event.target.value)} />
@@ -194,6 +205,28 @@ test('creates the authoritative parent chain and Draft without leaving the workf
   expect(mockCreateJob).toHaveBeenCalledWith(expect.objectContaining({ clientId: 'client-1', propertyId: 'property-1', fieldIds: ['field-1'] }));
   expect(mockCreateMission).toHaveBeenCalledWith(expect.objectContaining({ jobId: 'job-1', status: 'Planning' }));
   expect(mockNavigate).toHaveBeenCalledWith('/missions/mission-1?guided=1');
+});
+
+test('preserves a multipart imported Field boundary in guided Mission creation', async () => {
+  const user = userEvent.setup();
+  render(<GuidedMissionCreation />);
+  await user.click(screen.getByRole('button', { name: 'Add new Client' }));
+  await user.type(screen.getByRole('textbox', { name: /Client or business name/ }), 'New Client');
+  await user.click(screen.getByRole('button', { name: 'Save Client and continue' }));
+  await user.click(screen.getByRole('button', { name: 'Add new Property' }));
+  await user.type(screen.getByRole('textbox', { name: /Property name/ }), 'New Property');
+  await user.click(screen.getByRole('button', { name: 'Select address suggestion' }));
+  await user.click(screen.getByRole('button', { name: 'Save Property and continue' }));
+  await user.click(screen.getByRole('button', { name: 'Create new Field' }));
+  await user.type(screen.getByRole('textbox', { name: /Field name/ }), 'Multipart Field');
+  await user.click(screen.getByRole('button', { name: 'Import multipart boundary' }));
+  await user.click(screen.getByRole('button', { name: 'Save Field and boundary' }));
+
+  expect(mockCreateField).toHaveBeenCalledWith(expect.objectContaining({ sizeHa: 21, boundaryCoords: undefined }));
+  expect(mockCreateFieldBoundaryVersion).toHaveBeenCalledWith('field-1', [
+    [[-27, 151], [-27, 151.01], [-27.01, 151.01]],
+    [[-27.02, 151.02], [-27.02, 151.03], [-27.03, 151.03]],
+  ]);
 });
 
 test('returns to Getting Started only after the authoritative Draft Mission is created', async () => {
