@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   Typography,
@@ -58,7 +58,7 @@ import {
   updateOutcome,
 } from '../services/fieldManagementStore';
 import { getReportsForJob, AskFtfReportRecord } from '../services/askFtfReportStore';
-import { JobOutcome, EfficacyRating, PhotoRef } from '../types/fieldManagement';
+import { Field, JobOutcome, EfficacyRating, PhotoRef } from '../types/fieldManagement';
 import PhotoUpload from '../components/PhotoUpload';
 import { generateClientReportPdf } from '../utils/clientReportPdf';
 import AssessmentIcon from '@mui/icons-material/Assessment';
@@ -66,6 +66,8 @@ import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import ExpandLessIcon from '@mui/icons-material/ExpandLess';
 import { useOperationalData } from '../contexts/OperationalDataContext';
 import { describeOperationalError } from '../services/operationalDataStore';
+import { missionOperationsApi } from '../services/missionOperationsApi';
+import type { MissionFinalSignoffReadiness } from '../types/missionOperations';
 
 const efficacyLabels: Record<number, string> = {
   1: 'No effect',
@@ -89,12 +91,28 @@ function AuthoritativeJobDetail() {
   const operational = useOperationalData();
   const [archiveConfirm, setArchiveConfirm] = useState(false);
   const [actionError, setActionError] = useState('');
-  const job = operational.jobs.find((record) => record.id === jobId && record.clientId === clientId
-    && record.propertyId === propertyId && record.fieldIds.includes(fieldId || ''));
+  const job = operational.jobs.find((record) => record.id === jobId && record.clientId === clientId);
   const field = operational.fields.find((record) => record.id === fieldId && record.propertyId === propertyId);
   const property = operational.properties.find((record) => record.id === propertyId && record.clientId === clientId);
   const client = operational.clients.find((record) => record.id === clientId);
   const basePath = `/jobs/client/${clientId}/property/${propertyId}/field/${fieldId}`;
+  const fieldsByProperty = useMemo<Array<{ id: string; name: string; fields: Field[] }>>(() => {
+    if (!job) return [];
+    const grouped = new Map<string, Field[]>();
+    job.fieldIds.forEach((id) => {
+      const scopedField = operational.fields.find((record) => record.id === id);
+      if (!scopedField) return;
+      const existing = grouped.get(scopedField.propertyId) || [];
+      existing.push(scopedField);
+      grouped.set(scopedField.propertyId, existing);
+    });
+    return Array.from(grouped.entries()).map(([id, scopedFields]) => ({
+      id,
+      name: operational.properties.find((record) => record.id === id)?.name || 'Property unavailable',
+      fields: scopedFields,
+    }));
+  }, [job, operational.fields, operational.properties]);
+  const linkedMissions = useMemo(() => operational.missions.filter((mission) => mission.jobId === job?.id), [job?.id, operational.missions]);
 
   if (operational.status === 'loading') return <Alert severity="info">Loading job…</Alert>;
   if (operational.status === 'error' || operational.status === 'unauthorised') {
@@ -124,7 +142,7 @@ function AuthoritativeJobDetail() {
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 3 }} className="ftf-animate-in">
         <Box>
           <Typography variant="h4" sx={{ fontWeight: 800, color: 'primary.dark', fontSize: { xs: '1.4rem', md: '1.75rem' } }}>Spray Job — {job.reference}</Typography>
-          <Typography variant="body2" color="text.secondary">{client.name} &bull; {property.name} &bull; {field.name}</Typography>
+          <Typography variant="body2" color="text.secondary">{client.name} &bull; {fieldsByProperty.length} {fieldsByProperty.length === 1 ? 'Property' : 'Properties'} &bull; {job.fieldIds.length} {job.fieldIds.length === 1 ? 'Field' : 'Fields'}</Typography>
         </Box>
         <Stack direction="row" spacing={1}>
           <Button
@@ -149,6 +167,31 @@ function AuthoritativeJobDetail() {
               <InfoRow label="Scheduled Date" value={displayDate(job.scheduledDate)} />
               <InfoRow label="Notes" value={job.notes || '—'} />
             </Stack>
+            <Divider sx={{ my: 2 }} />
+            <Typography variant="body2" fontWeight={700} sx={{ mb: 1 }}>Field scope</Typography>
+            <Stack spacing={0.75}>
+              {fieldsByProperty.map((group) => {
+                const totalHa = group.fields.reduce((total, scopedField) => total + (scopedField.sizeHa || 0), 0);
+                return <Typography key={group.id} variant="body2" color="text.secondary">
+                  <strong>{group.name}</strong> · {group.fields.map((scopedField) => scopedField.name).join(', ')} · {totalHa.toFixed(4)} ha
+                </Typography>;
+              })}
+            </Stack>
+          </CardContent>
+        </Card>
+        <Card elevation={0} sx={{ border: `1.5px solid ${alpha(theme.palette.primary.main, 0.1)}`, borderRadius: '16px' }}>
+          <CardContent sx={{ p: 3 }}>
+            <Typography variant="subtitle1" fontWeight={700} color="primary.dark" sx={{ mb: 1 }}>Mission CRP review</Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>A Job defines eligible Fields; it does not approve operational work. Scope and CRP decisions are recorded against an exact Mission package revision.</Typography>
+            {linkedMissions.length === 0 ? <Typography variant="body2" color="text.secondary">Create a Mission to prepare its scope and CRP review.</Typography>
+              : <Stack spacing={1}>{linkedMissions.map((mission) => <Stack key={mission.id} direction={{ xs: 'column', sm: 'row' }} justifyContent="space-between" alignItems={{ sm: 'center' }} spacing={1}>
+                <Typography variant="body2" fontWeight={700}>{mission.missionNumber} · {mission.title}</Typography>
+                <Button size="small" variant="outlined" onClick={() => navigate(`/missions/${mission.id}?stage=review`)}>Open Mission review</Button>
+              </Stack>)}</Stack>}
+            <Divider sx={{ my: 2 }} />
+            <JobCloseControl jobId={job.id} jobVersion={job.rowVersion} jobStatus={job.status}
+              missions={linkedMissions}
+              onClosed={() => operational.refresh()} />
           </CardContent>
         </Card>
         <Alert severity="info">Outcomes, reports, financials and compliance records are unavailable until their authoritative Production Beta slices are connected. Chemical, weather, spray recommendation and actual/quote data are not shown as server data.</Alert>
@@ -167,6 +210,32 @@ function AuthoritativeJobDetail() {
 
 function InfoRow({ label, value }: { label: string; value: string }) {
   return <Box sx={{ display: 'flex', gap: 2, py: 0.75 }}><Typography variant="body2" color="text.secondary" sx={{ minWidth: 140, fontWeight: 600 }}>{label}</Typography><Typography variant="body2">{value}</Typography></Box>;
+}
+
+function JobCloseControl({ jobId, jobVersion, jobStatus, missions, onClosed }: {
+  jobId: string; jobVersion: number; jobStatus: string;
+  missions: Array<{ id: string; status: string }>; onClosed: () => Promise<void>;
+}) {
+  const [readiness, setReadiness] = useState<MissionFinalSignoffReadiness[]>([]);
+  const [error, setError] = useState('');
+  const governedMissions = useMemo(() => missions.filter((mission) => !['cancelled', 'canceled'].includes(String(mission.status || '').toLowerCase())), [missions]);
+  const allOperationallyCompleted = missions.length > 0 && governedMissions.every((mission) => String(mission.status || '').toLowerCase() === 'completed');
+  React.useEffect(() => {
+    if (!allOperationallyCompleted || jobStatus.toLowerCase() === 'closed') return;
+    let active = true;
+    void Promise.all(governedMissions.map((mission) => missionOperationsApi.readFinalSignoffReadiness(mission.id)))
+      .then((records) => { if (active) setReadiness(records); })
+      .catch((candidate) => { if (active) setError(candidate instanceof Error ? candidate.message : 'Job close readiness could not be loaded.'); });
+    return () => { active = false; };
+  }, [allOperationallyCompleted, governedMissions, jobStatus]);
+  if (jobStatus.toLowerCase() === 'closed') return <Alert severity="success">Job closed</Alert>;
+  if (!allOperationallyCompleted) return <Typography variant="body2" color="text.secondary">Job close becomes available after every non-cancelled Mission completes operational work and final sign-off.</Typography>;
+  if (error) return <Alert severity="error">{error}</Alert>;
+  const ready = readiness.length === governedMissions.length && readiness.every((record) => record.finalSignedOff);
+  return <Stack spacing={1}>
+    <Typography variant="body2" fontWeight={700}>{ready ? 'Job ready to close' : 'Mission final sign-off remains incomplete'}</Typography>
+    {ready && <Button variant="contained" onClick={async () => { try { setError(''); await missionOperationsApi.closeJob(jobId, jobVersion); await onClosed(); } catch (candidate) { setError(candidate instanceof Error ? candidate.message : 'Job close failed.'); } }}>Close Job</Button>}
+  </Stack>;
 }
 
 function LocalJobDetail() {

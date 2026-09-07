@@ -329,7 +329,7 @@ jobs:
     timeout-minutes: 10
     environment: production-beta-acceptance
     env:
-      EXPECTED_RELEASE_SHA: 932f787d9ff9aa091a74a0543adc5d6e6be591f6
+      EXPECTED_RELEASE_SHA: ${{ inputs.expected_release_sha }}
       EXPECTED_SUPABASE_PROJECT_REF: fzkrvglzompkuiodqllr
       SUPABASE_CLI_VERSION: 2.113.0
       SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
@@ -355,6 +355,7 @@ jobs:
             echo "::add-mask::$value"
           done
           set -euo pipefail
+          [[ "$EXPECTED_RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]]
           [[ "$REQUESTED_TARGET" == "production" ]]
           [[ "$REQUESTED_RELEASE_SHA" == "$EXPECTED_RELEASE_SHA" ]]
           [[ "$DEPLOYED_RELEASE_SHA" == "$EXPECTED_RELEASE_SHA" ]]
@@ -388,7 +389,7 @@ jobs:
           pending="$(printf '%s\n' "$pending_output" | node scripts/productionBetaReleaseEvidence.mjs plan)"
           node -e 'const value=JSON.parse(process.argv[1]); if(!Array.isArray(value)||value.length!==0) process.exit(1);' "$pending"
 
-      - name: Verify archived fixture and genuine-data baseline
+      - name: Verify controlled archived fixture isolation
         shell: bash
         run: npx --yes "supabase@$SUPABASE_CLI_VERSION" db query --linked --file scripts/clientToMissionProductionPreflight.sql
 
@@ -500,6 +501,16 @@ jobs:
 
       - name: Install locked dependencies
         run: npm ci
+
+      - name: Load reviewed Client-to-Mission acceptance harness
+        env:
+          ACCEPTANCE_HARNESS_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          [[ "$ACCEPTANCE_HARNESS_SHA" =~ ^[0-9a-f]{40}$ ]]
+          git fetch --no-tags origin "$ACCEPTANCE_HARNESS_SHA"
+          git checkout "$ACCEPTANCE_HARNESS_SHA" -- \
+            e2e/acceptance/client-to-mission.spec.ts
 
       - name: Install isolated Chromium runtime
         run: npx playwright install --with-deps chromium

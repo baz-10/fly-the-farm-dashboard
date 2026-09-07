@@ -7,14 +7,19 @@ export type MissionWorkspaceStageId =
   | 'weather-chemicals'
   | 'jsa'
   | 'review'
+  | 'operating-days'
   | 'operational-closeout'
   | 'mission-outcomes'
   | 'customer-outcome';
+
+/** The review stage only presents an immutable Mission package revision for decision. */
+export type MissionReviewAuthority = 'MISSION_PACKAGE_REVISION';
 
 export type MissionWorkspaceStageDefinition = {
   id: MissionWorkspaceStageId;
   label: string;
   question: string;
+  authority?: MissionReviewAuthority;
 };
 
 export type MissionWorkspaceStage = MissionWorkspaceStageDefinition & {
@@ -33,4 +38,11 @@ export type MissionStatusGroups = {
   needsAttention: MissionStatusItem[];
   needsReview: MissionStatusItem[];
   complete: MissionStatusItem[];
+};
+
+/** A display-only Field identity sourced from the authoritative Mission package scope. */
+export type AuthorisedMissionOperatingField = {
+  id: string;
+  name: string;
+  sizeHa?: number;
 };

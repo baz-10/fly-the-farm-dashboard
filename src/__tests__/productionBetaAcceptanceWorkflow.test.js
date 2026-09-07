@@ -21,7 +21,13 @@ const playwrightConfiguration = () => {
   const configModule = { exports: {} };
   const controlledRequire = (name) => {
     if (name === '@playwright/test') {
-      return { defineConfig: (config) => config, devices: { 'Desktop Chrome': { browserName: 'chromium' } } };
+      return {
+        defineConfig: (config) => config,
+        devices: {
+          'Desktop Chrome': { browserName: 'chromium' },
+          'Desktop Safari': { browserName: 'webkit' },
+        },
+      };
     }
     throw new Error(`Unexpected Playwright config import: ${name}`);
   };
@@ -99,7 +105,7 @@ describe('Production Beta operational acceptance execution profile', () => {
     ]));
     expect(operational.if).toContain("needs.client-to-mission-preflight.result == 'success'");
     expect(operational.if).toContain("needs.commercial-onboarding-acceptance.result == 'skipped'");
-    expect(preflight.env.EXPECTED_RELEASE_SHA).toBe('932f787d9ff9aa091a74a0543adc5d6e6be591f6');
+    expect(preflight.env.EXPECTED_RELEASE_SHA).toBe('${{ inputs.expected_release_sha }}');
     expect(preflight.env.EXPECTED_SUPABASE_PROJECT_REF).toBe('fzkrvglzompkuiodqllr');
 
     const preflightSource = fs.readFileSync(clientToMissionPreflightPath, 'utf8');
@@ -107,8 +113,14 @@ describe('Production Beta operational acceptance execution profile', () => {
     expect(preflightSource).toContain("event_type='commercial_onboarding.acceptance_archived'");
     expect(preflightSource).toContain("topic='commercial_onboarding.acceptance_archived'");
     expect(preflightSource).toContain("tenant_id='961a4354-40f5-479d-a577-74839596ad14'::uuid");
-    expect(preflightSource).toContain("digest mismatch: clients");
+    expect(preflightSource).toContain("'controlledFixture','archived'");
+    expect(preflightSource).toContain("'unrelatedRecords','not_read'");
     expect(preflightSource).not.toContain("name like 'SC ACCEPTANCE — %'");
+    expect(preflightSource).not.toMatch(/md5\(|string_agg\(|row_to_json\(|digest mismatch/);
+    expect(preflightSource).not.toMatch(/(?:organisation_id|tenant_id|id)\s*<>\s*'961a4354-40f5-479d-a577-74839596ad14'/);
+    expect(workflowStep(preflight, 'Verify controlled archived fixture isolation')).toEqual(expect.objectContaining({
+      run: expect.stringContaining('scripts/clientToMissionProductionPreflight.sql'),
+    }));
   });
 
   test('manual Client-to-Mission mode reuses the existing gate and cannot onboard, archive, migrate, or deploy', () => {
@@ -125,6 +137,23 @@ describe('Production Beta operational acceptance execution profile', () => {
     expect(preflightSource).not.toMatch(/commercial-onboarding\.spec|archive-controlled|ftf_archive_controlled_commercial_onboarding/);
     expect(`${preflightSource}${operationalSource}`).not.toMatch(/db push(?! --linked --dry-run)|vercel deploy|supabase migration up/);
     expect(operationalSource).not.toMatch(/commercial-onboarding\.spec|archive-controlled|ftf_archive_controlled_commercial_onboarding/);
+  });
+
+  test('runs the reviewed Client-to-Mission harness against the separately verified runtime SHA', () => {
+    const definition = workflowDefinition();
+    const operational = definition.jobs['operational-acceptance'];
+    const checkout = workflowStep(operational, 'Check out accepted source');
+    const harness = workflowStep(operational, 'Load reviewed Client-to-Mission acceptance harness');
+    const stepNames = operational.steps.map(({ name }) => name);
+
+    expect(checkout.with.ref).toBe('${{ needs.deployment-identity.outputs.commit-sha }}');
+    expect(harness.env.ACCEPTANCE_HARNESS_SHA).toBe('${{ github.sha }}');
+    expect(harness.run).toContain('e2e/acceptance/client-to-mission.spec.ts');
+    expect(harness.run).not.toMatch(/\bsrc\/|\bserver\/|\bapi\/|playwright\.config/);
+    expect(stepNames.indexOf('Install locked dependencies'))
+      .toBeLessThan(stepNames.indexOf('Load reviewed Client-to-Mission acceptance harness'));
+    expect(stepNames.indexOf('Load reviewed Client-to-Mission acceptance harness'))
+      .toBeLessThan(stepNames.indexOf('Run established Client-to-Mission gate'));
   });
 
   test('pins deterministic acceptance execution to the approved operational timezone', () => {
@@ -189,6 +218,15 @@ describe('Production Beta operational acceptance execution profile', () => {
       const effectiveUse = { ...config.use, ...project.use };
       expect(effectiveUse).toMatchObject({ trace: 'off', screenshot: 'off', video: 'off' });
     }
+  });
+
+  test('defines both Chromium and WebKit browser projects for responsive acceptance coverage', () => {
+    const config = playwrightConfiguration();
+
+    expect(config.projects).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: 'chromium', use: expect.objectContaining({ browserName: 'chromium' }) }),
+      expect.objectContaining({ name: 'webkit', use: expect.objectContaining({ browserName: 'webkit' }) }),
+    ]));
   });
 
   test('uploads only explicit safe text outcomes after removing authenticated storage', () => {

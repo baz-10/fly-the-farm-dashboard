@@ -1,0 +1,153 @@
+const fs = require('fs');
+const path = require('path');
+
+const file = path.join(__dirname, '../../supabase/migrations/20260905150000_mission_frozen_report_evidence.sql');
+const migration = () => fs.readFileSync(file, 'utf8').toLowerCase();
+const finalityMigration = () => fs.readFileSync(path.join(__dirname, '../../supabase/migrations/20260905140000_mission_final_signoff_and_job_close.sql'), 'utf8').toLowerCase();
+
+test('enriches only the canonical completion manifest through a forward migration', () => {
+  const sql = migration();
+  expect(sql).toContain('ftf_build_mission_report_evidence_manifest');
+  expect(sql).toContain('ftf_build_mission_daily_evidence_manifest_before_report_evidence');
+  expect(sql).toContain("'reportevidence'");
+  expect(sql).not.toMatch(/create table|mission_report_authority|report_final/);
+});
+
+test('freezes complete bounded report evidence with deterministic ordering', () => {
+  const sql = migration();
+  for (const token of [
+    "'scope'", "'job'", "'client'", "'properties'", "'fields'", "'targethectares'",
+    "'effectivepackage'", "'packagehistory'", "'decisionhistory'", "'effectiveapproval'",
+    "'governingjsa'", "'jsahistory'", "'aircraft'", "'plannedchemicals'",
+    "'flightlineevidence'", "'exceptionhistory'",
+  ]) expect(sql).toContain(token);
+  expect(sql).toContain('mission_report_evidence_bound_exceeded');
+  expect(sql).toMatch(/order by scope\.field_order,field\.id/);
+  expect(sql).toMatch(/order by pack\.version_number,pack\.id/);
+  expect(sql).toMatch(/order by decision\.version_number,decision\.id/);
+  expect(sql).toMatch(/order by aircraft\.registration,aircraft\.id/);
+  expect(sql).toMatch(/order by import\.version_number,import\.id/);
+});
+
+test('derives the snapshot server-side under canonical final-signoff locks', () => {
+  const sql = migration();
+  expect(sql).toContain('ftf_lock_mission_package_aggregate_allow_final');
+  expect(sql).toContain('current_authorised_pack_revision_id');
+  expect(sql).toContain('mission_report_evidence_invalid');
+  expect(finalityMigration()).toMatch(/ftf_build_mission_daily_evidence_manifest[\s\S]+daily_evidence_digest/);
+  expect(sql).not.toMatch(/grant execute[\s\S]+ftf_build_mission_report_evidence_manifest[\s\S]+authenticated/);
+  expect(sql).toContain('from public,anon,authenticated,service_role');
+});
+
+test('validates every included Base-scoped source before freezing evidence', () => {
+  const sql = migration();
+  for (const table of [
+    'mission_pack_fields', 'mission_jsa_revisions', 'mission_day_jsa_reviews',
+    'mission_day_field_activity', 'mission_aircraft_day_actuals', 'mission_flight_actuals',
+    'mission_day_chemical_revisions', 'mission_day_chemical_lines', 'mission_day_weather_reports',
+    'mission_operational_import_attributions', 'mission_operational_imports',
+  ]) expect(sql).toMatch(new RegExp(`${table}[\\s\\S]{0,240}operating_location_id`));
+  expect(sql).toContain('mission_report_evidence_invalid: base');
+});
+
+test('locks display and evidence rows in a documented deterministic order before either manifest is built', () => {
+  const sql = migration();
+  expect(sql).toContain('mission_report_evidence_lock_order_v1');
+  for (const table of [
+    'clients', 'properties', 'fields', 'aircraft', 'jobs', 'mission_pack_revisions',
+    'mission_operating_days', 'mission_day_jsa_reviews', 'mission_day_field_activity',
+    'mission_aircraft_day_actuals', 'mission_flight_actuals', 'mission_day_chemical_revisions',
+    'mission_day_chemical_lines', 'mission_day_weather_reports',
+    'mission_operational_import_attributions', 'mission_operational_imports',
+  ]) expect(sql).toMatch(new RegExp(`lock rows: ${table}`));
+  expect(sql.indexOf('v_report:=public.ftf_build_mission_report_evidence_manifest')).toBeLessThan(
+    sql.indexOf('v_daily:=public.ftf_build_mission_daily_evidence_manifest_before_report_evidence'),
+  );
+});
+
+test('checks explicit preconstruction bounds for each frozen collection and nested array', () => {
+  const sql = migration();
+  for (const bound of [
+    'operating_days', 'field_activities', 'aircraft_day_actuals', 'flight_actuals',
+    'chemical_revisions', 'chemical_lines', 'weather_reports', 'weather_observations',
+    'weather_gaps', 'import_attributions', 'package_history', 'decision_history',
+    'jsa_history', 'planned_chemical_revisions', 'planned_chemical_lines',
+    'flight_line_imports', 'exception_history',
+  ]) expect(sql).toContain(`bound: ${bound}`);
+  expect(sql).toContain('mission_report_evidence_bound_exceeded');
+});
+
+test('validates referenced identities within the governing Mission package', () => {
+  const sql = migration();
+  for (const marker of [
+    'reference: field_activity_field', 'reference: flight_field',
+    'reference: chemical_line_field', 'reference: flight_source_import',
+    'reference: attribution_import', 'reference: attribution_aircraft',
+    'reference: weather_source_observation', 'reference: aircraft_identity',
+  ]) expect(sql).toContain(marker);
+  expect(sql).toContain('mission_report_evidence_invalid: reference');
+});
+
+test('locks mutable referenced identities before reference validation', () => {
+  const sql = migration();
+  expect(sql).toContain('lock rows: mission_weather_observations');
+  expect(sql).toContain('lock rows: mission_aircraft_assignments');
+  expect(sql.indexOf('lock rows: mission_weather_observations')).toBeLessThan(
+    sql.indexOf('reference: weather_source_observation'),
+  );
+});
+
+test('correlates aircraft-day assignments and preserves governed historical unassignment semantics', () => {
+  const sql = migration();
+  expect(sql).toContain('reference: aircraft_day_assignment');
+  expect(sql).toContain('assignment.id=actual.mission_aircraft_assignment_id');
+  expect(sql).toContain('assignment.aircraft_id=actual.aircraft_id');
+  expect(sql).toContain('assignment.unassigned_at>=actual.signed_off_at');
+  expect(sql).toContain('assignment.assigned_at<=actual.signed_off_at');
+});
+
+test('correlates chemical actual lines to the day plan and same-day aircraft participation', () => {
+  const sql = migration();
+  expect(sql).toContain('reference: chemical_planned_line');
+  expect(sql).toContain('line.planned_line_id');
+  expect(sql).toContain('revision.planned_chemical_revision_id');
+  expect(sql).toContain('reference: chemical_aircraft_participation');
+  expect(sql).toMatch(/actual\.operating_day_id=line\.operating_day_id/);
+});
+
+test('locks referenced parents even when their own Mission identity is corrupt', () => {
+  const sql = migration();
+  for (const marker of [
+    'lock referenced rows: mission_operational_imports',
+    'lock referenced rows: mission_chemical_plan_revisions',
+    'lock referenced rows: mission_chemical_plan_lines',
+    'lock referenced rows: mission_aircraft_assignments',
+    'lock referenced rows: aircraft',
+  ]) expect(sql).toContain(marker);
+});
+
+test('binds every day JSA to that days exact governing package and Mission lineage', () => {
+  const sql = migration();
+  expect(sql).toContain('reference: day_governing_package_jsa');
+  expect(sql).toContain('day.jsa_revision_id=pack.jsa_revision_id');
+  expect(sql).toContain('jsa.mission_id=p_mission_id');
+  expect(sql).toContain('jsa.operating_location_id=v_mission.operating_location_id');
+});
+
+test('reconciles every historical package to the Mission Job JSA and scoped client graph', () => {
+  const sql = migration();
+  expect(sql).toContain('reference: package_parent_graph');
+  expect(sql).toContain('pack.job_id=v_job.id');
+  expect(sql).toContain('scope.pack_revision_id=pack.id');
+  expect(sql).toContain('property.client_id=v_client.id');
+  expect(sql).toContain('job_scope.job_id=v_job.id');
+});
+
+test('locks corrupt same-organisation package parents before lineage validation', () => {
+  const sql = migration();
+  for (const marker of [
+    'lock referenced rows: jobs', 'lock referenced rows: clients',
+    'lock referenced rows: properties', 'lock referenced rows: fields',
+    'lock referenced rows: mission_jsa_revisions',
+  ]) expect(sql).toContain(marker);
+});

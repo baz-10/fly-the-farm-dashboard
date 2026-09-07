@@ -55,6 +55,7 @@ import MissionWeatherEvidence from '../components/mission/MissionWeatherEvidence
 import MissionChemicalPlanning from '../components/mission/MissionChemicalPlanning';
 import MissionAuthorisation from '../components/mission/MissionAuthorisation';
 import MissionOperationalCloseout from '../components/mission/MissionOperationalCloseout';
+import MissionOperatingDays from '../components/mission/MissionOperatingDays';
 import MissionOutcomes from '../components/mission/MissionOutcomes';
 import CustomerAcceptance from '../components/mission/CustomerAcceptance';
 import MissionDeploymentWorkPack from '../components/mission/MissionDeploymentWorkPack';
@@ -525,7 +526,16 @@ function AuthoritativeMissionPlanning() {
   const selectedLocation = operational.operatingLocations.find((record) => record.id === operatingLocationId);
   const selectedClient = selectedJob && operational.clients.find((record) => record.id === selectedJob.clientId);
   const selectedProperty = selectedJob && operational.properties.find((record) => record.id === selectedJob.propertyId);
-  const selectedFields = selectedJob ? operational.fields.filter((record) => selectedJob.fieldIds.includes(record.id)) : [];
+  const selectedFields = React.useMemo(() => selectedJob ? operational.fields.filter((record) => selectedJob.fieldIds.includes(record.id)) : [], [operational.fields, selectedJob]);
+  const jobFieldGroups = React.useMemo(() => {
+    const groups = new Map<string, typeof selectedFields>();
+    selectedFields.forEach((field) => groups.set(field.propertyId, [...(groups.get(field.propertyId) || []), field]));
+    return Array.from(groups.entries()).map(([propertyId, fields]) => ({
+      propertyId,
+      propertyName: operational.properties.find((property) => property.id === propertyId)?.name || 'Property unavailable',
+      fields: fields.map((field) => ({ id: field.id, name: field.name, sizeHa: field.sizeHa })),
+    }));
+  }, [operational.properties, selectedFields]);
   const hasActiveLocation = operational.operatingLocations.length > 0;
   const canSave = Boolean(selectedJob && selectedLocation && missionNumber.trim() && title.trim()) && !operational.saving;
 
@@ -655,7 +665,8 @@ function AuthoritativeMissionPlanning() {
 
   const missionStatusLabel = lifecycle.completed ? 'Completed' : lifecycle.authorised ? 'Authorised' : stepReadiness?.ready ? 'Ready for Flight' : 'Planning incomplete';
   const nextStageById: Partial<Record<MissionWorkspaceStageId, MissionWorkspaceStageId>> = {
-    mission: 'map', map: 'resources', resources: 'weather-chemicals', 'weather-chemicals': 'jsa', jsa: 'review', review: 'operational-closeout',
+    mission: 'map', map: 'resources', resources: 'weather-chemicals', 'weather-chemicals': 'jsa', jsa: 'review', review: 'operating-days',
+    'operating-days': 'operational-closeout',
     'operational-closeout': 'mission-outcomes', 'mission-outcomes': 'customer-outcome',
   };
   const simpleNext = nextStageById[activeStage] && <Button variant="contained" onClick={() => showStage(nextStageById[activeStage]!)}>Next</Button>;
@@ -696,7 +707,8 @@ function AuthoritativeMissionPlanning() {
     <Panel title="JSA & Risk Controls" icon={<SecurityIcon />}><Alert severity="info" sx={{ mb: 1.5 }}>Mission Checks, triggered hazards, controls and PIC approval are retained as authoritative versioned evidence.</Alert><Button fullWidth variant="contained" startIcon={<SecurityIcon />} onClick={() => setAuthoritativeJsaOpen(true)}>Complete Mission JSA</Button></Panel>
     <Panel title="Controlled Checklists" icon={<CheckCircleIcon />}><MissionChecklists missionId={selectedMission!.id} operatingLocationId={selectedMission!.operatingLocationId} aircraftId={selectedAircraftId || undefined} onChanged={() => setAuthorisationRefreshToken((current) => current + 1)} /></Panel>
     <Stack direction="row" justifyContent="flex-end">{simpleNext}</Stack>
-  </Stack> : activeStage === 'review' ? <Panel title="Mission Readiness & Authorisation" icon={<GavelIcon />}><MissionAuthorisation missionId={selectedMission!.id} refreshToken={authorisationRefreshToken} onReadinessChanged={setStepReadiness} onLifecycleChanged={lifecycle.refresh} /></Panel>
+  </Stack> : activeStage === 'review' ? <Panel title="Mission Scope & CRP Review" icon={<GavelIcon />}><MissionAuthorisation missionId={selectedMission!.id} jobFieldIds={selectedJob?.fieldIds || []} fieldsByProperty={jobFieldGroups} refreshToken={authorisationRefreshToken} onReadinessChanged={setStepReadiness} onLifecycleChanged={lifecycle.refresh} /></Panel>
+    : activeStage === 'operating-days' ? <Panel title="Operating Days" icon={<FlightTakeoffIcon />}><MissionOperatingDays missionId={selectedMission!.id} fields={selectedFields.map((field) => ({ id: field.id, name: field.name, sizeHa: field.sizeHa }))} /></Panel>
     : activeStage === 'operational-closeout' ? <Panel title="Operational Closeout" icon={<FlightTakeoffIcon />}><MissionOperationalCloseout missionId={selectedMission!.id} onLifecycleChanged={lifecycle.refresh} /></Panel>
     : activeStage === 'mission-outcomes' ? <MissionOutcomes missionId={selectedMission!.id} />
     : <CustomerAcceptance missionId={selectedMission!.id} />;

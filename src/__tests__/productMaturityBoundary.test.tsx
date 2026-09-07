@@ -2,6 +2,7 @@ import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync,
 import { spawnSync, SpawnSyncReturns } from 'child_process';
 import { tmpdir } from 'os';
 import path from 'path';
+import { getWorkflowMaturityEntry } from '../productMaturity/registry';
 
 const root = path.resolve(process.cwd());
 const fixturePaths = [
@@ -125,15 +126,28 @@ const expectVerifierFailure = (expectedMessage: string, fixtureRoot: string): vo
 };
 
 describe('product maturity CI boundary', () => {
+  test('keeps multi-day Mission operations unavailable until every authority slice is verified', () => {
+    const entry = getWorkflowMaturityEntry('mission-workspace', 'multiday-operations');
+
+    expect(entry.maturity).toBe('COMING_SOON');
+    expect(entry.requiredAutomatedTests).toEqual(expect.arrayContaining([
+      'Checked Job scope authority',
+      'CRP package authority',
+      'Daily operational evidence authority',
+      'Final sign-off authority',
+      'Cross-browser lifecycle acceptance',
+    ]));
+  });
+
   test('verifies every classified module and workflow without a customer-facing Legacy violation', () => {
     const result = runVerifier();
 
     expect(result.error).toBeUndefined();
     expect(result.status).toBe(0);
     expect(result.stderr).toBe('');
-    expect(result.stdout).toContain('46 modules and 15 workflows classified');
-    expect(result.stdout).toContain('181 customer UI source files checked');
-    expect(result.stdout).toContain('80 evidence references checked');
+    expect(result.stdout).toContain('46 modules and 16 workflows classified');
+    expect(result.stdout).toContain('192 customer UI source files checked');
+    expect(result.stdout).toContain('85 evidence references checked');
     expect(result.stdout).toContain('0 customer-facing Legacy violations');
   });
 

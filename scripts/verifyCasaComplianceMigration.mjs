@@ -2,12 +2,18 @@ import { readFile, readdir } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 import { PGlite } from '@electric-sql/pglite';
+import { createRequire } from 'node:module';
 
-const directory=resolve(dirname(fileURLToPath(import.meta.url)),'../supabase/migrations');
+const scriptDirectory=dirname(fileURLToPath(import.meta.url));
+const directory=resolve(scriptDirectory,'../supabase/migrations');
+const require=createRequire(import.meta.url);
+// PGlite 0.5's CommonJS wildcard export appends a duplicate extension, so load
+// the bundled extension by its repository-controlled absolute path.
+const {pgcrypto}=require(resolve(scriptDirectory,'../node_modules/@electric-sql/pglite/dist/contrib/pgcrypto.cjs'));
 const id={org:'51000000-0000-4000-8000-000000000001',otherOrg:'52000000-0000-4000-8000-000000000001',actor:'51000000-0000-4000-8000-000000000101',otherActor:'52000000-0000-4000-8000-000000000101',person:'51000000-0000-4000-8000-000000000201',doc:'51000000-0000-4000-8000-000000000301'};
-const db=new PGlite();
+const db=new PGlite({extensions:{pgcrypto}});
 try{
- await db.exec(`create schema auth;create table auth.users(id uuid primary key);create function auth.uid()returns uuid language sql stable as $$select null::uuid$$;create role anon;create role authenticated;create role service_role;`);
+ await db.exec(`create extension if not exists pgcrypto;create schema auth;create table auth.users(id uuid primary key);create function auth.uid()returns uuid language sql stable as $$select null::uuid$$;create role anon;create role authenticated;create role service_role;`);
  for(const name of(await readdir(directory)).filter(name=>name.endsWith('.sql')&&!['20260804162000_production_beta_platform_identity_reconciliation.sql','20260805131000_personnel_compliance_evidence_storage.sql','20260805144000_checklist_evidence_storage.sql'].includes(name)).sort())await db.exec(await readFile(resolve(directory,name),'utf8'));
  await db.exec(`insert into auth.users(id)values('51000000-0000-4000-8000-000000000011'),('52000000-0000-4000-8000-000000000011');
  insert into public.organisations(id,organisation_id,name)values('${id.org}','${id.org}','Fly The Farm'),('${id.otherOrg}','${id.otherOrg}','Other');

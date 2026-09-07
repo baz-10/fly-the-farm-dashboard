@@ -1,5 +1,6 @@
 const { createHttpError } = require('./supabase');
 const crypto = require('crypto');
+const { Unzip, UnzipInflate } = require('fflate');
 const { resolveOperationalActorContext } = require('./operational-actor-context');
 const { resolveRequestContext } = require('./request-context');
 const { OperationalRepository } = require('./operational-repository');
@@ -10,6 +11,9 @@ const MAX_BODY_BYTES = 64 * 1024;
 const MAX_BOUNDARY_BODY_BYTES = 256 * 1024;
 const MAX_IMPORT_SOURCE_BYTES = 3 * 1024 * 1024;
 const MAX_IMPORT_BODY_BYTES = Math.ceil(MAX_IMPORT_SOURCE_BYTES * 1.4);
+const MAX_KMZ_ENTRIES = 100;
+const MAX_KMZ_EXPANDED_BYTES = 10 * 1024 * 1024;
+const KMZ_STREAM_CHUNK_BYTES = 1024;
 const MAX_PAGE_SIZE = 100;
 const AUSTRALIAN_STATES = new Set(['NSW', 'VIC', 'QLD', 'SA', 'WA', 'TAS', 'NT', 'ACT']);
 const ACCEPTANCE_PREFIX = 'SC ACCEPTANCE —';
@@ -46,6 +50,167 @@ function apiError(statusCode, code, message, meta) {
   error.code = code;
   error.meta = meta;
   return error;
+}
+
+const KMZ_CRC32_TABLE = (() => {
+  const table = new Uint32Array(256);
+  for (let index = 0; index < table.length; index += 1) {
+    let value = index;
+    for (let bit = 0; bit < 8; bit += 1) value = (value & 1) ? (0xedb88320 ^ (value >>> 1)) : (value >>> 1);
+    table[index] = value >>> 0;
+  }
+  return table;
+})();
+
+function updateKmzCrc32(current, bytes) {
+  let value = current;
+  for (let index = 0; index < bytes.length; index += 1) {
+    value = KMZ_CRC32_TABLE[(value ^ bytes[index]) & 0xff] ^ (value >>> 8);
+  }
+  return value >>> 0;
+}
+
+function unsafeKmzEntryName(name) {
+  const parts = name.split('/');
+  const pathParts = name.endsWith('/') ? parts.slice(0, -1) : parts;
+  return !name || name.length > 255 || /^[\\/]/.test(name) || /[\\:\0-\x1f\x7f]/.test(name)
+    || pathParts.some((part) => !part || part === '.' || part === '..');
+}
+
+function readKmzCentralDirectory(bytes) {
+  if (bytes.length < 22) throw new Error('ZIP end record is missing.');
+  const minimumOffset = Math.max(0, bytes.length - 22 - 65535);
+  let endOffset = -1;
+  for (let offset = bytes.length - 22; offset >= minimumOffset; offset -= 1) {
+    if (bytes.readUInt32LE(offset) === 0x06054b50
+      && offset + 22 + bytes.readUInt16LE(offset + 20) === bytes.length) {
+      endOffset = offset;
+      break;
+    }
+  }
+  if (endOffset < 0) throw new Error('ZIP end record is invalid.');
+
+  const diskNumber = bytes.readUInt16LE(endOffset + 4);
+  const centralDiskNumber = bytes.readUInt16LE(endOffset + 6);
+  const diskEntryCount = bytes.readUInt16LE(endOffset + 8);
+  const entryCount = bytes.readUInt16LE(endOffset + 10);
+  const centralSize = bytes.readUInt32LE(endOffset + 12);
+  const centralOffset = bytes.readUInt32LE(endOffset + 16);
+  if (diskNumber !== 0 || centralDiskNumber !== 0 || diskEntryCount !== entryCount
+    || entryCount === 0 || entryCount === 0xffff || centralSize === 0xffffffff || centralOffset === 0xffffffff
+    || centralOffset + centralSize !== endOffset) {
+    throw new Error('ZIP central directory is invalid.');
+  }
+  if (entryCount > MAX_KMZ_ENTRIES) {
+    throw apiError(400, 'VALIDATION_ERROR', 'KMZ contains unsafe or unsupported entries.');
+  }
+
+  const entries = new Map();
+  const localOffsets = new Set();
+  let advertisedTotal = 0;
+  let cursor = centralOffset;
+  for (let index = 0; index < entryCount; index += 1) {
+    if (cursor + 46 > endOffset || bytes.readUInt32LE(cursor) !== 0x02014b50) {
+      throw new Error('ZIP central entry is invalid.');
+    }
+    const flags = bytes.readUInt16LE(cursor + 8);
+    const compression = bytes.readUInt16LE(cursor + 10);
+    const crc32 = bytes.readUInt32LE(cursor + 16);
+    const compressedSize = bytes.readUInt32LE(cursor + 20);
+    const uncompressedSize = bytes.readUInt32LE(cursor + 24);
+    const nameLength = bytes.readUInt16LE(cursor + 28);
+    const extraLength = bytes.readUInt16LE(cursor + 30);
+    const commentLength = bytes.readUInt16LE(cursor + 32);
+    const diskStart = bytes.readUInt16LE(cursor + 34);
+    const localOffset = bytes.readUInt32LE(cursor + 42);
+    const nextCursor = cursor + 46 + nameLength + extraLength + commentLength;
+    if (nextCursor > endOffset || diskStart !== 0 || compressedSize === 0xffffffff
+      || uncompressedSize === 0xffffffff || localOffset === 0xffffffff) {
+      throw new Error('ZIP central entry bounds are invalid.');
+    }
+    const nameBytes = bytes.subarray(cursor + 46, cursor + 46 + nameLength);
+    const name = Buffer.from(nameBytes).toString('utf8');
+    if (name.includes('\ufffd') || unsafeKmzEntryName(name) || entries.has(name) || localOffsets.has(localOffset)
+      || (flags & 0x2061) !== 0 || ![0, 8].includes(compression)) {
+      throw apiError(400, 'VALIDATION_ERROR', 'KMZ contains unsafe or unsupported entries.');
+    }
+    advertisedTotal += uncompressedSize;
+    if (uncompressedSize > MAX_IMPORT_SOURCE_BYTES || advertisedTotal > MAX_KMZ_EXPANDED_BYTES) {
+      throw apiError(400, 'VALIDATION_ERROR', 'KMZ expanded content is too large.');
+    }
+    if (localOffset + 30 > centralOffset || bytes.readUInt32LE(localOffset) !== 0x04034b50) {
+      throw new Error('ZIP local entry is invalid.');
+    }
+    const localFlags = bytes.readUInt16LE(localOffset + 6);
+    const localCompression = bytes.readUInt16LE(localOffset + 8);
+    const localCrc32 = bytes.readUInt32LE(localOffset + 14);
+    const localCompressedSize = bytes.readUInt32LE(localOffset + 18);
+    const localUncompressedSize = bytes.readUInt32LE(localOffset + 22);
+    const localNameLength = bytes.readUInt16LE(localOffset + 26);
+    const localExtraLength = bytes.readUInt16LE(localOffset + 28);
+    const dataOffset = localOffset + 30 + localNameLength + localExtraLength;
+    if (dataOffset + compressedSize > centralOffset
+      || !Buffer.from(bytes.subarray(localOffset + 30, localOffset + 30 + localNameLength)).equals(Buffer.from(nameBytes))
+      || localFlags !== flags || localCompression !== compression
+      || ((flags & 8) === 0 && (localCrc32 !== crc32 || localCompressedSize !== compressedSize
+        || localUncompressedSize !== uncompressedSize))) {
+      throw new Error('ZIP local and central entries do not agree.');
+    }
+    entries.set(name, { name, flags, compression, crc32, compressedSize, uncompressedSize, completed: false });
+    localOffsets.add(localOffset);
+    cursor = nextCursor;
+  }
+  if (cursor !== endOffset) throw new Error('ZIP central directory length is invalid.');
+  return entries;
+}
+
+function extractBoundedKmzKml(bytes) {
+  const centralEntries = readKmzCentralDirectory(bytes);
+  const seenEntries = new Set();
+  const kmlEntries = [];
+  let expandedTotal = 0;
+  let completedCount = 0;
+  const unzip = new Unzip((file) => {
+    const metadata = centralEntries.get(file.name);
+    if (!metadata || seenEntries.has(file.name) || metadata.compression !== file.compression) {
+      throw apiError(400, 'VALIDATION_ERROR', 'KMZ contains unsafe or unsupported entries.');
+    }
+    seenEntries.add(file.name);
+    let expandedEntryBytes = 0;
+    let crc32 = 0xffffffff;
+    const chunks = !file.name.endsWith('/') && /\.kml$/i.test(file.name) ? [] : null;
+    file.ondata = (error, chunk, final) => {
+      if (error) throw error;
+      const expanded = chunk || new Uint8Array(0);
+      expandedEntryBytes += expanded.length;
+      expandedTotal += expanded.length;
+      if (expandedEntryBytes > MAX_IMPORT_SOURCE_BYTES || expandedTotal > MAX_KMZ_EXPANDED_BYTES) {
+        throw apiError(400, 'VALIDATION_ERROR', 'KMZ expanded content is too large.');
+      }
+      crc32 = updateKmzCrc32(crc32, expanded);
+      if (chunks && expanded.length) chunks.push(Buffer.from(expanded));
+      if (final) {
+        const actualCrc32 = (crc32 ^ 0xffffffff) >>> 0;
+        if (expandedEntryBytes !== metadata.uncompressedSize || actualCrc32 !== metadata.crc32) {
+          throw apiError(400, 'VALIDATION_ERROR', 'KMZ archive integrity validation failed.');
+        }
+        metadata.completed = true;
+        completedCount += 1;
+        if (chunks) kmlEntries.push(Buffer.concat(chunks, expandedEntryBytes));
+      }
+    };
+    file.start();
+  });
+  unzip.register(UnzipInflate);
+  for (let offset = 0; offset < bytes.length; offset += KMZ_STREAM_CHUNK_BYTES) {
+    const end = Math.min(offset + KMZ_STREAM_CHUNK_BYTES, bytes.length);
+    unzip.push(bytes.subarray(offset, end), end === bytes.length);
+  }
+  if (seenEntries.size !== centralEntries.size || completedCount !== centralEntries.size
+    || [...centralEntries.values()].some((entry) => !entry.completed)) {
+    throw new Error('ZIP entries are incomplete.');
+  }
+  return kmlEntries;
 }
 
 function assertUuid(value, field) {
@@ -172,6 +337,10 @@ function mapDatabaseRecord(resource, record) {
   if (resource === 'missions') {
     result.aircraftIds = Array.isArray(record.aircraft_ids) ? record.aircraft_ids : [];
     result.equipmentKitIds = Array.isArray(record.equipment_kit_ids) ? record.equipment_kit_ids : [];
+  }
+  if (resource === 'jobs') {
+    result.propertyIds = Array.isArray(record.property_ids) && record.property_ids.length
+      ? record.property_ids : (record.property_id ? [record.property_id] : []);
   }
   if (record.row_version !== undefined) result.rowVersion = record.row_version;
   if (record.created_at !== undefined) result.createdAt = record.created_at;
@@ -591,7 +760,131 @@ function parseMissionMapSourceFile(body) {
     transformationMetadata: body.transformationMetadata, validationResult: body.validationResult };
 }
 
-function parseOperationalImport(body){const allowed=new Set(['expectedVersion','fileName','fileType','evidenceType','sizeBytes','dataUrl']);Object.keys(body).forEach(k=>{if(!allowed.has(k))throw apiError(400,'VALIDATION_ERROR',`Unexpected import field: ${k}.`);});if(typeof body.fileName!=='string'||!body.fileName.trim()||body.fileName.length>255||/[\\/\0]/.test(body.fileName))throw apiError(400,'VALIDATION_ERROR','fileName is invalid.');const fileType=String(body.fileType||'').toLowerCase();if(!['kml','csv','txt','log','bin'].includes(fileType))throw apiError(400,'VALIDATION_ERROR','Unsupported Operational Evidence file type.');if(!['FINAL_KML','FLIGHT_LINES','TELEMETRY','FLIGHT_LOG'].includes(body.evidenceType))throw apiError(400,'VALIDATION_ERROR','evidenceType is invalid.');const match=typeof body.dataUrl==='string'&&body.dataUrl.match(/^data:([^;,]+);base64,([A-Za-z0-9+/=]+)$/);if(!match)throw apiError(400,'VALIDATION_ERROR','dataUrl must contain a base64-encoded file.');const bytes=Buffer.from(match[2],'base64');if(!bytes.length||bytes.length>MAX_IMPORT_SOURCE_BYTES||Number(body.sizeBytes)!==bytes.length)throw apiError(400,'VALIDATION_ERROR','Operational file size is invalid.');let operationalGeometry=null,derivedStatistics={},parseStatus='RETAINED',validationResult={state:'retained'};if(fileType==='kml'){const text=bytes.toString('utf8'),lines=[...text.matchAll(/<LineString\b[^>]*>[\s\S]*?<coordinates\b[^>]*>([\s\S]*?)<\/coordinates>[\s\S]*?<\/LineString>/gi)].map(m=>parseCoordinateSequence(m[1])).filter(x=>x.length>=2),polygons=[...text.matchAll(/<Polygon\b[^>]*>[\s\S]*?<coordinates\b[^>]*>([\s\S]*?)<\/coordinates>[\s\S]*?<\/Polygon>/gi)].map(m=>parseCoordinateSequence(m[1])).filter(x=>x.length>=4);if(!lines.length&&!polygons.length)throw apiError(400,'UNSUPPORTED_GEOMETRY','KML contains no supported flight lines or polygon geometry.');const distanceMetres=lines.reduce((sum,line)=>sum+line.slice(1).reduce((s,p,i)=>s+haversine(line[i],p),0),0);operationalGeometry={type:'GeometryCollection',geometries:[...(lines.length?[{type:'MultiLineString',coordinates:lines}]:[]),...polygons.map(r=>({type:'Polygon',coordinates:[r]}))]};derivedStatistics={flightLineCount:lines.length,totalFlightDistanceMetres:Math.round(distanceMetres),areaTreatedHa:polygons.reduce((s,r)=>s+ringAreaHa(r),0)};parseStatus='PARSED';validationResult={state:'valid',parserVersion:'operational-kml-v1'};}return{expectedVersion:Number(body.expectedVersion),fileName:body.fileName.trim(),fileType,evidenceType:body.evidenceType,contentType:match[1],bytes,checksum:crypto.createHash('sha256').update(bytes).digest('hex'),operationalGeometry,derivedStatistics,parseStatus,validationResult};}
+function parseOperationalImport(body) {
+  const allowed = new Set(['expectedVersion', 'fileName', 'fileType', 'evidenceType', 'sizeBytes', 'dataUrl', 'attributions']);
+  Object.keys(body).forEach((key) => {
+    if (!allowed.has(key)) throw apiError(400, 'VALIDATION_ERROR', `Unexpected import field: ${key}.`);
+  });
+  if (typeof body.fileName !== 'string' || !body.fileName.trim() || body.fileName.length > 255 || /[\\/\0]/.test(body.fileName)) {
+    throw apiError(400, 'VALIDATION_ERROR', 'fileName is invalid.');
+  }
+  const fileName = body.fileName.trim();
+  const fileType = String(body.fileType || '').toLowerCase();
+  const mimeByType = {
+    kml: 'application/vnd.google-earth.kml+xml',
+    kmz: 'application/vnd.google-earth.kmz',
+    csv: 'text/csv',
+    txt: 'text/plain',
+    log: 'text/plain',
+    bin: 'application/octet-stream',
+  };
+  if (!Object.prototype.hasOwnProperty.call(mimeByType, fileType)) {
+    throw apiError(400, 'VALIDATION_ERROR', 'Unsupported Operational Evidence file type.');
+  }
+  const extension = fileName.includes('.') ? fileName.slice(fileName.lastIndexOf('.') + 1).toLowerCase() : '';
+  if (extension !== fileType) throw apiError(400, 'VALIDATION_ERROR', 'Operational file extension does not match fileType.');
+  if (!['FINAL_KML', 'FLIGHT_LINES', 'TELEMETRY', 'FLIGHT_LOG'].includes(body.evidenceType)) {
+    throw apiError(400, 'VALIDATION_ERROR', 'evidenceType is invalid.');
+  }
+  const rawAttributions = body.attributions === undefined ? [] : body.attributions;
+  if (!Array.isArray(rawAttributions) || rawAttributions.length > 100) {
+    throw apiError(400, 'VALIDATION_ERROR', 'Operational Evidence attributions are invalid.');
+  }
+  const attributions = rawAttributions.map((item) => {
+    if (!item || typeof item !== 'object' || Array.isArray(item) || Object.keys(item).length !== 3
+      || !Object.prototype.hasOwnProperty.call(item, 'operatingDayId')
+      || !Object.prototype.hasOwnProperty.call(item, 'aircraftId')
+      || !Object.prototype.hasOwnProperty.call(item, 'confidence')) {
+      throw apiError(400, 'VALIDATION_ERROR', 'Operational Evidence attribution is invalid.');
+    }
+    const operatingDayId = item.operatingDayId === null ? null : assertUuid(item.operatingDayId, 'operatingDayId');
+    const aircraftId = item.aircraftId === null ? null : assertUuid(item.aircraftId, 'aircraftId');
+    if (operatingDayId === null && aircraftId === null) {
+      throw apiError(400, 'VALIDATION_ERROR', 'Operational Evidence attribution must link a day or Aircraft.');
+    }
+    if (!['OPERATOR_CONFIRMED', 'SOURCE_METADATA'].includes(item.confidence)) {
+      throw apiError(400, 'VALIDATION_ERROR', 'Operational Evidence attribution confidence is invalid.');
+    }
+    return { operatingDayId, aircraftId, confidence: item.confidence };
+  });
+  const attributionKeys = attributions.map((item) => `${item.operatingDayId || ''}:${item.aircraftId || ''}`);
+  if (new Set(attributionKeys).size !== attributionKeys.length) {
+    throw apiError(400, 'VALIDATION_ERROR', 'Operational Evidence attributions contain duplicates.');
+  }
+  const match = typeof body.dataUrl === 'string' && body.dataUrl.match(/^data:([^;,]+);base64,([A-Za-z0-9+/]+={0,2})$/);
+  if (!match || match[1].toLowerCase() !== mimeByType[fileType] || match[2].length % 4 !== 0) {
+    throw apiError(400, 'VALIDATION_ERROR', 'Operational file MIME type does not match fileType.');
+  }
+  const bytes = Buffer.from(match[2], 'base64');
+  const canonicalBase64 = match[2].replace(/=+$/, '');
+  if (bytes.toString('base64').replace(/=+$/, '') !== canonicalBase64
+    || !bytes.length || bytes.length > MAX_IMPORT_SOURCE_BYTES || Number(body.sizeBytes) !== bytes.length) {
+    throw apiError(400, 'VALIDATION_ERROR', 'Operational file size or encoding is invalid.');
+  }
+
+  let operationalGeometry = null;
+  let derivedStatistics = {};
+  let parseStatus = 'RETAINED';
+  let validationResult = { state: 'retained' };
+  if (fileType === 'kmz') {
+    let kmlEntries;
+    try {
+      kmlEntries = extractBoundedKmzKml(bytes);
+    } catch (error) {
+      if (error?.code === 'VALIDATION_ERROR') throw error;
+      throw apiError(400, 'VALIDATION_ERROR', 'KMZ is not a valid bounded ZIP archive.');
+    }
+    if (!kmlEntries.length || !kmlEntries.some((entry) => {
+      const text = Buffer.from(entry).toString('utf8');
+      return /<kml(?:\s[^>]*)?>/i.test(text) && (/<\/kml\s*>/i.test(text) || /<kml(?:\s[^>]*)?\/>/i.test(text));
+    })) {
+      throw apiError(400, 'VALIDATION_ERROR', 'KMZ must contain a valid KML entry.');
+    }
+    validationResult = { state: 'retained', parserVersion: 'operational-kmz-envelope-v2' };
+  }
+  if (fileType === 'kml') {
+    const text = bytes.toString('utf8');
+    if (!/<kml(?:\s[^>]*)?>/i.test(text) || !/<\/kml\s*>/i.test(text)) {
+      throw apiError(400, 'VALIDATION_ERROR', 'KML document structure is invalid.');
+    }
+    const lines = [...text.matchAll(/<LineString\b[^>]*>[\s\S]*?<coordinates\b[^>]*>([\s\S]*?)<\/coordinates>[\s\S]*?<\/LineString>/gi)]
+      .map((candidate) => parseCoordinateSequence(candidate[1])).filter((coordinates) => coordinates.length >= 2);
+    const polygons = [...text.matchAll(/<Polygon\b[^>]*>[\s\S]*?<coordinates\b[^>]*>([\s\S]*?)<\/coordinates>[\s\S]*?<\/Polygon>/gi)]
+      .map((candidate) => parseCoordinateSequence(candidate[1])).filter((coordinates) => coordinates.length >= 4);
+    if (!lines.length && !polygons.length) {
+      throw apiError(400, 'UNSUPPORTED_GEOMETRY', 'KML contains no supported flight lines or polygon geometry.');
+    }
+    const distanceMetres = lines.reduce((sum, line) => sum + line.slice(1).reduce((lineSum, point, index) => lineSum + haversine(line[index], point), 0), 0);
+    operationalGeometry = {
+      type: 'GeometryCollection',
+      geometries: [
+        ...(lines.length ? [{ type: 'MultiLineString', coordinates: lines }] : []),
+        ...polygons.map((ring) => ({ type: 'Polygon', coordinates: [ring] })),
+      ],
+    };
+    derivedStatistics = {
+      flightLineCount: lines.length,
+      totalFlightDistanceMetres: Math.round(distanceMetres),
+      areaTreatedHa: polygons.reduce((sum, ring) => sum + ringAreaHa(ring), 0),
+    };
+    parseStatus = 'PARSED';
+    validationResult = { state: 'valid', parserVersion: 'operational-kml-v1' };
+  }
+  return {
+    expectedVersion: Number(body.expectedVersion),
+    fileName,
+    fileType,
+    evidenceType: body.evidenceType,
+    contentType: match[1].toLowerCase(),
+    bytes,
+    checksum: crypto.createHash('sha256').update(bytes).digest('hex'),
+    operationalGeometry,
+    derivedStatistics,
+    parseStatus,
+    validationResult,
+    attributions,
+  };
+}
 function parseCoordinateSequence(raw){return raw.trim().split(/\s+/).map(v=>v.split(',').slice(0,2).map(Number)).filter(p=>p.length===2&&Number.isFinite(p[0])&&Number.isFinite(p[1])&&p[0]>=-180&&p[0]<=180&&p[1]>=-90&&p[1]<=90);}
 function haversine(a,b){const r=6371000,rad=Math.PI/180,dLat=(b[1]-a[1])*rad,dLon=(b[0]-a[0])*rad,x=Math.sin(dLat/2)**2+Math.cos(a[1]*rad)*Math.cos(b[1]*rad)*Math.sin(dLon/2)**2;return 2*r*Math.asin(Math.sqrt(x));}
 function ringAreaHa(ring){if(ring.length<4)return 0;const lat=ring.reduce((s,p)=>s+p[1],0)/ring.length*Math.PI/180,m=111320,scaleX=m*Math.cos(lat);let area=0;for(let i=0,j=ring.length-1;i<ring.length;j=i++)area+=(ring[j][0]*scaleX)*(ring[i][1]*m)-(ring[i][0]*scaleX)*(ring[j][1]*m);return Math.round(Math.abs(area)/2/10000*100)/100;}
@@ -777,6 +1070,18 @@ function createOperationalHandler(resource, dependencies = {}) {
         assertPermission(context, resource, 'create');
         const { data, merged } = mapInput(resource, body);
         assertAcceptanceCreateScope(context, resource, merged);
+        if (resource === 'jobs') {
+          // Delegated Support retains its separately audited writer. The new
+          // organisation command must not bypass Support Session evidence.
+          if (context.actorType === 'PLATFORM_SUPPORT') await assertRelationships(repository, resource, context, merged);
+          const result = context.actorType === 'PLATFORM_SUPPORT'
+            ? await repository.createDelegated(resource, context, data)
+            : await repository.createJobWithScope(context, data);
+          if (result.forbidden) throw apiError(403, 'FORBIDDEN', 'You do not have permission for this operation.');
+          if (result.relationshipConflict) throw apiError(409, 'RELATIONSHIP_CONFLICT', 'The related record is missing, archived, or belongs to another organisation.');
+          if (result.error) throw apiError(409, result.error, 'The requested Job scope is invalid.');
+          return res.status(201).json({ data: mapDatabaseRecord(resource, result.record) });
+        }
         if (['missions', 'aircraft', 'equipment-kits', 'fleet-assets'].includes(resource)) assertLocationAccess(context, merged.operatingLocationId, resource === 'missions' ? 'mission' : resource === 'aircraft' ? 'aircraft' : resource === 'fleet-assets' ? 'Fleet asset' : 'equipment kit');
         await assertRelationships(repository, resource, context, merged);
         const result = context.actorType === 'PLATFORM_SUPPORT' ? await repository.createDelegated(resource, context, data) : await repository.create(resource, context, data);
@@ -789,6 +1094,30 @@ function createOperationalHandler(resource, dependencies = {}) {
       const id = assertUuid(req.query?.id, 'id');
       const expectedVersion = Number(body.expectedVersion);
       if (!Number.isInteger(expectedVersion) || expectedVersion < 1) throw apiError(400, 'VALIDATION_ERROR', 'expectedVersion must be a positive integer.');
+      if (req.method === 'PATCH' && resource === 'jobs' && Object.prototype.hasOwnProperty.call(body, 'fieldIds')) {
+        if (!hasPermission(context, 'jobs', 'write')) {
+          throw apiError(403, 'FORBIDDEN', 'You do not have permission for this operation.');
+        }
+        const allowed = new Set(['expectedVersion', 'fieldIds']);
+        Object.keys(body).forEach((key) => {
+          if (!allowed.has(key)) throw apiError(400, 'VALIDATION_ERROR', `Unexpected field: ${key}.`);
+        });
+        if (!Array.isArray(body.fieldIds) || body.fieldIds.length < 1 || body.fieldIds.length > 100) {
+          throw apiError(400, 'VALIDATION_ERROR', 'fieldIds must contain between 1 and 100 field IDs.');
+        }
+        const fieldIds = body.fieldIds.map((fieldId) => assertUuid(fieldId, 'fieldIds'));
+        if (new Set(fieldIds).size !== fieldIds.length) {
+          throw apiError(400, 'VALIDATION_ERROR', 'fieldIds must not contain duplicates.');
+        }
+        const result = await repository.writeJobScope(context, id, expectedVersion, fieldIds);
+        if (result.forbidden) throw apiError(403, 'FORBIDDEN', 'You do not have permission for this operation.');
+        if (result.notFound || result.error === 'JOB_SCOPE_NOT_FOUND') throw apiError(404, 'NOT_FOUND', 'Operational record not found.');
+        if (result.error === 'JOB_SCOPE_VERSION_CONFLICT') {
+          throw apiError(409, 'JOB_SCOPE_VERSION_CONFLICT', 'This Job scope changed before your update.', { currentVersion: result.currentVersion });
+        }
+        if (result.error) throw apiError(400, result.error, 'The requested Job scope is invalid.');
+        return res.status(200).json({ data: mapDatabaseRecord('jobs', result.record) });
+      }
       if (req.method === 'PATCH') {
         assertPermission(context, resource, 'update');
         const existing = await repository.get(resource, context, id);
@@ -932,13 +1261,13 @@ function createMissionOperationalCloseoutHandler(dependencies={}){const reposito
  else if(action==='submit'){assertPermission(context,'mission.operational','write');result=await repository.submitMissionOperationalEvidence(context,missionId,{...body,expectedVersion});}
  else if(action==='complete'){assertPermission(context,'mission.completion','complete');const operationalRevisionId=assertUuid(body.operationalRevisionId,'operationalRevisionId');if(typeof body.declaration!=='string'||!body.declaration.trim())throw apiError(400,'VALIDATION_ERROR','A completion declaration is required.');if(body.overrideReason){assertPermission(context,'mission.completion','override_flight_lines');}result=await repository.completeMission(context,missionId,{operationalRevisionId,expectedVersion,declaration:body.declaration.trim(),overrideReason:body.overrideReason});}
  else throw apiError(400,'UNSUPPORTED_ACTION','Unsupported Mission Operational Closeout action.');
- if(result.conflict)throw apiError(409,'VERSION_CONFLICT','Mission Operational Evidence changed.',{currentVersion:result.currentVersion});if(result.notAuthorised)throw apiError(409,'MISSION_NOT_AUTHORISED','Authorise the Mission before recording actuals.');if(result.evidenceIncomplete)throw apiError(409,'EVIDENCE_INCOMPLETE','Complete each Operational Closeout step before review.');if(result.flightLinesRequired)throw apiError(409,'FLIGHT_LINES_REQUIRED','Import final flight-line evidence or provide an authorised exception.');if(result.personnelRequired)throw apiError(409,'PERSONNEL_REQUIRED','A linked authorised Personnel record is required.');if(result.locationForbidden)throw apiError(403,'LOCATION_FORBIDDEN','Mission location is not assigned.');if(result.notFound)throw apiError(404,'NOT_FOUND','Mission evidence was not found.');return res.status(201).json({data:result.record});}catch(error){const{status,response}=errorEnvelope(error);return res.status(status).json(response);}};}
+ if(result.conflict)throw apiError(409,'VERSION_CONFLICT','Mission Operational Evidence changed.',{currentVersion:result.currentVersion});if(result.notAuthorised)throw apiError(409,'MISSION_NOT_AUTHORISED','Authorise the Mission before recording actuals.');if(result.evidenceIncomplete)throw apiError(409,'EVIDENCE_INCOMPLETE','Complete each Operational Closeout step before review.');if(result.aircraftDaysIncomplete)throw apiError(409,'AIRCRAFT_DAYS_INCOMPLETE','Sign off every operating day with exact aircraft totals before completing the Mission.');if(result.flightLinesRequired)throw apiError(409,'FLIGHT_LINES_REQUIRED','Import final flight-line evidence or provide an authorised exception.');if(result.personnelRequired)throw apiError(409,'PERSONNEL_REQUIRED','A linked authorised Personnel record is required.');if(result.attributionInvalid)throw apiError(400,'OPERATIONAL_ATTRIBUTION_INVALID','Operational Evidence attribution is invalid.');if(result.forbidden)throw apiError(403,'FORBIDDEN','You do not have permission to record Mission Operational Evidence.');if(result.locationForbidden)throw apiError(403,'LOCATION_FORBIDDEN','Mission location is not assigned.');if(result.notFound)throw apiError(404,'NOT_FOUND','Mission evidence was not found.');return res.status(201).json({data:result.record});}catch(error){const{status,response}=errorEnvelope(error);return res.status(status).json(response);}};}
 
 function createMissionOutcomesHandler(dependencies={}){const repository=dependencies.repository||new OperationalRepository(),getContext=dependencies.resolveContext||resolveRequestContext;return async function(req,res){res.setHeader('Cache-Control','no-store');res.setHeader('Content-Type','application/json; charset=utf-8');try{const context=await getContext(req,res),missionId=assertUuid(req.query?.missionId,'missionId'),mission=await repository.get('missions',context,missionId);if(!mission||!hasAssignedLocationReadAccess('missions',context,mission))throw apiError(404,'NOT_FOUND','Mission not found.');if(req.method==='GET'){assertPermission(context,'mission.outcomes','read');return res.status(200).json({data:await repository.readMissionOutcomes(context,missionId)});}if(req.method!=='POST')throw apiError(405,'METHOD_NOT_ALLOWED','Method not allowed.');assertSameOrigin(req);assertLocationAccess(context,mission.operating_location_id,'Mission');const action=req.query?.action,body=parseBody(req,MAX_IMPORT_BODY_BYTES);let result;if(action==='observation'){assertPermission(context,'mission.outcomes','create');for(const field of['observerPersonnelId','observedAt','observationTypeCode','methodCode','confidenceCode'])if(typeof body[field]!=='string'||!body[field].trim())throw apiError(400,'VALIDATION_ERROR',`${field} is required.`);result=await repository.createMissionOutcomeObservation(context,missionId,body);}else if(action==='photo'){assertPermission(context,'mission.outcomes','photo.upload');result=await repository.stageMissionOutcomePhoto(context,missionId,body);}else if(action==='follow-up'){assertPermission(context,'mission.outcomes','follow_up.manage');const version=Number(body.expectedVersion);if(!Number.isInteger(version)||version<0)throw apiError(400,'VALIDATION_ERROR','expectedVersion is required.');result=await repository.writeMissionOutcomeFollowUp(context,missionId,body.actionId||null,version,body);}else throw apiError(400,'UNSUPPORTED_ACTION','Unsupported Mission Outcomes action.');if(result.completionRequired)throw apiError(409,'COMPLETION_REQUIRED','Complete the Mission before recording outcomes.');if(result.conflict)throw apiError(409,'VERSION_CONFLICT','The follow-up action changed.');return res.status(201).json({data:result.record});}catch(error){const{status,response}=errorEnvelope(error);return res.status(status).json(response);}};}
 
 function createOrganisationBrandingHandler(dependencies={}){const repository=dependencies.repository||new OperationalRepository(),getContext=dependencies.resolveContext||resolveRequestContext;return async function(req,res){res.setHeader('Cache-Control','no-store');res.setHeader('Content-Type','application/json; charset=utf-8');try{const context=await getContext(req,res),action=req.query?.action||'profile';if(req.method==='GET'){assertPermission(context,'organisation.branding','read');return res.status(200).json({data:await repository.readOrganisationBranding(context)});}if(req.method!=='POST')throw apiError(405,'METHOD_NOT_ALLOWED','Method not allowed.');assertSameOrigin(req);assertPermission(context,'organisation.branding','manage');const body=parseBody(req,MAX_IMPORT_BODY_BYTES);let result;if(action==='profile'){const expectedVersion=Number(body.expectedVersion);if(!Number.isInteger(expectedVersion)||expectedVersion<1)throw apiError(400,'VALIDATION_ERROR','expectedVersion is required.');result=await repository.updateOrganisationBranding(context,expectedVersion,body);}else if(action==='logo'){if(typeof body.fileName!=='string'||typeof body.dataUrl!=='string')throw apiError(400,'VALIDATION_ERROR','Logo file is required.');result=await repository.storeOrganisationLogo(context,body);}else if(action==='activate-logo'){const internalFileId=assertUuid(body.internalFileId,'internalFileId'),fileVersion=Number(body.fileVersion),expectedVersion=Number(body.expectedVersion);if(!Number.isInteger(fileVersion)||fileVersion<1||!Number.isInteger(expectedVersion)||expectedVersion<1)throw apiError(400,'VALIDATION_ERROR','fileVersion and expectedVersion are required.');result=await repository.activateOrganisationLogo(context,internalFileId,fileVersion,expectedVersion);}else if(action==='remove-logo'){const expectedVersion=Number(body.expectedVersion);if(!Number.isInteger(expectedVersion)||expectedVersion<1)throw apiError(400,'VALIDATION_ERROR','expectedVersion is required.');result=await repository.removeOrganisationLogo(context,expectedVersion);}else throw apiError(400,'UNSUPPORTED_ACTION','Unsupported Organisation Branding action.');if(result?.conflict)throw apiError(409,'VERSION_CONFLICT','Organisation branding changed.',{currentVersion:result.currentVersion});if(result?.notFound)throw apiError(404,'NOT_FOUND','Organisation logo was not found.');if(result?.forbidden)throw apiError(403,'FORBIDDEN','You do not have permission for this operation.');return res.status(201).json({data:result.record});}catch(error){const{status,response}=errorEnvelope(error);if(error.message&&status<500)response.error.message=error.message;return res.status(status).json(response);}};}
 
-function createReportsHandler(dependencies={}){const repository=dependencies.repository||new OperationalRepository(),getContext=dependencies.resolveContext||resolveRequestContext,types=['MISSION_PACK','MISSION_SUMMARY','MISSION_RECORD'];return async function(req,res){res.setHeader('Cache-Control','no-store');try{const context=await getContext(req,res),missionId=assertUuid(req.query?.missionId,'missionId'),mission=await repository.get('missions',context,missionId);if(!mission||!hasAssignedLocationReadAccess('missions',context,mission))throw apiError(404,'NOT_FOUND','Mission not found.');const action=req.query?.action||'history';if(req.method==='GET'){assertPermission(context,'reports','read');if(action==='download'){const output=await repository.readReportOutput(context,missionId,assertUuid(req.query?.artefactId,'artefactId'));if(!output)throw apiError(404,'NOT_FOUND','Ready report output was not found.');res.setHeader('Content-Type','application/pdf');res.setHeader('Content-Disposition',`attachment; filename="${String(output.metadata.original_filename).replace(/["\r\n]/g,'_')}"`);res.setHeader('X-Content-Type-Options','nosniff');return res.status(200).send(output.bytes);}res.setHeader('Content-Type','application/json; charset=utf-8');const reportType=String(req.query?.reportType||'');if(!types.includes(reportType))throw apiError(400,'VALIDATION_ERROR','reportType is invalid.');return res.status(200).json({data:await repository.readReportArtefacts(context,missionId,reportType)});}if(req.method!=='POST')throw apiError(405,'METHOD_NOT_ALLOWED','Method not allowed.');res.setHeader('Content-Type','application/json; charset=utf-8');assertSameOrigin(req);assertLocationAccess(context,mission.operating_location_id,'Mission');if(action!=='request')throw apiError(400,'UNSUPPORTED_ACTION','Unsupported Reports action.');assertPermission(context,'reports','generate');const body=parseBody(req),reportType=String(body.reportType||'');if(!types.includes(reportType))throw apiError(400,'VALIDATION_ERROR','reportType is invalid.');assertPermission(context,reportType==='MISSION_PACK'?'mission.pack':reportType==='MISSION_SUMMARY'?'mission.summary':'mission.record','generate');if(typeof body.idempotencyKey!=='string'||body.idempotencyKey.length<4||body.idempotencyKey.length>128)throw apiError(400,'VALIDATION_ERROR','idempotencyKey is required.');const result=await repository.requestReportArtefact(context,missionId,reportType,body.idempotencyKey);if(result.completionRequired)throw apiError(409,'COMPLETION_REQUIRED',reportType==='MISSION_SUMMARY'?'Complete the Mission before generating a Mission Summary.':'Complete the Mission before generating a Mission Record.');if(result.operationStarted)throw apiError(409,'OPERATION_STARTED','Mission Packs cannot be regenerated after operations begin.');if(result.notFound)throw apiError(404,'NOT_FOUND','Report evidence was not found.');if(result.locationForbidden)throw apiError(403,'LOCATION_FORBIDDEN','Mission location is not assigned.');return res.status(201).json({data:result});}catch(error){const{status,response}=errorEnvelope(error);res.setHeader('Content-Type','application/json; charset=utf-8');return res.status(status).json(response);}};}
+function createReportsHandler(dependencies={}){const repository=dependencies.repository||new OperationalRepository(),getContext=dependencies.resolveContext||resolveRequestContext,types=['MISSION_PACK','MISSION_SUMMARY','MISSION_RECORD'];return async function(req,res){res.setHeader('Cache-Control','no-store');try{const context=await getContext(req,res),missionId=assertUuid(req.query?.missionId,'missionId'),mission=await repository.get('missions',context,missionId);if(!mission||!hasAssignedLocationReadAccess('missions',context,mission))throw apiError(404,'NOT_FOUND','Mission not found.');const action=req.query?.action||'history';if(req.method==='GET'){assertPermission(context,'reports','read');if(action==='download'){const output=await repository.readReportOutput(context,missionId,assertUuid(req.query?.artefactId,'artefactId'));if(!output)throw apiError(404,'NOT_FOUND','Ready report output was not found.');res.setHeader('Content-Type','application/pdf');res.setHeader('Content-Disposition',`attachment; filename="${String(output.metadata.original_filename).replace(/["\r\n]/g,'_')}"`);res.setHeader('X-Content-Type-Options','nosniff');return res.status(200).send(output.bytes);}res.setHeader('Content-Type','application/json; charset=utf-8');const reportType=String(req.query?.reportType||'');if(!types.includes(reportType))throw apiError(400,'VALIDATION_ERROR','reportType is invalid.');return res.status(200).json({data:await repository.readReportArtefacts(context,missionId,reportType)});}if(req.method!=='POST')throw apiError(405,'METHOD_NOT_ALLOWED','Method not allowed.');res.setHeader('Content-Type','application/json; charset=utf-8');assertSameOrigin(req);assertLocationAccess(context,mission.operating_location_id,'Mission');if(action!=='request')throw apiError(400,'UNSUPPORTED_ACTION','Unsupported Reports action.');assertPermission(context,'reports','generate');const body=parseBody(req),reportType=String(body.reportType||'');if(!types.includes(reportType))throw apiError(400,'VALIDATION_ERROR','reportType is invalid.');assertPermission(context,reportType==='MISSION_PACK'?'mission.pack':reportType==='MISSION_SUMMARY'?'mission.summary':'mission.record','generate');if(typeof body.idempotencyKey!=='string'||body.idempotencyKey.length<4||body.idempotencyKey.length>128)throw apiError(400,'VALIDATION_ERROR','idempotencyKey is required.');const result=await repository.requestReportArtefact(context,missionId,reportType,body.idempotencyKey);if(result.completionRequired)throw apiError(409,'COMPLETION_REQUIRED',reportType==='MISSION_SUMMARY'?'Complete the Mission before generating a Mission Summary.':'Complete the Mission before generating a Mission Record.');if(result.operationStarted)throw apiError(409,'OPERATION_STARTED','Mission Packs cannot be regenerated after operations begin.');if(result.notFound)throw apiError(404,'NOT_FOUND','Report evidence was not found.');if(result.locationForbidden)throw apiError(403,'LOCATION_FORBIDDEN','Mission location is not assigned.');if(result.idempotencyConflict)throw apiError(409,'IDEMPOTENCY_SCOPE_MISMATCH','That report request key is already bound to another report scope.');return res.status(201).json({data:result});}catch(error){const{status,response}=errorEnvelope(error);res.setHeader('Content-Type','application/json; charset=utf-8');return res.status(status).json(response);}};}
 
 function createCustomerAcceptanceHandler(dependencies={}){const repository=dependencies.repository||new OperationalRepository(),getContext=dependencies.resolveContext||resolveRequestContext;return async function(req,res){res.setHeader('Cache-Control','no-store');res.setHeader('Content-Type','application/json; charset=utf-8');try{const context=await getContext(req,res),missionId=assertUuid(req.query?.missionId,'missionId'),mission=await repository.get('missions',context,missionId);if(!mission||!hasAssignedLocationReadAccess('missions',context,mission))throw apiError(404,'NOT_FOUND','Mission not found.');if(req.method==='GET'){assertPermission(context,'mission.customer_acceptance','read');return res.status(200).json({data:await repository.readCustomerAcceptance(context,missionId)});}if(req.method!=='POST')throw apiError(405,'METHOD_NOT_ALLOWED','Method not allowed.');assertSameOrigin(req);assertLocationAccess(context,mission.operating_location_id,'Mission');const action=req.query?.action,body=parseBody(req,MAX_IMPORT_BODY_BYTES);let result;if(action==='record'){assertPermission(context,'mission.customer_acceptance','record');for(const field of['stateCode','methodCode','satisfactionCode','outcomeSummary','customerContactName','acknowledgedAt'])if(typeof body[field]!=='string'||!body[field].trim())throw apiError(400,'VALIDATION_ERROR',`${field} is required.`);if(body.followUpRequested===true&&(!body.followUpDate||typeof body.followUpDate!=='string'))throw apiError(400,'VALIDATION_ERROR','followUpDate is required.');result=await repository.createCustomerAcceptance(context,missionId,body);}else if(action==='file'){assertPermission(context,'mission.customer_acceptance','attachment.upload');const match=typeof body.dataUrl==='string'&&body.dataUrl.match(/^data:(image\/(?:png|jpeg|webp));base64,([A-Za-z0-9+/=]+)$/);const bytes=match?Buffer.from(match[2],'base64'):null;if(!match||!bytes?.length||bytes.length>3145728||Number(body.sizeBytes)!==bytes.length)throw apiError(400,'VALIDATION_ERROR','A valid Customer Outcome photo is required.');result=await repository.stageInternalCustomerOutcomeFile(context,missionId,{kind:body.kind==='SIGNATURE'?'SIGNATURE':'OUTCOME_PHOTO',fileName:String(body.fileName||'outcome-photo'),contentType:match[1],bytes,captureTimestamp:body.captureTimestamp||null,caption:body.caption||null});}else if(action==='link-issue'){assertPermission(context,'mission.customer_acceptance','link.issue');if(typeof body.contactName!=='string'||!body.contactName.trim())throw apiError(400,'VALIDATION_ERROR','contactName is required.');result=await repository.issueCustomerAcceptanceLink(context,missionId,body);}else if(action==='link-revoke'){assertPermission(context,'mission.customer_acceptance','link.revoke');result=await repository.revokeCustomerAcceptanceLink(context,missionId,body);}else throw apiError(400,'UNSUPPORTED_ACTION','Unsupported Customer Outcome action.');if(result?.completion_required)throw apiError(409,'COMPLETION_REQUIRED','Complete the Mission before recording a Customer Outcome.');if(result?.validation_error)throw apiError(400,'VALIDATION_ERROR','Customer Outcome evidence is incomplete.');if(result?.conflict)throw apiError(409,'VERSION_CONFLICT','The secure link changed.');return res.status(201).json({data:{...(result.record||result),...(result.token?{token:result.token}:{})}});}catch(error){const{status,response}=errorEnvelope(error);return res.status(status).json(response);}};}
 

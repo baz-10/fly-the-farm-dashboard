@@ -184,7 +184,7 @@ describe('trusted organisation operational API', () => {
 
   test('rejects a cross-tenant property assignment before creating a job', async () => {
     const repository = {
-      relationshipExists: jest.fn().mockResolvedValue(false),
+      createJobWithScope: jest.fn().mockResolvedValue({ error: 'JOB_SCOPE_FIELD_NOT_FOUND' }),
       create: jest.fn(),
     };
     const res = createResponse();
@@ -197,7 +197,7 @@ describe('trusted organisation operational API', () => {
     }), res);
 
     expect(res.statusCode).toBe(409);
-    expect(res.body.error.code).toBe('RELATIONSHIP_CONFLICT');
+    expect(res.body.error.code).toBe('JOB_SCOPE_FIELD_NOT_FOUND');
     expect(repository.create).not.toHaveBeenCalled();
   });
 
