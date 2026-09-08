@@ -57,6 +57,7 @@ export default function PropertyDetail() {
   const [fieldDialogOpen, setFieldDialogOpen] = useState(false);
   const [fieldForm, setFieldForm] = useState(defaultFieldForm);
   const [fieldBoundaryCoords, setFieldBoundaryCoords] = useState<LatLng[]>([]);
+  const [fieldBoundaryPolygons, setFieldBoundaryPolygons] = useState<LatLng[][]>([]);
   const [fieldBoundaryFile, setFieldBoundaryFile] = useState<BoundaryFileRef | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState(false);
   const [actionError, setActionError] = useState('');
@@ -123,8 +124,8 @@ export default function PropertyDetail() {
 
   const handleSaveField = async () => {
     if (!fieldForm.name.trim()) return;
-    if (operational.mode === 'remote' && (fieldForm.notes.trim() || fieldBoundaryCoords.length > 0 || fieldBoundaryFile)) {
-      setActionError('Production Beta does not yet support field notes or boundary-version writes. Remove them before saving; field name and area are supported.');
+    if (operational.mode === 'remote' && (fieldForm.notes.trim() || fieldBoundaryFile)) {
+      setActionError('Production Beta currently saves field boundaries through authoritative boundary versions. Remove notes and the uploaded source-file attachment before saving.');
       return;
     }
     try {
@@ -134,11 +135,16 @@ export default function PropertyDetail() {
         sizeHa: parseFloat(fieldForm.sizeHa) || 0,
         boundary: fieldBoundaryFile,
         boundaryCoords: fieldBoundaryCoords.length >= 3 ? fieldBoundaryCoords : undefined,
+        boundaryPolygons: fieldBoundaryPolygons.length > 0 ? fieldBoundaryPolygons : undefined,
         notes: fieldForm.notes,
       });
+      if (operational.mode === 'remote' && fieldBoundaryPolygons.length > 0) {
+        await operational.createFieldBoundaryVersion(field.id, fieldBoundaryPolygons);
+      }
       setFieldDialogOpen(false);
       setFieldForm(defaultFieldForm);
       setFieldBoundaryCoords([]);
+      setFieldBoundaryPolygons([]);
       setFieldBoundaryFile(null);
       setActionError('');
       navigate(`/jobs/client/${clientId}/property/${property.id}/field/${field.id}`);
@@ -326,7 +332,7 @@ export default function PropertyDetail() {
       </Box>
 
       {/* Add Field Dialog */}
-      <Dialog open={fieldDialogOpen} onClose={() => { setFieldDialogOpen(false); setFieldBoundaryCoords([]); setFieldBoundaryFile(null); }} maxWidth="md" fullWidth PaperProps={{ sx: { borderRadius: '16px' } }}>
+      <Dialog open={fieldDialogOpen} onClose={() => { setFieldDialogOpen(false); setFieldBoundaryCoords([]); setFieldBoundaryPolygons([]); setFieldBoundaryFile(null); }} maxWidth="md" fullWidth PaperProps={{ sx: { borderRadius: '16px' } }}>
         <DialogTitle sx={{ fontWeight: 700 }}>Add Field / Paddock</DialogTitle>
         <DialogContent>
           <Stack spacing={2.5} sx={{ mt: 1 }}>
@@ -352,6 +358,8 @@ export default function PropertyDetail() {
             <FieldBoundaryEditor
               coords={fieldBoundaryCoords}
               onCoordsChange={setFieldBoundaryCoords}
+              polygons={fieldBoundaryPolygons}
+              onPolygonsChange={setFieldBoundaryPolygons}
               onAreaChange={(ha) => {
                 if (ha > 0) setFieldForm((prev) => ({ ...prev, sizeHa: ha.toFixed(1) }));
               }}
@@ -370,7 +378,7 @@ export default function PropertyDetail() {
           </Stack>
         </DialogContent>
         <DialogActions sx={{ px: 3, pb: 2.5 }}>
-          <Button onClick={() => { setFieldDialogOpen(false); setFieldBoundaryCoords([]); setFieldBoundaryFile(null); }}>Cancel</Button>
+          <Button onClick={() => { setFieldDialogOpen(false); setFieldBoundaryCoords([]); setFieldBoundaryPolygons([]); setFieldBoundaryFile(null); }}>Cancel</Button>
           <Button variant="contained" onClick={() => void handleSaveField()} disabled={!fieldForm.name.trim() || operational.saving} sx={{ borderRadius: '10px', fontWeight: 700 }}>
             {operational.saving ? 'Saving…' : 'Add Field'}
           </Button>
