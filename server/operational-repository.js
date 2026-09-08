@@ -50,10 +50,23 @@ class OperationalRepository {
     return rows?.[0]||null;
   }
   async saveRecentWeatherSearch(context,location) {
-    const current=await this.readOperationsPreference(context),key=`${Number(location.latitude).toFixed(5)},${Number(location.longitude).toFixed(5)}`;
-    const recent=[location,...(current?.recent_weather_searches||[]).filter(item=>`${Number(item.latitude).toFixed(5)},${Number(item.longitude).toFixed(5)}`!==key)].slice(0,5);
+    const current=await this.readOperationsPreference(context),key=`${Number(location.latitude).toFixed(5)},${Number(location.longitude).toFixed(5)}`,stored=Array.isArray(current?.recent_weather_searches)?current.recent_weather_searches:[];
+    const favourites=stored.filter(item=>item?.favourite===true),favourite=favourites.some(item=>`${Number(item.latitude).toFixed(5)},${Number(item.longitude).toFixed(5)}`===key);
+    const recent=[...favourites,...(favourite?[]:[location]),...stored.filter(item=>item?.favourite!==true&&`${Number(item.latitude).toFixed(5)},${Number(item.longitude).toFixed(5)}`!==key)].slice(0,5);
     const rows=await supabaseRequest('rest/v1/internal_user_operations_preferences?on_conflict=organisation_id,internal_user_id',{method:'POST',headers:{Prefer:'resolution=merge-duplicates,return=representation'},body:JSON.stringify({organisation_id:context.organisation.id,internal_user_id:context.internalUser.id,selected_operating_location_id:current?.selected_operating_location_id||null,recent_weather_searches:recent,updated_at:new Date().toISOString()}),publicMessage:'Recent weather location could not be saved.'});
     return rows?.[0]?.recent_weather_searches||recent;
+  }
+  async saveFavouriteWeatherLocation(context,location) {
+    const current=await this.readOperationsPreference(context),key=`${Number(location.latitude).toFixed(5)},${Number(location.longitude).toFixed(5)}`,stored=Array.isArray(current?.recent_weather_searches)?current.recent_weather_searches:[];
+    const locations=[{...location,favourite:true},...stored.filter(item=>`${Number(item.latitude).toFixed(5)},${Number(item.longitude).toFixed(5)}`!==key)].slice(0,5);
+    const rows=await supabaseRequest('rest/v1/internal_user_operations_preferences?on_conflict=organisation_id,internal_user_id',{method:'POST',headers:{Prefer:'resolution=merge-duplicates,return=representation'},body:JSON.stringify({organisation_id:context.organisation.id,internal_user_id:context.internalUser.id,selected_operating_location_id:current?.selected_operating_location_id||null,recent_weather_searches:locations,updated_at:new Date().toISOString()}),publicMessage:'Favourite weather location could not be saved.'});
+    return (rows?.[0]?.recent_weather_searches||locations).filter(item=>item?.favourite===true);
+  }
+  async removeFavouriteWeatherLocation(context,location) {
+    const current=await this.readOperationsPreference(context),key=`${Number(location.latitude).toFixed(5)},${Number(location.longitude).toFixed(5)}`,stored=Array.isArray(current?.recent_weather_searches)?current.recent_weather_searches:[];
+    const locations=stored.map(item=>`${Number(item.latitude).toFixed(5)},${Number(item.longitude).toFixed(5)}`===key?Object.fromEntries(Object.entries(item).filter(([name])=>name!=='favourite')):item);
+    const rows=await supabaseRequest('rest/v1/internal_user_operations_preferences?on_conflict=organisation_id,internal_user_id',{method:'POST',headers:{Prefer:'resolution=merge-duplicates,return=representation'},body:JSON.stringify({organisation_id:context.organisation.id,internal_user_id:context.internalUser.id,selected_operating_location_id:current?.selected_operating_location_id||null,recent_weather_searches:locations,updated_at:new Date().toISOString()}),publicMessage:'Favourite weather location could not be removed.'});
+    return (rows?.[0]?.recent_weather_searches||locations).filter(item=>item?.favourite===true);
   }
   async attachMissionAssignments(context, records) {
     if (!Array.isArray(records) || records.length === 0) return records;

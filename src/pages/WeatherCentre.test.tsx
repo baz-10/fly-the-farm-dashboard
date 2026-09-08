@@ -3,19 +3,22 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import WeatherCentre from './WeatherCentre';
 
-var mockRead = jest.fn(), mockSearchWeather = jest.fn(), mockSearchedWeather = jest.fn();
-jest.mock('../services/operationsBriefApi', () => ({ createOperationsBriefApi: () => ({ read: (...args: any[]) => mockRead(...args), searchWeather: (...args: any[]) => mockSearchWeather(...args), searchedWeather: (...args: any[]) => mockSearchedWeather(...args) }) }));
+class ResizeObserverMock { observe(){} unobserve(){} disconnect(){} }
+(global as any).ResizeObserver=ResizeObserverMock;
+
+var mockRead = jest.fn(), mockSearchWeather = jest.fn(), mockSearchedWeather = jest.fn(), mockFavouriteWeather = jest.fn(), mockUnfavouriteWeather = jest.fn();
+jest.mock('../services/operationsBriefApi', () => ({ createOperationsBriefApi: () => ({ read: (...args: any[]) => mockRead(...args), searchWeather: (...args: any[]) => mockSearchWeather(...args), searchedWeather: (...args: any[]) => mockSearchedWeather(...args), favouriteWeather:(...args:any[])=>mockFavouriteWeather(...args), unfavouriteWeather:(...args:any[])=>mockUnfavouriteWeather(...args) }) }));
 
 beforeEach(() => mockRead.mockResolvedValue({
   location: { id: 'loc-1', name: 'Fly The Farm Base' },
   locations: [{ id: 'loc-1', name: 'Fly The Farm Base' }],
-  recentWeatherSearches: [{ label: 'Dalby, QLD 4405', latitude: -27.18, longitude: 151.26 }],
+  recentWeatherSearches: [{ label: 'Dalby, QLD 4405', latitude: -27.18, longitude: 151.26 }], favouriteWeatherLocations: [],
   weather: {
     state: 'READY',
     resolvedLocation: { label: 'Molendinar, QLD 4214', latitude: -27.97, longitude: 153.36 },
     sourceLabel: 'Fly The Farm Base',
     current: { temperatureC: 24, windSpeedKmh: 11, windGustKmh: 18, rainProbability: 10, deltaTC: 5.2, sprayCondition: { status: 'GO', label: 'Good' } },
-    hourly: [{ time: '2026-08-05T09:00', temperatureC: 24, windSpeedKmh: 11, windGustKmh: 18, rainProbability: 10, deltaTC: 5.2, sprayCondition: { status: 'GO', label: 'Good' } }],
+    hourly: Array.from({length:25},(_,index)=>({ time: `2026-08-${index<15?'05':'06'}T${String((9+index)%24).padStart(2,'0')}:00`, temperatureC:24, windSpeedKmh:11+index, windGustKmh:18+index, windDirection:['N','NE','E','SE'][index%4], rainProbability:10, deltaTC:5.2, inversionPotential:{rating:index<4?'high':index<8?'moderate':'low',score:index<4?2:index<8?1:0,label:index<4?'High':index<8?'Medium':'Low'}, sprayCondition:{status:'GO',label:'Good'} })),
     daily: [{ date: '2026-08-05', minTemperatureC: 12, maxTemperatureC: 27, rainProbability: 10 }],
     bestSprayWindow: { start: '2026-08-05T09:00', end: '2026-08-05T11:00' },
   },
@@ -27,9 +30,19 @@ test('explains advisory weather and presents current, hourly and seven-day views
   expect(screen.getByText(/decision support only/i)).toBeInTheDocument();
   expect(screen.getByText('Current conditions')).toBeInTheDocument();
   expect(screen.getByText('Next 24 hours')).toBeInTheDocument();
+  expect(screen.getByText('Wind and inversion outlook')).toBeInTheDocument();
+  expect(screen.getByText(/Two-hour view from now/i)).toBeInTheDocument();
+  expect(screen.getAllByText('High').length).toBeGreaterThan(0);
   expect(screen.getByText('7 day forecast')).toBeInTheDocument();
   expect(screen.getByText(/09:00.*11:00/)).toBeInTheDocument();
   expect(screen.getByText('Molendinar, QLD 4214')).toBeInTheDocument();
+});
+
+test('lets the signed-in user save the current searched location as a favourite',async()=>{
+ const user=userEvent.setup(),location={label:'Toowoomba, QLD 4350',latitude:-27.56,longitude:151.95};
+ mockSearchWeather.mockResolvedValue({results:[location]});mockSearchedWeather.mockResolvedValue({state:'READY',locationSource:'SEARCH',resolvedLocation:location,sourceLabel:'Searched location',recentSearches:[location],favouriteWeatherLocations:[],current:{temperatureC:21,windSpeedKmh:9,windGustKmh:14,rainProbability:5,deltaTC:4,sprayCondition:{status:'GO',label:'Good'}},hourly:[],daily:[]});mockFavouriteWeather.mockResolvedValue({favouriteWeatherLocations:[location]});
+ render(<WeatherCentre/>);await screen.findByText('Weather Centre');await user.type(screen.getByRole('textbox',{name:'Search weather location'}),'Toowoomba');await user.click(screen.getByRole('button',{name:'Search locations'}));await user.click(await screen.findByRole('button',{name:/Toowoomba, QLD 4350/}));await user.click(await screen.findByRole('button',{name:/Add Toowoomba.*to favourites/i}));
+ expect(mockFavouriteWeather).toHaveBeenCalledWith(location);expect(await screen.findByText('Favourite locations')).toBeInTheDocument();
 });
 
 test('searches an advisory location without changing the Home operating location and exposes recent searches', async () => {

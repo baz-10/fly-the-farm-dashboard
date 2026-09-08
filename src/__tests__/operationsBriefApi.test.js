@@ -46,3 +46,12 @@ test('searches weather locations and returns advisory weather without changing t
  expect(repository.saveRecentWeatherSearch).toHaveBeenCalled();
  expect(repository.saveOperationsPreference).toBeUndefined();
 });
+
+test('adds and removes only the signed-in users bounded weather favourites',async()=>{
+ const repository={list:jest.fn().mockResolvedValue([]),saveFavouriteWeatherLocation:jest.fn().mockResolvedValue([{label:'Emerald, QLD 4720',latitude:-23.53,longitude:148.16}]),removeFavouriteWeatherLocation:jest.fn().mockResolvedValue([])};
+ const handler=createOperationsBriefHandler({repository,weatherProvider:{},complianceRepository:{},resolveContext:jest.fn().mockResolvedValue(context)}),location={label:'Emerald, QLD 4720',latitude:-23.53,longitude:148.16};
+ const add=response();await handler(req('POST',{action:'favourite-weather'},{location}),add);
+ expect(add.statusCode).toBe(200);expect(repository.saveFavouriteWeatherLocation).toHaveBeenCalledWith(context,expect.objectContaining(location));
+ const remove=response();await handler(req('POST',{action:'unfavourite-weather'},{location}),remove);
+ expect(remove.statusCode).toBe(200);expect(repository.removeFavouriteWeatherLocation).toHaveBeenCalledWith(context,expect.objectContaining(location));
+});

@@ -6,7 +6,16 @@ const {
   geocodeOpenMeteoLocation,
   mergeAustralianPlace,
   fetchOpenMeteoHistoricalWeather,
+  fetchOpenMeteoOperationsForecast,
 } = require('../../server/weather-provider');
+
+test('builds the operations outlook from the current provider hour for exactly the next 24 hours',async()=>{
+  const start=Date.parse('2026-09-08T00:00:00Z'),times=Array.from({length:48},(_,index)=>new Date(start+index*3600000).toISOString().slice(0,16)),values=Array.from({length:48},()=>20);
+  const fetchImpl=jest.fn().mockResolvedValue({ok:true,json:async()=>({latitude:-27,longitude:153,timezone:'Australia/Brisbane',current:{time:'2026-09-08T09:00',temperature_2m:24,apparent_temperature:24,relative_humidity_2m:70,wind_speed_10m:8,wind_gusts_10m:12,wind_direction_10m:90,precipitation:0,rain:0,is_day:1},hourly:{time:times,temperature_2m:values,relative_humidity_2m:values.map(()=>70),precipitation_probability:values.map(()=>0),precipitation:values.map(()=>0),cloud_cover:values.map(()=>20),is_day:values.map((_,index)=>index%24>=6&&index%24<18?1:0),wind_speed_10m:values.map(()=>8),wind_gusts_10m:values.map(()=>12),wind_direction_10m:values.map(()=>90)},daily:{time:['2026-09-08'],temperature_2m_min:[15],temperature_2m_max:[27],precipitation_probability_max:[0],precipitation_sum:[0],wind_speed_10m_max:[12],wind_gusts_10m_max:[18]}})});
+  const result=await fetchOpenMeteoOperationsForecast({latitude:-27,longitude:153,fetchImpl});
+  expect(result.hourly).toHaveLength(25);expect(result.hourly[0].time).toBe('2026-09-08T09:00');expect(result.hourly[24].time).toBe('2026-09-09T09:00');expect(result.hourly[0].inversionPotential).toEqual(expect.objectContaining({rating:expect.stringMatching(/low|moderate|high/)}));
+  const request=new URL(fetchImpl.mock.calls[0][0]);expect(request.searchParams.get('hourly')).toMatch(/cloud_cover/);expect(request.searchParams.get('hourly')).toMatch(/is_day/);
+});
 
 test('normalises and filters historical observations to the exact frozen UTC interval', async () => {
   const fetchImpl = jest.fn().mockResolvedValue({
