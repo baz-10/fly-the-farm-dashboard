@@ -24,6 +24,11 @@ test('builds the operations outlook from the actual current provider-local hour 
   const request=new URL(fetchImpl.mock.calls[0][0]);expect(request.searchParams.get('hourly')).toMatch(/cloud_cover/);expect(request.searchParams.get('hourly')).toMatch(/is_day/);
 });
 
+test('accepts a valid provider timezone offset when retrieval time includes milliseconds',async()=>{
+  const fetchImpl=jest.fn().mockResolvedValue({ok:true,json:async()=>operationsSnapshot()});
+  await expect(fetchOpenMeteoOperationsForecast({latitude:-27,longitude:153,fetchImpl,now:()=>new Date('2026-09-08T10:22:00.999Z')})).resolves.toEqual(expect.objectContaining({timezone:'Australia/Brisbane'}));
+});
+
 test('fails closed when the provider timezone and UTC offset disagree',async()=>{
   const fetchImpl=jest.fn().mockResolvedValue({ok:true,json:async()=>operationsSnapshot({utc_offset_seconds:0})});
   await expect(fetchOpenMeteoOperationsForecast({latitude:-27,longitude:153,fetchImpl,now:()=>new Date('2026-09-08T10:22:00.000Z')})).rejects.toThrow('timezone and UTC offset');

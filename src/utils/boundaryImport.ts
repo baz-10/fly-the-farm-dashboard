@@ -109,6 +109,10 @@ function normaliseRing(positions: Position[]): LatLng[] {
     coords.pop();
   }
 
+  if (new Set(coords.map(([lat, lng]) => `${lat},${lng}`)).size < 3) {
+    throw new Error('Every polygon ring must contain at least three distinct points.');
+  }
+
   return coords;
 }
 
@@ -119,11 +123,13 @@ export function calculateBoundaryAreaHectares(coords: LatLng[]): number {
 }
 
 function buildBoundaryResult(rings: LatLng[][]): BoundaryImportResult {
-  const candidates = rings
-    .filter((ring) => ring.length >= 3)
-    .map((coords) => ({ coords, areaHa: calculateBoundaryAreaHectares(coords) }))
-    .filter(({ areaHa }) => areaHa > 0)
-    .sort((a, b) => b.areaHa - a.areaHa);
+  const candidates = rings.map((coords) => ({ coords, areaHa: calculateBoundaryAreaHectares(coords) }));
+
+  if (candidates.some(({ areaHa }) => !Number.isFinite(areaHa) || areaHa <= 0)) {
+    throw new Error('Every polygon ring must define a positive WGS84 area.');
+  }
+
+  candidates.sort((a, b) => b.areaHa - a.areaHa);
 
   if (candidates.length === 0) {
     throw new Error('No valid WGS84 polygon was found. Include the shapefile .prj sidecar if its coordinates are projected.');

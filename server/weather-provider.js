@@ -85,8 +85,8 @@ async function reverseGeocodeAustralianLocation({latitude,longitude},fetchImpl=g
 }
 function timezoneOffsetSeconds(timezone,instant){
   try{
-    const parts=Object.fromEntries(new Intl.DateTimeFormat('en-CA',{timeZone:timezone,hourCycle:'h23',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit'}).formatToParts(instant).filter(part=>part.type!=='literal').map(part=>[part.type,part.value]));
-    return Math.round((Date.UTC(Number(parts.year),Number(parts.month)-1,Number(parts.day),Number(parts.hour),Number(parts.minute),Number(parts.second))-instant.getTime())/1000);
+    const wholeSecond=new Date(Math.trunc(instant.getTime()/1000)*1000),parts=Object.fromEntries(new Intl.DateTimeFormat('en-CA',{timeZone:timezone,hourCycle:'h23',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit'}).formatToParts(wholeSecond).filter(part=>part.type!=='literal').map(part=>[part.type,part.value]));
+    return (Date.UTC(Number(parts.year),Number(parts.month)-1,Number(parts.day),Number(parts.hour),Number(parts.minute),Number(parts.second))-wholeSecond.getTime())/1000;
   }catch{return null;}
 }
 function assertOperationsForecast(snapshot,retrievedAt){

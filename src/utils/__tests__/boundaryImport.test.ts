@@ -101,6 +101,16 @@ describe('boundary imports', () => {
     })).toThrow(/invalid WGS84 coordinate/i);
   });
 
+  test('rejects a multipart import when one discovered polygon ring is empty', () => {
+    expect(() => boundaryFromGeoJson({
+      type: 'FeatureCollection',
+      features: [
+        { type: 'Feature', properties: {}, geometry: { type: 'Polygon', coordinates: [[[153, -27], [153.01, -27], [153.01, -27.01], [153, -27]]] } },
+        { type: 'Feature', properties: {}, geometry: { type: 'Polygon', coordinates: [[]] } },
+      ],
+    })).toThrow(/every polygon ring must contain at least three distinct points/i);
+  });
+
   test('calculates zero for an incomplete boundary', () => {
     expect(calculateBoundaryAreaHectares([[-27, 153], [-27, 153.01]])).toBe(0);
   });
