@@ -94,6 +94,13 @@ describe('boundary imports', () => {
     expect(result.areaHa).toBeGreaterThan(100);
   });
 
+  test('rejects an entire polygon ring when one coordinate is malformed', () => {
+    expect(() => boundaryFromGeoJson({
+      type: 'Polygon',
+      coordinates: [[[153, -27], [153.01, -27], ['invalid', -27.01], [153, -27.01], [153, -27]]],
+    })).toThrow(/invalid WGS84 coordinate/i);
+  });
+
   test('calculates zero for an incomplete boundary', () => {
     expect(calculateBoundaryAreaHectares([[-27, 153], [-27, 153.01]])).toBe(0);
   });

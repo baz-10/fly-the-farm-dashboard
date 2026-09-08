@@ -9,6 +9,7 @@ export interface BriefWeather {
   daily?: any[];
   bestSprayWindow?: { start: string; end: string } | null;
   retrievedAt?: string;
+  timezone?: string;
   resolvedLocation?: WeatherLocation | null;
   sourceLabel?: string;
   locationSource?: 'OPERATING_LOCATION' | 'DEVICE' | 'SEARCH';

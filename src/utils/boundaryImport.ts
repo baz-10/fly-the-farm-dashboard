@@ -93,17 +93,17 @@ function samePosition(first: LatLng, second: LatLng) {
 }
 
 function normaliseRing(positions: Position[]): LatLng[] {
-  const coords = positions
-    .filter((position) => (
-      position.length >= 2
-      && Number.isFinite(position[0])
-      && Number.isFinite(position[1])
-      && position[0] >= -180
-      && position[0] <= 180
-      && position[1] >= -90
-      && position[1] <= 90
-    ))
-    .map(([lng, lat]) => [lat, lng] as LatLng);
+  const valid = positions.every((position) => (
+    position.length >= 2
+    && Number.isFinite(position[0])
+    && Number.isFinite(position[1])
+    && position[0] >= -180
+    && position[0] <= 180
+    && position[1] >= -90
+    && position[1] <= 90
+  ));
+  if (!valid) throw new Error('Boundary contains an invalid WGS84 coordinate.');
+  const coords = positions.map(([lng, lat]) => [lat, lng] as LatLng);
 
   if (coords.length > 1 && samePosition(coords[0], coords[coords.length - 1])) {
     coords.pop();

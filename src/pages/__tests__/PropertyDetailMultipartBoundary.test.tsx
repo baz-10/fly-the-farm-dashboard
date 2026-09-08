@@ -2,10 +2,10 @@ import React from 'react';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import PropertyDetail from '../PropertyDetail';
 
-const mockPolygons: Array<Array<[number, number]>> = [
-  [[-27, 153], [-27, 153.01], [-27.01, 153.01]],
-  [[-27.02, 153.02], [-27.02, 153.03], [-27.03, 153.03]],
-];
+const mockPolygons: Array<Array<[number, number]>> = Array.from({ length: 14 }, (_, index) => {
+  const offset = index * 0.02;
+  return [[-27 - offset, 153 + offset], [-27 - offset, 153.01 + offset], [-27.01 - offset, 153.01 + offset]];
+});
 const mockCreateField = jest.fn();
 const mockCreateFieldBoundaryVersion = jest.fn();
 
@@ -30,6 +30,7 @@ jest.mock('../../components/FieldBoundaryEditor', () => (props: any) => (
     <button type="button" onClick={() => {
       props.onCoordsChange(mockPolygons[0]);
       props.onPolygonsChange(mockPolygons);
+      props.onBoundaryFile?.({ name: 'fourteen-paddocks.zip', size: 1024, type: 'application/zip' });
       props.onAreaChange(105.6);
     }}>Import 14 paddocks</button>
   </div>
@@ -47,7 +48,7 @@ test('creates the Field then publishes every imported polygon as its authoritati
   const dialog = await screen.findByRole('dialog', { name: 'Add Field / Paddock' });
   fireEvent.change(within(dialog).getByRole('textbox', { name: /Field Name/ }), { target: { value: 'North blocks' } });
   fireEvent.click(within(dialog).getByRole('button', { name: 'Import 14 paddocks' }));
-  expect(within(dialog).getByTestId('polygon-count')).toHaveTextContent('2');
+  expect(within(dialog).getByTestId('polygon-count')).toHaveTextContent('14');
   fireEvent.click(within(dialog).getByRole('button', { name: 'Add Field' }));
 
   await waitFor(() => expect(mockCreateField).toHaveBeenCalled());
@@ -56,4 +57,18 @@ test('creates the Field then publishes every imported polygon as its authoritati
   }));
   expect(mockCreateFieldBoundaryVersion).toHaveBeenCalledWith('field-1', mockPolygons);
   expect(mockCreateField.mock.invocationCallOrder[0]).toBeLessThan(mockCreateFieldBoundaryVersion.mock.invocationCallOrder[0]);
+});
+
+test('retries a failed boundary publication without creating a duplicate Field', async () => {
+  mockCreateFieldBoundaryVersion.mockRejectedValueOnce(new Error('Boundary unavailable')).mockResolvedValueOnce({ id: 'boundary-1' });
+  render(<PropertyDetail />);
+  fireEvent.click(screen.getAllByRole('button', { name: 'Add Field' })[0]);
+  const dialog = await screen.findByRole('dialog', { name: 'Add Field / Paddock' });
+  fireEvent.change(within(dialog).getByRole('textbox', { name: /Field Name/ }), { target: { value: 'North blocks' } });
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Import 14 paddocks' }));
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Add Field' }));
+  expect(await within(dialog).findByText(/Field was created, but its boundary is not yet saved/)).toBeVisible();
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Add Field' }));
+  await waitFor(() => expect(mockCreateFieldBoundaryVersion).toHaveBeenCalledTimes(2));
+  expect(mockCreateField).toHaveBeenCalledTimes(1);
 });
