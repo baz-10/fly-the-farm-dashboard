@@ -142,6 +142,7 @@ export default function FieldDetail() {
           sizeHa: parseFloat(editForm.sizeHa) || 0,
           notes: editForm.notes,
           boundaryCoords: editBoundaryCoords.length >= 3 ? editBoundaryCoords : undefined,
+          boundaryPolygons: editBoundaryPolygons.length > 0 ? editBoundaryPolygons : undefined,
           boundary: editBoundaryFile,
         });
       }

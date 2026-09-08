@@ -12,13 +12,14 @@ const hours = Array.from({ length: 25 }, (_, index) => ({
   windDirection: ['N', 'NE', 'E', 'SE'][index % 4],
   rainProbability: 5,
   deltaTC: 4.2,
-  inversionPotential: { rating: index < 4 ? 'high' : index < 8 ? 'moderate' : 'low', score: index < 4 ? 2 : index < 8 ? 1 : 0, label: index < 4 ? 'High' : index < 8 ? 'Medium' : 'Low' },
+  isDay: index >= 0 && index < 9,
+  inversionPotential: { rating: index < 4 ? 'high' : index < 8 ? 'moderate' : 'low', score: index < 4 ? 2 : index < 8 ? 1 : 0, label: index < 4 ? 'High' : index < 8 ? 'Medium' : 'Low', factors: index === 0 ? ['Light wind', 'Clear night'] : [] },
   sprayCondition: { status: 'GO', label: 'Good' },
 }));
 
 const weather = (location = { label: 'Fly The Farm Base', latitude: -27.97, longitude: 153.36 }, source = 'OPERATING_LOCATION') => ({
-  state: 'READY', locationSource: source, resolvedLocation: location, sourceLabel: source === 'SEARCH' ? 'Searched location' : 'Fly The Farm Base',
-  current: { temperatureC: 24, windSpeedKmh: 10, windGustKmh: 16, rainProbability: 5, deltaTC: 4.2, inversionPotential: { rating: 'high', score: 2, label: 'High' }, sprayCondition: { status: 'GO', label: 'Good' } },
+  state: 'READY', locationSource: source, resolvedLocation: location, sourceLabel: source === 'SEARCH' ? 'Searched location' : 'Fly The Farm Base', timezone: 'Australia/Brisbane', retrievedAt: '2026-09-08T10:55:00.000Z',
+  current: { temperatureC: 24, windSpeedKmh: 10, windGustKmh: 16, rainProbability: 5, deltaTC: 4.2, inversionPotential: { rating: 'high', score: 2, label: 'High', factors: ['Light wind', 'Clear night'] }, sprayCondition: { status: 'GO', label: 'Good' } },
   hourly: hours,
   daily: [{ date: '2026-09-08', minTemperatureC: 14, maxTemperatureC: 27, rainProbability: 5 }],
   bestSprayWindow: { start: '2026-09-08T09:00', end: '2026-09-08T11:00' },
@@ -51,7 +52,22 @@ test('shows a rolling two-hour wind and inversion outlook while retaining writte
   await expect(page.getByLabel('Two-hour wind and inversion outlook')).toBeVisible();
   await expect(page.getByText('Next 24 hours')).toBeVisible();
   await expect(page.getByText('7 day forecast')).toBeVisible();
-  await expect(page.getByText(/09:00 N · High/)).toBeVisible();
+  await expect(page.getByText(/Now.*09:00 N · High/).first()).toBeVisible();
+  await expect(page.getByLabel('Two-hour wind and inversion outlook').getByText('Wind (km/h)')).toBeVisible();
+  await expect(page.getByText(/Forecast inversion potential:/).first()).toBeVisible();
+  await expect(page.getByText(/Times shown in provider local time/)).toBeVisible();
+  await expect(page.getByText(/Australia\/Brisbane/)).toBeVisible();
+  await expect(page.getByText(/Factors: Light wind, Clear night/).first()).toBeVisible();
+  const chart = page.getByLabel('Two-hour wind and inversion outlook');
+  const chartBox = await chart.boundingBox();
+  expect(chartBox).not.toBeNull();
+  for (const tick of await chart.locator('.recharts-yAxis .recharts-cartesian-axis-tick-value').all()) {
+    const box = await tick.boundingBox();
+    if (box && chartBox) {
+      expect(box.x).toBeGreaterThanOrEqual(chartBox.x);
+      expect(box.x + box.width).toBeLessThanOrEqual(chartBox.x + chartBox.width);
+    }
+  }
 });
 
 test('lets the signed-in user keep a searched location as a personal favourite', async ({ page }) => {

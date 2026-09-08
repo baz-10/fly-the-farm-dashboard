@@ -41,7 +41,7 @@ export default defineConfig({
     },
     {
       name: 'chromium',
-      testMatch: [/acceptance\/.*\.spec\.ts/, /mission\/multifield-multiday-mission\.spec\.ts/],
+      testMatch: [/acceptance\/.*\.spec\.ts/, /mission\/multifield-multiday-mission\.spec\.ts/, /weather\/.*\.spec\.ts/],
       use: {
         ...devices['Desktop Chrome'],
         storageState: 'test-results/.auth/organisation.json',
@@ -54,7 +54,7 @@ export default defineConfig({
     },
     {
       name: 'webkit',
-      testMatch: [/acceptance\/.*\.spec\.ts/, /mission\/multifield-multiday-mission\.spec\.ts/],
+      testMatch: [/acceptance\/.*\.spec\.ts/, /mission\/multifield-multiday-mission\.spec\.ts/, /weather\/.*\.spec\.ts/],
       use: {
         ...devices['Desktop Safari'],
         storageState: 'test-results/.auth/organisation.json',

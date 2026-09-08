@@ -93,20 +93,24 @@ function samePosition(first: LatLng, second: LatLng) {
 }
 
 function normaliseRing(positions: Position[]): LatLng[] {
-  const coords = positions
-    .filter((position) => (
-      position.length >= 2
-      && Number.isFinite(position[0])
-      && Number.isFinite(position[1])
-      && position[0] >= -180
-      && position[0] <= 180
-      && position[1] >= -90
-      && position[1] <= 90
-    ))
-    .map(([lng, lat]) => [lat, lng] as LatLng);
+  const valid = positions.every((position) => (
+    position.length >= 2
+    && Number.isFinite(position[0])
+    && Number.isFinite(position[1])
+    && position[0] >= -180
+    && position[0] <= 180
+    && position[1] >= -90
+    && position[1] <= 90
+  ));
+  if (!valid) throw new Error('Boundary contains an invalid WGS84 coordinate.');
+  const coords = positions.map(([lng, lat]) => [lat, lng] as LatLng);
 
   if (coords.length > 1 && samePosition(coords[0], coords[coords.length - 1])) {
     coords.pop();
+  }
+
+  if (new Set(coords.map(([lat, lng]) => `${lat},${lng}`)).size < 3) {
+    throw new Error('Every polygon ring must contain at least three distinct points.');
   }
 
   return coords;
@@ -119,11 +123,13 @@ export function calculateBoundaryAreaHectares(coords: LatLng[]): number {
 }
 
 function buildBoundaryResult(rings: LatLng[][]): BoundaryImportResult {
-  const candidates = rings
-    .filter((ring) => ring.length >= 3)
-    .map((coords) => ({ coords, areaHa: calculateBoundaryAreaHectares(coords) }))
-    .filter(({ areaHa }) => areaHa > 0)
-    .sort((a, b) => b.areaHa - a.areaHa);
+  const candidates = rings.map((coords) => ({ coords, areaHa: calculateBoundaryAreaHectares(coords) }));
+
+  if (candidates.some(({ areaHa }) => !Number.isFinite(areaHa) || areaHa <= 0)) {
+    throw new Error('Every polygon ring must define a positive WGS84 area.');
+  }
+
+  candidates.sort((a, b) => b.areaHa - a.areaHa);
 
   if (candidates.length === 0) {
     throw new Error('No valid WGS84 polygon was found. Include the shapefile .prj sidecar if its coordinates are projected.');

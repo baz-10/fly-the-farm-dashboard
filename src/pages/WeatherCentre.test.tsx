@@ -15,10 +15,11 @@ beforeEach(() => mockRead.mockResolvedValue({
   recentWeatherSearches: [{ label: 'Dalby, QLD 4405', latitude: -27.18, longitude: 151.26 }], favouriteWeatherLocations: [],
   weather: {
     state: 'READY',
+    timezone: 'Australia/Brisbane', retrievedAt: '2026-08-05T00:55:00.000Z',
     resolvedLocation: { label: 'Molendinar, QLD 4214', latitude: -27.97, longitude: 153.36 },
     sourceLabel: 'Fly The Farm Base',
-    current: { temperatureC: 24, windSpeedKmh: 11, windGustKmh: 18, rainProbability: 10, deltaTC: 5.2, sprayCondition: { status: 'GO', label: 'Good' } },
-    hourly: Array.from({length:25},(_,index)=>({ time: `2026-08-${index<15?'05':'06'}T${String((9+index)%24).padStart(2,'0')}:00`, temperatureC:24, windSpeedKmh:11+index, windGustKmh:18+index, windDirection:['N','NE','E','SE'][index%4], rainProbability:10, deltaTC:5.2, inversionPotential:{rating:index<4?'high':index<8?'moderate':'low',score:index<4?2:index<8?1:0,label:index<4?'High':index<8?'Medium':'Low'}, sprayCondition:{status:'GO',label:'Good'} })),
+    current: { temperatureC: 24, windSpeedKmh: 11, windGustKmh: 18, rainProbability: 10, deltaTC: 5.2, inversionPotential:{rating:'high',score:2,label:'High',factors:['Light wind','Clear night']}, sprayCondition: { status: 'GO', label: 'Good' } },
+    hourly: Array.from({length:25},(_,index)=>({ time: `2026-08-${index<15?'05':'06'}T${String((9+index)%24).padStart(2,'0')}:00`, temperatureC:24, windSpeedKmh:11+index, windGustKmh:18+index, windDirection:['N','NE','E','SE'][index%4], rainProbability:10, deltaTC:5.2, inversionPotential:{rating:index<4?'high':index<8?'moderate':'low',score:index<4?2:index<8?1:0,label:index<4?'High':index<8?'Medium':'Low',factors:index===0?['Light wind','Clear night']:[]}, sprayCondition:{status:'GO',label:'Good'} })),
     daily: [{ date: '2026-08-05', minTemperatureC: 12, maxTemperatureC: 27, rainProbability: 10 }],
     bestSprayWindow: { start: '2026-08-05T09:00', end: '2026-08-05T11:00' },
   },
@@ -32,6 +33,12 @@ test('explains advisory weather and presents current, hourly and seven-day views
   expect(screen.getByText('Next 24 hours')).toBeInTheDocument();
   expect(screen.getByText('Wind and inversion outlook')).toBeInTheDocument();
   expect(screen.getByText(/Two-hour view from now/i)).toBeInTheDocument();
+  expect(screen.getByText('Wind (km/h)')).toBeInTheDocument();
+  expect(screen.getAllByText(/Forecast inversion potential:/).length).toBeGreaterThan(0);
+  expect(screen.getByText(/Times shown in provider local time/)).toBeInTheDocument();
+  expect(screen.getByText(/Australia\/Brisbane/)).toBeInTheDocument();
+  expect(screen.getAllByText(/Factors: Light wind, Clear night/).length).toBeGreaterThan(0);
+  expect(screen.getAllByText(/Now.*09:00/).length).toBeGreaterThanOrEqual(2);
   expect(screen.getAllByText('High').length).toBeGreaterThan(0);
   expect(screen.getByText('7 day forecast')).toBeInTheDocument();
   expect(screen.getByText(/09:00.*11:00/)).toBeInTheDocument();
