@@ -12,6 +12,7 @@ const hours = Array.from({ length: 25 }, (_, index) => ({
   windDirection: ['N', 'NE', 'E', 'SE'][index % 4],
   rainProbability: 5,
   deltaTC: 4.2,
+  isDay: index >= 0 && index < 9,
   inversionPotential: { rating: index < 4 ? 'high' : index < 8 ? 'moderate' : 'low', score: index < 4 ? 2 : index < 8 ? 1 : 0, label: index < 4 ? 'High' : index < 8 ? 'Medium' : 'Low' },
   sprayCondition: { status: 'GO', label: 'Good' },
 }));
@@ -51,7 +52,10 @@ test('shows a rolling two-hour wind and inversion outlook while retaining writte
   await expect(page.getByLabel('Two-hour wind and inversion outlook')).toBeVisible();
   await expect(page.getByText('Next 24 hours')).toBeVisible();
   await expect(page.getByText('7 day forecast')).toBeVisible();
-  await expect(page.getByText(/09:00 N · High/)).toBeVisible();
+  await expect(page.getByText(/Now.*09:00 N · High/).first()).toBeVisible();
+  await expect(page.getByText('Wind (km/h)')).toBeVisible();
+  await expect(page.getByText(/Forecast inversion potential:/)).toBeVisible();
+  await expect(page.getByText(/Times shown in provider local time/)).toBeVisible();
 });
 
 test('lets the signed-in user keep a searched location as a personal favourite', async ({ page }) => {

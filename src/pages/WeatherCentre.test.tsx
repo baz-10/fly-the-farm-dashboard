@@ -32,6 +32,10 @@ test('explains advisory weather and presents current, hourly and seven-day views
   expect(screen.getByText('Next 24 hours')).toBeInTheDocument();
   expect(screen.getByText('Wind and inversion outlook')).toBeInTheDocument();
   expect(screen.getByText(/Two-hour view from now/i)).toBeInTheDocument();
+  expect(screen.getByText('Wind (km/h)')).toBeInTheDocument();
+  expect(screen.getByText(/Forecast inversion potential:/)).toBeInTheDocument();
+  expect(screen.getByText(/Times shown in provider local time/)).toBeInTheDocument();
+  expect(screen.getAllByText(/Now.*09:00/).length).toBeGreaterThanOrEqual(2);
   expect(screen.getAllByText('High').length).toBeGreaterThan(0);
   expect(screen.getByText('7 day forecast')).toBeInTheDocument();
   expect(screen.getByText(/09:00.*11:00/)).toBeInTheDocument();

@@ -18,4 +18,6 @@ test('reports high medium and low inversion potential without claiming an observ
  expect(assessInversionPotential({isDay:false,windSpeedKmh:3,cloudCoverPercent:5,humidityPercent:94,temperatureTrendC:-1})).toEqual(expect.objectContaining({rating:'high',score:2,label:'High',message:expect.stringMatching(/checked on site/i)}));
  expect(assessInversionPotential({isDay:false,windSpeedKmh:9,cloudCoverPercent:70,humidityPercent:60})).toEqual(expect.objectContaining({rating:'moderate',score:1,label:'Medium'}));
  expect(assessInversionPotential({isDay:true,windSpeedKmh:20,cloudCoverPercent:70,humidityPercent:60})).toEqual(expect.objectContaining({rating:'low',score:0,label:'Low'}));
+ expect(assessInversionPotential({isDay:undefined,windSpeedKmh:20,cloudCoverPercent:70,humidityPercent:60})).toEqual(expect.objectContaining({rating:'unknown',score:null,label:'Unknown'}));
+ expect(assessInversionPotential({isDay:false,windSpeedKmh:3,cloudCoverPercent:5,humidityPercent:94,temperatureTrendC:-1}).factors).toEqual(expect.arrayContaining(['Night-time','Light wind','Clear sky','High humidity','Cooling trend']));
 });
