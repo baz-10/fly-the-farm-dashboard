@@ -13,6 +13,7 @@ export interface BriefWeather {
   sourceLabel?: string;
   locationSource?: 'OPERATING_LOCATION' | 'DEVICE' | 'SEARCH';
   recentSearches?: WeatherLocation[];
+  favouriteWeatherLocations?: WeatherLocation[];
 }
 export interface OperationsBrief {
   location: { id: string; name: string; address?: string } | null;
@@ -23,6 +24,7 @@ export interface OperationsBrief {
   nextActions: any[];
   alerts: BriefAlert[];
   recentWeatherSearches?: WeatherLocation[];
+  favouriteWeatherLocations?: WeatherLocation[];
 }
 
 async function request<T>(fetcher: typeof fetch, action = '', init: RequestInit = {}) {
@@ -38,4 +40,6 @@ export const createOperationsBriefApi = (fetcher: typeof fetch = fetch) => ({
   deviceWeather: (latitude: number, longitude: number) => request<BriefWeather>(fetcher, 'device-weather', { method: 'POST', body: JSON.stringify({ latitude, longitude }) }),
   searchWeather: (query: string) => request<{ results: WeatherLocation[] }>(fetcher, 'search-weather', { method: 'POST', body: JSON.stringify({ query }) }),
   searchedWeather: (location: WeatherLocation) => request<BriefWeather>(fetcher, 'searched-weather', { method: 'POST', body: JSON.stringify({ location }) }),
+  favouriteWeather: (location: WeatherLocation) => request<{ favouriteWeatherLocations: WeatherLocation[] }>(fetcher, 'favourite-weather', { method: 'POST', body: JSON.stringify({ location }) }),
+  unfavouriteWeather: (location: WeatherLocation) => request<{ favouriteWeatherLocations: WeatherLocation[] }>(fetcher, 'unfavourite-weather', { method: 'POST', body: JSON.stringify({ location }) }),
 });
