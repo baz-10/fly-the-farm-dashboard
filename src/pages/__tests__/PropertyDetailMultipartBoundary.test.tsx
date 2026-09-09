@@ -12,7 +12,7 @@ const mockCreateFieldBoundaryVersion = jest.fn();
 jest.mock('react-router-dom', () => ({
   useParams: () => ({ clientId: 'client-1', propertyId: 'property-1' }),
   useNavigate: () => jest.fn(),
-}));
+}), { virtual: true });
 
 jest.mock('../../contexts/OperationalDataContext', () => ({
   useOperationalData: () => ({
