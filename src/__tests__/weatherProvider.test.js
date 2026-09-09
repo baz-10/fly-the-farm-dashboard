@@ -13,7 +13,8 @@ function operationsSnapshot(overrides={}) {
   const start=Date.parse('2026-09-08T00:00:00Z');
   const times=Array.from({length:48},(_,index)=>new Date(start+index*3600000).toISOString().slice(0,16));
   const values=Array.from({length:48},()=>20);
-  const base={latitude:-27,longitude:153,timezone:'Australia/Brisbane',utc_offset_seconds:36000,current:{time:'2026-09-08T20:15',temperature_2m:24,apparent_temperature:24,relative_humidity_2m:70,wind_speed_10m:8,wind_gusts_10m:12,wind_direction_10m:90,precipitation:0,rain:0,is_day:0},hourly:{time:times,temperature_2m:values,relative_humidity_2m:values.map(()=>70),precipitation_probability:values.map(()=>0),precipitation:values.map(()=>0),cloud_cover:values.map(()=>20),is_day:values.map((_,index)=>index%24>=6&&index%24<18?1:0),wind_speed_10m:values.map(()=>8),wind_gusts_10m:values.map(()=>12),wind_direction_10m:values.map(()=>90)},daily:{time:['2026-09-08'],temperature_2m_min:[15],temperature_2m_max:[27],precipitation_probability_max:[0],precipitation_sum:[0],wind_speed_10m_max:[12],wind_gusts_10m_max:[18]}};
+  const dates=Array.from({length:14},(_,index)=>new Date(start+index*86400000).toISOString().slice(0,10));
+  const base={latitude:-27,longitude:153,timezone:'Australia/Brisbane',utc_offset_seconds:36000,current:{time:'2026-09-08T20:15',temperature_2m:24,apparent_temperature:24,relative_humidity_2m:70,wind_speed_10m:8,wind_gusts_10m:12,wind_direction_10m:90,precipitation:0,rain:0,is_day:0},hourly:{time:times,temperature_2m:values,relative_humidity_2m:values.map(()=>70),precipitation_probability:values.map(()=>0),precipitation:values.map(()=>0),cloud_cover:values.map(()=>20),is_day:values.map((_,index)=>index%24>=6&&index%24<18?1:0),wind_speed_10m:values.map(()=>8),wind_gusts_10m:values.map(()=>12),wind_direction_10m:values.map(()=>90)},daily:{time:dates,weather_code:dates.map(()=>2),temperature_2m_min:dates.map(()=>15),temperature_2m_max:dates.map(()=>27),precipitation_probability_max:dates.map(()=>0),precipitation_sum:dates.map(()=>0),precipitation_hours:dates.map(()=>0),wind_speed_10m_max:dates.map(()=>12),wind_gusts_10m_max:dates.map(()=>18),wind_direction_10m_dominant:dates.map(()=>90)}};
   return {...base,...overrides,current:{...base.current,...overrides.current},hourly:{...base.hourly,...overrides.hourly}};
 }
 
@@ -22,6 +23,39 @@ test('builds the operations outlook from the actual current provider-local hour 
   const result=await fetchOpenMeteoOperationsForecast({latitude:-27,longitude:153,fetchImpl,now:()=>new Date('2026-09-08T10:22:00.000Z')});
   expect(result.hourly).toHaveLength(25);expect(result.hourly[0].time).toBe('2026-09-08T21:00');expect(result.hourly[24].time).toBe('2026-09-09T21:00');expect(result.hourly[0].inversionPotential).toEqual(expect.objectContaining({rating:expect.stringMatching(/low|moderate|high/)}));
   const request=new URL(fetchImpl.mock.calls[0][0]);expect(request.searchParams.get('hourly')).toMatch(/cloud_cover/);expect(request.searchParams.get('hourly')).toMatch(/is_day/);
+});
+
+test('requests and returns a fourteen-day spray-planning outlook with daily rain timing',async()=>{
+  const snapshot=operationsSnapshot();
+  const start=Date.parse('2026-09-08T00:00:00Z'),hours=14*24;
+  snapshot.hourly.time=Array.from({length:hours},(_,index)=>new Date(start+index*3600000).toISOString().slice(0,16));
+  for(const key of ['temperature_2m','relative_humidity_2m','precipitation_probability','precipitation','cloud_cover','is_day','wind_speed_10m','wind_gusts_10m','wind_direction_10m']) snapshot.hourly[key]=Array.from({length:hours},(_,index)=>key==='temperature_2m'?20:key==='relative_humidity_2m'?70:key==='cloud_cover'?20:key==='is_day'?(index%24>=6&&index%24<18?1:0):key==='wind_speed_10m'?8:key==='wind_gusts_10m'?12:key==='wind_direction_10m'?90:0);
+  snapshot.hourly.precipitation_probability[38]=65;snapshot.hourly.precipitation_probability[39]=75;snapshot.hourly.precipitation[38]=1.2;snapshot.hourly.precipitation[39]=2.1;
+  const dates=Array.from({length:14},(_,index)=>new Date(start+index*86400000).toISOString().slice(0,10));
+  snapshot.daily={time:dates,weather_code:dates.map(()=>2),temperature_2m_min:dates.map(()=>14),temperature_2m_max:dates.map(()=>27),precipitation_probability_max:dates.map((_,index)=>index===1?75:5),precipitation_sum:dates.map((_,index)=>index===1?3.3:0),precipitation_hours:dates.map((_,index)=>index===1?2:0),wind_speed_10m_max:dates.map(()=>16),wind_gusts_10m_max:dates.map(()=>24),wind_direction_10m_dominant:dates.map(()=>90)};
+  const fetchImpl=jest.fn().mockResolvedValue({ok:true,json:async()=>snapshot});
+  const result=await fetchOpenMeteoOperationsForecast({latitude:-27,longitude:153,fetchImpl,now:()=>new Date('2026-09-08T10:22:00.000Z')});
+  const request=new URL(fetchImpl.mock.calls[0][0]);
+  expect(request.searchParams.get('forecast_days')).toBe('14');
+  expect(request.searchParams.get('daily')).toMatch(/precipitation_hours/);
+  expect(request.searchParams.get('daily')).toMatch(/wind_direction_10m_dominant/);
+  expect(result.daily).toHaveLength(14);
+  expect(result.daily[1]).toEqual(expect.objectContaining({condition:'Partly cloudy',rainAmountMm:3.3,rainDurationHours:2,windDirection:'E',rainWindow:expect.objectContaining({certainty:'LIKELY',start:'2026-09-09T14:00',end:'2026-09-09T16:00',peakProbability:75,expectedAmountMm:3.3})}));
+});
+
+test('keeps separated showers as distinct rain windows and excludes elapsed hours from today spray guidance',async()=>{
+  const snapshot=operationsSnapshot({current:{time:'2026-09-08T10:15'}}),day=snapshot.daily.time[0];
+  snapshot.hourly.precipitation_probability[9]=70;snapshot.hourly.precipitation[9]=1;
+  snapshot.hourly.precipitation_probability[17]=80;snapshot.hourly.precipitation[17]=2;
+  const fetchImpl=jest.fn().mockResolvedValue({ok:true,json:async()=>snapshot});
+  const result=await fetchOpenMeteoOperationsForecast({latitude:-27,longitude:153,fetchImpl,now:()=>new Date('2026-09-08T00:22:00.000Z')});
+  expect(result.daily[0].rainWindows).toEqual([{certainty:'LIKELY',start:`${day}T09:00`,end:`${day}T10:00`,peakProbability:70,expectedAmountMm:1},{certainty:'LIKELY',start:`${day}T17:00`,end:`${day}T18:00`,peakProbability:80,expectedAmountMm:2}]);
+  expect(result.daily[0].bestSprayWindow?.start>=`${day}T11:00`).toBe(true);
+});
+
+test('fails closed when fourteen-day daily forecast arrays are incomplete or misaligned',async()=>{
+  const snapshot=operationsSnapshot();snapshot.daily.precipitation_hours=snapshot.daily.precipitation_hours.slice(0,13);
+  await expect(fetchOpenMeteoOperationsForecast({latitude:-27,longitude:153,fetchImpl:jest.fn().mockResolvedValue({ok:true,json:async()=>snapshot}),now:()=>new Date('2026-09-08T10:22:00.000Z')})).rejects.toThrow('daily values');
 });
 
 test('accepts a valid provider timezone offset when retrieval time includes milliseconds',async()=>{
@@ -54,7 +88,8 @@ test.each([
 
 test('fails closed instead of presenting a stale hourly window as current',async()=>{
   const values=Array.from({length:25},()=>20),times=Array.from({length:25},(_,index)=>`2026-09-08T${String(index).padStart(2,'0')}:00`);
-  const fetchImpl=jest.fn().mockResolvedValue({ok:true,json:async()=>({latitude:-27,longitude:153,timezone:'Australia/Brisbane',utc_offset_seconds:36000,current:{time:'2026-09-09T20:15',temperature_2m:24,apparent_temperature:24,relative_humidity_2m:70,wind_speed_10m:8,wind_gusts_10m:12,wind_direction_10m:90,precipitation:0,rain:0,is_day:1},hourly:{time:times,temperature_2m:values,relative_humidity_2m:values.map(()=>70),precipitation_probability:values.map(()=>0),precipitation:values.map(()=>0),cloud_cover:values.map(()=>20),is_day:values.map(()=>1),wind_speed_10m:values.map(()=>8),wind_gusts_10m:values.map(()=>12),wind_direction_10m:values.map(()=>90)},daily:{time:[],temperature_2m_min:[],temperature_2m_max:[],precipitation_probability_max:[],precipitation_sum:[],wind_speed_10m_max:[],wind_gusts_10m_max:[]}})});
+  const snapshot=operationsSnapshot({current:{time:'2026-09-09T20:15'},hourly:{time:times,temperature_2m:values,relative_humidity_2m:values.map(()=>70),precipitation_probability:values.map(()=>0),precipitation:values.map(()=>0),cloud_cover:values.map(()=>20),is_day:values.map(()=>1),wind_speed_10m:values.map(()=>8),wind_gusts_10m:values.map(()=>12),wind_direction_10m:values.map(()=>90)}});
+  const fetchImpl=jest.fn().mockResolvedValue({ok:true,json:async()=>snapshot});
   await expect(fetchOpenMeteoOperationsForecast({latitude:-27,longitude:153,fetchImpl,now:()=>new Date('2026-09-09T10:22:00.000Z')})).rejects.toThrow('does not cover the next 24 hours');
 });
 

@@ -23,6 +23,18 @@ test('missing location coordinates informs without removing quick actions',async
  expect(res.body.data.weather.state).toBe('LOCATION_REQUIRED');expect(res.body.data.quickActions.some(x=>x.label==='New Client')).toBe(true);
 });
 
+test('geocodes the authoritative address when stored coordinates are null instead of forecasting at 0,0',async()=>{
+ const repository={list:jest.fn(async resource=>resource==='operating_locations'?[{id:'loc-1',name:'Fly The Farm Base',address:'17 Example Road, Dalby QLD 4405',latitude:null,longitude:null}]:[]),listMissionSetupDrafts:jest.fn().mockResolvedValue([]),readOperationsPreference:jest.fn().mockResolvedValue(null)};
+ const geocoded={latitude:-27.181,longitude:151.262,resolvedLocation:{label:'Dalby, QLD 4405',locality:'Dalby',state:'QLD',postcode:'4405'}};
+ const weather={geocode:jest.fn().mockResolvedValue(geocoded),reverse:jest.fn().mockResolvedValue(geocoded.resolvedLocation),forecast:jest.fn().mockResolvedValue({timezone:'Australia/Brisbane',current:{temperatureC:25},hourly:[],daily:[]})};
+ const res=response();await createOperationsBriefHandler({repository,weatherProvider:weather,complianceRepository:{readOverview:jest.fn().mockResolvedValue({})},resolveContext:jest.fn().mockResolvedValue(context)})(req(),res);
+ expect(res.statusCode).toBe(200);
+ expect(weather.geocode).toHaveBeenCalledWith('17 Example Road, Dalby QLD 4405');
+ expect(weather.forecast).toHaveBeenCalledWith(expect.objectContaining({latitude:-27.181,longitude:151.262}));
+ expect(weather.forecast).not.toHaveBeenCalledWith({latitude:0,longitude:0});
+ expect(res.body.data.weather).toEqual(expect.objectContaining({state:'READY',timezone:'Australia/Brisbane'}));
+});
+
 test('persists an explicitly selected authorised operating location',async()=>{
  const repository={list:jest.fn().mockResolvedValue([{id:'loc-1'},{id:'loc-2'}]),saveOperationsPreference:jest.fn().mockResolvedValue({})};
  const res=response();await createOperationsBriefHandler({repository,complianceRepository:{},resolveContext:jest.fn().mockResolvedValue(context)})(req('POST',{action:'select-location'},{operatingLocationId:'loc-2'}),res);
